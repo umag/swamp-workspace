@@ -66,7 +66,14 @@ Use `swamp --help` to see available commands.
 - `/review-security` — security audit for credential/API/input handling code
 - `/review-skill` — quality review for new/modified skills
 
+### Issue Lifecycle
+- Every significant change starts as an issue with `/issue-lifecycle`
+- Plans require DDD analysis and test strategy before review
+- Review skills fan-out in parallel based on reviewMatrix
+- Human approves plans — never auto-approve
+
 ## Additional Skills
+- `issue-lifecycle` - Issue triage and implementation lifecycle (plan, review, implement)
 - `ddd` - Domain-Driven Design building block selection and patterns
 - `tdd` - Test-Driven Development workflow enforcement
 - `moldable-dev` - Moldable development principles and domain inspectors
