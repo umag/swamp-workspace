@@ -1,0 +1,11 @@
+{
+  "name": "aopab/moldable-dev",
+  "version": "0.1.0",
+  "private": true,
+  "summary": "Moldable development principles — programming through contextual micro tools built for each problem. Build domain-specific inspectors, reduce time-to-answer (ttA), use live data exploration, and create narrative-driven tools. Based on the 8 principles from moldabledevelopment.com. Triggers on \"explore\", \"inspect\", \"debug\", \"investigate\", \"moldable\", \"inspector\", \"live data\", \"custom view\", \"understand code\", \"how does this work\", \"figure out\", \"narrative\".\n",
+  "skills": {
+    "moldable-dev": {
+      "path": "SKILL.md"
+    }
+  }
+}

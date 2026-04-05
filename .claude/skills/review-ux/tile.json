@@ -1,0 +1,11 @@
+{
+  "name": "aopab/review-ux",
+  "version": "0.1.0",
+  "private": true,
+  "summary": "CLI UX review for output formatting, help text, error messages, JSON mode, and behavioral consistency. Ensures commands are discoverable, errors are actionable, and output modes are consistent. Must compare against existing commands for consistency. Triggers on \"ux review\", \"review ux\", \"/review-ux\", \"cli output\", \"user experience review\", \"help text review\", \"error message review\", \"output format\".\n",
+  "skills": {
+    "review-ux": {
+      "path": "SKILL.md"
+    }
+  }
+}

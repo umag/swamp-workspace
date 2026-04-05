@@ -1,0 +1,11 @@
+{
+  "name": "aopab/review-code",
+  "version": "0.1.0",
+  "private": true,
+  "summary": "General code review for CLAUDE.md compliance, DDD pattern adherence, TDD compliance, type safety, import hygiene, and code organization. The primary reviewer — runs on every significant code change. Outputs structured findings with severity levels. Triggers on \"code review\", \"review code\", \"check my code\", \"/review-code\", \"review changes\", \"review my changes\".\n",
+  "skills": {
+    "review-code": {
+      "path": "SKILL.md"
+    }
+  }
+}

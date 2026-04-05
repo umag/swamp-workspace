@@ -1,0 +1,11 @@
+{
+  "name": "aopab/review-adversarial",
+  "version": "0.1.0",
+  "private": true,
+  "summary": "Adversarial code review that assumes code is broken until proven otherwise. Reviews across 7 dimensions: credentials, logging, error handling, testing, idempotency, API contracts, resource management. For core domain changes, extension code, and anything touching state or external APIs. Triggers on \"adversarial review\", \"review adversarial\", \"/review-adversarial\", \"assume broken\", \"stress test code\", \"break my code\", \"find bugs\".\n",
+  "skills": {
+    "review-adversarial": {
+      "path": "SKILL.md"
+    }
+  }
+}

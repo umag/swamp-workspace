@@ -1,0 +1,11 @@
+{
+  "name": "aopab/review-skill",
+  "version": "0.1.0",
+  "private": true,
+  "summary": "Skill quality review for Claude Code skills. Checks frontmatter quality,\nprogressive disclosure, trigger precision, instruction quality, context\nwindow budget, cross-skill consistency, and reference organization.\nEnsures skills follow the \"context window is a public good\" principle.\nTriggers on \"skill review\", \"review skill\", \"/review-skill\", \"check\nskill\", \"skill quality\", \"new skill review\".\n",
+  "skills": {
+    "review-skill": {
+      "path": "SKILL.md"
+    }
+  }
+}

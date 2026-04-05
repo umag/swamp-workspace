@@ -1,0 +1,11 @@
+{
+  "name": "aopab/tdd",
+  "version": "0.1.0",
+  "private": true,
+  "summary": "Test-Driven Development workflow enforcement. Red-Green-Refactor cycle for all feature implementations and bug fixes. Covers test naming, file organization, mock/stub guidelines, and when to use unit vs integration vs e2e tests in Deno/TypeScript. Triggers on \"implement\", \"feature\", \"fix bug\", \"write test\", \"test\", \"TDD\", \"red green refactor\", \"failing test\", \"test first\", \"unit test\", \"integration test\".\n",
+  "skills": {
+    "tdd": {
+      "path": "SKILL.md"
+    }
+  }
+}

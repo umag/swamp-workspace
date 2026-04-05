@@ -1,0 +1,11 @@
+{
+  "name": "aopab/ddd",
+  "version": "0.1.0",
+  "private": true,
+  "summary": "Domain Driven Design guidance for TypeScript/Deno codebases and swamp extensions. Apply when writing or modifying code to choose appropriate DDD building blocks (entities, value objects, aggregates, domain services, repositories, application services) and maintain ubiquitous language. Triggers on all code changes to ensure domain model consistency, \"domain model\", \"entity\", \"value object\", \"aggregate\", \"domain service\", \"repository\", \"bounded context\", \"DDD\", \"building block\".\n",
+  "skills": {
+    "ddd": {
+      "path": "SKILL.md"
+    }
+  }
+}

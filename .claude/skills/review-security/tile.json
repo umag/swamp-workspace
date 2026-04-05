@@ -1,0 +1,11 @@
+{
+  "name": "aopab/review-security",
+  "version": "0.1.0",
+  "private": true,
+  "summary": "Security-focused code review covering command injection, input validation,\nsecret handling, supply chain, file system safety, API security, and\npermission scope. OWASP Top 10 adapted for CLI/automation context. Triggers\non \"security review\", \"review security\", \"/review-security\", \"security\naudit\", \"vulnerability check\", \"security scan\", \"check for vulnerabilities\".\n",
+  "skills": {
+    "review-security": {
+      "path": "SKILL.md"
+    }
+  }
+}
