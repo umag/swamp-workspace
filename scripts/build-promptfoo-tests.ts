@@ -40,7 +40,8 @@ interface PromptfooConfig {
 }
 
 const REPO_ROOT = join(dirname(fromFileUrl(import.meta.url)), "..");
-const SKILLS_ROOT = join(REPO_ROOT, ".claude", "skills");
+// Scan all extension subdirs for skills (monorepo layout: <ext>/.claude/skills/)
+const SKILLS_ROOT = REPO_ROOT;
 const TEMPLATE = join(REPO_ROOT, "promptfoo.config.yaml");
 const OUTPUT = join(REPO_ROOT, "promptfoo.generated.yaml");
 

@@ -1,0 +1,92 @@
+manifestVersion: 1
+name: "@magistr/issue-lifecycle"
+version: "2026.04.10.1"
+description: |
+  Issue lifecycle model with 9 bundled Claude Code skills for DDD, TDD,
+  moldable development, and parallel code review.
+
+  Drives issues from filing through triage, prior-art lookup, DDD + TDD
+  planning, parallel review fan-out (5 review skills), autonomous
+  code-review iteration (zero CRITICAL + zero HIGH gate), optional UAT/KB
+  harvest, and completion. State persists across sessions via the `state`
+  resource; the `hydrate` method writes a cheap `summary` resource for
+  long autonomous loops.
+
+  ## State Machine
+
+  ```
+  filed ──[triage]──> triaged
+  triaged ──[plan]──> planned
+  planned ──[review_plan]──> reviewing
+  reviewing ──[approve_plan]──> approved
+  reviewing ──[reject_plan]──> planned  (feedback loop)
+  approved ──[implement]──> implementing
+  implementing ──[review_code]──> code_reviewing
+  code_reviewing ──[resolve_findings]──> resolved
+  code_reviewing ──[iterate]──> implementing  (autonomous loop)
+  resolved ──[iterate]──> implementing
+  resolved ──[harvest]──> harvested  (optional)
+  resolved ──[complete]──> complete
+  harvested ──[complete]──> complete
+  ```
+
+  `approve_plan` requires full matrix coverage AND zero open CRITICAL AND
+  zero open HIGH findings. `close` works from any state.
+
+  ## Methods
+
+  - `start` — file a new issue
+  - `triage` — classify with optional confidence/regression/reproduction
+  - `record_prior_art` — record existing UAT scenarios and KB entries
+  - `plan` — create/revise plan with DDD analysis, TDD strategy, review matrix
+  - `review_plan` — enter plan review phase
+  - `record_review` — record one reviewer's findings
+  - `approve_plan` — approve (gated on coverage + zero blocking findings)
+  - `reject_plan` — reject with auto/human source tracking
+  - `implement` — start coding on a branch
+  - `review_code` — enter code review phase
+  - `resolve_findings` — record resolutions, snapshot round
+  - `iterate` — return to implementation (bumps codeReviewIteration)
+  - `harvest` — record UAT/KB improvement proposals
+  - `complete` — mark done
+  - `close` — abandon from any state
+  - `hydrate` — write compact summary for autonomous loops
+
+  ## Bundled Skills
+
+  - `issue-lifecycle` — orchestrates the full lifecycle
+  - `ddd` — domain-driven design building block selection
+  - `tdd` — red-green-refactor workflow enforcement
+  - `moldable-dev` — contextual inspectors and live-data queries
+  - `review-code` — general code review
+  - `review-adversarial` — adversarial review (7 dimensions)
+  - `review-security` — OWASP-adapted security audit
+  - `review-ux` — CLI output and error message review
+  - `review-skill` — skill quality review
+
+repository: "https://github.com/umag/swamp-workspace"
+
+skills:
+  - issue-lifecycle
+  - ddd
+  - tdd
+  - moldable-dev
+  - review-code
+  - review-adversarial
+  - review-security
+  - review-ux
+  - review-skill
+
+models:
+  - issue_lifecycle.ts
+
+additionalFiles:
+  - README.md
+
+labels:
+  - issue-tracking
+  - tdd
+  - ddd
+  - review
+  - lifecycle
+  - sdlc

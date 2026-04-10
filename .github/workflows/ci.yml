@@ -14,9 +14,11 @@ jobs:
   deno-check:
     name: deno (fmt, lint, check, test)
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'pull_request' ||
-      github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        extension:
+          - issue-lifecycle
     steps:
       - uses: actions/checkout@v4
 
@@ -25,20 +27,20 @@ jobs:
         with:
           deno-version: v2.2.6
 
-      - name: Format check (extension)
-        working-directory: extensions/issue-lifecycle
+      - name: Format check
+        working-directory: ${{ matrix.extension }}/extensions/models
         run: deno fmt --check
 
-      - name: Lint (extension)
-        working-directory: extensions/issue-lifecycle
+      - name: Lint
+        working-directory: ${{ matrix.extension }}/extensions/models
         run: deno lint
 
-      - name: Type check (extension)
-        working-directory: extensions/issue-lifecycle
+      - name: Type check
+        working-directory: ${{ matrix.extension }}/extensions/models
         run: deno check issue_lifecycle.ts issue_lifecycle.test.ts
 
-      - name: Test (extension)
-        working-directory: extensions/issue-lifecycle
+      - name: Test
+        working-directory: ${{ matrix.extension }}/extensions/models
         run: deno test issue_lifecycle.test.ts
 
       - name: Format check (scripts)
@@ -60,16 +62,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        skill:
-          - issue-lifecycle
-          - ddd
-          - tdd
-          - moldable-dev
-          - review-code
-          - review-adversarial
-          - review-security
-          - review-ux
-          - review-skill
+        include:
+          - extension: issue-lifecycle
+            skill: issue-lifecycle
+          - extension: issue-lifecycle
+            skill: ddd
+          - extension: issue-lifecycle
+            skill: tdd
+          - extension: issue-lifecycle
+            skill: moldable-dev
+          - extension: issue-lifecycle
+            skill: review-code
+          - extension: issue-lifecycle
+            skill: review-adversarial
+          - extension: issue-lifecycle
+            skill: review-security
+          - extension: issue-lifecycle
+            skill: review-ux
+          - extension: issue-lifecycle
+            skill: review-skill
     steps:
       - uses: actions/checkout@v4
 
@@ -81,14 +92,10 @@ jobs:
       - name: Review ${{ matrix.skill }} with tessl
         run: |
           set -eo pipefail
-          # Pinned tessl version — bump explicitly, never float.
           npx --yes tessl@0.5.0 skill review \
-            ".claude/skills/${{ matrix.skill }}" --json \
+            "${{ matrix.extension }}/.claude/skills/${{ matrix.skill }}" --json \
             | tee "tessl-${{ matrix.skill }}.json"
 
-          # Threshold: average score across validation/description/content
-          # must be >= 0.90. The exact JSON shape is documented at
-          # https://stack72.dev/skills-are-context-and-context-needs-tests/
           node -e "
             const r = require('./tessl-${{ matrix.skill }}.json');
             const scores = [
@@ -140,12 +147,10 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -eo pipefail
-          # Pinned promptfoo version — bump explicitly, never float.
           npx --yes promptfoo@0.104.0 eval \
             -c promptfoo.generated.yaml \
             --output promptfoo-results.json
 
-          # Gate: overall pass rate >= 90%
           node -e "
             const r = require('./promptfoo-results.json');
             const total = r.results?.stats?.total
@@ -183,11 +188,11 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Detect manifest version change
+      - name: Detect manifest version changes
         id: manifest-changed
         run: |
           set -eo pipefail
-          changed=$(git diff --name-only HEAD~1 HEAD -- 'extensions/*/manifest.yaml' || true)
+          changed=$(git diff --name-only HEAD~1 HEAD -- '*/manifest.yaml' || true)
           if [ -z "$changed" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No manifest changes in this push."

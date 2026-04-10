@@ -1,12 +1,12 @@
-# Swamp runtime data (never commit live model state)
-.swamp/
+# Swamp runtime data (per-extension, never commit)
+**/.swamp/
 .swamp-sources.yaml
 
-# Claude Code local-only settings (keep skills tracked)
-.claude/settings.local.json
-.claude/projects/
+# Claude Code local-only settings
+**/.claude/settings.local.json
+**/.claude/projects/
 
-# Generated promptfoo tests — rebuilt from per-skill trigger_evals.json
+# Generated promptfoo tests
 promptfoo.generated.yaml
 
 # OS
