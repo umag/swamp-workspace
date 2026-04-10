@@ -1,0 +1,28 @@
+name: Setup swamp
+description: >
+  Download a pinned swamp release and add it to $PATH. Used by the
+  extension-publish job in CI.
+
+inputs:
+  version:
+    description: "swamp release version (matches a tag in systeminit/swamp)"
+    required: false
+    default: "0.20.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Download swamp ${{ inputs.version }}
+      shell: bash
+      run: |
+        set -eo pipefail
+        version="${{ inputs.version }}"
+        # Adjust the URL once the real swamp release asset layout is known —
+        # this composite action is the one place to update.
+        url="https://github.com/systeminit/swamp/releases/download/v${version}/swamp-linux-x86_64.tar.gz"
+        echo "Downloading swamp v${version} from ${url}"
+        curl -fsSL "$url" -o /tmp/swamp.tar.gz
+        mkdir -p "${RUNNER_TEMP}/swamp-bin"
+        tar -xzf /tmp/swamp.tar.gz -C "${RUNNER_TEMP}/swamp-bin"
+        echo "${RUNNER_TEMP}/swamp-bin" >> "$GITHUB_PATH"
+        "${RUNNER_TEMP}/swamp-bin/swamp" --version

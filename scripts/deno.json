@@ -1,0 +1,20 @@
+{
+  "tasks": {
+    "build-promptfoo": "deno run --allow-read --allow-write build-promptfoo-tests.ts",
+    "check": "deno check build-promptfoo-tests.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

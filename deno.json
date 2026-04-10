@@ -1,0 +1,23 @@
+{
+  "tasks": {
+    "test": "deno test --allow-none issue_lifecycle.test.ts",
+    "check": "deno check issue_lifecycle.ts issue_lifecycle.test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "zod": "npm:zod@4"
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

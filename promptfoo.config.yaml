@@ -1,0 +1,56 @@
+# promptfoo routing evals — source of truth is per-skill
+# `.claude/skills/<name>/evals/trigger_evals.json`. CI expands those files
+# into `promptfoo.generated.yaml` via `scripts/build-promptfoo-tests.ts`
+# and runs promptfoo against the generated file.
+#
+# This file holds the provider + prompt template. The generator injects the
+# `tests:` array.
+#
+# Pattern adapted from:
+#   https://stack72.dev/skills-are-context-and-context-needs-tests/
+#
+# Limitation: this tests description-based routing via the raw Anthropic API,
+# not the real Claude Code harness. A skill that passes here can still
+# mis-route inside the harness — use as a PR gate, not a correctness proof.
+
+description: "Skill routing evals — does the model pick the right skill?"
+
+providers:
+  - id: anthropic:messages:claude-sonnet-4-5
+    config:
+      max_tokens: 64
+      temperature: 0
+
+prompts:
+  - id: routing
+    raw: |
+      You are a router choosing ONE Claude Code skill to handle a user query.
+
+      Available skills (name — one-line purpose):
+      - issue-lifecycle — drive issue triage, planning, review,
+        implementation, harvest, and completion via the
+        @magistr/issue-lifecycle extension model
+      - ddd — domain-driven design building block selection and ubiquitous
+        language guidance
+      - tdd — red-green-refactor workflow enforcement for features and bug
+        fixes
+      - moldable-dev — build contextual micro tools, query live system
+        state, create reusable reports to reduce time-to-answer
+      - review-code — general code review (CLAUDE.md, DDD, TDD, types,
+        imports, organization)
+      - review-adversarial — adversarial review across 7 dimensions; assume
+        code is broken
+      - review-security — security audit (injection, secrets, supply chain,
+        OWASP Top 10)
+      - review-ux — CLI UX review (output formatting, help text, error
+        messages, JSON mode, consistency)
+      - review-skill — skill quality review (frontmatter, progressive
+        disclosure, trigger precision, context window budget)
+
+      User query: "{{query}}"
+
+      Output ONLY the single skill name on one line (e.g. `review-code`),
+      or `none` if no skill applies. No prose, no punctuation, no quotes.
+
+# `tests` is injected by scripts/build-promptfoo-tests.ts at CI time.
+tests: []

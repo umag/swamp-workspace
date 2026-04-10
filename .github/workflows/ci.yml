@@ -1,0 +1,222 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deno-check:
+    name: deno (fmt, lint, check, test)
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.2.6
+
+      - name: Format check (extension)
+        working-directory: extensions/issue-lifecycle
+        run: deno fmt --check
+
+      - name: Lint (extension)
+        working-directory: extensions/issue-lifecycle
+        run: deno lint
+
+      - name: Type check (extension)
+        working-directory: extensions/issue-lifecycle
+        run: deno check issue_lifecycle.ts issue_lifecycle.test.ts
+
+      - name: Test (extension)
+        working-directory: extensions/issue-lifecycle
+        run: deno test issue_lifecycle.test.ts
+
+      - name: Format check (scripts)
+        working-directory: scripts
+        run: deno fmt --check
+
+      - name: Lint (scripts)
+        working-directory: scripts
+        run: deno lint
+
+      - name: Type check (scripts)
+        working-directory: scripts
+        run: deno check build-promptfoo-tests.ts
+
+  skill-review:
+    name: skill-review (tessl)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        skill:
+          - issue-lifecycle
+          - ddd
+          - tdd
+          - moldable-dev
+          - review-code
+          - review-adversarial
+          - review-security
+          - review-ux
+          - review-skill
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Review ${{ matrix.skill }} with tessl
+        run: |
+          set -eo pipefail
+          # Pinned tessl version — bump explicitly, never float.
+          npx --yes tessl@0.5.0 skill review \
+            ".claude/skills/${{ matrix.skill }}" --json \
+            | tee "tessl-${{ matrix.skill }}.json"
+
+          # Threshold: average score across validation/description/content
+          # must be >= 0.90. The exact JSON shape is documented at
+          # https://stack72.dev/skills-are-context-and-context-needs-tests/
+          node -e "
+            const r = require('./tessl-${{ matrix.skill }}.json');
+            const scores = [
+              r.scores?.validation,
+              r.scores?.description,
+              r.scores?.content,
+            ].filter((s) => typeof s === 'number');
+            if (scores.length === 0) {
+              console.error('no scores in tessl output');
+              process.exit(1);
+            }
+            const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+            console.log('avg=' + avg.toFixed(3));
+            if (avg < 0.90) {
+              console.error('FAIL: avg ' + avg.toFixed(3) + ' < 0.90');
+              process.exit(1);
+            }
+          "
+
+      - name: Upload tessl report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessl-${{ matrix.skill }}
+          path: tessl-${{ matrix.skill }}.json
+
+  skill-trigger-eval:
+    name: skill-trigger-eval (promptfoo, sonnet)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.2.6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build promptfoo tests from per-skill JSONs
+        run: deno run --allow-read --allow-write scripts/build-promptfoo-tests.ts
+
+      - name: Run promptfoo eval (sonnet only)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -eo pipefail
+          # Pinned promptfoo version — bump explicitly, never float.
+          npx --yes promptfoo@0.104.0 eval \
+            -c promptfoo.generated.yaml \
+            --output promptfoo-results.json
+
+          # Gate: overall pass rate >= 90%
+          node -e "
+            const r = require('./promptfoo-results.json');
+            const total = r.results?.stats?.total
+              ?? (r.results?.results?.length ?? 0);
+            const passes = r.results?.stats?.successes
+              ?? (r.results?.results || []).filter((x) => x.success).length;
+            if (total === 0) {
+              console.error('no results');
+              process.exit(1);
+            }
+            const rate = passes / total;
+            console.log('promptfoo pass rate: ' + passes + '/' + total + ' = ' + (rate * 100).toFixed(1) + '%');
+            if (rate < 0.90) {
+              console.error('FAIL: pass rate < 90%');
+              process.exit(1);
+            }
+          "
+
+      - name: Upload promptfoo report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-results
+          path: |
+            promptfoo.generated.yaml
+            promptfoo-results.json
+
+  extension-publish:
+    name: extension-publish (on manifest version bump)
+    runs-on: ubuntu-latest
+    needs: deno-check
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect manifest version change
+        id: manifest-changed
+        run: |
+          set -eo pipefail
+          changed=$(git diff --name-only HEAD~1 HEAD -- 'extensions/*/manifest.yaml' || true)
+          if [ -z "$changed" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No manifest changes in this push."
+            exit 0
+          fi
+          version_diff=$(git diff HEAD~1 HEAD -- $changed | grep -E '^\+version:' || true)
+          if [ -z "$version_diff" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Manifest touched but version line unchanged."
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "Changed manifests: $changed"
+          echo "manifests<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$changed" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Setup swamp
+        if: steps.manifest-changed.outputs.changed == 'true'
+        uses: ./.github/actions/setup-swamp
+
+      - name: Publish changed extensions
+        if: steps.manifest-changed.outputs.changed == 'true'
+        env:
+          SWAMP_AUTH_TOKEN: ${{ secrets.SWAMP_AUTH_TOKEN }}
+        run: |
+          set -eo pipefail
+          while IFS= read -r manifest; do
+            [ -z "$manifest" ] && continue
+            echo "Publishing $manifest"
+            ( cd "$(dirname "$manifest")" && swamp extension push manifest.yaml )
+          done <<< "${{ steps.manifest-changed.outputs.manifests }}"

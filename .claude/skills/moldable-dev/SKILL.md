@@ -120,7 +120,7 @@ swamp audit search --json
 # 6. If data is stale — trigger refresh, then re-verify steps 1 and 3
 ```
 
-Once this sequence proves useful, wrap it as a `swamp-report` health check so it is reusable.
+Once this sequence proves useful, wrap it as a swamp report so it is reusable (`swamp report run <name>`).
 
 ## Building Micro Tools
 
@@ -146,7 +146,7 @@ is a tool. The key metric: **can you build it in minutes?**
 
 ### Reports as Moldable Tools
 
-Use `swamp-report` to create reusable domain-specific views:
+Use swamp reports to create reusable domain-specific views:
 
 - **Model health check**: verify model state, check last execution, identify
   stale data

@@ -1,0 +1,15 @@
+[
+  { "query": "I want to explore the issue state blob through a custom view rather than reading the code.", "should_trigger": true },
+  { "query": "Build me a contextual inspector to debug why the retry scheduler stalls.", "should_trigger": true },
+  { "query": "Query the swamp audit log to see which workflows ran overnight.", "should_trigger": true },
+  { "query": "I'm trying to understand this model's state — help me reduce time-to-answer.", "should_trigger": true },
+  { "query": "Write a reusable swamp report that checks model freshness across the repo.", "should_trigger": true },
+  { "query": "Use moldable development to investigate the slow workflow execution.", "should_trigger": true },
+
+  { "query": "Write a failing unit test for the new helper function.", "should_trigger": false },
+  { "query": "Rename these technical classes to match the ubiquitous language.", "should_trigger": false },
+  { "query": "Review this code change for CLAUDE.md compliance.", "should_trigger": false },
+  { "query": "Audit the credential loading path for security issues.", "should_trigger": false },
+  { "query": "Start a new issue for the retry bug and plan the fix.", "should_trigger": false },
+  { "query": "Review the error messages in the new CLI command.", "should_trigger": false }
+]

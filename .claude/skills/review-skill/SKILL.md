@@ -45,12 +45,23 @@ Evaluate each of the 7 dimensions. For full criteria and examples, read
 | 6 | Cross-Skill Consistency | Does the skill follow heading conventions, table/code-block style, and naming patterns of the project? |
 | 7 | Reference Organization | Is each reference file focused, named descriptively, linked from SKILL.md, and loaded on-demand? |
 
-Existing swamp skills to check against for trigger conflicts:
+Sibling skills in this repo — check every new or modified skill against these
+for trigger overlap. A new skill's description must not fire on queries that
+clearly belong to one of these:
 
-- swamp-model, swamp-workflow, swamp-vault, swamp-data, swamp-data-query
-- swamp-extension-model, swamp-extension-driver, swamp-extension-datastore,
-  swamp-extension-vault
-- swamp-report, swamp-repo, swamp-issue, swamp-troubleshooting
+- `issue-lifecycle` — drive issue triage → plan → review → implement → harvest
+- `ddd` — Domain-Driven Design building block selection
+- `tdd` — Red-Green-Refactor workflow enforcement
+- `moldable-dev` — live-data inspectors and domain-specific micro tools
+- `review-code` — general code review (CLAUDE.md, types, architecture, tests)
+- `review-adversarial` — adversarial review (assume broken, 7 dimensions)
+- `review-security` — security audit (injection, secrets, OWASP, supply chain)
+- `review-ux` — CLI UX review (output, help text, errors, JSON mode)
+- `review-skill` — this skill
+
+Trigger-overlap discrimination is also enforced in CI via each skill's
+`evals/trigger_evals.json` — write negative examples that point at the sibling
+skill that *should* match so promptfoo catches regressions.
 
 ## Freedom Level Assessment
 

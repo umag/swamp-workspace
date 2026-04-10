@@ -1,0 +1,28 @@
+manifestVersion: 1
+name: "@magistr/issue-lifecycle"
+version: "2026.04.09.1"
+description: >
+  Drive issues from triage through completion with prior-art lookup,
+  DDD + TDD planning, parallel review fan-out, autonomous code-review
+  iteration (zero CRITICAL + zero HIGH gate), optional UAT/KB harvest,
+  and a cheap `hydrate` resource for long autonomous loops.
+labels:
+  - issue-tracking
+  - tdd
+  - ddd
+  - review
+  - lifecycle
+models:
+  - issue_lifecycle.ts
+skills:
+  - issue-lifecycle
+  - ddd
+  - tdd
+  - moldable-dev
+  - review-code
+  - review-adversarial
+  - review-security
+  - review-ux
+  - review-skill
+additionalFiles:
+  - extensions/models/README.md

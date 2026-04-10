@@ -70,6 +70,39 @@ findings:
 After ALL reviews are recorded, the human sees:
 - Total findings by severity across all reviewers
 - Which reviewers passed vs failed
-- Whether any CRITICAL findings block approval
+- Whether any CRITICAL or HIGH findings block approval
 
-The `approve_plan` method enforces: no unresolved CRITICAL findings.
+## Approval Gate
+
+The `approve_plan` method enforces **all three** conditions — fails with a
+descriptive error if any one is violated:
+
+1. **Full matrix coverage** — every reviewer listed in `reviewMatrix` (as
+   `field: true`) must have recorded at least one `ReviewResult` for the
+   current round. This is `allMatrixReviewersRecorded(reviews, matrix)`.
+2. **Zero unresolved CRITICAL findings** across all reviews.
+3. **Zero unresolved HIGH findings** across all reviews.
+
+Findings with `status` of `resolved`, `accepted`, or `wontfix` do NOT block
+approval — only `status: open` counts. This matches `hasBlockingFindings()`.
+
+## Autonomous Loop Safety
+
+When the skill drives the code-review loop autonomously (`review_code` →
+`record_review` ×N → `iterate --input source=auto`), two safeguards prevent
+runaway spinning:
+
+1. **`findingSignature(reviews)`** — a stable hash of open CRITICAL/HIGH
+   findings in the current round. If two successive iterations produce the
+   same signature, the loop is not making progress. Bail out and escalate to
+   the human rather than loop indefinitely. Signature is computed from
+   `severity | category | description[:60]`, sorted — so minor textual edits
+   to a finding's description do not mask a real loop.
+
+2. **`codeReviewIteration` cap** — each `iterate` bumps the counter. A cap
+   (e.g., 5) after which the loop exits with `outcome: "cap_reached"` in the
+   final `reviewHistory` entry.
+
+Every round's outcome is captured in `reviewHistory` (append-only), so you can
+always reconstruct the trajectory via `swamp model get issue-<N> --json |
+jq '.reviewHistory'`.

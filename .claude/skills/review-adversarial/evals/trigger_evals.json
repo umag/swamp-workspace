@@ -1,0 +1,15 @@
+[
+  { "query": "Do an adversarial review of the new retry scheduler — assume it's broken.", "should_trigger": true },
+  { "query": "/review-adversarial", "should_trigger": true },
+  { "query": "Try to break my code across all 7 dimensions.", "should_trigger": true },
+  { "query": "Stress test this state-transition code and find the bugs.", "should_trigger": true },
+  { "query": "Find the idempotency and resource-leak bugs in this extension.", "should_trigger": true },
+  { "query": "Adversarial review for the new code that touches external APIs.", "should_trigger": true },
+
+  { "query": "Standard code review for CLAUDE.md compliance.", "should_trigger": false },
+  { "query": "Audit the credential loader for OWASP Top 10 risks.", "should_trigger": false },
+  { "query": "Review the help text and error messages on the new CLI command.", "should_trigger": false },
+  { "query": "Review my new skill for trigger precision.", "should_trigger": false },
+  { "query": "Write a failing test for the retry jitter first.", "should_trigger": false },
+  { "query": "Triage this bug and record prior art before planning.", "should_trigger": false }
+]

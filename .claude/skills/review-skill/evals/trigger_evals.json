@@ -1,0 +1,15 @@
+[
+  { "query": "Review my new SKILL.md for trigger precision and context budget.", "should_trigger": true },
+  { "query": "/review-skill", "should_trigger": true },
+  { "query": "Check this skill's frontmatter quality and progressive disclosure.", "should_trigger": true },
+  { "query": "Does my new skill overlap with existing ones? Check trigger uniqueness.", "should_trigger": true },
+  { "query": "Skill quality review — is the description precise enough?", "should_trigger": true },
+  { "query": "Review the reference file organization in my new skill.", "should_trigger": true },
+
+  { "query": "General code review for CLAUDE.md compliance.", "should_trigger": false },
+  { "query": "Adversarial review — try to break the new retry scheduler.", "should_trigger": false },
+  { "query": "Security audit on the credential loader.", "should_trigger": false },
+  { "query": "Review the CLI error messages on the new command.", "should_trigger": false },
+  { "query": "Write a failing test first for the jitter helper.", "should_trigger": false },
+  { "query": "Triage this issue and plan the fix with DDD.", "should_trigger": false }
+]
