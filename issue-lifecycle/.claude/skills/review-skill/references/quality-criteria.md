@@ -1,7 +1,7 @@
 # Quality Criteria Reference
 
-Detailed criteria for reviewing Claude Code skills, expanded from the
-principle: **"The context window is a public good."**
+Detailed criteria for reviewing Claude Code skills, expanded from the principle:
+**"The context window is a public good."**
 
 ## Context Window as Public Good
 
@@ -11,12 +11,13 @@ context -- previous conversation, file contents, tool results. A skill must
 justify every line it occupies.
 
 Practical test for each paragraph in a skill:
+
 1. If this paragraph were deleted, would Claude produce worse output? If no,
    delete it.
 2. Could this information be obtained from `--help`, tool output, or Claude's
    training data? If yes, delete it.
-3. Is this a project-specific convention that Claude cannot infer? If yes,
-   keep it.
+3. Is this a project-specific convention that Claude cannot infer? If yes, keep
+   it.
 
 ## Progressive Disclosure Levels
 
@@ -25,11 +26,11 @@ Practical test for each paragraph in a skill:
 - Always loaded into context for every conversation
 - Budget: ~100 words maximum
 - Contains: skill name, one-sentence purpose, when to use, trigger phrases
-- Example of good metadata: "Create GitHub issues for swamp -- file bug
-  reports with reproduction steps. Triggers on 'bug report', 'file issue'."
+- Example of good metadata: "Create GitHub issues for swamp -- file bug reports
+  with reproduction steps. Triggers on 'bug report', 'file issue'."
 - Example of bad metadata: "This skill helps you work with issues in the swamp
-  project management system by providing templates and automation."
-  (vague, no triggers, no "when to use")
+  project management system by providing templates and automation." (vague, no
+  triggers, no "when to use")
 
 ### Tier 2: SKILL.md body
 
@@ -76,13 +77,13 @@ Use when operations are fragile, destructive, or must be exact.
 
 ## Skill Size Guidelines
 
-| Metric | Guideline | Action if exceeded |
-| --- | --- | --- |
-| SKILL.md lines | < 500 | Move content to references |
-| SKILL.md words | < 5000 | Tighten prose, use tables |
-| Frontmatter description words | < 100 | Trim to essentials |
-| Reference file count | 2-7 per skill | Merge small files or split large ones |
-| Individual reference lines | < 300 | Split into focused files |
+| Metric                        | Guideline     | Action if exceeded                    |
+| ----------------------------- | ------------- | ------------------------------------- |
+| SKILL.md lines                | < 500         | Move content to references            |
+| SKILL.md words                | < 5000        | Tighten prose, use tables             |
+| Frontmatter description words | < 100         | Trim to essentials                    |
+| Reference file count          | 2-7 per skill | Merge small files or split large ones |
+| Individual reference lines    | < 300         | Split into focused files              |
 
 ## Common Anti-Patterns
 
@@ -100,14 +101,14 @@ The skill teaches Claude things it already knows from training data.
 Two skills fire on the same phrase, confusing the routing.
 
 - Bad: skill-a triggers on "create model", skill-b triggers on "model create"
-- Fix: make triggers more specific -- "create extension model" vs "create
-  model definition"
+- Fix: make triggers more specific -- "create extension model" vs "create model
+  definition"
 - Check: read all SKILL.md frontmatters and compare trigger lists
 
 ### 3. README Masquerading as Skill
 
-The skill is informational but gives no actionable instructions. It reads
-like documentation rather than a set of procedures.
+The skill is informational but gives no actionable instructions. It reads like
+documentation rather than a set of procedures.
 
 - Signal: no imperative verbs ("Run", "Create", "Check")
 - Signal: lots of "X is..." explanations with no "do Y" follow-up
@@ -145,5 +146,5 @@ Multiple skills contain large identical sections. When the shared content
 changes, only some copies get updated.
 
 - Signal: diff two skills and find 20+ identical lines
-- Fix: factor shared content into a reference that both skills can point to,
-  or deduplicate by having one skill defer to another
+- Fix: factor shared content into a reference that both skills can point to, or
+  deduplicate by having one skill defer to another

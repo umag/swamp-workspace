@@ -25,9 +25,8 @@ swamp model output search <name> --json
 ```
 
 **Healthy indicators**: recent successful execution, fresh data, no error
-outputs.
-**Unhealthy indicators**: no recent execution, stale data, error outputs,
-validation failures.
+outputs. **Unhealthy indicators**: no recent execution, stale data, error
+outputs, validation failures.
 
 ## Workflow Bottleneck Finder
 
@@ -63,10 +62,9 @@ swamp data list <name> --json
 # Look for: versions exceeding retention limits
 ```
 
-**Fresh indicators**: data updated within expected interval, version count within
-retention limits.
-**Stale indicators**: data older than refresh interval, too many versions
-(missing GC), no recent writes.
+**Fresh indicators**: data updated within expected interval, version count
+within retention limits. **Stale indicators**: data older than refresh interval,
+too many versions (missing GC), no recent writes.
 
 ## Extension Audit
 

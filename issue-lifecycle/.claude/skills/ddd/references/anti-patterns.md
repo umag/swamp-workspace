@@ -5,6 +5,7 @@
 Data classes with only getters/setters — all logic lives in services.
 
 **Before** (anemic):
+
 ```typescript
 class Order {
   id: string;
@@ -21,6 +22,7 @@ class OrderService {
 ```
 
 **After** (rich domain model):
+
 ```typescript
 class Order {
   submit(): void {
@@ -49,6 +51,7 @@ Business rules in controllers, workflows, or CLI commands instead of domain
 layer.
 
 **Before** (leaked):
+
 ```typescript
 // In a workflow step or CLI command
 if (customer.balance < order.total) {
@@ -58,6 +61,7 @@ order.status = "approved";
 ```
 
 **After** (encapsulated):
+
 ```typescript
 // In the domain
 class Order {
@@ -74,25 +78,27 @@ class Order {
 
 Using implementation words instead of domain words.
 
-| Bad (Technical)     | Good (Domain)           | Why                                      |
-| ------------------- | ----------------------- | ---------------------------------------- |
-| `DataProcessor`     | `InvoiceGenerator`      | Says what it actually does               |
-| `EventHandler`      | `PaymentReceivedPolicy` | Names the domain event and its purpose   |
-| `RequestManager`    | `OrderSubmissionService`| Names the domain operation               |
-| `BaseEntity`        | (just use the entity)   | No need for inheritance marker           |
-| `Utils`             | (spread into domain)    | Utility classes hide domain concepts     |
+| Bad (Technical)  | Good (Domain)            | Why                                    |
+| ---------------- | ------------------------ | -------------------------------------- |
+| `DataProcessor`  | `InvoiceGenerator`       | Says what it actually does             |
+| `EventHandler`   | `PaymentReceivedPolicy`  | Names the domain event and its purpose |
+| `RequestManager` | `OrderSubmissionService` | Names the domain operation             |
+| `BaseEntity`     | (just use the entity)    | No need for inheritance marker         |
+| `Utils`          | (spread into domain)     | Utility classes hide domain concepts   |
 
 ## 5. Skipping the Aggregate Boundary
 
 Modifying child entities without going through the aggregate root.
 
 **Before** (boundary violation):
+
 ```typescript
 const item = order.items[0]; // Direct child access
 item.quantity = 5; // Mutation bypasses aggregate
 ```
 
 **After** (through the root):
+
 ```typescript
 order.updateItemQuantity(item.id, 5); // Root enforces invariants
 ```
@@ -102,11 +108,13 @@ order.updateItemQuantity(item.id, 5); // Root enforces invariants
 Using raw strings/numbers for domain concepts.
 
 **Before** (primitives):
+
 ```typescript
 function sendEmail(to: string, amount: number, currency: string) {}
 ```
 
 **After** (value objects):
+
 ```typescript
 function sendEmail(to: EmailAddress, amount: Money) {}
 ```

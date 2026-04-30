@@ -1,5 +1,5 @@
-// Copyright 2026 magistr. All rights reserved.
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright 2026 magistr.
+// SPDX-License-Identifier: MIT
 
 import {
   assertEquals,

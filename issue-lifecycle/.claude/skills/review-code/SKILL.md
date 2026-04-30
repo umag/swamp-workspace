@@ -54,20 +54,25 @@ Verdict: REQUEST_CHANGES
 ```
 
 **Rules for this format:**
+
 - Header MUST be `## Code Review | <scope>`.
 - Verdict MUST appear both after the header AND in the Summary.
-- ALL four severity sections MUST appear (CRITICAL, HIGH, MEDIUM, LOW) even if empty — write "None" for empty sections.
+- ALL four severity sections MUST appear (CRITICAL, HIGH, MEDIUM, LOW) even if
+  empty — write "None" for empty sections.
 - The PASSED section MUST list which review categories had no findings.
 - Every finding MUST include `[file:line]` and a `**Fix:**` recommendation.
 - Summary MUST list counts for all four severity levels.
-- Verdict: any CRITICAL → REQUEST_CHANGES. 2+ HIGH → REQUEST_CHANGES. Otherwise → APPROVE.
+- Verdict: any CRITICAL → REQUEST_CHANGES. 2+ HIGH → REQUEST_CHANGES. Otherwise
+  → APPROVE.
 
 ## How to Use
 
 Invoke with `/review-code` or ask for "code review".
 
 **Scope detection:**
-1. If git is initialized: review `git diff --cached` (staged) or `git diff` (unstaged)
+
+1. If git is initialized: review `git diff --cached` (staged) or `git diff`
+   (unstaged)
 2. If a file path is provided: review that specific file
 3. If neither: ask the user what to review
 
@@ -83,16 +88,16 @@ Invoke with `/review-code` or ask for "code review".
 
 Check each category. Every finding needs `[file:line]` and `**Fix:**`.
 
-| Category | What to Check | Default Severity |
-|----------|--------------|-----------------|
-| CLAUDE.md Compliance | Every rule in CLAUDE.md | CRITICAL-LOW by impact |
-| DDD Compliance | Building blocks, ubiquitous language, aggregate boundaries | MEDIUM-HIGH |
-| TDD Compliance | Test exists, naming, placement, failure paths, regression tests | HIGH-LOW |
-| Type Safety | No `any`, no unsafe casts, strict mode | HIGH |
-| Import Hygiene | Pinned npm versions, no circular imports, correct paths | HIGH-MEDIUM |
-| Error Handling | Actionable messages, narrow try/catch, throw before write | HIGH-MEDIUM |
-| Security Smoke Test | Hardcoded secrets (CRITICAL), command injection (CRITICAL) | CRITICAL |
-| Code Organization | Correct directories, single responsibility, minimal blast radius | MEDIUM-LOW |
+| Category             | What to Check                                                    | Default Severity       |
+| -------------------- | ---------------------------------------------------------------- | ---------------------- |
+| CLAUDE.md Compliance | Every rule in CLAUDE.md                                          | CRITICAL-LOW by impact |
+| DDD Compliance       | Building blocks, ubiquitous language, aggregate boundaries       | MEDIUM-HIGH            |
+| TDD Compliance       | Test exists, naming, placement, failure paths, regression tests  | HIGH-LOW               |
+| Type Safety          | No `any`, no unsafe casts, strict mode                           | HIGH                   |
+| Import Hygiene       | Pinned npm versions, no circular imports, correct paths          | HIGH-MEDIUM            |
+| Error Handling       | Actionable messages, narrow try/catch, throw before write        | HIGH-MEDIUM            |
+| Security Smoke Test  | Hardcoded secrets (CRITICAL), command injection (CRITICAL)       | CRITICAL               |
+| Code Organization    | Correct directories, single responsibility, minimal blast radius | MEDIUM-LOW             |
 
 For full security audit use `/review-security`. For detailed checks per category
 see [references/checklist.md](references/checklist.md).

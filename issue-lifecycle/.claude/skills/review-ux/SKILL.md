@@ -31,6 +31,7 @@ description: >
 - Subcommands logically grouped
 
 **Good vs Bad — flag description:**
+
 ```
 # Bad
 --output   Output format
@@ -42,15 +43,18 @@ description: >
 
 ### 2. Error Messages
 
-Every error must answer: **WHAT** failed, **WHY** it failed, and **WHAT TO DO** next.
+Every error must answer: **WHAT** failed, **WHY** it failed, and **WHAT TO DO**
+next.
 
 Rules:
+
 - No raw stack traces in user-facing output
 - Reference the specific input that caused the failure
 - Suggest the correct command or flag when possible
 - Exit codes are meaningful (not all errors = exit 1)
 
 **Good vs Bad — error message:**
+
 ```
 # Bad
 Error: command failed
@@ -71,6 +75,7 @@ override the default port.
 - Paired messages: every "Starting X..." has a corresponding "X complete"
 
 **Good vs Bad — progress + completion:**
+
 ```
 # Bad
 (silence for 10 seconds)
@@ -94,6 +99,7 @@ Deployment complete in 28s.
 - Error responses also valid JSON with `error` field
 
 **Good vs Bad — error in JSON mode:**
+
 ```
 # Bad (mixes prose into JSON output)
 Deploying...
@@ -116,6 +122,7 @@ Deploying...
 - No surprises: command names match what they do
 
 **Good vs Bad — flag consistency:**
+
 ```
 # Bad — inconsistent naming across commands
 cli user create --username alice
@@ -167,8 +174,9 @@ Summary: X findings across 5 dimensions
 
 ## Verdict Rules
 
-- UX review uses SUGGEST_CHANGES (not REQUEST_CHANGES) — UX issues are
-  important but rarely blocking
-- Exception: completely missing error handling or broken JSON output → REQUEST_CHANGES
+- UX review uses SUGGEST_CHANGES (not REQUEST_CHANGES) — UX issues are important
+  but rarely blocking
+- Exception: completely missing error handling or broken JSON output →
+  REQUEST_CHANGES
 
 See [references/patterns.md](references/patterns.md) for good/bad UX examples.

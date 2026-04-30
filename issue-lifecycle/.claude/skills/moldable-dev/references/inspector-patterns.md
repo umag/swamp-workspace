@@ -20,27 +20,32 @@ swamp model get <name> --json  # extract resource specs
 ## CEL Query Patterns
 
 ### Filter by Attributes
+
 ```bash
 swamp data query 'attributes.status == "running"' --json
 swamp data query 'attributes.region == "us-east-1"' --json
 ```
 
 ### Filter by Tags
+
 ```bash
 swamp data query 'has(tags.environment) && tags.environment == "production"' --json
 ```
 
 ### Filter by Date Range
+
 ```bash
 swamp data query 'timestamp(createdAt) > now() - duration("7d")' --json
 ```
 
 ### Combine Predicates
+
 ```bash
 swamp data query 'attributes.status == "error" && has(tags.critical)' --json
 ```
 
 ### Extract Specific Fields
+
 ```bash
 swamp data query 'attributes.status == "running"' --select 'name,attributes.instanceId,attributes.region' --json
 ```
@@ -50,9 +55,11 @@ swamp data query 'attributes.status == "running"' --select 'name,attributes.inst
 When a single query isn't enough, compose a multi-step investigation:
 
 1. **Start broad**: `swamp model get <name> --json` — what's the current state?
-2. **Narrow down**: `swamp data get <name> <dataName> --json` — what specific data?
+2. **Narrow down**: `swamp data get <name> <dataName> --json` — what specific
+   data?
 3. **Trace history**: `swamp model method history <name> --json` — what changed?
-4. **Correlate**: `swamp model output data <outputId> --json` — what was the result?
+4. **Correlate**: `swamp model output data <outputId> --json` — what was the
+   result?
 
 ## Building a Health Check Inspector
 
@@ -61,7 +68,8 @@ For any model type, a health check answers:
 1. Does the model exist and is it valid? → `swamp model validate <name>`
 2. When was it last executed? → `swamp model method history <name> --json`
 3. Is its data fresh? → `swamp data get <name> --json` (check timestamps)
-4. Are there errors in recent outputs? → `swamp model output search <name> --json`
+4. Are there errors in recent outputs? →
+   `swamp model output search <name> --json`
 
 ## Building a Change History Inspector
 
@@ -78,6 +86,7 @@ answer enable?** Each commoditized answer opens a door to questions you couldn't
 afford to ask before.
 
 Example chain:
+
 - "Which models have stale data?" → (CEL query)
 - "Why is this model's data stale?" → (method history)
 - "What failed in the last execution?" → (output inspector)

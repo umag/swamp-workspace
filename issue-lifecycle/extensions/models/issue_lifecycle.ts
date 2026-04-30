@@ -1,12 +1,29 @@
-// Copyright 2026 magistr. All rights reserved.
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright 2026 magistr.
+// SPDX-License-Identifier: MIT
 
 import { z } from "npm:zod@4";
 
 // ============================================================================
 // Schemas
 // ============================================================================
+//
+// All Zod schemas in this module are tagged `@internal`. Their value types
+// recursively reference symbols inside `npm:zod@4` that the package marks
+// private (e.g. `ZodType`, `output`, `$ZodInternals`); this is intrinsic to
+// Zod 4 and cannot be worked around without rewriting every schema as a
+// hand-typed TypeScript interface, which would defeat the point of using
+// Zod. The `@internal` tag keeps the schemas exported (the test file
+// imports them) but excludes them from `deno doc --lint`'s public-API view.
+//
+// Consumers should depend on the public TypeScript types below
+// (`IssueState`, `Finding`, …, `HydrateSummary`) and call the model's
+// methods, not import the schemas directly.
 
+/**
+ * Issue category — what kind of work this issue represents.
+ *
+ * @internal
+ */
 export const CategoryEnum = z.enum([
   "bug",
   "feature",
@@ -15,13 +32,29 @@ export const CategoryEnum = z.enum([
   "security",
 ]);
 
+/**
+ * Triage confidence in the recorded classification.
+ *
+ * @internal
+ */
 export const ConfidenceEnum = z.enum(["high", "medium", "low"]);
 
+/**
+ * Bug-reproduction outcome captured during triage.
+ *
+ * @internal
+ */
 export const ReproducedSchema = z.object({
   status: z.enum(["reproduced", "could-not-reproduce", "not-applicable"]),
   notes: z.string().optional(),
 });
 
+/**
+ * Optional richer triage record — confidence, reasoning, regression flag,
+ * clarifying questions, reproduction outcome.
+ *
+ * @internal
+ */
 export const TriageDetailSchema = z.object({
   confidence: ConfidenceEnum.optional(),
   reasoning: z.string().optional(),
@@ -30,6 +63,11 @@ export const TriageDetailSchema = z.object({
   reproduced: ReproducedSchema.optional(),
 });
 
+/**
+ * One reviewer finding — severity, category, optional location, status.
+ *
+ * @internal
+ */
 export const FindingSchema = z.object({
   reviewer: z.string(),
   severity: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"]),
@@ -41,6 +79,11 @@ export const FindingSchema = z.object({
   status: z.enum(["open", "resolved", "accepted", "wontfix"]).default("open"),
 });
 
+/**
+ * One reviewer's verdict + findings, captured in a review round.
+ *
+ * @internal
+ */
 export const ReviewResultSchema = z.object({
   reviewer: z.string(),
   verdict: z.enum(["PASS", "FAIL", "SUGGEST_CHANGES"]),
@@ -48,6 +91,11 @@ export const ReviewResultSchema = z.object({
   timestamp: z.iso.datetime(),
 });
 
+/**
+ * Which of the five reviewers run for this plan / iteration.
+ *
+ * @internal
+ */
 export const ReviewMatrixSchema = z.object({
   code: z.boolean().default(true),
   adversarial: z.boolean().default(true),
@@ -56,7 +104,12 @@ export const ReviewMatrixSchema = z.object({
   skill: z.boolean().default(false),
 });
 
-// Plan steps: legacy bare strings OR new rich objects. Union for backward compat.
+/**
+ * Plan step — legacy bare strings OR new rich step objects. Union kept
+ * for backward compatibility with older lifecycle records.
+ *
+ * @internal
+ */
 export const PlanStepSchema = z.union([
   z.string(),
   z.object({
@@ -67,6 +120,11 @@ export const PlanStepSchema = z.union([
   }),
 ]);
 
+/**
+ * Implementation plan with DDD analysis, TDD strategy, review matrix.
+ *
+ * @internal
+ */
 export const PlanSchema = z.object({
   summary: z.string(),
   steps: z.array(PlanStepSchema),
@@ -81,25 +139,45 @@ export const PlanSchema = z.object({
   planVersion: z.number().int().positive().default(1),
 });
 
-// Prior-art lookup (Phase 2 entry side)
+/**
+ * Reference to an existing UAT scenario discovered during prior-art lookup.
+ *
+ * @internal
+ */
 export const UatScenarioRefSchema = z.object({
   path: z.string(),
   summary: z.string(),
   reusable: z.boolean().default(true),
 });
 
+/**
+ * Reference to an existing knowledge-base entry discovered during prior-art
+ * lookup.
+ *
+ * @internal
+ */
 export const KbEntryRefSchema = z.object({
   path: z.string(),
   summary: z.string(),
 });
 
+/**
+ * Prior-art bundle: existing UAT scenarios and KB entries known going into
+ * the issue. Enables Phase 6 harvest to diff against new proposals.
+ *
+ * @internal
+ */
 export const PriorArtSchema = z.object({
   uatScenarios: z.array(UatScenarioRefSchema).default([]),
   kbEntries: z.array(KbEntryRefSchema).default([]),
   searchedAt: z.iso.datetime(),
 });
 
-// Harvest proposals (Phase 6 exit side)
+/**
+ * Proposed UAT scenario surfaced from this lifecycle's harvest phase.
+ *
+ * @internal
+ */
 export const UatProposalSchema = z.object({
   scenario: z.string(),
   rationale: z.string(),
@@ -107,6 +185,11 @@ export const UatProposalSchema = z.object({
   committed: z.boolean().default(false),
 });
 
+/**
+ * Proposed knowledge-base entry surfaced from this lifecycle's harvest phase.
+ *
+ * @internal
+ */
 export const KbProposalSchema = z.object({
   kind: z.enum([
     "decision",
@@ -121,15 +204,24 @@ export const KbProposalSchema = z.object({
   committed: z.boolean().default(false),
 });
 
+/**
+ * Harvest output — UAT and KB proposals from this lifecycle.
+ *
+ * @internal
+ */
 export const HarvestSchema = z.object({
   uatProposals: z.array(UatProposalSchema).default([]),
   kbProposals: z.array(KbProposalSchema).default([]),
   harvestedAt: z.iso.datetime(),
 });
 
-// Compact summary written by `hydrate` for the autonomous loop. Lives in its
-// own `summary` resource (not `state`) so it has no shape overlap with the
-// main IssueStateSchema and mutation of one can never corrupt the other.
+/**
+ * Compact summary written by `hydrate` for the autonomous loop. Lives in
+ * its own `summary` resource (not `state`) so it has no shape overlap with
+ * the main IssueStateSchema and mutation of one can never corrupt the other.
+ *
+ * @internal
+ */
 export const HydrateSummarySchema = z.object({
   state: z.string(),
   planVersion: z.number().int().nonnegative(),
@@ -149,6 +241,11 @@ export const HydrateSummarySchema = z.object({
   snapshotAt: z.iso.datetime(),
 });
 
+/**
+ * Issue lifecycle state — every state in the state machine.
+ *
+ * @internal
+ */
 export const StateEnum = z.enum([
   "filed",
   "triaged",
@@ -163,7 +260,11 @@ export const StateEnum = z.enum([
   "closed",
 ]);
 
-// Append-only audit entry for every completed review round
+/**
+ * Append-only audit entry capturing one completed review round.
+ *
+ * @internal
+ */
 export const ReviewRoundSchema = z.object({
   phase: z.enum(["plan_review", "code_review"]),
   planVersion: z.number().int().positive(),
@@ -182,6 +283,12 @@ export const ReviewRoundSchema = z.object({
   completedAt: z.iso.datetime(),
 });
 
+/**
+ * The Issue aggregate root — full lifecycle state stored under
+ * `state.current`.
+ *
+ * @internal
+ */
 export const IssueStateSchema = z.object({
   state: StateEnum,
   title: z.string(),
@@ -207,21 +314,368 @@ export const IssueStateSchema = z.object({
   reviewRoundStartedAt: z.iso.datetime().optional(),
 });
 
-export type IssueState = z.infer<typeof IssueStateSchema>;
-export type Finding = z.infer<typeof FindingSchema>;
-export type ReviewResult = z.infer<typeof ReviewResultSchema>;
-export type ReviewMatrix = z.infer<typeof ReviewMatrixSchema>;
-export type ReviewRound = z.infer<typeof ReviewRoundSchema>;
-export type Plan = z.infer<typeof PlanSchema>;
+// ============================================================================
+// Public TypeScript types — these are the shapes consumers should depend on
+// ============================================================================
+//
+// Hand-written interfaces rather than `z.infer<typeof Schema>`: the latter
+// resolves through Zod's internal `output` type which `deno doc --lint`
+// flags as private. Keeping them in lockstep with the schemas above is a
+// minor maintenance cost paid for a public, properly-documented API.
+
+/** Issue category. */
+export type Category =
+  | "bug"
+  | "feature"
+  | "improvement"
+  | "refactor"
+  | "security";
+
+/** Triage confidence. */
+export type Confidence = "high" | "medium" | "low";
+
+/** Issue priority assigned at triage. */
+export type Priority = "critical" | "high" | "medium" | "low";
+
+/** Reproduction outcome captured during triage. */
+export type ReproducedStatus =
+  | "reproduced"
+  | "could-not-reproduce"
+  | "not-applicable";
+
+/** Bug-reproduction record. */
+export interface Reproduced {
+  /** Did we reproduce, fail to reproduce, or skip? */
+  status: ReproducedStatus;
+  /** Optional notes (env, steps, observations). */
+  notes?: string;
+}
+
+/** Optional richer triage detail. */
+export interface TriageDetail {
+  /** Confidence in the classification. */
+  confidence?: Confidence;
+  /** Free-form reasoning behind the classification. */
+  reasoning?: string;
+  /** True if the issue is a regression of previously-working behavior. */
+  isRegression?: boolean;
+  /** Open clarifying questions for the human. */
+  clarifyingQuestions: string[];
+  /** Reproduction outcome (bugs only). */
+  reproduced?: Reproduced;
+}
+
+/** Finding severity. */
+export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+
+/** Finding lifecycle status. */
+export type FindingStatus = "open" | "resolved" | "accepted" | "wontfix";
+
+/** One reviewer finding. */
+export interface Finding {
+  /** Reviewer skill name (e.g. `review-code`). */
+  reviewer: string;
+  /** Finding severity (drives the autonomous-loop blocking gate). */
+  severity: Severity;
+  /** Optional category tag for grouping. */
+  category?: string;
+  /** Optional source-file path the finding refers to. */
+  file?: string;
+  /** Optional line number within `file`. */
+  line?: number;
+  /** Free-form description of the issue. */
+  description: string;
+  /** Optional suggested fix. */
+  fix?: string;
+  /** Lifecycle status. */
+  status: FindingStatus;
+}
+
+/** Review verdict. */
+export type Verdict = "PASS" | "FAIL" | "SUGGEST_CHANGES";
+
+/** One reviewer's recorded verdict + findings. */
+export interface ReviewResult {
+  /** Reviewer skill name. */
+  reviewer: string;
+  /** Reviewer's overall verdict. */
+  verdict: Verdict;
+  /** Findings (may be empty for PASS). */
+  findings: Finding[];
+  /** ISO-8601 timestamp the review was recorded. */
+  timestamp: string;
+}
+
+/** Which reviewers run for a given plan / iteration. */
+export interface ReviewMatrix {
+  /** General code review (default true). */
+  code: boolean;
+  /** Adversarial review (default true). */
+  adversarial: boolean;
+  /** Security review (default false; opt in for risky changes). */
+  security: boolean;
+  /** UX review (default false; opt in for CLI / surface changes). */
+  ux: boolean;
+  /** Skill review (default false; opt in when a SKILL.md is touched). */
+  skill: boolean;
+}
+
+/** Rich plan step. Legacy bare-string steps are still accepted via `PlanStep`. */
+export interface PlanStepObject {
+  /** Sequential 1-based step order. */
+  order: number;
+  /** What the step does. */
+  description: string;
+  /** Files this step touches. */
+  files: string[];
+  /** Optional risks the step carries. */
+  risks?: string;
+}
+
+/** A plan step — bare string OR rich object (backward-compat union). */
+export type PlanStep = string | PlanStepObject;
+
+/** Implementation plan with DDD analysis, TDD strategy, and review matrix. */
+export interface Plan {
+  /** One-paragraph plan summary. */
+  summary: string;
+  /** Ordered steps. */
+  steps: PlanStep[];
+  /** Which DDD building blocks the plan affects. */
+  dddAnalysis: string;
+  /** Red-green-refactor sequence and what to test first. */
+  testStrategy: string;
+  /** Review matrix that gates approval. */
+  reviewMatrix: ReviewMatrix;
+  /** Risks and unknowns the plan acknowledges. */
+  potentialChallenges: string[];
+  /** Plan version (bumps on every successful `plan` call). */
+  planVersion: number;
+}
+
+/** Reference to an existing UAT scenario. */
+export interface UatScenarioRef {
+  /** Filesystem path to the scenario. */
+  path: string;
+  /** One-line description. */
+  summary: string;
+  /** Whether this scenario should be reused as-is or replaced. */
+  reusable: boolean;
+}
+
+/** Reference to an existing knowledge-base entry. */
+export interface KbEntryRef {
+  /** Filesystem path to the entry. */
+  path: string;
+  /** One-line description. */
+  summary: string;
+}
+
+/** Prior-art bundle: what was known going in. */
+export interface PriorArt {
+  /** Existing UAT scenarios. */
+  uatScenarios: UatScenarioRef[];
+  /** Existing KB entries. */
+  kbEntries: KbEntryRef[];
+  /** ISO-8601 timestamp of the lookup. */
+  searchedAt: string;
+}
+
+/** Proposed UAT scenario from this lifecycle's harvest. */
+export interface UatProposal {
+  /** Scenario description. */
+  scenario: string;
+  /** Why this scenario should be added. */
+  rationale: string;
+  /** Optional intended path on disk. */
+  path?: string;
+  /** Whether the proposal has been written to disk. */
+  committed: boolean;
+}
+
+/** Knowledge-base entry kind. */
+export type KbKind =
+  | "decision"
+  | "pattern"
+  | "anti-pattern"
+  | "runbook"
+  | "postmortem";
+
+/** Proposed knowledge-base entry from this lifecycle's harvest. */
+export interface KbProposal {
+  /** Entry kind (decision, pattern, …). */
+  kind: KbKind;
+  /** Entry title. */
+  title: string;
+  /** Entry body (markdown). */
+  body: string;
+  /** Optional intended path on disk. */
+  path?: string;
+  /** Whether the proposal has been written to disk. */
+  committed: boolean;
+}
+
+/** Harvest bundle — UAT and KB proposals at lifecycle end. */
+export interface Harvest {
+  /** Proposed UAT scenarios. */
+  uatProposals: UatProposal[];
+  /** Proposed KB entries. */
+  kbProposals: KbProposal[];
+  /** ISO-8601 timestamp of the harvest. */
+  harvestedAt: string;
+}
+
+/** Issue lifecycle state. */
+export type State =
+  | "filed"
+  | "triaged"
+  | "planned"
+  | "reviewing"
+  | "approved"
+  | "implementing"
+  | "code_reviewing"
+  | "resolved"
+  | "harvested"
+  | "complete"
+  | "closed";
+
+/** Review round phase. */
+export type ReviewPhase = "plan_review" | "code_review";
+
+/** Review round outcome. */
+export type ReviewOutcome =
+  | "clean"
+  | "rejected_auto"
+  | "rejected_human"
+  | "cap_reached"
+  | "loop_detected"
+  | "pivot_required";
+
+/** Append-only audit entry for one completed review round. */
+export interface ReviewRound {
+  /** Plan-review or code-review phase. */
+  phase: ReviewPhase;
+  /** Plan version at the time of the round. */
+  planVersion: number;
+  /** Iteration number within the phase. */
+  iteration: number;
+  /** Per-reviewer results recorded during the round. */
+  reviews: ReviewResult[];
+  /** Round outcome (clean, rejected, loop-detected, etc.). */
+  outcome: ReviewOutcome;
+  /** Free-form reason if the round was rejected or aborted. */
+  rejectReason?: string;
+  /** ISO-8601 timestamp the round started. */
+  startedAt: string;
+  /** ISO-8601 timestamp the round ended. */
+  completedAt: string;
+}
+
+/** Counts of blocking findings (CRITICAL + HIGH). */
+export interface BlockingCounts {
+  /** Open CRITICAL findings. */
+  critical: number;
+  /** Open HIGH findings. */
+  high: number;
+  /** Sum of CRITICAL + HIGH. */
+  total: number;
+}
+
+/** Coverage check for the plan's review matrix. */
+export interface MatrixCoverage {
+  /** True if every reviewer in the matrix has recorded a result. */
+  complete: boolean;
+  /** Names of reviewers (e.g. `review-code`) still missing. */
+  missing: string[];
+}
+
+/** Compact summary written by `hydrate`. */
+export interface HydrateSummary {
+  /** Current lifecycle state. */
+  state: string;
+  /** Current plan version. */
+  planVersion: number;
+  /** Plan iterations recorded for the current plan version. */
+  planIterationsThisVersion: number;
+  /** Code-review iteration cursor. */
+  codeReviewIteration: number;
+  /** Open blocking-finding counts. */
+  blocking: BlockingCounts;
+  /** Review-matrix coverage for the current round. */
+  coverage: MatrixCoverage;
+  /** Cumulative review-round history length. */
+  historyLength: number;
+  /** Stable signature over the open blocking findings (for loop detection). */
+  signature: string;
+  /** ISO-8601 timestamp of the snapshot. */
+  snapshotAt: string;
+}
+
+/** The Issue aggregate root — full lifecycle state. */
+export interface IssueState {
+  /** Current state in the lifecycle state machine. */
+  state: State;
+  /** Issue title. */
+  title: string;
+  /** Issue body / description. */
+  description: string;
+  /** Labels attached to the issue. */
+  labels: string[];
+  /** Priority assigned at triage. */
+  priority?: Priority;
+  /** Category assigned at triage. */
+  category?: Category;
+  /** Affected areas (subsystems, modules, components). */
+  affectedAreas: string[];
+  /** Optional richer triage record. */
+  triageDetail?: TriageDetail;
+  /** Optional prior-art bundle from before planning. */
+  priorArt?: PriorArt;
+  /** Implementation plan; unset until `plan` runs. */
+  plan?: Plan;
+  /** Reviewer results for the current review round. */
+  reviews: ReviewResult[];
+  /** Append-only history of completed review rounds. */
+  reviewHistory: ReviewRound[];
+  /** Plan version (bumps on every `plan` call). */
+  planVersion: number;
+  /** Code-review iteration cursor (bumps on every `iterate`). */
+  codeReviewIteration: number;
+  /** Optional implementation branch name. */
+  branch?: string;
+  /** Map of finding-description → resolution-action. */
+  resolutions: Record<string, string>;
+  /** Optional harvest bundle from Phase 6. */
+  harvest?: Harvest;
+  /** Reason recorded if the issue was abandoned via `close`. */
+  closedReason?: string;
+  /** ISO-8601 timestamp set when the issue completes. */
+  completedAt?: string;
+  /** ISO-8601 timestamp the issue was filed. */
+  createdAt: string;
+  /** ISO-8601 timestamp of the last mutation. */
+  updatedAt: string;
+  /** ISO-8601 timestamp the current review round started. */
+  reviewRoundStartedAt?: string;
+}
 
 // ============================================================================
 // Helpers (exported for tests)
 // ============================================================================
 
+/** Current ISO-8601 timestamp string. */
 export function now(): string {
   return new Date().toISOString();
 }
 
+/**
+ * State-machine guard. Throws with a useful message naming the current
+ * state, the expected state(s), and the method being called.
+ *
+ * @param current   The lifecycle's current state.
+ * @param expected  Allowed source state, or list of allowed states.
+ * @param method    Method name for the error message.
+ */
 export function guardState(
   current: string,
   expected: string | string[],
@@ -351,10 +805,21 @@ async function readState(
 ): Promise<IssueState | null> {
   const raw = await context.readResource!("current");
   if (!raw) return null;
-  // Parse through the schema so defaults fill in for legacy instances
-  return IssueStateSchema.parse(raw);
+  // Parse through the schema so defaults fill in for legacy instances.
+  // The hand-written `IssueState` interface above is kept structurally
+  // identical to the schema's parse output. Drift between them would
+  // surface as a `deno check` failure at this cast.
+  return IssueStateSchema.parse(raw) as IssueState;
 }
 
+/**
+ * Internal model object — its value type recursively references Zod
+ * internals that are private at the JSR-publish level. Consumers should
+ * depend on the public types and helpers above and call methods via
+ * swamp's CLI or `swamp model method run`, not import this object.
+ *
+ * @internal
+ */
 export const model = {
   type: "@magistr/issue-lifecycle",
   version: "2026.04.09.1",

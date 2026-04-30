@@ -3,6 +3,7 @@
 ## Error Messages
 
 ### Bad
+
 ```
 Error: something went wrong
 Error: ENOENT
@@ -11,6 +12,7 @@ Error: validation failed
 ```
 
 ### Good
+
 ```
 Error: Model "my-vpc" not found. Run 'swamp model search' to see available models.
 Error: Cannot delete model "my-vpc" — it has active workflow references. Remove references first or use --force.
@@ -19,6 +21,7 @@ Error: Invalid YAML at line 12: expected string for 'name' field, got number.
 ```
 
 ### Template
+
 ```
 Error: <operation> failed for <resource>. <cause>. <suggestion>.
 ```
@@ -26,6 +29,7 @@ Error: <operation> failed for <resource>. <cause>. <suggestion>.
 ## Help Text
 
 ### Bad
+
 ```
 Usage: swamp model create [options]
 
@@ -36,6 +40,7 @@ Options:
 ```
 
 ### Good
+
 ```
 Usage: swamp model create <type> <name> [options]
 
@@ -56,6 +61,7 @@ See also: swamp model type search, swamp model get
 ## JSON Output
 
 ### Bad (inconsistent schema)
+
 ```json
 // Sometimes returns object...
 { "name": "my-vpc", "status": "ready" }
@@ -65,6 +71,7 @@ See also: swamp model type search, swamp model get
 ```
 
 ### Good (consistent schema)
+
 ```json
 // Always same shape for same command
 {
@@ -77,6 +84,7 @@ See also: swamp model type search, swamp model get
 ```
 
 ### Error in JSON mode
+
 ```json
 {
   "error": {
@@ -90,12 +98,14 @@ See also: swamp model type search, swamp model get
 ## Log Output
 
 ### Bad
+
 ```
 Starting...
 Done.
 ```
 
 ### Good
+
 ```
 19:53:38.883 INF model·create Creating model "my-vpc" from type "aws/ec2"
 19:53:38.945 INF model·create Model created at models/my-vpc.yaml
@@ -104,24 +114,26 @@ Done.
 
 ## Flag Naming Conventions
 
-| Flag | Meaning | Consistency Rule |
-|------|---------|-----------------|
-| `--json` | JSON output mode | Always means JSON, never "input is JSON" |
-| `--name` | Resource name | Always the primary identifier |
-| `--force` | Skip confirmation | Only for destructive operations |
-| `--verbose` / `-v` | More detail | Debug-level log output |
-| `--quiet` / `-q` | Less output | Suppress non-essential output |
-| `--dry-run` | Preview without executing | Show what would happen |
+| Flag               | Meaning                   | Consistency Rule                         |
+| ------------------ | ------------------------- | ---------------------------------------- |
+| `--json`           | JSON output mode          | Always means JSON, never "input is JSON" |
+| `--name`           | Resource name             | Always the primary identifier            |
+| `--force`          | Skip confirmation         | Only for destructive operations          |
+| `--verbose` / `-v` | More detail               | Debug-level log output                   |
+| `--quiet` / `-q`   | Less output               | Suppress non-essential output            |
+| `--dry-run`        | Preview without executing | Show what would happen                   |
 
 ## Swamp-Specific Patterns
 
 ### Model Output: Log vs JSON
+
 - **Log mode** (default): human-readable progress and results
 - **JSON mode** (`--json`): machine-parseable, pipe to `jq`, use in scripts
 - Every command that produces output must support both modes
 - JSON mode must include ALL data that log mode shows
 
 ### Workflow Status Display
+
 ```
 19:53:38 INF workflow·run Starting workflow "deploy-vpc"
 19:53:39 INF workflow·run [step 1/3] Running "create-vpc"... done (1.2s)

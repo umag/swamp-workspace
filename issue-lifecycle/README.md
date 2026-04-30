@@ -28,8 +28,8 @@ harvested ──[complete]──> complete
 ```
 
 `approve_plan` requires full matrix coverage AND zero open CRITICAL AND zero
-open HIGH findings. `close` works from any state. `hydrate` reads from any
-state without mutating it.
+open HIGH findings. `close` works from any state. `hydrate` reads from any state
+without mutating it.
 
 ## Using with Claude Code (recommended)
 
@@ -126,31 +126,31 @@ swamp data get issue-42 hydrate --json
 
 ## Methods
 
-| Method             | Description                                       | State Transition                            |
-| ------------------ | ------------------------------------------------- | ------------------------------------------- |
-| `start`            | File a new issue                                  | -> `filed`                                  |
-| `triage`           | Classify with optional detail                     | `filed` -> `triaged`                        |
-| `record_prior_art` | Record existing UAT/KB entries                    | no change                                   |
-| `plan`             | Create/revise plan (bumps planVersion)            | `triaged`\|`planned` -> `planned`           |
-| `review_plan`      | Enter plan review phase                           | `planned` -> `reviewing`                    |
-| `record_review`    | Record one reviewer's findings                    | no change                                   |
-| `approve_plan`     | Approve (gated on coverage + zero blocking)       | `reviewing` -> `approved`                   |
-| `reject_plan`      | Reject with auto/human source                     | `reviewing` -> `planned`                    |
-| `implement`        | Start coding on a branch                          | `approved` -> `implementing`                |
-| `review_code`      | Enter code review phase                           | `implementing` -> `code_reviewing`          |
-| `resolve_findings` | Record resolutions, snapshot round                | `code_reviewing` -> `resolved`              |
-| `iterate`          | Return to implementation                          | `resolved`\|`code_reviewing` -> `implementing` |
-| `harvest`          | Record UAT/KB improvement proposals               | `resolved` -> `harvested`                   |
-| `complete`         | Mark done                                         | `resolved`\|`harvested` -> `complete`       |
-| `close`            | Abandon from any state                            | any -> `closed`                             |
-| `hydrate`          | Write compact summary (no state mutation)         | no change                                   |
+| Method             | Description                                 | State Transition                               |
+| ------------------ | ------------------------------------------- | ---------------------------------------------- |
+| `start`            | File a new issue                            | -> `filed`                                     |
+| `triage`           | Classify with optional detail               | `filed` -> `triaged`                           |
+| `record_prior_art` | Record existing UAT/KB entries              | no change                                      |
+| `plan`             | Create/revise plan (bumps planVersion)      | `triaged`\|`planned` -> `planned`              |
+| `review_plan`      | Enter plan review phase                     | `planned` -> `reviewing`                       |
+| `record_review`    | Record one reviewer's findings              | no change                                      |
+| `approve_plan`     | Approve (gated on coverage + zero blocking) | `reviewing` -> `approved`                      |
+| `reject_plan`      | Reject with auto/human source               | `reviewing` -> `planned`                       |
+| `implement`        | Start coding on a branch                    | `approved` -> `implementing`                   |
+| `review_code`      | Enter code review phase                     | `implementing` -> `code_reviewing`             |
+| `resolve_findings` | Record resolutions, snapshot round          | `code_reviewing` -> `resolved`                 |
+| `iterate`          | Return to implementation                    | `resolved`\|`code_reviewing` -> `implementing` |
+| `harvest`          | Record UAT/KB improvement proposals         | `resolved` -> `harvested`                      |
+| `complete`         | Mark done                                   | `resolved`\|`harvested` -> `complete`          |
+| `close`            | Abandon from any state                      | any -> `closed`                                |
+| `hydrate`          | Write compact summary (no state mutation)   | no change                                      |
 
 ## Data stored
 
-| Resource  | What it stores                                                                      |
-| --------- | ----------------------------------------------------------------------------------- |
-| `state`   | Full lifecycle state: phase, plan, reviews, reviewHistory, harvest, resolutions      |
-| `summary` | Compact hydrate snapshot: state, blocking counts, coverage, iteration cursors        |
+| Resource  | What it stores                                                                  |
+| --------- | ------------------------------------------------------------------------------- |
+| `state`   | Full lifecycle state: phase, plan, reviews, reviewHistory, harvest, resolutions |
+| `summary` | Compact hydrate snapshot: state, blocking counts, coverage, iteration cursors   |
 
 ## Approval gate
 
@@ -162,17 +162,17 @@ swamp data get issue-42 hydrate --json
 
 ## Bundled skills
 
-| Skill                | Purpose                                                    |
-| -------------------- | ---------------------------------------------------------- |
+| Skill                | Purpose                                                     |
+| -------------------- | ----------------------------------------------------------- |
 | `issue-lifecycle`    | Orchestrates the full lifecycle (this model's driver skill) |
-| `ddd`                | Domain-driven design building block selection              |
-| `tdd`                | Red-green-refactor workflow enforcement                    |
-| `moldable-dev`       | Contextual inspectors, live-data queries, reusable reports |
-| `review-code`        | General code review (types, imports, architecture, tests)  |
-| `review-adversarial` | Adversarial review across 7 dimensions                     |
-| `review-security`    | OWASP-adapted security audit                               |
-| `review-ux`          | CLI output, help text, error message review                |
-| `review-skill`       | Skill quality review (frontmatter, triggers, budget)       |
+| `ddd`                | Domain-driven design building block selection               |
+| `tdd`                | Red-green-refactor workflow enforcement                     |
+| `moldable-dev`       | Contextual inspectors, live-data queries, reusable reports  |
+| `review-code`        | General code review (types, imports, architecture, tests)   |
+| `review-adversarial` | Adversarial review across 7 dimensions                      |
+| `review-security`    | OWASP-adapted security audit                                |
+| `review-ux`          | CLI output, help text, error message review                 |
+| `review-skill`       | Skill quality review (frontmatter, triggers, budget)        |
 
 Each skill ships `evals/trigger_evals.json` for CI routing tests via promptfoo.
 

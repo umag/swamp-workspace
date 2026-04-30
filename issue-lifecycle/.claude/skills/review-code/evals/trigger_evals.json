@@ -1,15 +1,45 @@
 [
-  { "query": "Do a code review on my latest changes before I commit.", "should_trigger": true },
+  {
+    "query": "Do a code review on my latest changes before I commit.",
+    "should_trigger": true
+  },
   { "query": "/review-code", "should_trigger": true },
-  { "query": "Review my changes for CLAUDE.md compliance and type safety.", "should_trigger": true },
-  { "query": "Check the imports and organization in the issue_lifecycle.ts refactor.", "should_trigger": true },
-  { "query": "General review of this diff — is DDD respected? Tests present?", "should_trigger": true },
+  {
+    "query": "Review my changes for CLAUDE.md compliance and type safety.",
+    "should_trigger": true
+  },
+  {
+    "query": "Check the imports and organization in the issue_lifecycle.ts refactor.",
+    "should_trigger": true
+  },
+  {
+    "query": "General review of this diff — is DDD respected? Tests present?",
+    "should_trigger": true
+  },
   { "query": "Review my code before I open the PR.", "should_trigger": true },
 
-  { "query": "Try to break my code — assume it's broken until proven otherwise.", "should_trigger": false },
-  { "query": "Audit this credential-handling code for injection risks.", "should_trigger": false },
-  { "query": "Review the CLI output formatting and help text of the new command.", "should_trigger": false },
-  { "query": "Review my new SKILL.md for trigger precision and context budget.", "should_trigger": false },
-  { "query": "Write a failing test first for this retry fix.", "should_trigger": false },
-  { "query": "Triage issue #99 and plan the implementation.", "should_trigger": false }
+  {
+    "query": "Try to break my code — assume it's broken until proven otherwise.",
+    "should_trigger": false
+  },
+  {
+    "query": "Audit this credential-handling code for injection risks.",
+    "should_trigger": false
+  },
+  {
+    "query": "Review the CLI output formatting and help text of the new command.",
+    "should_trigger": false
+  },
+  {
+    "query": "Review my new SKILL.md for trigger precision and context budget.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a failing test first for this retry fix.",
+    "should_trigger": false
+  },
+  {
+    "query": "Triage issue #99 and plan the implementation.",
+    "should_trigger": false
+  }
 ]

@@ -1,15 +1,48 @@
 [
-  { "query": "Review the CLI output of this new command for consistency.", "should_trigger": true },
+  {
+    "query": "Review the CLI output of this new command for consistency.",
+    "should_trigger": true
+  },
   { "query": "/review-ux", "should_trigger": true },
-  { "query": "The error messages on failure are unclear — review them.", "should_trigger": true },
-  { "query": "Check the help text and JSON mode of the new command.", "should_trigger": true },
-  { "query": "UX review for the new subcommand before I ship it.", "should_trigger": true },
-  { "query": "Review the output format of this command against the rest of the CLI.", "should_trigger": true },
+  {
+    "query": "The error messages on failure are unclear — review them.",
+    "should_trigger": true
+  },
+  {
+    "query": "Check the help text and JSON mode of the new command.",
+    "should_trigger": true
+  },
+  {
+    "query": "UX review for the new subcommand before I ship it.",
+    "should_trigger": true
+  },
+  {
+    "query": "Review the output format of this command against the rest of the CLI.",
+    "should_trigger": true
+  },
 
-  { "query": "General code review for CLAUDE.md and types.", "should_trigger": false },
-  { "query": "Adversarial review — assume the code is broken.", "should_trigger": false },
-  { "query": "Security audit on the credential loader.", "should_trigger": false },
-  { "query": "Review my new SKILL.md for trigger precision.", "should_trigger": false },
-  { "query": "Write a failing test first for this CLI option.", "should_trigger": false },
-  { "query": "Triage this bug report and plan the fix.", "should_trigger": false }
+  {
+    "query": "General code review for CLAUDE.md and types.",
+    "should_trigger": false
+  },
+  {
+    "query": "Adversarial review — assume the code is broken.",
+    "should_trigger": false
+  },
+  {
+    "query": "Security audit on the credential loader.",
+    "should_trigger": false
+  },
+  {
+    "query": "Review my new SKILL.md for trigger precision.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a failing test first for this CLI option.",
+    "should_trigger": false
+  },
+  {
+    "query": "Triage this bug report and plan the fix.",
+    "should_trigger": false
+  }
 ]

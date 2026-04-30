@@ -1,15 +1,48 @@
 [
-  { "query": "Do a security review of the credential-loading path.", "should_trigger": true },
+  {
+    "query": "Do a security review of the credential-loading path.",
+    "should_trigger": true
+  },
   { "query": "/review-security", "should_trigger": true },
-  { "query": "Check this input parser for injection and validation issues.", "should_trigger": true },
-  { "query": "Audit the filesystem writes — any path traversal risks?", "should_trigger": true },
-  { "query": "Security audit for the new API client that sends auth tokens.", "should_trigger": true },
-  { "query": "Vulnerability check on the new dependency we just added.", "should_trigger": true },
+  {
+    "query": "Check this input parser for injection and validation issues.",
+    "should_trigger": true
+  },
+  {
+    "query": "Audit the filesystem writes — any path traversal risks?",
+    "should_trigger": true
+  },
+  {
+    "query": "Security audit for the new API client that sends auth tokens.",
+    "should_trigger": true
+  },
+  {
+    "query": "Vulnerability check on the new dependency we just added.",
+    "should_trigger": true
+  },
 
-  { "query": "Standard code review for DDD and CLAUDE.md compliance.", "should_trigger": false },
-  { "query": "Adversarial review — try to break my retry scheduler.", "should_trigger": false },
-  { "query": "Review the CLI help text and error messages for UX.", "should_trigger": false },
-  { "query": "Review this new skill for context budget and trigger precision.", "should_trigger": false },
-  { "query": "Write a failing test first for the input parser.", "should_trigger": false },
-  { "query": "Triage this bug report and plan the implementation.", "should_trigger": false }
+  {
+    "query": "Standard code review for DDD and CLAUDE.md compliance.",
+    "should_trigger": false
+  },
+  {
+    "query": "Adversarial review — try to break my retry scheduler.",
+    "should_trigger": false
+  },
+  {
+    "query": "Review the CLI help text and error messages for UX.",
+    "should_trigger": false
+  },
+  {
+    "query": "Review this new skill for context budget and trigger precision.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a failing test first for the input parser.",
+    "should_trigger": false
+  },
+  {
+    "query": "Triage this bug report and plan the implementation.",
+    "should_trigger": false
+  }
 ]

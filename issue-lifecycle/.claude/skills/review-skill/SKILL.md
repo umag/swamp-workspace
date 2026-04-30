@@ -35,15 +35,15 @@ that principle.
 Evaluate each of the 7 dimensions. For full criteria and examples, read
 `references/dimensions.md`.
 
-| # | Dimension | Key Question |
-| --- | --- | --- |
-| 1 | Frontmatter Quality | Is `name` kebab-case? Does `description` explain what, when, and when NOT? Are triggers natural and unique? |
-| 2 | Progressive Disclosure | Is heavy content in references/? Does SKILL.md stay under 500 lines / 5000 words? |
-| 3 | Trigger Precision | Do triggers match user intent without false positives, false negatives, or overlap? |
-| 4 | Instruction Quality | Are instructions imperative and actionable? Are steps numbered? Is MUST vs SHOULD used correctly? |
-| 5 | Context Window Budget | Does every paragraph earn its place? Is project-specific knowledge prioritised over general knowledge? |
-| 6 | Cross-Skill Consistency | Does the skill follow heading conventions, table/code-block style, and naming patterns of the project? |
-| 7 | Reference Organization | Is each reference file focused, named descriptively, linked from SKILL.md, and loaded on-demand? |
+| # | Dimension               | Key Question                                                                                                |
+| - | ----------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 1 | Frontmatter Quality     | Is `name` kebab-case? Does `description` explain what, when, and when NOT? Are triggers natural and unique? |
+| 2 | Progressive Disclosure  | Is heavy content in references/? Does SKILL.md stay under 500 lines / 5000 words?                           |
+| 3 | Trigger Precision       | Do triggers match user intent without false positives, false negatives, or overlap?                         |
+| 4 | Instruction Quality     | Are instructions imperative and actionable? Are steps numbered? Is MUST vs SHOULD used correctly?           |
+| 5 | Context Window Budget   | Does every paragraph earn its place? Is project-specific knowledge prioritised over general knowledge?      |
+| 6 | Cross-Skill Consistency | Does the skill follow heading conventions, table/code-block style, and naming patterns of the project?      |
+| 7 | Reference Organization  | Is each reference file focused, named descriptively, linked from SKILL.md, and loaded on-demand?            |
 
 Sibling skills in this repo — check every new or modified skill against these
 for trigger overlap. A new skill's description must not fire on queries that
@@ -61,17 +61,17 @@ clearly belong to one of these:
 
 Trigger-overlap discrimination is also enforced in CI via each skill's
 `evals/trigger_evals.json` — write negative examples that point at the sibling
-skill that *should* match so promptfoo catches regressions.
+skill that _should_ match so promptfoo catches regressions.
 
 ## Freedom Level Assessment
 
 Assess prescriptiveness level. Details in `references/dimensions.md`.
 
-| Level | When to use |
-| --- | --- |
-| High | Varied, flexible tasks — text writing, code review, architecture |
-| Medium | Preferred approach exists but variations are acceptable |
-| Low | Fragile, error-prone operations — publishing, destructive ops, CI setup |
+| Level  | When to use                                                             |
+| ------ | ----------------------------------------------------------------------- |
+| High   | Varied, flexible tasks — text writing, code review, architecture        |
+| Medium | Preferred approach exists but variations are acceptable                 |
+| Low    | Fragile, error-prone operations — publishing, destructive ops, CI setup |
 
 Flag skills that over-constrain creative tasks or under-constrain fragile ones.
 
@@ -80,12 +80,17 @@ Flag skills that over-constrain creative tasks or under-constrain fragile ones.
 Flag these immediately. Full examples in `references/quality-criteria.md`.
 
 1. **Trigger squatting** — overly broad triggers like "help", "code", "fix"
-2. **README masquerading as skill** — informational content, no actionable instructions
-3. **Monolithic SKILL.md** — all content in body with empty references/, exceeding 500 lines
-4. **Knowledge duplication** — teaching Claude things it already knows (language syntax, stdlib APIs)
+2. **README masquerading as skill** — informational content, no actionable
+   instructions
+3. **Monolithic SKILL.md** — all content in body with empty references/,
+   exceeding 500 lines
+4. **Knowledge duplication** — teaching Claude things it already knows (language
+   syntax, stdlib APIs)
 5. **Vague triggers** — so generic they match everything or nothing
-6. **Stale references** — reference files that exist but are never mentioned in SKILL.md
-7. **Copy-paste skills** — duplicate large sections from other skills instead of cross-referencing
+6. **Stale references** — reference files that exist but are never mentioned in
+   SKILL.md
+7. **Copy-paste skills** — duplicate large sections from other skills instead of
+   cross-referencing
 
 ## Output Format
 

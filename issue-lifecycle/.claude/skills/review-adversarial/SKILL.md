@@ -64,6 +64,7 @@ Verdict: FAIL
 ```
 
 **Rules for this format:**
+
 - The header MUST be `## Adversarial Review | <scope>`.
 - The verdict MUST appear both after the header AND in the Summary.
 - ALL 7 dimensions MUST appear, numbered 1-7 in order, even if PASS.
@@ -81,46 +82,55 @@ Verdict: FAIL
 ## The 7 Dimensions
 
 ### 1. Credentials & Secrets
-Flag any hardcoded secrets or credentials visible in the code under review.
-For the full credential audit (vault annotations, env-based auth, scoping),
-defer to `/review-security`. Here, just note obvious exposure.
-Severity: CRITICAL for exposure found, PASS if none visible.
+
+Flag any hardcoded secrets or credentials visible in the code under review. For
+the full credential audit (vault annotations, env-based auth, scoping), defer to
+`/review-security`. Here, just note obvious exposure. Severity: CRITICAL for
+exposure found, PASS if none visible.
 
 ### 2. Logging Quality
-Assume the log is the only evidence after failure. Check: missing entry/completion
-logs, string interpolation instead of structured placeholders, wrong log levels,
-sensitive data in logs.
-Severity: HIGH for missing entry/completion logs, MEDIUM for level mistakes.
+
+Assume the log is the only evidence after failure. Check: missing
+entry/completion logs, string interpolation instead of structured placeholders,
+wrong log levels, sensitive data in logs. Severity: HIGH for missing
+entry/completion logs, MEDIUM for level mistakes.
 
 ### 3. Error Handling
+
 Assume every external call will fail. Check: writes before validation (partial
-state), broad try/catch swallowing errors, non-descriptive error messages, missing
-HTTP status/body in errors, no transient vs permanent error distinction.
+state), broad try/catch swallowing errors, non-descriptive error messages,
+missing HTTP status/body in errors, no transient vs permanent error distinction.
 Severity: CRITICAL for partial writes, HIGH for swallowed errors.
 
 ### 4. Testing Completeness
-Assume untested code is broken. Check: missing test context usage, no failure path
-tests, no injectable client pattern for external APIs, missing edge case tests
-(empty input, already-exists, not-found, invalid input).
-Severity: HIGH for missing failure paths, MEDIUM for missing edge cases.
+
+Assume untested code is broken. Check: missing test context usage, no failure
+path tests, no injectable client pattern for external APIs, missing edge case
+tests (empty input, already-exists, not-found, invalid input). Severity: HIGH
+for missing failure paths, MEDIUM for missing edge cases.
 
 ### 5. Idempotency & Resilience
+
 Assume the operation will be retried. Check: create throws on "already exists"
 instead of returning existing, delete throws on 404 instead of succeeding,
-orphaned resources on partial failure, no retry with backoff for transient errors.
-Severity: HIGH for non-idempotent CRUD, MEDIUM for missing partial failure handling.
+orphaned resources on partial failure, no retry with backoff for transient
+errors. Severity: HIGH for non-idempotent CRUD, MEDIUM for missing partial
+failure handling.
 
 ### 6. API Contracts
+
 Assume the API response is wrong. Check: no response validation before field
 access, missing pagination for list endpoints, no `Retry-After` handling, no
 `AbortSignal` timeout on network requests, URLs/methods not matching docs.
 Severity: HIGH for missing validation, MEDIUM for missing pagination.
 
 ### 7. Resource Management
+
 Assume cleanup won't happen automatically. Check: file handles not closed in
 finally blocks, temp files not cleaned on error paths, cloud resource IDs not
-tracked, leaked AbortControllers/event listeners, missing `using` or try/finally.
-Severity: HIGH for leaked cloud resources, MEDIUM for leaked local resources.
+tracked, leaked AbortControllers/event listeners, missing `using` or
+try/finally. Severity: HIGH for leaked cloud resources, MEDIUM for leaked local
+resources.
 
 ## Severity Rules
 
@@ -129,4 +139,5 @@ Severity: HIGH for leaked cloud resources, MEDIUM for leaked local resources.
 - **MEDIUM**: degraded behavior, missing edge case handling
 - **LOW**: style issue, minor improvement opportunity
 
-See [references/dimensions.md](references/dimensions.md) for expanded checklists.
+See [references/dimensions.md](references/dimensions.md) for expanded
+checklists.

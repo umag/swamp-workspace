@@ -15,13 +15,18 @@ description: >
 
 # Moldable Development
 
-Build micro tools tailored to each investigation to reduce time-to-answer — query live system state rather than reading source, and make every tool reusable.
+Build micro tools tailored to each investigation to reduce time-to-answer —
+query live system state rather than reading source, and make every tool
+reusable.
 
 ## Core Behavioral Principles
 
-- **Query live data before reading source.** Use domain tools to expose actual system state — the default view is rarely best for the current question.
-- **Build reusable views, not one-off scripts.** If you've run the same commands twice, make a report or workflow.
-- **Cross module/file/service boundaries freely.** Let the question drive the investigation, not the architecture.
+- **Query live data before reading source.** Use domain tools to expose actual
+  system state — the default view is rarely best for the current question.
+- **Build reusable views, not one-off scripts.** If you've run the same commands
+  twice, make a report or workflow.
+- **Cross module/file/service boundaries freely.** Let the question drive the
+  investigation, not the architecture.
 - **Produce deterministic, re-runnable tools** rather than summarizing directly.
 
 ## Applied to Swamp — Contextual Inspectors
@@ -42,6 +47,7 @@ swamp data get <name> --json
 ```
 
 **Example output from `swamp model get mymodel --json`:**
+
 ```json
 {
   "name": "mymodel",
@@ -53,7 +59,9 @@ swamp data get <name> --json
   }
 }
 ```
-Validate: `status` should be `"ready"`, `lastExecutedAt` should be recent, and `outputCount` should be non-zero.
+
+Validate: `status` should be `"ready"`, `lastExecutedAt` should be recent, and
+`outputCount` should be non-zero.
 
 ### Workflow Inspector
 
@@ -94,7 +102,8 @@ swamp data query 'attributes.status == "running"' --json
 
 ## Worked Example: Debugging a Failing Model
 
-A complete multi-step investigation — run these in sequence, validate before proceeding:
+A complete multi-step investigation — run these in sequence, validate before
+proceeding:
 
 ```bash
 # 1. Check current live state
@@ -120,7 +129,8 @@ swamp audit search --json
 # 6. If data is stale — trigger refresh, then re-verify steps 1 and 3
 ```
 
-Once this sequence proves useful, wrap it as a swamp report so it is reusable (`swamp report run <name>`).
+Once this sequence proves useful, wrap it as a swamp report so it is reusable
+(`swamp report run <name>`).
 
 ## Building Micro Tools
 
@@ -136,13 +146,13 @@ is a tool. The key metric: **can you build it in minutes?**
 
 ### Tool Hierarchy (Cheapest First)
 
-| Tool Type          | Cost      | When to Use                                    |
-| ------------------ | --------- | ---------------------------------------------- |
-| CEL query          | Seconds   | Filter/extract from existing data              |
-| CLI pipeline       | Minutes   | Chain swamp commands for a specific question    |
-| Swamp report       | Minutes   | Reusable data transformation/analysis          |
-| Swamp workflow     | Hours     | Multi-step orchestrated investigation          |
-| Extension model    | Hours-Day | New domain abstraction worth encoding          |
+| Tool Type       | Cost      | When to Use                                  |
+| --------------- | --------- | -------------------------------------------- |
+| CEL query       | Seconds   | Filter/extract from existing data            |
+| CLI pipeline    | Minutes   | Chain swamp commands for a specific question |
+| Swamp report    | Minutes   | Reusable data transformation/analysis        |
+| Swamp workflow  | Hours     | Multi-step orchestrated investigation        |
+| Extension model | Hours-Day | New domain abstraction worth encoding        |
 
 ### Reports as Moldable Tools
 
@@ -158,8 +168,8 @@ Use swamp reports to create reusable domain-specific views:
 
 - **Using `cat` + `grep` on YAML** instead of `swamp model get --json` — the
   domain tool already parses and validates
-- **Generic dashboards** instead of focused domain views — every problem deserves
-  its own view
+- **Generic dashboards** instead of focused domain views — every problem
+  deserves its own view
 - **Reading source code** when live data answers the question faster — query
   first, read second
 - **Treating all data the same** — use domain-specific views per model type
@@ -168,5 +178,5 @@ Use swamp reports to create reusable domain-specific views:
   with explainable outputs instead
 
 See [references/inspector-patterns.md](references/inspector-patterns.md) for
-recipes and [references/swamp-inspectors.md](references/swamp-inspectors.md)
-for swamp-specific templates.
+recipes and [references/swamp-inspectors.md](references/swamp-inspectors.md) for
+swamp-specific templates.

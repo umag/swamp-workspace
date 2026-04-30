@@ -3,7 +3,7 @@
 ## Basic Test
 
 ```typescript
-import { assertEquals, assertThrows, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 
 Deno.test("add returns sum of two numbers", () => {
   assertEquals(add(2, 3), 5);

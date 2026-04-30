@@ -23,23 +23,25 @@ e2e/
 
 ## Naming Helpers
 
-| Prefix     | Purpose                    | Example                          |
-| ---------- | -------------------------- | -------------------------------- |
-| `create*`  | Test data factory          | `createTestOrder(overrides)`     |
-| `mock*`    | Mock implementation        | `mockS3Client(responses)`        |
-| `stub*`    | Stub with canned data      | `stubApiResponse(status, body)`  |
-| `fake*`    | In-memory implementation   | `fakeOrderRepository()`          |
-| `with*`    | Wrapper/context setup      | `withMockedFetch(fn)`            |
+| Prefix    | Purpose                  | Example                         |
+| --------- | ------------------------ | ------------------------------- |
+| `create*` | Test data factory        | `createTestOrder(overrides)`    |
+| `mock*`   | Mock implementation      | `mockS3Client(responses)`       |
+| `stub*`   | Stub with canned data    | `stubApiResponse(status, body)` |
+| `fake*`   | In-memory implementation | `fakeOrderRepository()`         |
+| `with*`   | Wrapper/context setup    | `withMockedFetch(fn)`           |
 
 ## When to Use Fixtures vs Inline Data
 
 **Fixtures** (`_fixtures/`):
+
 - Large response payloads (API responses, config files)
 - Data shared across multiple test files
 - Binary data or complex JSON structures
 - Snapshot testing baselines
 
 **Inline data**:
+
 - Small, test-specific values
 - Data that clarifies the test's intent
 - Values that would lose context if separated from the test
@@ -54,7 +56,9 @@ Deno.test("Money.add sums amounts", () => {
 
 // Good: fixture — large API response is incidental
 Deno.test("parseApiResponse extracts instances", async () => {
-  const raw = JSON.parse(await Deno.readTextFile("./_fixtures/ec2_response.json"));
+  const raw = JSON.parse(
+    await Deno.readTextFile("./_fixtures/ec2_response.json"),
+  );
   const instances = parseApiResponse(raw);
   assertEquals(instances.length, 3);
 });
@@ -67,18 +71,18 @@ Deno.test("parseApiResponse extracts instances", async () => {
 ```typescript
 Deno.test("ShoppingCart", async (t) => {
   await t.step("adding products", async (t) => {
-    await t.step("creates new item for unknown product", () => { /* ... */ });
-    await t.step("increments quantity for known product", () => { /* ... */ });
+    await t.step("creates new item for unknown product", () => {/* ... */});
+    await t.step("increments quantity for known product", () => {/* ... */});
   });
 
   await t.step("removing products", async (t) => {
-    await t.step("removes item entirely", () => { /* ... */ });
-    await t.step("no-ops for unknown product", () => { /* ... */ });
+    await t.step("removes item entirely", () => {/* ... */});
+    await t.step("no-ops for unknown product", () => {/* ... */});
   });
 
   await t.step("calculating total", async (t) => {
-    await t.step("returns zero for empty cart", () => { /* ... */ });
-    await t.step("sums all line items", () => { /* ... */ });
+    await t.step("returns zero for empty cart", () => {/* ... */});
+    await t.step("sums all line items", () => {/* ... */});
   });
 });
 ```

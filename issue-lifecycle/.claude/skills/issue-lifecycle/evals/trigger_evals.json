@@ -1,15 +1,48 @@
 [
   { "query": "Triage issue #42 and plan the fix.", "should_trigger": true },
-  { "query": "Start a new issue for the retry bug and drive it through the lifecycle.", "should_trigger": true },
-  { "query": "File an issue for the broken jitter and create a plan with DDD analysis.", "should_trigger": true },
-  { "query": "Record prior art before we plan — search UAT and KB for existing retry scenarios.", "should_trigger": true },
-  { "query": "Iterate autonomously on the code-review findings until zero CRITICAL and HIGH remain.", "should_trigger": true },
-  { "query": "Harvest the UAT and KB proposals from this issue before completing it.", "should_trigger": true },
-  { "query": "Reject the current plan — the reviewers found a HIGH finding.", "should_trigger": true },
+  {
+    "query": "Start a new issue for the retry bug and drive it through the lifecycle.",
+    "should_trigger": true
+  },
+  {
+    "query": "File an issue for the broken jitter and create a plan with DDD analysis.",
+    "should_trigger": true
+  },
+  {
+    "query": "Record prior art before we plan — search UAT and KB for existing retry scenarios.",
+    "should_trigger": true
+  },
+  {
+    "query": "Iterate autonomously on the code-review findings until zero CRITICAL and HIGH remain.",
+    "should_trigger": true
+  },
+  {
+    "query": "Harvest the UAT and KB proposals from this issue before completing it.",
+    "should_trigger": true
+  },
+  {
+    "query": "Reject the current plan — the reviewers found a HIGH finding.",
+    "should_trigger": true
+  },
 
-  { "query": "Submit a swamp bug report on GitHub for the upstream repo.", "should_trigger": false },
-  { "query": "Help me pick the right DDD building block for this new class.", "should_trigger": false },
-  { "query": "Write a failing test first for the new helper function.", "should_trigger": false },
-  { "query": "Do an adversarial review of this credential loader.", "should_trigger": false },
-  { "query": "Build a moldable inspector to query the swamp audit log.", "should_trigger": false }
+  {
+    "query": "Submit a swamp bug report on GitHub for the upstream repo.",
+    "should_trigger": false
+  },
+  {
+    "query": "Help me pick the right DDD building block for this new class.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a failing test first for the new helper function.",
+    "should_trigger": false
+  },
+  {
+    "query": "Do an adversarial review of this credential loader.",
+    "should_trigger": false
+  },
+  {
+    "query": "Build a moldable inspector to query the swamp audit log.",
+    "should_trigger": false
+  }
 ]

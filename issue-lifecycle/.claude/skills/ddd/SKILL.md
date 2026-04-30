@@ -18,15 +18,24 @@ Apply these patterns when implementing domain logic in TypeScript/Deno.
 
 Follow these steps whenever writing or modifying domain code:
 
-1. **Identify the domain concept** — What real-world thing or operation does this code represent? Use domain expert language, not technical terms.
-2. **Select the building block** — Use the decision flow below to choose the correct DDD type (Value Object, Entity, Aggregate, Domain Service, Application Service, Repository).
-3. **Implement using the pattern** — Apply the TypeScript patterns (see inline example below and [references/patterns.md](references/patterns.md)).
-4. **Verify naming against ubiquitous language** — Check that names match domain expert terminology and are consistent with the glossary.
+1. **Identify the domain concept** — What real-world thing or operation does
+   this code represent? Use domain expert language, not technical terms.
+2. **Select the building block** — Use the decision flow below to choose the
+   correct DDD type (Value Object, Entity, Aggregate, Domain Service,
+   Application Service, Repository).
+3. **Implement using the pattern** — Apply the TypeScript patterns (see inline
+   example below and [references/patterns.md](references/patterns.md)).
+4. **Verify naming against ubiquitous language** — Check that names match domain
+   expert terminology and are consistent with the glossary.
 5. **Validate invariants and boundaries** — Run through this checklist:
-   - Every aggregate root has exactly one repository — no repository per plain entity.
-   - No domain object imports from persistence layers or infrastructure packages.
-   - Child entities are only mutated through the aggregate root — never directly.
-   - Each swamp model owns a single consistency boundary; unrelated concerns live in separate models wired with CEL expressions.
+   - Every aggregate root has exactly one repository — no repository per plain
+     entity.
+   - No domain object imports from persistence layers or infrastructure
+     packages.
+   - Child entities are only mutated through the aggregate root — never
+     directly.
+   - Each swamp model owns a single consistency boundary; unrelated concerns
+     live in separate models wired with CEL expressions.
    - All new domain terms are added to the ubiquitous language glossary.
 
 ## Building Block Selection
@@ -42,7 +51,8 @@ Choose the appropriate type based on these criteria:
 | **Repository**          | None                     | Stateless               | datastore provider      |
 | **Application Service** | None                     | Stateless               | workflow job            |
 
-> **Swamp-specific rule**: one swamp model = one aggregate = one consistency boundary. If two things change independently, they belong in separate models.
+> **Swamp-specific rule**: one swamp model = one aggregate = one consistency
+> boundary. If two things change independently, they belong in separate models.
 
 ### Quick Decision Flow
 
@@ -142,8 +152,8 @@ glossary template and naming conventions.
 - **Leaking persistence**: Domain objects should not know about storage
 - **Primitive obsession**: Using strings for emails, IDs, money → create Value
   Objects
-- **Skipping aggregate boundary**: Modifying child entities directly → go through
-  aggregate root
+- **Skipping aggregate boundary**: Modifying child entities directly → go
+  through aggregate root
 - **Technical naming**: "Handler", "Manager", "Processor" → use domain verbs
 
 See [references/anti-patterns.md](references/anti-patterns.md) for expanded

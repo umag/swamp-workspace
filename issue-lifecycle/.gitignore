@@ -1,0 +1,8 @@
+.swamp/
+.swamp-sources.yaml
+.DS_Store
+node_modules/
+
+# Locally-created model instances (smoke tests, lifecycle records).
+# Runtime artifacts at the workspace root, not the extensions/models/ source.
+/models/

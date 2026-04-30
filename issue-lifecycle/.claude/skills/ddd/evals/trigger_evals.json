@@ -1,15 +1,51 @@
 [
-  { "query": "Help me decide whether this retry logic should be a domain service or a value object.", "should_trigger": true },
-  { "query": "I'm adding a new aggregate to the issue lifecycle — what are the building block rules?", "should_trigger": true },
-  { "query": "Rename these tech-jargon classes to use ubiquitous language from the domain.", "should_trigger": true },
-  { "query": "Should this be an entity or a value object? It has an ID but is immutable after creation.", "should_trigger": true },
-  { "query": "What's the difference between a repository and a domain service in this codebase?", "should_trigger": true },
-  { "query": "Check whether my new code follows DDD principles for bounded contexts.", "should_trigger": true },
+  {
+    "query": "Help me decide whether this retry logic should be a domain service or a value object.",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm adding a new aggregate to the issue lifecycle — what are the building block rules?",
+    "should_trigger": true
+  },
+  {
+    "query": "Rename these tech-jargon classes to use ubiquitous language from the domain.",
+    "should_trigger": true
+  },
+  {
+    "query": "Should this be an entity or a value object? It has an ID but is immutable after creation.",
+    "should_trigger": true
+  },
+  {
+    "query": "What's the difference between a repository and a domain service in this codebase?",
+    "should_trigger": true
+  },
+  {
+    "query": "Check whether my new code follows DDD principles for bounded contexts.",
+    "should_trigger": true
+  },
 
-  { "query": "Write me a failing test for the retry backoff before I implement it.", "should_trigger": false },
-  { "query": "Do a security review of the credential-loading path.", "should_trigger": false },
-  { "query": "The CLI output for this command is confusing — review the help text.", "should_trigger": false },
-  { "query": "Triage issue #42 and create an implementation plan.", "should_trigger": false },
-  { "query": "Query the swamp audit log to see which workflows ran overnight.", "should_trigger": false },
-  { "query": "Review this SKILL.md frontmatter for trigger precision.", "should_trigger": false }
+  {
+    "query": "Write me a failing test for the retry backoff before I implement it.",
+    "should_trigger": false
+  },
+  {
+    "query": "Do a security review of the credential-loading path.",
+    "should_trigger": false
+  },
+  {
+    "query": "The CLI output for this command is confusing — review the help text.",
+    "should_trigger": false
+  },
+  {
+    "query": "Triage issue #42 and create an implementation plan.",
+    "should_trigger": false
+  },
+  {
+    "query": "Query the swamp audit log to see which workflows ran overnight.",
+    "should_trigger": false
+  },
+  {
+    "query": "Review this SKILL.md frontmatter for trigger precision.",
+    "should_trigger": false
+  }
 ]

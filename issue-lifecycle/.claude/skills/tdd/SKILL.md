@@ -17,26 +17,34 @@ description: >
 Every feature and bug fix follows this cycle. No exceptions.
 
 ### RED
-Write a failing test that describes the desired behavior. Run it. Confirm it fails **for the right reason** — a missing function or wrong return value, not a syntax error or import failure.
+
+Write a failing test that describes the desired behavior. Run it. Confirm it
+fails **for the right reason** — a missing function or wrong return value, not a
+syntax error or import failure.
 
 ### GREEN
+
 Write the **minimum** code to make the test pass. No more.
 
 ### REFACTOR
-Clean up while all tests stay green. Run tests after **every** change. If a test breaks, undo and try a smaller refactoring.
+
+Clean up while all tests stay green. Run tests after **every** change. If a test
+breaks, undo and try a smaller refactoring.
 
 ### Repeat
-Each cycle should take minutes, not hours. If you're stuck in RED for more than 15 minutes, the test is too ambitious — write a simpler one.
+
+Each cycle should take minutes, not hours. If you're stuck in RED for more than
+15 minutes, the test is too ambitious — write a simpler one.
 
 ## Test File Organization
 
-| Test Type   | Location                        | When to Use                                           |
-| ----------- | ------------------------------- | ----------------------------------------------------- |
-| Unit        | `foo.test.ts` next to `foo.ts`  | Pure logic, transformations, validators, single fn    |
-| Integration | `integration/`                  | Cross-module, datastore ops, real file I/O            |
-| E2E         | `e2e/`                          | Full workflow runs, CLI commands, model methods e2e   |
-| Helpers     | `_test_utils/`                  | Shared mocks, factories, fixtures                     |
-| Fixtures    | `_fixtures/`                    | Sample data, response snapshots                       |
+| Test Type   | Location                       | When to Use                                         |
+| ----------- | ------------------------------ | --------------------------------------------------- |
+| Unit        | `foo.test.ts` next to `foo.ts` | Pure logic, transformations, validators, single fn  |
+| Integration | `integration/`                 | Cross-module, datastore ops, real file I/O          |
+| E2E         | `e2e/`                         | Full workflow runs, CLI commands, model methods e2e |
+| Helpers     | `_test_utils/`                 | Shared mocks, factories, fixtures                   |
+| Fixtures    | `_fixtures/`                   | Sample data, response snapshots                     |
 
 ## Test Naming Convention
 
@@ -47,13 +55,14 @@ Deno.test("<unit> <does thing> when <condition>", async () => {
 ```
 
 **Examples:**
+
 - `"createVpc returns vpc ID when API succeeds"`
 - `"sync throws when resource not found"`
 - `"parseConfig ignores unknown fields when strict mode is off"`
 - `"Money.add throws when currencies differ"`
 
-Names should read as behavior specifications. A failing test name should tell you
-exactly what broke without reading the test body.
+Names should read as behavior specifications. A failing test name should tell
+you exactly what broke without reading the test body.
 
 ## When to Use Which Test Type
 
@@ -93,12 +102,12 @@ Deno.test("sync refreshes state from API", async () => {
 
 ```typescript
 const {
-  context,              // MethodContext to pass to execute()
-  getWrittenResources,  // Array<{ specName, name, data, handle }>
-  getWrittenFiles,      // Array<{ specName, name, content, handle }>
-  getLogs,              // Array<{ level, message, args }>
-  getLogsByLevel,       // (level) => filtered logs
-  getEvents,            // Array<{ type, ...fields }>
+  context, // MethodContext to pass to execute()
+  getWrittenResources, // Array<{ specName, name, data, handle }>
+  getWrittenFiles, // Array<{ specName, name, content, handle }>
+  getLogs, // Array<{ level, message, args }>
+  getLogsByLevel, // (level) => filtered logs
+  getEvents, // Array<{ type, ...fields }>
 } = createModelTestContext();
 ```
 
@@ -108,10 +117,11 @@ Accept an optional client parameter so tests can inject a stub:
 
 ```typescript
 // In the model
-execute: async (args, context) => {
-  const s3 = args._s3Client ?? new S3Client({ region: context.globalArgs.region });
+execute: (async (args, context) => {
+  const s3 = args._s3Client ??
+    new S3Client({ region: context.globalArgs.region });
   await s3.send(new CreateBucketCommand({ Bucket: context.globalArgs.bucket }));
-};
+});
 
 // In the test
 const mockS3 = { send: () => Promise.resolve({}) };
