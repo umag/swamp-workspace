@@ -19,6 +19,7 @@ jobs:
       matrix:
         extension:
           - issue-lifecycle
+          - good-planning
     steps:
       - uses: actions/checkout@v4
 
@@ -28,20 +29,20 @@ jobs:
           deno-version: v2.2.6
 
       - name: Format check
-        working-directory: ${{ matrix.extension }}/extensions/models
-        run: deno fmt --check
+        working-directory: ${{ matrix.extension }}
+        run: deno task fmt:check
 
       - name: Lint
-        working-directory: ${{ matrix.extension }}/extensions/models
-        run: deno lint
+        working-directory: ${{ matrix.extension }}
+        run: deno task lint
 
       - name: Type check
-        working-directory: ${{ matrix.extension }}/extensions/models
-        run: deno check issue_lifecycle.ts issue_lifecycle.test.ts
+        working-directory: ${{ matrix.extension }}
+        run: deno task check
 
       - name: Test
-        working-directory: ${{ matrix.extension }}/extensions/models
-        run: deno test issue_lifecycle.test.ts
+        working-directory: ${{ matrix.extension }}
+        run: deno task test
 
       - name: Format check (scripts)
         working-directory: scripts
@@ -81,6 +82,8 @@ jobs:
             skill: review-ux
           - extension: issue-lifecycle
             skill: review-skill
+          - extension: good-planning
+            skill: good-planning
     steps:
       - uses: actions/checkout@v4
 

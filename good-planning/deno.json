@@ -1,0 +1,23 @@
+{
+  "tasks": {
+    "test": "deno test extensions/models/good_planning.test.ts",
+    "check": "deno check extensions/models/good_planning.ts extensions/models/good_planning.test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "zod": "npm:zod@4"
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

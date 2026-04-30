@@ -1,0 +1,86 @@
+manifestVersion: 1
+name: "@magistr/good-planning"
+version: "2026.04.30.1"
+description: |
+  Good-planning model that operationalizes Felipe Bovolon's "Good Planning
+  Bad Planning" four-layer architecture as queryable swamp state. Strategy
+  chooses; planning commits — this model holds the commitment.
+
+  A plan is not a slide deck. The article's thesis: the real plan is the
+  pattern of commitments the organization has actually funded, sequenced,
+  protected, and agreed to review. This model makes those commitments first-
+  class state with explicit assumptions, signposts, tripwires, ceiling
+  trigger points, and a pullback ladder — so the plan can be evaluated and
+  revised on a cadence rather than executed-as-written until reality breaks
+  it.
+
+  ## Four Layers (from the article)
+
+  - **Layer 1 — Assumption:** what the plan believes about the world.
+    Each assumption has impact, vulnerability, and a signpost.
+  - **Layer 2 — Allocative:** what is actually funded and protected.
+    Targets, forecasts, and allocations are tracked separately
+    (Beyond Budgeting).
+  - **Layer 3 — Coordinative:** how commitments interlock.
+    Captured via `dependsOn` on each commitment.
+  - **Layer 4 — Adaptive:** how the plan revises.
+    Ceiling discipline (first-binding crux + trigger formula) and
+    floor discipline (signposts → tripwires → pre-authorized actions
+    + pullback ladder + max tolerable loss).
+
+  ## State Machine
+
+  ```
+  drafted ──[commit]──> committed     (gated: all four layers populated)
+  committed ──[monitor]──> monitoring
+  monitoring ──[evaluate]──> monitoring  (read signposts, update layer state)
+  monitoring ──[trigger]──> adapting     (tripwire fired or ceiling crossed)
+  adapting ──[adapt]──> committed        (pullback or option exercised)
+  adapting ──[revise]──> drafted         (assumption broken — re-plan)
+  committed ──[archive]──> archived
+  monitoring ──[archive]──> archived
+  ```
+
+  `commit` is the gate the article calls for: it refuses to leave `drafted`
+  unless every layer is materially populated, including the six properties
+  on every commitment (owner, resource, time, dependencies, review rule,
+  consequence-if-changed) and at least one tripwire on the floor side.
+
+  ## Methods
+
+  - `start` — create a draft plan with strategicChoice + horizon
+  - `add_assumption` — record an assumption with impact / vulnerability / signpost
+  - `add_commitment` — record a commitment or hypothesis (six-property gate)
+  - `add_allocation` — record protected budget per priority (Layer 2)
+  - `add_ceiling` — record a first-binding crux + lead time + signpost
+  - `add_tripwire` — record a signpost threshold + pre-authorized action
+  - `set_pullback_ladder` — ordered list of cuts (what to cut first)
+  - `set_loss_budget` — sunk + shutdown + liabilities + working-capital + tail
+  - `commit` — gate; transitions drafted → committed
+  - `monitor` — committed → monitoring
+  - `evaluate` — read a signpost; updates assumption/tripwire/ceiling state
+  - `trigger` — explicit transition into adapting (action required)
+  - `adapt` — record adaptation taken; back to committed
+  - `revise` — assumption broken; back to drafted
+  - `archive` — terminal
+  - `hydrate` — write a compact governability scorecard summary
+  - `audit` — answer the four diagnostic questions (one per layer)
+
+repository: "https://github.com/umag/swamp-workspace"
+
+skills:
+  - good-planning
+
+models:
+  - good_planning.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - planning
+  - strategy
+  - governance
+  - adaptive
+  - bovolon
