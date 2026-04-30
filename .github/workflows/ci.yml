@@ -223,8 +223,19 @@ jobs:
           SWAMP_AUTH_TOKEN: ${{ secrets.SWAMP_AUTH_TOKEN }}
         run: |
           set -eo pipefail
+          # Per-version release notes are immutable on the swamp registry —
+          # if we don't pass --release-notes, the swamp.club changelog
+          # entry is empty for that version forever. Default to the commit
+          # message of HEAD (the commit that bumped the version), capped
+          # to the CLI's 5000-char limit.
+          notes="$(git log -1 --format=%B HEAD | head -c 4900)"
+          if [ -z "$notes" ]; then
+            notes="Release of $(git rev-parse --short HEAD)"
+          fi
           while IFS= read -r manifest; do
             [ -z "$manifest" ] && continue
             echo "Publishing $manifest"
-            ( cd "$(dirname "$manifest")" && swamp extension push manifest.yaml )
+            ( cd "$(dirname "$manifest")" \
+                && swamp extension push manifest.yaml \
+                     --release-notes "$notes" )
           done <<< "${{ steps.manifest-changed.outputs.manifests }}"
