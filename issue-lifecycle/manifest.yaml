@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/issue-lifecycle"
-version: "2026.04.30.2"
+version: "2026.04.30.3"
 description: |
   Issue lifecycle model with 9 bundled Claude Code skills for DDD, TDD,
   moldable development, and parallel code review.
@@ -20,7 +20,10 @@ description: |
   planned ──[review_plan]──> reviewing
   reviewing ──[approve_plan]──> approved
   reviewing ──[reject_plan]──> planned  (feedback loop)
-  approved ──[implement]──> implementing
+  approved ──[implement]──> writing_tests
+  writing_tests ──[review_tests]──> reviewing_tests
+  reviewing_tests ──[iterate_tests]──> writing_tests  (autonomous TDD sub-loop)
+  reviewing_tests ──[tests_approved]──> implementing  (autonomous gate)
   implementing ──[review_code]──> code_reviewing
   code_reviewing ──[resolve_findings]──> resolved
   code_reviewing ──[iterate]──> implementing  (autonomous loop)
@@ -43,7 +46,11 @@ description: |
   - `record_review` — record one reviewer's findings
   - `approve_plan` — approve (gated on coverage + zero blocking findings)
   - `reject_plan` — reject with auto/human source tracking
-  - `implement` — start coding on a branch
+  - `implement` — start TDD on a branch (enters `writing_tests`)
+  - `review_tests` — enter test review phase
+  - `iterate_tests` — loop back on test-review findings (bumps testReviewIteration)
+  - `tests_approved` — tests clean → write code (autonomous gate; supports
+    `override_reason` for explicit human force-approve after 5-iteration cap)
   - `review_code` — enter code review phase
   - `resolve_findings` — record resolutions, snapshot round
   - `iterate` — return to implementation (bumps codeReviewIteration)

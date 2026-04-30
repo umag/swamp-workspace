@@ -32,24 +32,28 @@ finding is resolved. Do not attempt to bypass it.
 
 ## Quick Reference
 
-| Phase        | Action                                | Command                                                                                                                  |
-| ------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| File         | Create issue                          | `swamp model create @magistr/issue-lifecycle issue-<N> && swamp model method run issue-<N> start --input-file file.yaml` |
-| Triage       | Investigate with moldable-dev, triage | `swamp model method run issue-<N> triage --input-file triage.yaml`                                                       |
-| Prior art    | Record existing UAT/KB that applies   | `swamp model method run issue-<N> record_prior_art --input-file prior-art.yaml`                                          |
-| Plan         | Create plan with DDD + TDD            | `swamp model method run issue-<N> plan --input-file plan.yaml`                                                           |
-| Review       | Start plan review                     | `swamp model method run issue-<N> review_plan`                                                                           |
-| Record       | Record each reviewer's findings       | `swamp model method run issue-<N> record_review --input-file review.yaml`                                                |
-| Auto-reject  | Auto revise after failed review       | `swamp model method run issue-<N> reject_plan --input reason=... --input source=auto`                                    |
-| Approve      | Human approves plan                   | `swamp model method run issue-<N> approve_plan`                                                                          |
-| Implement    | Start coding (TDD)                    | `swamp model method run issue-<N> implement --input branch=feat/...`                                                     |
-| Code Review  | Fan-out code reviews                  | `swamp model method run issue-<N> review_code`                                                                           |
-| Auto iterate | Loop back on CRITICAL/HIGH            | `swamp model method run issue-<N> iterate --input reason=... --input source=auto`                                        |
-| Resolve      | Record finding resolutions            | `swamp model method run issue-<N> resolve_findings --input-file resolve.yaml`                                            |
-| Harvest      | Record UAT/KB proposals (optional)    | `swamp model method run issue-<N> harvest --input-file harvest.yaml`                                                     |
-| Complete     | Mark done                             | `swamp model method run issue-<N> complete`                                                                              |
-| Close        | Abandon                               | `swamp model method run issue-<N> close --input reason=...`                                                              |
-| Hydrate      | Cheap state check (autonomous loop)   | `swamp model method run issue-<N> hydrate && swamp data get issue-<N> hydrate --json`                                    |
+| Phase          | Action                                | Command                                                                                                                  |
+| -------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| File           | Create issue                          | `swamp model create @magistr/issue-lifecycle issue-<N> && swamp model method run issue-<N> start --input-file file.yaml` |
+| Triage         | Investigate with moldable-dev, triage | `swamp model method run issue-<N> triage --input-file triage.yaml`                                                       |
+| Prior art      | Record existing UAT/KB that applies   | `swamp model method run issue-<N> record_prior_art --input-file prior-art.yaml`                                          |
+| Plan           | Create plan with DDD + TDD            | `swamp model method run issue-<N> plan --input-file plan.yaml`                                                           |
+| Review         | Start plan review                     | `swamp model method run issue-<N> review_plan`                                                                           |
+| Record         | Record each reviewer's findings       | `swamp model method run issue-<N> record_review --input-file review.yaml`                                                |
+| Auto-reject    | Auto revise after failed review       | `swamp model method run issue-<N> reject_plan --input reason=... --input source=auto`                                    |
+| Approve        | Human approves plan                   | `swamp model method run issue-<N> approve_plan`                                                                          |
+| Implement      | Start TDD — enter `writing_tests`     | `swamp model method run issue-<N> implement --input branch=feat/...`                                                     |
+| Test Review    | Fan-out reviewers against tests       | `swamp model method run issue-<N> review_tests`                                                                          |
+| Iterate tests  | Loop back on test-review findings     | `swamp model method run issue-<N> iterate_tests --input reason=... --input source=auto`                                  |
+| Tests OK       | Tests clean — proceed to write code   | `swamp model method run issue-<N> tests_approved`                                                                        |
+| Tests override | Human force-approves after cap        | `swamp model method run issue-<N> tests_approved --input override_reason=...`                                            |
+| Code Review    | Fan-out code reviews                  | `swamp model method run issue-<N> review_code`                                                                           |
+| Auto iterate   | Loop back on CRITICAL/HIGH            | `swamp model method run issue-<N> iterate --input reason=... --input source=auto`                                        |
+| Resolve        | Record finding resolutions            | `swamp model method run issue-<N> resolve_findings --input-file resolve.yaml`                                            |
+| Harvest        | Record UAT/KB proposals (optional)    | `swamp model method run issue-<N> harvest --input-file harvest.yaml`                                                     |
+| Complete       | Mark done                             | `swamp model method run issue-<N> complete`                                                                              |
+| Close          | Abandon                               | `swamp model method run issue-<N> close --input reason=...`                                                              |
+| Hydrate        | Cheap state check (autonomous loop)   | `swamp model method run issue-<N> hydrate && swamp data get issue-<N> hydrate --json`                                    |
 
 ## Phase-by-Phase Instructions
 
@@ -182,8 +186,9 @@ findings:
 
 **After ALL reviews are recorded**, aggregate and decide:
 
-- **Clean** (zero CRITICAL + zero HIGH + full coverage): show to human, wait for
-  explicit approval, then call `approve_plan`.
+- **Clean** (zero CRITICAL + zero HIGH + full coverage): present the plan fully
+  and explicitly to the human (see "Presenting the plan" below), wait for
+  explicit approval, then call `approve_plan`. Never auto-approve.
 - **Blocking findings present**: the skill MAY auto-reject by calling
   `reject_plan --input source=auto --input reason=<why>`. This returns to
   `planned` so you can revise (a new `plan` call produces `planVersion + 1`) and
@@ -192,13 +197,124 @@ findings:
 - **Human rejects**: the human calls `reject_plan --input source=human`. Same
   transition, different `outcome` label.
 
-### Phase 5: Implement
+#### Presenting the plan to the human (MANDATORY)
 
-**Use tdd.** Follow red-green-refactor:
+When the round is clean and you are about to ask for approval, you MUST display
+the **full plan content verbatim** in the conversation — not a paraphrase, not a
+summary, not a "here are the highlights". The human is the sole gate at
+`approve_plan`; they can only consent meaningfully when the content is in front
+of them. Compressing the plan steals informed consent.
 
-1. Write failing test (RED)
-2. Minimum code to pass (GREEN)
-3. Refactor while green
+Output, in this order, with these section headings:
+
+1. **Plan v{planVersion}** — the `plan.summary` field, verbatim.
+2. **Steps** — every step in `plan.steps`, in order. For rich step objects, show
+   the step number, the full description, the `files` list, and the `risks`
+   text. For legacy bare-string steps, show them as-is. Do not truncate the
+   list, even if it has many entries.
+3. **DDD analysis** — the full `plan.dddAnalysis` text, verbatim.
+4. **TDD test strategy** — the full `plan.testStrategy` text, verbatim.
+5. **Review matrix** — the boolean flags from `plan.reviewMatrix`, listing which
+   reviewers will run during plan review and code review.
+6. **Potential challenges** — every entry in `plan.potentialChallenges`, as a
+   bulleted list. If empty, say so explicitly ("None recorded").
+7. **Aggregated review findings** — for each entry in `reviews[]`: reviewer
+   name, verdict (PASS / FAIL / SUGGEST_CHANGES), and every finding (severity,
+   file:line if present, description, suggested fix, current status). Include
+   MEDIUM and LOW findings — they don't block the gate but the human still needs
+   to see them.
+8. **Final question** — explicitly ask the human:
+   `Do you approve this plan? Reply "approve" / "approved" / "LGTM" / "ship it" / "go" to proceed, or describe the changes you want.`
+
+Only after the human replies with one of the explicit approval phrases may you
+call `approve_plan`. Anything else (silence, "looks ok", "I think so") is not
+approval — ask again or treat it as a request for changes.
+
+### Phase 5: Implement — TEST-FIRST AUTONOMOUS LOOP
+
+`implement` does **not** drop you straight into writing code. It enters
+`writing_tests` so the TDD discipline is enforced by the state machine: tests
+must be authored, reviewed, and cleared of blocking findings _before_ any
+production code is written. Only when the test-review round comes back clean
+does the lifecycle transition to `implementing` (= "tests are green-lit; now
+write code that makes them pass").
+
+The sub-loop:
+
+1. **Write failing tests (RED)** in `writing_tests`. Capture the contract the
+   change must satisfy — every behavior, every edge case, every regression
+   guard.
+2. `swamp model method run <issue-N> review_tests` → state `reviewing_tests`.
+3. Fan out the reviewers from `reviewMatrix` **in parallel** against the tests
+   (not the implementation) and record each via `record_review`. The reviewers
+   ask: do these tests faithfully encode the plan's intent? Are they specific
+   enough to fail when broken? Do they cover the failure paths, not just the
+   happy path?
+4. Aggregate the verdicts:
+   - **CRITICAL or HIGH present** → call
+     `iterate_tests --input source=auto --input reason=<summary>`. State returns
+     to `writing_tests`, `testReviewIteration` bumps, the round is snapshotted
+     to `reviewHistory` with `outcome: "rejected_auto"`. Rewrite the tests to
+     address the findings, then loop back to step 2.
+   - **Clean** (zero CRITICAL + zero HIGH + full matrix coverage) → call
+     `tests_approved`. State transitions to `implementing` and the round is
+     snapshotted with `outcome: "clean"`.
+5. **Now write code (GREEN)** in `implementing`. The minimal implementation that
+   turns the approved tests green. Keep iterating locally until every test
+   passes.
+6. **Refactor while green.** Tighten naming, extract helpers, remove duplication
+   — without breaking any of the approved tests.
+7. Continue to Phase 6 (code review).
+
+**Loop-safety rules** — the test-review loop respects the same safeguards as the
+code-review loop:
+
+- **Signature loop detection.** Run `hydrate` after each iteration. If the
+  `signature` field matches the previous iteration, the rewrites aren't closing
+  the findings. Bail out and escalate to the human (see below).
+- **Iteration cap.** Stop autonomous iteration once `testReviewIteration >= 5`.
+  Escalate to the human instead of continuing to spin.
+
+`tests_approved` is gated like `approve_plan` (full matrix coverage AND zero
+open CRITICAL AND zero open HIGH). In the normal autonomous path it does **not**
+require explicit human approval — it is part of the autonomous TDD sub-loop. The
+strict human approval gate is exclusively at `approve_plan`.
+
+#### Escalating to the human after the cap is reached
+
+When either safety rule trips (signature loop OR `testReviewIteration >= 5` with
+blocking findings still open), STOP calling `iterate_tests --input source=auto`.
+The autonomous loop has failed to converge and the human must intervene.
+
+Present the situation to the human, fully and explicitly:
+
+1. **State the failure mode**: signature loop, iteration cap, or both.
+2. **Show the iteration history** — for each entry in `reviewHistory` where
+   `phase: test_review`, the iteration number, outcome, and rejectReason.
+3. **Show the current open blocking findings** — for each entry in `reviews[]`:
+   reviewer name, every CRITICAL and HIGH finding with severity, file:line,
+   description, suggested fix. Do not summarize.
+4. **Show the current tests** — point at the test files modified in this issue,
+   so the human can read the actual contents.
+5. **Offer the human two paths, explicitly**:
+   - **(A) Provide correction guidance.** The human writes guidance on how to
+     address the findings (or which to ignore, with rationale). You then call:
+     `swamp model method run <issue-N> iterate_tests --input source=human --input reason="<the human's guidance verbatim>"`.
+     `testReviewIteration` bumps; the round is snapshotted with
+     `outcome: "rejected_human"`. Rewrite the tests per the guidance, then
+     re-run the test-review fan-out.
+   - **(B) Force-approve as a human override.** The human judges the remaining
+     findings acceptable and explicitly authorises proceeding despite open
+     CRITICAL/HIGH. You then call:
+     `swamp model method run <issue-N> tests_approved --input override_reason="<human's justification verbatim>"`.
+     This bypasses the blocking-findings gate (matrix coverage is still
+     enforced), snapshots the round with `outcome: "human_override"`, and
+     records the reason in `rejectReason` for audit. Only call this when the
+     human has used one of the explicit approval phrases listed in Phase 4 plus
+     a reason for the override — never infer override from silence or ambiguous
+     replies.
+
+If the human picks neither path, do not call any method; ask again.
 
 **Use moldable-dev.** Inspect runtime state to verify behavior — not just tests.
 

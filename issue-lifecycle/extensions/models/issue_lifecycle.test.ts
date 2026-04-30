@@ -190,6 +190,20 @@ async function withApprovedPlan(h: Harness): Promise<void> {
   await run("approve_plan", {}, h.ctx);
 }
 
+// Drive `implement → review_tests → 2× pass review → tests_approved` so
+// callers land in `implementing` (= "tests are clean, write code") with the
+// new TDD sub-loop accounted for in reviewHistory.
+async function implementWithTestsApproved(
+  h: Harness,
+  branch = "feat/x",
+): Promise<void> {
+  await run("implement", { branch }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("tests_approved", {}, h.ctx);
+}
+
 // ============================================================================
 // Schema round-trips
 // ============================================================================
@@ -533,13 +547,279 @@ Deno.test("reject_plan source=human snapshots rejected_human", async () => {
 });
 
 // ============================================================================
+// implement → writing_tests sub-loop
+// ============================================================================
+
+Deno.test("implement transitions approved → writing_tests (not implementing)", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  const s = h.getState()!;
+  assertEquals(s.state, "writing_tests");
+  assertEquals(s.branch, "feat/x");
+  assertEquals(s.testReviewIteration, 1);
+});
+
+Deno.test("review_tests transitions writing_tests → reviewing_tests and stamps round", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  const s = h.getState()!;
+  assertEquals(s.state, "reviewing_tests");
+  assertExists(s.reviewRoundStartedAt);
+  assertEquals(s.reviews, []);
+});
+
+Deno.test("review_tests rejected from implementing", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await implementWithTestsApproved(h);
+  await assertRejects(
+    () => run("review_tests", {}, h.ctx),
+    Error,
+    "Cannot call 'review_tests' in state 'implementing'",
+  );
+});
+
+Deno.test("record_review accepted in reviewing_tests", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  const s = h.getState()!;
+  assertEquals(s.reviews.length, 1);
+  assertEquals(s.reviews[0].reviewer, "review-code");
+});
+
+Deno.test("tests_approved blocks on missing matrix coverage", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  // review-adversarial is in the matrix but not recorded
+  await assertRejects(
+    () => run("tests_approved", {}, h.ctx),
+    Error,
+    "review-adversarial",
+  );
+});
+
+Deno.test("tests_approved blocks on open CRITICAL", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run(
+    "record_review",
+    failReview("review-code", [
+      finding("review-code", "CRITICAL", "test asserts wrong invariant"),
+    ]),
+    h.ctx,
+  );
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await assertRejects(
+    () => run("tests_approved", {}, h.ctx),
+    Error,
+    "CRITICAL",
+  );
+});
+
+Deno.test("tests_approved blocks on open HIGH", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run(
+    "record_review",
+    failReview("review-adversarial", [
+      finding("review-adversarial", "HIGH", "tests miss failure path"),
+    ]),
+    h.ctx,
+  );
+  await assertRejects(
+    () => run("tests_approved", {}, h.ctx),
+    Error,
+    "HIGH",
+  );
+});
+
+Deno.test("tests_approved succeeds with full coverage and zero blocking", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("tests_approved", {}, h.ctx);
+  const s = h.getState()!;
+  assertEquals(s.state, "implementing");
+  assertEquals(s.reviews, []);
+  // plan_review clean + test_review clean
+  assertEquals(s.reviewHistory.length, 2);
+  const testRound = s.reviewHistory.find((r) => r.phase === "test_review")!;
+  assertEquals(testRound.outcome, "clean");
+  assertEquals(testRound.iteration, 1);
+});
+
+Deno.test("tests_approved with override_reason bypasses blocking findings", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run(
+    "record_review",
+    failReview("review-code", [
+      finding("review-code", "HIGH", "missing edge-case test"),
+    ]),
+    h.ctx,
+  );
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run(
+    "tests_approved",
+    {
+      override_reason:
+        "Cap reached after 5 iterations; human accepts edge-case as MEDIUM scope",
+    },
+    h.ctx,
+  );
+  const s = h.getState()!;
+  assertEquals(s.state, "implementing");
+  const testRound = s.reviewHistory.find((r) => r.phase === "test_review")!;
+  assertEquals(testRound.outcome, "human_override");
+  assertStringIncludes(testRound.rejectReason!, "Cap reached");
+});
+
+Deno.test("tests_approved override still requires matrix coverage", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run(
+    "record_review",
+    failReview("review-code", [
+      finding("review-code", "HIGH", "missing edge-case test"),
+    ]),
+    h.ctx,
+  );
+  // review-adversarial missing
+  await assertRejects(
+    () =>
+      run(
+        "tests_approved",
+        { override_reason: "good enough" },
+        h.ctx,
+      ),
+    Error,
+    "review-adversarial",
+  );
+});
+
+Deno.test("tests_approved with empty override_reason still enforces blocking gate", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run(
+    "record_review",
+    failReview("review-code", [
+      finding("review-code", "HIGH", "missing"),
+    ]),
+    h.ctx,
+  );
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  // Empty/whitespace override_reason should not unlock the gate
+  await assertRejects(
+    () => run("tests_approved", { override_reason: "   " }, h.ctx),
+    Error,
+    "HIGH",
+  );
+});
+
+Deno.test("iterate_tests bumps testReviewIteration and snapshots", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run(
+    "record_review",
+    failReview("review-code", [
+      finding("review-code", "HIGH", "missing edge-case test"),
+    ]),
+    h.ctx,
+  );
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run(
+    "iterate_tests",
+    { reason: "Add edge-case coverage", source: "auto" },
+    h.ctx,
+  );
+  const s = h.getState()!;
+  assertEquals(s.state, "writing_tests");
+  assertEquals(s.testReviewIteration, 2);
+  assertEquals(s.reviews, []);
+  // plan_review clean + test_review rejected_auto
+  assertEquals(s.reviewHistory.length, 2);
+  const testRound = s.reviewHistory.find((r) => r.phase === "test_review")!;
+  assertEquals(testRound.outcome, "rejected_auto");
+  assertEquals(testRound.iteration, 1);
+  assertEquals(testRound.rejectReason, "Add edge-case coverage");
+});
+
+Deno.test("iterate_tests then re-review records second iteration with bumped counter", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run(
+    "record_review",
+    failReview("review-code", [
+      finding("review-code", "HIGH", "loop1"),
+    ]),
+    h.ctx,
+  );
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run(
+    "iterate_tests",
+    { reason: "fix loop1", source: "auto" },
+    h.ctx,
+  );
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("tests_approved", {}, h.ctx);
+  const s = h.getState()!;
+  assertEquals(s.state, "implementing");
+  assertEquals(s.testReviewIteration, 2);
+  const testRounds = s.reviewHistory.filter((r) => r.phase === "test_review");
+  assertEquals(testRounds.length, 2);
+  assertEquals(testRounds[0].outcome, "rejected_auto");
+  assertEquals(testRounds[0].iteration, 1);
+  assertEquals(testRounds[1].outcome, "clean");
+  assertEquals(testRounds[1].iteration, 2);
+});
+
+Deno.test("iterate_tests rejected outside reviewing_tests", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await assertRejects(
+    () => run("iterate_tests", { reason: "x", source: "auto" }, h.ctx),
+    Error,
+    "Cannot call 'iterate_tests' in state 'approved'",
+  );
+});
+
+// ============================================================================
 // review_code / iterate loop
 // ============================================================================
 
 Deno.test("iterate from code_reviewing bumps iteration and snapshots", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
-  await run("implement", { branch: "feat/x" }, h.ctx);
+  await implementWithTestsApproved(h);
   await run("review_code", {}, h.ctx);
   await run(
     "record_review",
@@ -561,8 +841,8 @@ Deno.test("iterate from code_reviewing bumps iteration and snapshots", async () 
   const s = h.getState()!;
   assertEquals(s.state, "implementing");
   assertEquals(s.codeReviewIteration, 2);
-  // One plan_review (clean, from approve_plan) + one code_review (rejected_auto)
-  assertEquals(s.reviewHistory.length, 2);
+  // plan_review clean + test_review clean + code_review rejected_auto
+  assertEquals(s.reviewHistory.length, 3);
   const codeRound = s.reviewHistory.find((r) => r.phase === "code_review")!;
   assertEquals(codeRound.outcome, "rejected_auto");
   assertEquals(codeRound.iteration, 1);
@@ -571,7 +851,7 @@ Deno.test("iterate from code_reviewing bumps iteration and snapshots", async () 
 Deno.test("iterate from resolved does not double-snapshot", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
-  await run("implement", { branch: "feat/x" }, h.ctx);
+  await implementWithTestsApproved(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -594,7 +874,7 @@ Deno.test("iterate from resolved does not double-snapshot", async () => {
 Deno.test("harvest transitions resolved → harvested", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
-  await run("implement", { branch: "feat/x" }, h.ctx);
+  await implementWithTestsApproved(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -617,7 +897,7 @@ Deno.test("harvest transitions resolved → harvested", async () => {
 Deno.test("complete works from resolved (harvest skipped)", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
-  await run("implement", { branch: "feat/x" }, h.ctx);
+  await implementWithTestsApproved(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -629,7 +909,7 @@ Deno.test("complete works from resolved (harvest skipped)", async () => {
 Deno.test("complete works from harvested", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
-  await run("implement", { branch: "feat/x" }, h.ctx);
+  await implementWithTestsApproved(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -850,8 +1130,8 @@ Deno.test("end-to-end: filed → auto-reject → re-plan → approve → review_
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("approve_plan", {}, h.ctx);
 
-  // Implement + code review (clean)
-  await run("implement", { branch: "feat/retry-fix" }, h.ctx);
+  // Implement: write tests → review_tests (clean) → write code → review_code (clean)
+  await implementWithTestsApproved(h, "feat/retry-fix");
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -878,17 +1158,21 @@ Deno.test("end-to-end: filed → auto-reject → re-plan → approve → review_
   assertEquals(s.state, "complete");
   assertEquals(s.plan!.planVersion, 2);
   assertEquals(s.planVersion, 2);
-  assertEquals(s.reviewHistory.length, 3);
+  // 2 plan rounds + 1 test round + 1 code round
+  assertEquals(s.reviewHistory.length, 4);
 
-  // One rejected_auto plan round + one clean plan round + one clean code round
+  // One rejected_auto plan round + one clean plan round + one clean test round + one clean code round
   const planRounds = s.reviewHistory.filter((r) => r.phase === "plan_review");
+  const testRounds = s.reviewHistory.filter((r) => r.phase === "test_review");
   const codeRounds = s.reviewHistory.filter((r) => r.phase === "code_review");
   assertEquals(planRounds.length, 2);
+  assertEquals(testRounds.length, 1);
   assertEquals(codeRounds.length, 1);
   assertEquals(planRounds[0].outcome, "rejected_auto");
   assertEquals(planRounds[0].planVersion, 1);
   assertEquals(planRounds[1].outcome, "clean");
   assertEquals(planRounds[1].planVersion, 2);
+  assertEquals(testRounds[0].outcome, "clean");
   assertEquals(codeRounds[0].outcome, "clean");
   assertExists(s.harvest);
   assertEquals(s.harvest!.kbProposals.length, 1);
@@ -916,4 +1200,3 @@ Deno.test("fake harness rejects invalid writes to the state spec", async () => {
 // assertNotEquals is imported for future use in hydrate assertions.
 // Silence unused-import lint if any future refactor drops its usage.
 const _kept = assertNotEquals;
-const _kept2 = assertStringIncludes;

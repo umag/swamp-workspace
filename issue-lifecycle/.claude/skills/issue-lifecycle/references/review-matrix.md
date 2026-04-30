@@ -90,9 +90,15 @@ approval — only `status: open` counts. This matches `hasBlockingFindings()`.
 
 ## Autonomous Loop Safety
 
-When the skill drives the code-review loop autonomously (`review_code` →
-`record_review` ×N → `iterate --input source=auto`), two safeguards prevent
-runaway spinning:
+The skill drives **two** autonomous review loops, both with the same safety
+rules:
+
+- **Test-review sub-loop** (Phase 5): `review_tests` → `record_review` ×N →
+  `iterate_tests --input source=auto` (or `tests_approved` when clean).
+- **Code-review loop** (Phase 6): `review_code` → `record_review` ×N →
+  `iterate --input source=auto` (or `resolve_findings` when clean).
+
+Two safeguards prevent runaway spinning:
 
 1. **`findingSignature(reviews)`** — a stable hash of open CRITICAL/HIGH
    findings in the current round. If two successive iterations produce the same
@@ -101,9 +107,29 @@ runaway spinning:
    `severity | category | description[:60]`, sorted — so minor textual edits to
    a finding's description do not mask a real loop.
 
-2. **`codeReviewIteration` cap** — each `iterate` bumps the counter. A cap
-   (e.g., 5) after which the loop exits with `outcome: "cap_reached"` in the
-   final `reviewHistory` entry.
+2. **Iteration cap** — `testReviewIteration` for the test loop and
+   `codeReviewIteration` for the code loop. Each `iterate_tests` / `iterate`
+   bumps its counter. A cap of **5** after which the autonomous loop must stop
+   and escalate to the human.
+
+When the cap (or signature loop) is reached, the skill MUST present the full
+iteration history and the open blocking findings to the human, then offer two
+explicit paths (no auto-pick):
+
+- **Human correction** —
+  `iterate_tests --input source=human --input reason="<guidance verbatim>"`
+  bumps the counter, snapshots `outcome: "rejected_human"`, returns to
+  `writing_tests` for another rewrite.
+- **Human override (force-approve)** —
+  `tests_approved --input override_reason="<justification verbatim>"` bypasses
+  the blocking-findings gate (matrix coverage still required), snapshots
+  `outcome: "human_override"` with the reason in `rejectReason`, transitions to
+  `implementing`. Only call after the human has explicitly authorised it.
+
+Note: in the normal autonomous path `tests_approved` does NOT require explicit
+human approval — that strict gate is exclusively at `approve_plan`. The override
+above is a separate, audited path that exists only because the autonomous loop
+has demonstrably failed to converge.
 
 Every round's outcome is captured in `reviewHistory` (append-only), so you can
 always reconstruct the trajectory via

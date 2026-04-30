@@ -226,6 +226,7 @@ export const HydrateSummarySchema = z.object({
   state: z.string(),
   planVersion: z.number().int().nonnegative(),
   planIterationsThisVersion: z.number().int().nonnegative(),
+  testReviewIteration: z.number().int().nonnegative(),
   codeReviewIteration: z.number().int().nonnegative(),
   blocking: z.object({
     critical: z.number().int().nonnegative(),
@@ -252,6 +253,8 @@ export const StateEnum = z.enum([
   "planned",
   "reviewing",
   "approved",
+  "writing_tests",
+  "reviewing_tests",
   "implementing",
   "code_reviewing",
   "resolved",
@@ -266,7 +269,7 @@ export const StateEnum = z.enum([
  * @internal
  */
 export const ReviewRoundSchema = z.object({
-  phase: z.enum(["plan_review", "code_review"]),
+  phase: z.enum(["plan_review", "test_review", "code_review"]),
   planVersion: z.number().int().positive(),
   iteration: z.number().int().positive(),
   reviews: z.array(ReviewResultSchema),
@@ -277,6 +280,7 @@ export const ReviewRoundSchema = z.object({
     "cap_reached",
     "loop_detected",
     "pivot_required",
+    "human_override",
   ]),
   rejectReason: z.string().optional(),
   startedAt: z.iso.datetime(),
@@ -303,6 +307,7 @@ export const IssueStateSchema = z.object({
   reviews: z.array(ReviewResultSchema).default([]),
   reviewHistory: z.array(ReviewRoundSchema).default([]),
   planVersion: z.number().int().positive().default(1),
+  testReviewIteration: z.number().int().positive().default(1),
   codeReviewIteration: z.number().int().positive().default(1),
   branch: z.string().optional(),
   resolutions: z.record(z.string(), z.string()).default({}),
@@ -532,6 +537,8 @@ export type State =
   | "planned"
   | "reviewing"
   | "approved"
+  | "writing_tests"
+  | "reviewing_tests"
   | "implementing"
   | "code_reviewing"
   | "resolved"
@@ -540,7 +547,7 @@ export type State =
   | "closed";
 
 /** Review round phase. */
-export type ReviewPhase = "plan_review" | "code_review";
+export type ReviewPhase = "plan_review" | "test_review" | "code_review";
 
 /** Review round outcome. */
 export type ReviewOutcome =
@@ -549,7 +556,8 @@ export type ReviewOutcome =
   | "rejected_human"
   | "cap_reached"
   | "loop_detected"
-  | "pivot_required";
+  | "pivot_required"
+  | "human_override";
 
 /** Append-only audit entry for one completed review round. */
 export interface ReviewRound {
@@ -597,6 +605,8 @@ export interface HydrateSummary {
   planVersion: number;
   /** Plan iterations recorded for the current plan version. */
   planIterationsThisVersion: number;
+  /** Test-review iteration cursor. */
+  testReviewIteration: number;
   /** Code-review iteration cursor. */
   codeReviewIteration: number;
   /** Open blocking-finding counts. */
@@ -639,6 +649,8 @@ export interface IssueState {
   reviewHistory: ReviewRound[];
   /** Plan version (bumps on every `plan` call). */
   planVersion: number;
+  /** Test-review iteration cursor (bumps on every `iterate_tests`). */
+  testReviewIteration: number;
   /** Code-review iteration cursor (bumps on every `iterate`). */
   codeReviewIteration: number;
   /** Optional implementation branch name. */
@@ -757,16 +769,21 @@ export function findingSignature(reviews: ReviewResult[]): string {
  */
 export function snapshotReviewRound(
   data: IssueState,
-  phase: "plan_review" | "code_review",
+  phase: ReviewPhase,
   outcome: ReviewRound["outcome"],
   rejectReason: string | undefined,
   startedAt: string,
 ): ReviewRound {
-  const iteration = phase === "plan_review"
-    ? data.reviewHistory.filter(
+  let iteration: number;
+  if (phase === "plan_review") {
+    iteration = data.reviewHistory.filter(
       (r) => r.phase === "plan_review" && r.planVersion === data.planVersion,
-    ).length + 1
-    : data.codeReviewIteration;
+    ).length + 1;
+  } else if (phase === "test_review") {
+    iteration = data.testReviewIteration;
+  } else {
+    iteration = data.codeReviewIteration;
+  }
   return {
     phase,
     planVersion: data.planVersion,
@@ -822,7 +839,7 @@ async function readState(
  */
 export const model = {
   type: "@magistr/issue-lifecycle",
-  version: "2026.04.09.1",
+  version: "2026.04.30.1",
 
   globalArguments: z.object({}),
 
@@ -868,6 +885,7 @@ export const model = {
           reviewHistory: [],
           resolutions: {},
           planVersion: 1,
+          testReviewIteration: 1,
           codeReviewIteration: 1,
           createdAt: now(),
           updatedAt: now(),
@@ -1119,7 +1137,7 @@ export const model = {
         if (!data) throw new Error("No issue state found — run 'start' first");
         guardState(
           data.state,
-          ["reviewing", "code_reviewing"],
+          ["reviewing", "reviewing_tests", "code_reviewing"],
           "record_review",
         );
 
@@ -1268,7 +1286,10 @@ export const model = {
 
     implement: {
       description:
-        "Start implementation — record branch name. Follow TDD: write failing test first.",
+        "Start implementation — record branch name and enter the TDD test-" +
+        "writing sub-phase (state 'writing_tests'). Write failing tests first; " +
+        "submit them for review via review_tests. Code is written only after " +
+        "tests pass review (tests_approved transitions to 'implementing').",
       arguments: z.object({
         branch: z.string(),
         description: z.string().default(""),
@@ -1287,14 +1308,211 @@ export const model = {
 
         const handle = await context.writeResource("state", "current", {
           ...data,
-          state: "implementing",
+          state: "writing_tests",
           branch: args.branch,
           updatedAt: now(),
         });
 
         context.logger.info(
-          "Implementation started — follow TDD: write failing test first",
+          "Now in writing_tests — author failing TDD tests, then call review_tests",
         );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    review_tests: {
+      description:
+        "Enter the test review phase — fans out reviewers (per reviewMatrix) " +
+        "to review the TDD tests authored in writing_tests. Mirrors review_plan " +
+        "and review_code: resets the round's reviews and stamps " +
+        "reviewRoundStartedAt.",
+      arguments: z.object({}),
+      execute: async (
+        _args: Record<string, never>,
+        context: ReadWriteCtx,
+      ) => {
+        const data = await readState(context);
+        if (!data) throw new Error("No issue state found — run 'start' first");
+        guardState(data.state, "writing_tests", "review_tests");
+
+        const matrix = data.plan?.reviewMatrix ?? {
+          code: true,
+          adversarial: true,
+          security: false,
+          ux: false,
+          skill: false,
+        };
+        const reviewers = Object.entries(matrix)
+          .filter(([_, enabled]) => enabled)
+          .map(([name]) => `review-${name}`);
+
+        context.logger.info(
+          "Starting test review iteration {iter} with {count} reviewers: {reviewers}",
+          {
+            iter: data.testReviewIteration,
+            count: reviewers.length,
+            reviewers: reviewers.join(", "),
+          },
+        );
+
+        const handle = await context.writeResource("state", "current", {
+          ...data,
+          state: "reviewing_tests",
+          reviews: [],
+          reviewRoundStartedAt: now(),
+          updatedAt: now(),
+        });
+
+        return { dataHandles: [handle] };
+      },
+    },
+
+    iterate_tests: {
+      description:
+        "Return to writing_tests because test review surfaced findings. " +
+        "Snapshots the current test-review round to reviewHistory, bumps " +
+        "testReviewIteration. `source=auto` means the skill iterated " +
+        "autonomously inside the test-review loop.",
+      arguments: z.object({
+        reason: z.string(),
+        source: z.enum(["auto", "human"]).default("human"),
+      }),
+      execute: async (
+        args: { reason: string; source: "auto" | "human" },
+        context: ReadWriteCtx,
+      ) => {
+        const data = await readState(context);
+        if (!data) throw new Error("No issue state found — run 'start' first");
+        guardState(data.state, "reviewing_tests", "iterate_tests");
+
+        const outcome: ReviewRound["outcome"] = args.source === "auto"
+          ? "rejected_auto"
+          : "rejected_human";
+
+        context.logger.info(
+          "Iterating test review ({source}): {reason}",
+          { source: args.source, reason: args.reason },
+        );
+
+        const historyEntry = snapshotReviewRound(
+          data,
+          "test_review",
+          outcome,
+          args.reason,
+          data.reviewRoundStartedAt ?? now(),
+        );
+
+        const handle = await context.writeResource("state", "current", {
+          ...data,
+          state: "writing_tests",
+          reviews: [],
+          reviewHistory: [...data.reviewHistory, historyEntry],
+          testReviewIteration: data.testReviewIteration + 1,
+          reviewRoundStartedAt: undefined,
+          updatedAt: now(),
+        });
+
+        context.logger.info(
+          "Back to writing_tests — rewrite tests to address findings, then " +
+            "re-run review_tests",
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    tests_approved: {
+      description:
+        "Tests pass review — transition reviewing_tests → implementing so " +
+        "code can be written against the approved tests. Default (autonomous) " +
+        "gate: full matrix coverage AND zero open CRITICAL AND zero open HIGH " +
+        "findings. Pass `override_reason` to force-approve (human override) " +
+        "when the autonomous loop has hit the iteration cap and the human " +
+        "judges the remaining findings acceptable. Override still requires " +
+        "matrix coverage. Snapshots outcome=clean (autonomous) or " +
+        "outcome=human_override (with the supplied reason).",
+      arguments: z.object({
+        override_reason: z.string().optional().describe(
+          "When set, bypasses the blocking-findings gate as an explicit " +
+            "human override (e.g., after the test-review loop hit the " +
+            "5-iteration cap without converging). Records the reason in the " +
+            "review round snapshot for audit.",
+        ),
+      }),
+      execute: async (
+        args: { override_reason?: string },
+        context: ReadWriteCtx,
+      ) => {
+        const data = await readState(context);
+        if (!data) throw new Error("No issue state found — run 'start' first");
+        guardState(data.state, "reviewing_tests", "tests_approved");
+
+        const matrix = data.plan?.reviewMatrix;
+        if (!matrix) {
+          throw new Error(
+            "No plan found — tests cannot be approved without a plan",
+          );
+        }
+
+        const coverage = allMatrixReviewersRecorded(data.reviews, matrix);
+        if (!coverage.complete) {
+          throw new Error(
+            `Cannot approve tests: missing reviews from ${
+              coverage.missing.join(", ")
+            }. Record every reviewer in the matrix before approving tests.`,
+          );
+        }
+
+        const blocking = hasBlockingFindings(data.reviews);
+        const isOverride = args.override_reason !== undefined &&
+          args.override_reason.trim().length > 0;
+
+        if (blocking.total > 0 && !isOverride) {
+          throw new Error(
+            `Cannot approve tests: ${blocking.critical} CRITICAL and ${blocking.high} HIGH findings still open. ` +
+              `Resolve them via iterate_tests and rewrite the tests, or pass ` +
+              `override_reason to force-approve as a human override.`,
+          );
+        }
+
+        const outcome: ReviewRound["outcome"] = isOverride
+          ? "human_override"
+          : "clean";
+
+        const historyEntry = snapshotReviewRound(
+          data,
+          "test_review",
+          outcome,
+          isOverride ? args.override_reason : undefined,
+          data.reviewRoundStartedAt ?? now(),
+        );
+
+        if (isOverride) {
+          context.logger.info(
+            "Tests force-approved by human override after {iterations} iteration(s) " +
+              "with {critical} CRITICAL and {high} HIGH still open: {reason}",
+            {
+              iterations: historyEntry.iteration,
+              critical: blocking.critical,
+              high: blocking.high,
+              reason: args.override_reason,
+            },
+          );
+        } else {
+          context.logger.info(
+            "Tests approved after {iterations} iteration(s) — proceed to write code",
+            { iterations: historyEntry.iteration },
+          );
+        }
+
+        const handle = await context.writeResource("state", "current", {
+          ...data,
+          state: "implementing",
+          reviews: [],
+          reviewHistory: [...data.reviewHistory, historyEntry],
+          reviewRoundStartedAt: undefined,
+          updatedAt: now(),
+        });
+
         return { dataHandles: [handle] };
       },
     },
@@ -1590,6 +1808,7 @@ export const model = {
           state: data.state,
           planVersion: data.planVersion,
           planIterationsThisVersion,
+          testReviewIteration: data.testReviewIteration,
           codeReviewIteration: data.codeReviewIteration,
           blocking,
           coverage,
@@ -1599,10 +1818,12 @@ export const model = {
         };
 
         context.logger.info(
-          "Hydrate: state={state}, planV={planV}, blocking={blocking}, coverage={coverage}",
+          "Hydrate: state={state}, planV={planV}, testIter={testIter}, codeIter={codeIter}, blocking={blocking}, coverage={coverage}",
           {
             state: summary.state,
             planV: summary.planVersion,
+            testIter: summary.testReviewIteration,
+            codeIter: summary.codeReviewIteration,
             blocking: `${blocking.critical}C+${blocking.high}H`,
             coverage: coverage.complete
               ? "complete"
