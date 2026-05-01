@@ -1,10 +1,12 @@
 manifestVersion: 1
 name: "@magistr/good-planning"
-version: "2026.04.30.1"
+version: "2026.05.01.1"
 description: |
   Good-planning model that operationalizes Felipe Bovolon's "Good Planning
   Bad Planning" four-layer architecture as queryable swamp state. Strategy
   chooses; planning commits — this model holds the commitment.
+
+  Article: https://bovolon.substack.com/p/good-planning-bad-planning
 
   A plan is not a slide deck. The article's thesis: the real plan is the
   pattern of commitments the organization has actually funded, sequenced,
