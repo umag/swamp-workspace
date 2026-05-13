@@ -1,0 +1,35 @@
+manifestVersion: 1
+name: "@magistr/telegram-send"
+version: "2026.05.13.1"
+description: |
+  Send messages, photos, and documents to Telegram chats and channels via the
+  Telegram Bot API.
+
+  Methods:
+  - `getMe` — verify the bot token and fetch bot identity (smoke test)
+  - `sendMessage` — text with optional MarkdownV2 / HTML formatting
+  - `sendPhoto` — image by URL, Telegram `file_id`, or local file path
+  - `sendDocument` — arbitrary file (PDF, ZIP, …) up to 50 MB
+
+  The `botToken` is stored as a sensitive `globalArgument` and routed to a
+  vault automatically. Set `defaultChatId` on the model instance to avoid
+  repeating the chat target on every call.
+
+  A natural complement to `@magistr/telegram-import`, which goes the other
+  direction — importing Telegram channel exports into Obsidian.
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - telegram_send.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - telegram
+  - send
+  - bot
+  - notification
+  - chat
