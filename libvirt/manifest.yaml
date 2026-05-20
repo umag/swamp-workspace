@@ -1,0 +1,47 @@
+manifestVersion: 1
+name: "@magistr/libvirt"
+version: "2026.05.20.1"
+description: |
+  Comprehensive libvirt/virsh management — VMs, networks, storage pools,
+  volumes, snapshots, and host info — over SSH OR locally via a connection URI.
+
+  Connection modes (per model instance):
+  - SSH mode: set `host` (+ optional `user`) and virsh runs on the remote
+    hypervisor over ssh. No local libvirt client needed.
+  - Local/URI mode: omit `host` and virsh runs on the swamp host against
+    `uri` (default qemu:///system; supports qemu+ssh://, qemu+tls://,
+    qemu:///session, etc.).
+
+  Models:
+  - `@magistr/libvirt/vm` — domain lifecycle, tuning, monitoring, snapshots,
+    guest agent
+  - `@magistr/libvirt/network` — virtual network lifecycle + DHCP leases
+  - `@magistr/libvirt/storage` — storage pool and volume management
+  - `@magistr/libvirt/host` — hypervisor host info, capabilities, node stats
+
+  Local/URI connection support is merged from @evrardjp's fork
+  (github.com/evrardjp/swamp-local-libvirt) — see README for credit.
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - libvirt_vm.ts
+  - libvirt_network.ts
+  - libvirt_storage.ts
+  - libvirt_host.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - libvirt
+  - virsh
+  - kvm
+  - qemu
+  - virtualization
+  - vm
+  - homelab
+  - ssh
