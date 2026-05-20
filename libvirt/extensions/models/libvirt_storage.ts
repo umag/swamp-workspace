@@ -88,7 +88,7 @@ const ActionResultSchema = z.object({
 });
 
 /**
- * `@magistr/libvirt/storage` — storage pool and volume management.
+ * `@bad-at-naming/libvirt/storage` — storage pool and volume management.
  *
  * Lists/describes pools and volumes, and creates, builds, starts, stops,
  * defines, undefines, autostarts, refreshes, resizes, clones, and deletes
@@ -98,12 +98,12 @@ const ActionResultSchema = z.object({
  * against `uri` (default qemu:///system).
  *
  * @example
- * swamp model create @magistr/libvirt/storage stor --input host=10.0.0.5
+ * swamp model create @bad-at-naming/libvirt/storage stor --input host=10.0.0.5
  * swamp model method run stor poolList
  * swamp model method run stor volList --input pool=default
  */
 export const model = {
-  type: "@magistr/libvirt/storage",
+  type: "@bad-at-naming/libvirt/storage",
   version: "2026.05.20.1",
   globalArguments: GlobalArgsSchema,
   resources: {

@@ -1,4 +1,4 @@
-# @magistr/libvirt
+# @bad-at-naming/libvirt
 
 Comprehensive [libvirt](https://libvirt.org/)/`virsh` management for
 [swamp](https://github.com/systeminit/swamp) — virtual machines, networks,
@@ -10,10 +10,10 @@ connection URI**.
 
 | Model | What it manages |
 |-------|-----------------|
-| `@magistr/libvirt/vm` | Domain lifecycle (start/stop/define/undefine/snapshot), CPU/memory tuning, disk/NIC hotplug, block/net/CPU/memory stats, guest-agent queries |
-| `@magistr/libvirt/network` | Virtual network lifecycle (list/get/define/start/stop/autostart) and DHCP lease inspection |
-| `@magistr/libvirt/storage` | Storage pool and volume management (create/build/resize/clone/delete) |
-| `@magistr/libvirt/host` | Hypervisor host info, capabilities, SMBIOS sysinfo, node CPU/memory stats, device list, static routes |
+| `@bad-at-naming/libvirt/vm` | Domain lifecycle (start/stop/define/undefine/snapshot), CPU/memory tuning, disk/NIC hotplug, block/net/CPU/memory stats, guest-agent queries |
+| `@bad-at-naming/libvirt/network` | Virtual network lifecycle (list/get/define/start/stop/autostart) and DHCP lease inspection |
+| `@bad-at-naming/libvirt/storage` | Storage pool and volume management (create/build/resize/clone/delete) |
+| `@bad-at-naming/libvirt/host` | Hypervisor host info, capabilities, SMBIOS sysinfo, node CPU/memory stats, device list, static routes |
 
 ## Connection modes
 
@@ -39,7 +39,7 @@ In both modes the optional `uri` argument selects the libvirt connection.
 Remote hypervisor over SSH:
 
 ```bash
-swamp model create @magistr/libvirt/vm vms --input host=10.0.0.5 --input user=root
+swamp model create @bad-at-naming/libvirt/vm vms --input host=10.0.0.5 --input user=root
 swamp model method run vms list
 swamp model method run vms start --input name=web
 swamp model method run vms snapshotCreate --input name=web --input snapshotName=pre-upgrade
@@ -48,11 +48,11 @@ swamp model method run vms snapshotCreate --input name=web --input snapshotName=
 Local hypervisor (or any URI) — no `host`:
 
 ```bash
-swamp model create @magistr/libvirt/host local-hv
+swamp model create @bad-at-naming/libvirt/host local-hv
 swamp model method run local-hv info
 
 # explicit URI (e.g. the user session, or a remote libvirt over its own ssh transport)
-swamp model create @magistr/libvirt/network nets --input uri=qemu+ssh://root@10.0.0.5/system
+swamp model create @bad-at-naming/libvirt/network nets --input uri=qemu+ssh://root@10.0.0.5/system
 swamp model method run nets list
 ```
 
@@ -95,11 +95,12 @@ Idempotency is detected by matching anchored substrings in `virsh` stderr (see
 
 ## Credit
 
-Local/URI connection support is merged from **@evrardjp**'s fork
+This extension derives from the original SSH-only `@magistr/libvirt`. Local/URI
+connection support is merged from **@evrardjp**'s fork
 [`swamp-local-libvirt`](https://github.com/evrardjp/swamp-local-libvirt), which
-adapted the original SSH-only `@magistr/libvirt` for non-SSH (local / custom
-URI) connections. This release unifies both transports in one extension. Thanks
-to @evrardjp for the contribution.
+adapted that SSH-only original for non-SSH (local / custom URI) connections.
+This release unifies both transports in one extension. Thanks to @evrardjp for
+the contribution.
 
 ## License
 

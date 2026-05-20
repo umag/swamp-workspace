@@ -44,7 +44,7 @@ const DeviceListSchema = z.object({
 });
 
 /**
- * `@magistr/libvirt/host` — hypervisor host information and node statistics.
+ * `@bad-at-naming/libvirt/host` — hypervisor host information and node statistics.
  *
  * Reports CPU model/topology, memory, libvirt and hypervisor versions, host
  * capabilities and SMBIOS sysinfo XML, live CPU/memory stats, and the node
@@ -53,14 +53,14 @@ const DeviceListSchema = z.object({
  *
  * @example
  * # remote (SSH) host
- * swamp model create @magistr/libvirt/host hv --input host=10.0.0.5
+ * swamp model create @bad-at-naming/libvirt/host hv --input host=10.0.0.5
  * swamp model method run hv info
  * # local host
- * swamp model create @magistr/libvirt/host local-hv
+ * swamp model create @bad-at-naming/libvirt/host local-hv
  * swamp model method run local-hv info
  */
 export const model = {
-  type: "@magistr/libvirt/host",
+  type: "@bad-at-naming/libvirt/host",
   version: "2026.05.20.1",
   globalArguments: GlobalArgsSchema,
   resources: {

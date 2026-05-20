@@ -148,7 +148,7 @@ async function reportState(
 }
 
 /**
- * `@magistr/libvirt/vm` — full VM (domain) lifecycle, tuning, monitoring,
+ * `@bad-at-naming/libvirt/vm` — full VM (domain) lifecycle, tuning, monitoring,
  * snapshots, and guest-agent operations.
  *
  * Lists/describes domains; starts, stops (graceful + forced), reboots, resets,
@@ -160,12 +160,12 @@ async function reportState(
  * otherwise runs `virsh` locally against `uri` (default qemu:///system).
  *
  * @example
- * swamp model create @magistr/libvirt/vm vms --input host=10.0.0.5
+ * swamp model create @bad-at-naming/libvirt/vm vms --input host=10.0.0.5
  * swamp model method run vms list
  * swamp model method run vms start --input name=web
  */
 export const model = {
-  type: "@magistr/libvirt/vm",
+  type: "@bad-at-naming/libvirt/vm",
   version: "2026.05.20.1",
   globalArguments: GlobalArgsSchema,
   resources: {

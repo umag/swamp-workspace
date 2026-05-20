@@ -1,5 +1,5 @@
 manifestVersion: 1
-name: "@magistr/libvirt"
+name: "@bad-at-naming/libvirt"
 version: "2026.05.20.1"
 description: |
   Comprehensive libvirt/virsh management — VMs, networks, storage pools,
@@ -13,11 +13,11 @@ description: |
     qemu:///session, etc.).
 
   Models:
-  - `@magistr/libvirt/vm` — domain lifecycle, tuning, monitoring, snapshots,
+  - `@bad-at-naming/libvirt/vm` — domain lifecycle, tuning, monitoring, snapshots,
     guest agent
-  - `@magistr/libvirt/network` — virtual network lifecycle + DHCP leases
-  - `@magistr/libvirt/storage` — storage pool and volume management
-  - `@magistr/libvirt/host` — hypervisor host info, capabilities, node stats
+  - `@bad-at-naming/libvirt/network` — virtual network lifecycle + DHCP leases
+  - `@bad-at-naming/libvirt/storage` — storage pool and volume management
+  - `@bad-at-naming/libvirt/host` — hypervisor host info, capabilities, node stats
 
   Local/URI connection support is merged from @evrardjp's fork
   (github.com/evrardjp/swamp-local-libvirt) — see README for credit.

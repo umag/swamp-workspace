@@ -71,19 +71,19 @@ const ActionResultSchema = z.object({
 });
 
 /**
- * `@magistr/libvirt/network` — virtual network lifecycle and inspection.
+ * `@bad-at-naming/libvirt/network` — virtual network lifecycle and inspection.
  *
  * Lists and describes virtual networks, starts/stops/defines/undefines them,
  * toggles autostart, and reads DHCP leases. Connects over SSH when `host` is
  * set, otherwise runs `virsh` locally against `uri` (default qemu:///system).
  *
  * @example
- * swamp model create @magistr/libvirt/network nets --input host=10.0.0.5
+ * swamp model create @bad-at-naming/libvirt/network nets --input host=10.0.0.5
  * swamp model method run nets list
  * swamp model method run nets dhcpLeases --input name=default
  */
 export const model = {
-  type: "@magistr/libvirt/network",
+  type: "@bad-at-naming/libvirt/network",
   version: "2026.05.20.1",
   globalArguments: GlobalArgsSchema,
   resources: {
