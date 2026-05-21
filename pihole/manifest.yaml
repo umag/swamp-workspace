@@ -1,0 +1,36 @@
+manifestVersion: 1
+name: "@magistr/pihole"
+version: "2026.05.21.1"
+description: |
+  Pi-hole custom DNS record management for swamp — list, add, delete, and
+  declaratively sync local DNS A-records on a Pi-hole v6 (FTL) appliance.
+
+  Model:
+  - `@magistr/pihole` — custom DNS host records with full CRUD plus `sync`
+    (add missing) and `sync-clean` (declarative converge: add missing + delete
+    extras).
+
+  Hardened for shared use: the web password is marked sensitive and never
+  persisted in cleartext; HTTPS is supported with an optional inline CA
+  certificate for self-signed appliances (no insecure verify-skip); every FTL
+  session is released after use (DELETE /api/auth) so the appliance's
+  concurrent-session limit is never exhausted; requests are bounded by a
+  timeout; and captured API error bodies are redacted before they are logged
+  or persisted.
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - pihole.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - dns
+  - pihole
+  - networking
+  - homelab
