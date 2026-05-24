@@ -1,0 +1,61 @@
+{
+  "context": "Tests whether the agent follows the skill's TDD red-green-refactor cycle, maps integration points before writing code, avoids unnecessary backward-compatibility scaffolding for unreleased code, and anchors changes in existing abstractions rather than creating parallel implementations.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Test written before implementation",
+      "description": "implementation-guide.md explicitly states that the failing test is written BEFORE any implementation code for at least one plan step (e.g. 'Write the failing test', 'Start with the test', 'Test first')",
+      "max_score": 14
+    },
+    {
+      "name": "Confirm test fails",
+      "description": "implementation-guide.md includes a step to run the test and confirm it fails before writing implementation code (e.g. 'run the test to confirm it fails', 'verify the test is red')",
+      "max_score": 10
+    },
+    {
+      "name": "Minimum code to pass",
+      "description": "implementation-guide.md describes writing the minimum code needed to make the failing test pass (e.g. 'write minimum code to pass', 'make the test green', not 'write the full implementation')",
+      "max_score": 10
+    },
+    {
+      "name": "Confirm test passes after implementation",
+      "description": "implementation-guide.md includes a step to run the test again after writing code and confirm it passes (e.g. 'run to confirm pass', 'verify green')",
+      "max_score": 8
+    },
+    {
+      "name": "Grep for callers before changing",
+      "description": "implementation-guide.md mentions grepping or searching for existing callers, usages, or integration points of the class/method being modified before making changes (e.g. 'grep for isAllowed', 'find callers of RateLimiter', 'map integration points')",
+      "max_score": 12
+    },
+    {
+      "name": "Extend existing RateLimiter, not parallel class",
+      "description": "implementation-guide.md describes extending or modifying the existing RateLimiter class (from inputs/rate-limiter.ts), NOT creating a separate parallel RateLimiter or BillingRateLimiter class",
+      "max_score": 10
+    },
+    {
+      "name": "No backward compat shims",
+      "description": "implementation-guide.md does NOT mention adding a backward compatibility layer, deprecation wrapper, dual code path, or keeping the old numeric-limit signature alongside the new RateLimitRule signature — since the code is unreleased",
+      "max_score": 12
+    },
+    {
+      "name": "Reads file before modifying",
+      "description": "implementation-guide.md mentions reading or reviewing the existing file contents before making changes for at least one step",
+      "max_score": 8
+    },
+    {
+      "name": "Follows plan step order",
+      "description": "implementation-guide.md works through the three plan steps in order (RateLimitRule VO → RateLimiter update → BillingService wiring), not in a different sequence",
+      "max_score": 8
+    },
+    {
+      "name": "Refactor mentioned",
+      "description": "implementation-guide.md mentions refactoring or cleaning up after the test passes (the 'refactor' step of red-green-refactor), even if brief",
+      "max_score": 8
+    },
+    {
+      "name": "Refactor not deferred",
+      "description": "implementation-guide.md performs the refactor in-place during this implementation and does NOT defer cleanup to a follow-up issue, a separate ticket, a TODO comment, or 'later' / 'a future PR'",
+      "max_score": 8
+    }
+  ]
+}

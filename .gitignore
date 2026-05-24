@@ -9,5 +9,15 @@
 # Generated promptfoo tests
 promptfoo.generated.yaml
 
+# Tessl project-local identity + init cruft (eval scenarios + tile.json ARE tracked)
+**/tessl.json
+**/.tessl/
+# MCP/agent configs auto-written by `tessl init` (regenerated on demand)
+**/.mcp.json
+**/.cursor/
+**/.gemini/
+**/.codex/
+**/.vscode/
+
 # OS
 .DS_Store

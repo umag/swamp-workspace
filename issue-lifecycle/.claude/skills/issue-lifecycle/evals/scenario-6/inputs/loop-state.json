@@ -1,0 +1,78 @@
+{
+  "issueName": "notification-dispatch-refactor",
+  "hydrate": {
+    "state": "reviewing",
+    "planVersion": 2,
+    "planIterationsThisVersion": 3,
+    "codeReviewIteration": 0,
+    "blocking": {
+      "critical": 0,
+      "high": 2,
+      "total": 2
+    },
+    "coverage": {
+      "complete": true,
+      "missing": []
+    },
+    "historyLength": 3,
+    "signature": "f7e3a1b2c9d04e5f",
+    "snapshotAt": "2026-05-24T09:42:11Z"
+  },
+  "previousRoundSignature": "f7e3a1b2c9d04e5f",
+  "currentOpenFindings": [
+    {
+      "reviewer": "review-adversarial",
+      "severity": "HIGH",
+      "category": "architecture",
+      "description": "The plan routes event dispatch through a new EventBus singleton that bypasses the existing DomainEventPublisher. All domain events must flow through DomainEventPublisher to maintain the audit trail.",
+      "fix": "Remove the EventBus; extend DomainEventPublisher with the missing multi-subscriber capability instead.",
+      "status": "open"
+    },
+    {
+      "reviewer": "review-code",
+      "severity": "HIGH",
+      "category": "correctness",
+      "description": "Step 3 references NotificationService.sendBatch() but that method does not exist — the actual method is sendAsync(). The plan confabulated a non-existent API.",
+      "fix": "Update step 3 to call sendAsync() in a loop and add the missing await.",
+      "status": "open"
+    }
+  ],
+  "reviewHistory": [
+    {
+      "planVersion": 1,
+      "iteration": 1,
+      "phase": "plan_review",
+      "critical": 0,
+      "high": 3,
+      "medium": 1,
+      "low": 0,
+      "reviewers": ["review-code", "review-adversarial"],
+      "outcome": "rejected_auto",
+      "signature": "a1b2c3d4e5f60718"
+    },
+    {
+      "planVersion": 2,
+      "iteration": 1,
+      "phase": "plan_review",
+      "critical": 0,
+      "high": 2,
+      "medium": 1,
+      "low": 1,
+      "reviewers": ["review-code", "review-adversarial"],
+      "outcome": "rejected_auto",
+      "signature": "f7e3a1b2c9d04e5f"
+    },
+    {
+      "planVersion": 2,
+      "iteration": 2,
+      "phase": "plan_review",
+      "critical": 0,
+      "high": 2,
+      "medium": 1,
+      "low": 1,
+      "reviewers": ["review-code", "review-adversarial"],
+      "outcome": "rejected_auto",
+      "signature": "f7e3a1b2c9d04e5f"
+    }
+  ]
+}

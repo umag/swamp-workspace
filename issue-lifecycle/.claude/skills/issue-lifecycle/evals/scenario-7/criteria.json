@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent correctly resumes a lifecycle in code_reviewing state by first calling hydrate (not dumping full state), then checking out the stored branch, and using the Phase 5 code-review pattern including the code-findings- prefix for findings YAML files, parallel reviewer fan-out, and --repo-dir because it is in a worktree.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "hydrate called first",
+      "description": "resume.sh starts with 'swamp model method run webhook-retry-backoff hydrate' (or equivalent issue name) as one of its first commands — before any other state-dependent commands",
+      "max_score": 14
+    },
+    {
+      "name": "swamp data get hydrate called",
+      "description": "resume.sh includes 'swamp data get webhook-retry-backoff hydrate --json' (or equivalent) to read the compact hydrate summary",
+      "max_score": 10
+    },
+    {
+      "name": "git checkout branch command",
+      "description": "resume.sh includes a 'git checkout feat/webhook-retry-backoff' command (or uses the branch name from the state) before any code reading or modification commands",
+      "max_score": 14
+    },
+    {
+      "name": "--repo-dir flag on swamp commands",
+      "description": "The swamp commands in resume.sh include '--repo-dir' pointing to the main repo directory (e.g. /workspace/webhooks-service), because the script runs from a worktree",
+      "max_score": 12
+    },
+    {
+      "name": "code-findings- prefix in findings filename",
+      "description": "resume.sh references a code-review findings YAML file using the 'code-findings-' prefix (e.g. /tmp/code-findings-issue-webhook-retry-backoff.yaml), NOT 'findings-' (which is Phase 3)",
+      "max_score": 12
+    },
+    {
+      "name": "Parallel reviewer fan-out",
+      "description": "resume.sh includes reviewer invocations (review-code and review-adversarial) shown as parallel/simultaneous calls, OR a comment stating they are run in parallel",
+      "max_score": 8
+    },
+    {
+      "name": "hydrate called again after review round",
+      "description": "resume.sh includes a second hydrate call after the record_review calls — to evaluate loop control flow after the review round completes",
+      "max_score": 10
+    },
+    {
+      "name": "No plan/triage/approve_plan calls",
+      "description": "resume.sh does NOT include 'swamp model method run ... plan', 'triage', or 'approve_plan' — those phases are already complete for this issue",
+      "max_score": 8
+    },
+    {
+      "name": "review_code entry not re-called unnecessarily",
+      "description": "resume.sh does not call review_code as its entry command if the state is already code_reviewing with active reviews pending — OR correctly explains why re-entering review_code is appropriate",
+      "max_score": 6
+    },
+    {
+      "name": "record_review calls included",
+      "description": "resume.sh includes 'swamp model method run ... record_review' calls to record findings from the code reviewers",
+      "max_score": 6
+    }
+  ]
+}

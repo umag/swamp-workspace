@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent correctly identifies a loop-detection safeguard scenario (two consecutive rounds with the same finding signature) and produces a handover message with the correct format and options. The loop state shows the signature matches across rounds, planIterationsThisVersion is 3, and blocking.total is 2. The agent must NOT attempt further auto-iteration or call any acceptance method.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Loop detected identified",
+      "description": "handover.md identifies this as a loop-detected situation — mentions that two consecutive rounds produced the same findings or the same signature, NOT that an iteration cap was reached",
+      "max_score": 15
+    },
+    {
+      "name": "Repeated findings listed",
+      "description": "handover.md lists both repeated HIGH findings from the state: the EventBus/DomainEventPublisher architecture finding (review-adversarial) and the NotificationService.sendBatch() confabulation finding (review-code)",
+      "max_score": 12
+    },
+    {
+      "name": "No approve_plan call",
+      "description": "handover.md does NOT include or suggest calling approve_plan, and does NOT indicate the plan should be approved in the current state",
+      "max_score": 12
+    },
+    {
+      "name": "No further auto-iteration",
+      "description": "handover.md does NOT include or suggest another autonomous reject_plan + plan iteration — it presents the situation for human judgment instead",
+      "max_score": 10
+    },
+    {
+      "name": "Asks for direction not approval",
+      "description": "handover.md asks the human for direction or a decision on how to proceed (e.g. 'What's the right call?', 'How would you like to proceed?') — NOT asking for approval of the current plan",
+      "max_score": 10
+    },
+    {
+      "name": "Pivot option included",
+      "description": "handover.md offers pivoting the approach (changing strategy, trying a different direction) as one of the options",
+      "max_score": 10
+    },
+    {
+      "name": "Wontfix option included",
+      "description": "handover.md offers marking the repeated findings as wontfix (with justification) as one of the options",
+      "max_score": 8
+    },
+    {
+      "name": "Accept-incomplete option included",
+      "description": "handover.md offers accepting the incomplete result (proceeding despite unresolved findings) as one of the options — with a note that findings must be explicitly marked as accepted",
+      "max_score": 8
+    },
+    {
+      "name": "Loop stuck explanation",
+      "description": "handover.md explains WHY the loop is stuck — that the same findings keep appearing despite revisions, indicating the current approach cannot resolve them",
+      "max_score": 8
+    },
+    {
+      "name": "Review history referenced",
+      "description": "handover.md includes or references the iteration history (e.g. mentions that 3 iterations have been run, or shows that the findings appeared in consecutive rounds)",
+      "max_score": 7
+    }
+  ]
+}

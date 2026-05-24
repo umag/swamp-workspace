@@ -1,0 +1,61 @@
+{
+  "context": "Tests whether the agent correctly handles a low-confidence triage situation by stopping before planning, populating clarifying questions with specific items, and using the correct triage YAML fields and issue-scoped filenames. The scenario has no reproduction steps, no available reporter, and only vague symptoms — which should trigger the low-confidence escape hatch.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "confidence=low in triage YAML",
+      "description": "triage-input.yaml contains a confidence field set to 'low' (not 'medium' or 'high')",
+      "max_score": 15
+    },
+    {
+      "name": "clarifyingQuestions populated",
+      "description": "triage-input.yaml contains a clarifyingQuestions field with at least 2 specific questions (not an empty array)",
+      "max_score": 12
+    },
+    {
+      "name": "No plan call in triage-commands.sh",
+      "description": "triage-commands.sh does NOT contain a 'swamp model method run ... plan' call — the script stops after triage without proceeding to planning",
+      "max_score": 15
+    },
+    {
+      "name": "Issue-scoped triage YAML filename",
+      "description": "triage-commands.sh references the triage input YAML using an issue-scoped filename (e.g. /tmp/triage-issue-<name>.yaml), NOT a generic name like /tmp/triage.yaml or /tmp/input.yaml",
+      "max_score": 10
+    },
+    {
+      "name": "model create called",
+      "description": "triage-commands.sh includes a 'swamp model create @magistr/issue-lifecycle <name>' call as the first command",
+      "max_score": 8
+    },
+    {
+      "name": "start called with title and description",
+      "description": "triage-commands.sh includes a 'swamp model method run <name> start' call with --input title and --input description arguments",
+      "max_score": 4
+    },
+    {
+      "name": "triage method called",
+      "description": "triage-commands.sh includes a 'swamp model method run <name> triage' call referencing the triage input YAML",
+      "max_score": 4
+    },
+    {
+      "name": "category set correctly",
+      "description": "triage-input.yaml has a category field set to 'bug' (the described behavior — spinner loading forever — is a broken behavior, not a feature request)",
+      "max_score": 8
+    },
+    {
+      "name": "affectedAreas populated",
+      "description": "triage-input.yaml contains an affectedAreas field with at least one entry (e.g. the dashboard or reports area)",
+      "max_score": 8
+    },
+    {
+      "name": "priority set",
+      "description": "triage-input.yaml has a priority field set to one of: critical, high, medium, or low",
+      "max_score": 8
+    },
+    {
+      "name": "Issue name is kebab-case",
+      "description": "The issue name used in triage-commands.sh is in short-kebab-case format based on the issue title (e.g. dashboard-reports-load, reports-spinner-hang) — NOT a generic name like 'issue-1' or a space-separated string",
+      "max_score": 8
+    }
+  ]
+}

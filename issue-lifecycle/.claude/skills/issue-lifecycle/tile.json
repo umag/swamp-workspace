@@ -1,0 +1,11 @@
+{
+  "name": "aopab/issue-lifecycle",
+  "version": "0.1.0",
+  "private": true,
+  "summary": "Drive an issue from triage through completion using the @magistr/issue-lifecycle model. Fans out review skills in parallel, iterates autonomously until zero CRITICAL and zero HIGH findings remain, then waits for explicit human approval. Post-implementation harvests new UAT scenarios and knowledge base entries. Do NOT use for filing GitHub bugs/features (use `swamp-issue`) or ad-hoc review of code outside a lifecycle (use `tessl__review-*` directly). Triggers on \"triage issue\", \"new issue\", \"issue plan\", \"lifecycle status\", \"resume issue\", \"approve plan\", \"review plan\", \"iterate plan\", \"issue lifecycle\", \"start issue\", \"harvest issue\", \"knowledge harvest\".\n",
+  "skills": {
+    "issue-lifecycle": {
+      "path": "SKILL.md"
+    }
+  }
+}

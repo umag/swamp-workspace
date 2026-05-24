@@ -1,0 +1,149 @@
+{
+  "issueName": "payment-idempotency-fix",
+  "state": "resolved",
+  "title": "Payment processor sends duplicate charges on retry",
+  "description": "When a payment request times out and the client retries, the payment processor sometimes charges the customer twice. This is a data-integrity bug affecting roughly 0.3% of transactions.",
+  "priority": "critical",
+  "category": "bug",
+  "isRegression": true,
+  "triageDetail": {
+    "confidence": "high",
+    "reasoning": "Confirmed by payment processor webhook logs — two charge events recorded 8 seconds apart for same order ID",
+    "isRegression": true,
+    "affectedAreas": [
+      "src/payments/PaymentService.ts",
+      "src/payments/PaymentGatewayClient.ts",
+      "src/domain/payments/PaymentIntent.ts",
+      "tests/payments/PaymentService.test.ts"
+    ],
+    "reproduced": {
+      "status": "reproduced",
+      "notes": "Steps:\n1. Submit payment request with network timeout set to 100ms\n2. Client retries same payment within 2 seconds\nObserved: Two charges appear in Stripe dashboard for same order\nExpected: Only one charge; second attempt should be recognised as duplicate"
+    }
+  },
+  "priorArt": {
+    "uatScenarios": [
+      {
+        "path": "tests/uat/payment-basic-flow.feature",
+        "summary": "Happy path: successful payment submission and confirmation",
+        "reusable": true
+      },
+      {
+        "path": "tests/uat/payment-declined.feature",
+        "summary": "Payment declined: card rejected by gateway",
+        "reusable": false
+      }
+    ],
+    "kbEntries": [
+      {
+        "path": "docs/ADR/0009-payment-gateway-integration.md",
+        "summary": "ADR for selecting Stripe as the payment gateway"
+      }
+    ]
+  },
+  "plan": {
+    "planVersion": 2,
+    "summary": "## Summary\nIntroduce idempotency keys on all outbound payment requests so the Stripe API deduplicates retries server-side. Add an idempotency key derived from the order ID and attempt number to every PaymentGatewayClient request.\n\n## Documentation impact\ndocs/runbook/payment-incidents.md — add section on idempotency key troubleshooting\n\n## UAT coverage\nNew scenarios needed — see Phase 6\n\n## PR\nhttps://github.com/example/myapp/pull/887",
+    "dddAnalysis": "PaymentIntent aggregate root. Idempotency key is a Value Object (IdempotencyKey) derived from orderId + attemptNumber. PaymentGatewayClient is an infrastructure port — the key is generated in the domain and passed through the application service.",
+    "testStrategy": "Unit tests for IdempotencyKey VO (collision resistance, format). Integration test for PaymentService that stubs Stripe to verify key is included on every call.",
+    "steps": [
+      {
+        "order": 1,
+        "description": "Add IdempotencyKey value object to domain/payments/",
+        "files": ["src/domain/payments/IdempotencyKey.ts", "src/domain/payments/__tests__/IdempotencyKey.test.ts"],
+        "risks": ""
+      },
+      {
+        "order": 2,
+        "description": "Update PaymentIntent to generate and expose IdempotencyKey",
+        "files": ["src/domain/payments/PaymentIntent.ts", "tests/payments/PaymentIntent.test.ts"],
+        "risks": "PaymentIntent is the aggregate root — must preserve existing invariants"
+      },
+      {
+        "order": 3,
+        "description": "Thread IdempotencyKey through PaymentService and PaymentGatewayClient",
+        "files": ["src/payments/PaymentService.ts", "src/payments/PaymentGatewayClient.ts", "tests/payments/PaymentService.test.ts"],
+        "risks": "Existing callers of PaymentService pass no idempotency key — need to verify no backwards-compat breakage"
+      }
+    ],
+    "reviewMatrix": {
+      "code": true,
+      "adversarial": true,
+      "security": true,
+      "ux": false,
+      "skill": false
+    },
+    "potentialChallenges": [
+      "Idempotency key uniqueness across retries vs across different orders",
+      "Clock skew if key includes a timestamp component",
+      "Stripe idempotency key TTL (24 hours) — keys older than that won't deduplicate"
+    ]
+  },
+  "branch": "fix/payment-idempotency-fix",
+  "reviewHistory": [
+    {
+      "phase": "plan_review",
+      "planVersion": 1,
+      "iteration": 1,
+      "outcome": "rejected_auto",
+      "findings": [
+        {
+          "reviewer": "review-adversarial",
+          "severity": "HIGH",
+          "category": "risk",
+          "description": "Plan derives idempotency key from orderId only — if customer retries with a different payment method for the same order, the key collision will correctly block the retry at Stripe, but the customer will see a confusing error. The key should include attempt context to distinguish intentional retries from duplicates.",
+          "status": "resolved"
+        }
+      ]
+    },
+    {
+      "phase": "plan_review",
+      "planVersion": 2,
+      "iteration": 1,
+      "outcome": "clean",
+      "findings": [
+        {
+          "reviewer": "review-code",
+          "severity": "MEDIUM",
+          "category": "correctness",
+          "description": "IdempotencyKey.ts should validate that attemptNumber is a positive integer, not just any number.",
+          "status": "resolved"
+        },
+        {
+          "reviewer": "review-security",
+          "severity": "LOW",
+          "category": "risk",
+          "description": "Consider whether idempotency keys should be logged — they contain order IDs which may be considered PII in some jurisdictions.",
+          "status": "accepted"
+        }
+      ]
+    },
+    {
+      "phase": "code_review",
+      "iteration": 1,
+      "outcome": "clean",
+      "findings": [
+        {
+          "reviewer": "review-adversarial",
+          "severity": "HIGH",
+          "category": "testing",
+          "description": "No test covers the 24-hour Stripe TTL edge case — if a key expires and the customer retries, the duplicate protection breaks silently.",
+          "status": "resolved"
+        },
+        {
+          "reviewer": "review-code",
+          "severity": "MEDIUM",
+          "category": "documentation",
+          "description": "PaymentGatewayClient now silently drops idempotency keys longer than 255 chars — this truncation should be documented or at least logged as a warning.",
+          "status": "resolved"
+        }
+      ]
+    }
+  ],
+  "resolutions": {
+    "MED: IdempotencyKey validation": "Fixed — added positive-integer guard in IdempotencyKey constructor",
+    "LOW: PII logging concern": "Accepted — idempotency keys do not appear in application logs per current log configuration",
+    "HIGH: Stripe TTL edge case": "Fixed — added TTL-aware test using MockClock; documented 24h limit in PaymentGatewayClient JSDoc",
+    "MED: truncation undocumented": "Fixed — added console.warn when key is truncated"
+  }
+}

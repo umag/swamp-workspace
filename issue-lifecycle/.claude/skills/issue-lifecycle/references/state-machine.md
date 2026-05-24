@@ -1,114 +1,205 @@
-# Issue Lifecycle State Machine
+# State machine + methods reference
 
-## State Diagram
+Complete state transition diagram and method table for
+`@magistr/issue-lifecycle` v2026.04.09.1.
+
+## State diagram
 
 ```
-                    ┌─────────┐
-                    │  filed  │
-                    └────┬────┘
-                         │ triage()
-                    ┌────▼────┐
-                    │ triaged │
-                    └────┬────┘
-                         │ plan() / record_prior_art()
-                    ┌────▼────┐
-              ┌─────│ planned │◄──────────────────┐
-              │     └────┬────┘                    │
-              │          │ review_plan()            │
-              │     ┌────▼──────┐                  │
-              │     │ reviewing │──────────────────┤
-              │     └────┬──────┘   reject_plan()  │
-              │          │ approve_plan()           │
-              │     ┌────▼────────┐                 │
-              │     │  approved   │                 │
-              │     └────┬────────┘                 │
-              │          │ implement()              │
-              │     ┌────▼─────────────┐            │
-              │     │ writing_tests    │◄────────┐  │
-              │     └────┬─────────────┘         │  │
-              │          │ review_tests()         │  │
-              │     ┌────▼─────────────┐         │  │
-              │     │ reviewing_tests  │─────────┤  │
-              │     └────┬─────────────┘         │  │
-              │          │ tests_approved()       │  │ iterate_tests()
-              │          │   (autonomous gate)   │  │
-              │     ┌────▼──────────┐            │  │
-              │     │ implementing  │◄──────────┐│  │
-              │     └────┬──────────┘           ││  │
-              │          │ review_code()         ││  │
-              │     ┌────▼─────────────┐         ││  │
-              │     │ code_reviewing   │─────────┤│  │
-              │     └────┬─────────────┘ iterate ││  │
-              │          │                       ││  │
-              │          │ resolve_findings()     ││  │
-              │     ┌────▼────────┐               ││  │
-              │     │  resolved   │───────────────┘│  │
-              │     └────┬────────┘  iterate()      │  │
-              │          │                              │
-              │          ├─► harvest() ──┐              │
-              │          │               │              │
-              │          │          ┌────▼────────┐     │
-              │          │          │  harvested  │     │
-              │          │          └────┬────────┘     │
-              │          │               │              │
-              │          │ complete()    │ complete()   │
-              │     ┌────▼───────────────▼──┐           │
-              │     │        complete       │           │
-              │     └───────────────────────┘           │
-              │                                          │
-              │ close() from any state                   │
-              │     ┌──────────┐                         │
-              └────►│  closed  │◄────────────────────────┘
-                    └──────────┘
-
-                  hydrate() — any state, no transition
-                              (writes compact summary resource)
+                          ┌─────────┐
+                          │  filed  │
+                          └────┬────┘
+                               │ triage()
+                          ┌────▼────┐
+                          │ triaged │
+                          └────┬────┘
+                               │ record_prior_art() (optional, stays in triaged)
+                               │ plan() (v1)
+                          ┌────▼────┐
+                ┌────────▶│ planned │◀───── reject_plan() (source=auto|human)
+                │         └────┬────┘             ▲
+                │              │ review_plan()    │
+                │         ┌────▼──────┐           │
+                │         │ reviewing │───────────┘
+                │         └────┬──────┘
+                │              │ approve_plan() (human-gated)
+                │         ┌────▼────────┐
+                │         │  approved   │
+                │         └────┬────────┘
+                │              │ implement()
+                │         ┌────▼──────────┐
+                │         │ implementing  │◀───── iterate() (source=auto|human)
+                │         └────┬──────────┘             ▲
+                │              │ review_code()          │
+                │         ┌────▼─────────────┐          │
+                │         │ code_reviewing   │──────────┘
+                │         └────┬─────────────┘
+                │              │ resolve_findings() (human-gated)
+                │         ┌────▼────────┐
+                │         │  resolved   │───── complete() ────┐
+                │         └────┬────────┘                      │
+                │              │ harvest()                     │
+                │         ┌────▼────────┐                      │
+                │         │  harvested  │─── complete() ───────┤
+                │         └─────────────┘                      │
+                │                                              │
+                │ close() (from any state)                     │
+                │         ┌──────────┐                    ┌────▼───────┐
+                └────────▶│  closed  │                    │  complete  │
+                          └──────────┘                    └────────────┘
 ```
 
-## Transition Guards
+Key differences from the previous version:
 
-| Method             | Guard                                                                                                                         | Notes                                                                                                                                                                                                                                                                                                                   |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `start`            | no prior state                                                                                                                | Creates initial `filed` state                                                                                                                                                                                                                                                                                           |
-| `triage`           | state == `filed`                                                                                                              | Accepts optional `triageDetail` (confidence, reasoning, isRegression, clarifyingQuestions, reproduced)                                                                                                                                                                                                                  |
-| `record_prior_art` | state in [`triaged`, `planned`]                                                                                               | No transition — records UAT/KB refs looked up before planning                                                                                                                                                                                                                                                           |
-| `plan`             | state in [`triaged`, `planned`]                                                                                               | Bumps `planVersion` on re-entry; resets `reviews` but preserves `reviewHistory`                                                                                                                                                                                                                                         |
-| `review_plan`      | state == `planned`                                                                                                            | Sets `reviewRoundStartedAt` for the round                                                                                                                                                                                                                                                                               |
-| `approve_plan`     | state == `reviewing` AND **every** matrix reviewer recorded AND zero open CRITICAL AND zero open HIGH                         | Snapshots round to `reviewHistory` with `outcome: "clean"`                                                                                                                                                                                                                                                              |
-| `reject_plan`      | state == `reviewing`                                                                                                          | `source: "auto"` → `outcome: "rejected_auto"`; `source: "human"` → `"rejected_human"`. Returns to `planned`                                                                                                                                                                                                             |
-| `implement`        | state == `approved`                                                                                                           | Records branch name; transitions to `writing_tests` (TDD sub-loop entry)                                                                                                                                                                                                                                                |
-| `review_tests`     | state == `writing_tests`                                                                                                      | Resets `reviews` and stamps `reviewRoundStartedAt` for the test-review round                                                                                                                                                                                                                                            |
-| `record_review`    | state in [`reviewing`, `reviewing_tests`, `code_reviewing`]                                                                   | Accumulates into the current round's `reviews[]`                                                                                                                                                                                                                                                                        |
-| `iterate_tests`    | state == `reviewing_tests`                                                                                                    | Snapshots round as `test_review`/`rejected_*`; bumps `testReviewIteration`; returns to `writing_tests`                                                                                                                                                                                                                  |
-| `tests_approved`   | state == `reviewing_tests` AND every matrix reviewer recorded AND (zero CRITICAL AND zero HIGH OR `override_reason` provided) | Default: snapshots `test_review`/`clean`. With `override_reason`: bypasses the blocking-findings gate (matrix coverage still required), snapshots `test_review`/`human_override` with the reason in `rejectReason`. Use override only after the human has explicitly authorised it once the autonomous loop hit the cap |
-| `review_code`      | state == `implementing`                                                                                                       | Resets `reviews` for the new code-review round                                                                                                                                                                                                                                                                          |
-| `resolve_findings` | state == `code_reviewing`                                                                                                     | Snapshots round to `reviewHistory` with `outcome: "clean"`                                                                                                                                                                                                                                                              |
-| `iterate`          | state in [`resolved`, `code_reviewing`]                                                                                       | From `code_reviewing`, snapshots the round as `rejected_auto`/`rejected_human`. From `resolved`, does NOT double-snapshot. Bumps `codeReviewIteration`                                                                                                                                                                  |
-| `harvest`          | state == `resolved`                                                                                                           | Optional — records UAT + KB improvement proposals                                                                                                                                                                                                                                                                       |
-| `complete`         | state in [`resolved`, `harvested`]                                                                                            | Accepts both exit paths                                                                                                                                                                                                                                                                                                 |
-| `close`            | any state                                                                                                                     | Records `closedReason`                                                                                                                                                                                                                                                                                                  |
-| `hydrate`          | any state                                                                                                                     | **No transition** — writes a compact summary to the `summary` resource for the autonomous loop                                                                                                                                                                                                                          |
+- **`harvested` state** between `resolved` and `complete` — optional, set
+  by `harvest()`. `complete()` accepts both `resolved` and `harvested`.
+- **`iterate()` accepts both `resolved` and `code_reviewing`** as source,
+  so autonomous code-review loops can bounce directly without double-
+  snapshotting.
+- **`reject_plan()` and `iterate()` take a `source` arg** (`auto` | `human`)
+  that tags the `reviewHistory` outcome as `rejected_auto` or
+  `rejected_human`, so audits can distinguish autonomous rejections from
+  human rejections.
 
-## State Fields
+## Autonomous loop visualization
 
-| Field                  | Set By                                                                                               | Description                                                                                                                                                                                |
-| ---------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `state`                | Every method                                                                                         | Current lifecycle state (one of `StateEnum`)                                                                                                                                               |
-| `title`, `description` | `start`                                                                                              | Issue basics                                                                                                                                                                               |
-| `labels`               | `start`                                                                                              | Optional issue labels                                                                                                                                                                      |
-| `priority`, `category` | `triage`                                                                                             | Triage classification                                                                                                                                                                      |
-| `affectedAreas`        | `triage`                                                                                             | Which parts of the codebase are affected                                                                                                                                                   |
-| `triageDetail`         | `triage` (optional)                                                                                  | Confidence, reasoning, isRegression, clarifyingQuestions, reproduced status                                                                                                                |
-| `priorArt`             | `record_prior_art`                                                                                   | Existing UAT scenarios and KB entries searched before planning                                                                                                                             |
-| `plan`                 | `plan`                                                                                               | Implementation plan with DDD + TDD + reviewMatrix + potentialChallenges + planVersion                                                                                                      |
-| `planVersion`          | `plan`                                                                                               | Monotonic plan counter — bumped on every `plan` call                                                                                                                                       |
-| `reviews`              | `record_review`                                                                                      | Array of review results **for the current round** — reset on `plan`/`review_plan`/`review_tests`/`review_code`/`reject_plan`/`iterate_tests`/`tests_approved`/`iterate`/`resolve_findings` |
-| `reviewHistory`        | `approve_plan` / `reject_plan` / `tests_approved` / `iterate_tests` / `resolve_findings` / `iterate` | Append-only audit — one `ReviewRound` per completed round (`plan_review`, `test_review`, or `code_review`)                                                                                 |
-| `testReviewIteration`  | `iterate_tests`                                                                                      | Monotonic test-review counter — bumped on every `iterate_tests` call                                                                                                                       |
-| `codeReviewIteration`  | `iterate`                                                                                            | Monotonic code-review counter — bumped on every `iterate` call                                                                                                                             |
-| `reviewRoundStartedAt` | `review_plan` / `review_tests` / `review_code`                                                       | Cleared on round completion; used for loop timing                                                                                                                                          |
-| `branch`               | `implement`                                                                                          | Git branch name                                                                                                                                                                            |
-| `resolutions`          | `resolve_findings`                                                                                   | Map of finding description → resolution action (cumulative across iterations)                                                                                                              |
-| `harvest`              | `harvest`                                                                                            | UAT + KB improvement proposals                                                                                                                                                             |
-| `completedAt`          | `complete`                                                                                           | Completion timestamp                                                                                                                                                                       |
-| `closedReason`         | `close`                                                                                              | Why the issue was abandoned                                                                                                                                                                |
+The skill drives autonomous iteration between `planned ↔ reviewing` (plan
+review) and `implementing ↔ code_reviewing` (code review) until zero
+CRITICAL and zero HIGH findings remain:
+
+```
+planned ──[review_plan]──▶ reviewing
+                               │
+         ┌── autonomous ───────┤
+         │                     │
+         ▼                     │
+    [fan out reviewers]        │
+         │                     │
+         ▼                     │
+    [hydrate]                  │
+         │                     │
+         ▼                     │
+   CRIT+HIGH > 0?              │
+         │                     │
+    yes  ├── reject_plan ──────┤
+         │     (source=auto)   │ re-plan (bumps planVersion)
+         │                     │ → review_plan
+         │                     │
+    no   └── present to human  │
+              (wait for trigger)│
+              ▼                 │
+         approve_plan ──────────┘ (sacred human gate)
+              │
+              ▼
+          approved
+```
+
+Safeguards (skill-enforced, not model-enforced):
+
+- **MAX_PLAN_ITERATIONS** (default 5) — cap on autonomous plan-review rounds
+  per plan version
+- **MAX_CODE_ITERATIONS** (default 5) — cap on autonomous code-review rounds
+- **Loop detection** — two identical finding signatures in a row triggers
+  handover
+- **Pivot required** — findings tagged `pivot-required` or prefixed
+  `FUNDAMENTAL:` trigger handover
+
+See [autonomous-loop.md](autonomous-loop.md) for the full loop logic.
+
+## Transition guards
+
+| Method | Guard | Error if violated |
+|--------|-------|-------------------|
+| `start` | none (writes from empty) | — |
+| `triage` | state == `filed` | "Cannot call 'triage' in state 'X'" |
+| `record_prior_art` | state in [`triaged`, `planned`] | "Cannot call 'record_prior_art' in state 'X'" |
+| `plan` | state in [`triaged`, `planned`] | "Cannot call 'plan' in state 'X'" |
+| `review_plan` | state == `planned` | "Cannot call 'review_plan' in state 'X'" |
+| `record_review` | state in [`reviewing`, `code_reviewing`] | "Cannot call 'record_review' in state 'X'" |
+| `approve_plan` | state == `reviewing` **AND** every active matrix reviewer has recorded a result **AND** 0 open CRITICAL + 0 open HIGH | "missing reviews from ..." or "N CRITICAL and M HIGH findings still open" |
+| `reject_plan` | state == `reviewing` | "Cannot call 'reject_plan' in state 'X'" |
+| `implement` | state == `approved` | "Cannot call 'implement' in state 'X'" |
+| `review_code` | state == `implementing` | "Cannot call 'review_code' in state 'X'" |
+| `resolve_findings` | state == `code_reviewing` | "Cannot call 'resolve_findings' in state 'X'" |
+| `iterate` | state in [`resolved`, `code_reviewing`] | "Cannot call 'iterate' in state 'X'" |
+| `harvest` | state == `resolved` | "Cannot call 'harvest' in state 'X'" |
+| `complete` | state in [`resolved`, `harvested`] | "Cannot call 'complete' in state 'X'" |
+| `close` | (any state) | never errors |
+| `hydrate` | (any state) | never errors; read-only (writes a `hydrate` named resource, not `current`) |
+
+**Note on `approve_plan`:** the stricter gate is one of the biggest model
+changes in v2026.04.09.1. The previous version blocked only on CRITICAL.
+Now it blocks on CRITICAL or HIGH **and** requires every matrix reviewer to
+have recorded a result for the current round. This is what lets the skill's
+autonomous loop trust the model to refuse premature approval even if the
+skill itself has a bug.
+
+## Method reference
+
+| Method | Args | Output | Description |
+|--------|------|--------|-------------|
+| `start` | `title`, `description`, `labels?` | `state` resource (name: `current`) | File a new issue |
+| `triage` | `priority`, `category`, `affectedAreas`, `confidence?`, `reasoning?`, `isRegression?`, `clarifyingQuestions?`, `reproduced?` | updates `current` | Triage with optional classification detail |
+| `record_prior_art` | `uatScenarios`, `kbEntries` | updates `current` | Record pre-planning knowledge lookup results |
+| `plan` | `summary`, `steps`, `dddAnalysis`, `testStrategy`, `reviewMatrix?`, `potentialChallenges?` | updates `current`, bumps `planVersion` | Create or revise implementation plan |
+| `review_plan` | — | updates `current`, sets `reviewRoundStartedAt` | Enter plan review phase |
+| `record_review` | `reviewer`, `verdict`, `findings?` | updates `current`, appends to `reviews` | Record one reviewer's findings |
+| `approve_plan` | — | updates `current`, snapshots to `reviewHistory` | Human-gated plan approval |
+| `reject_plan` | `reason`, `source?` | updates `current`, snapshots to `reviewHistory`, resets `reviews` | Reject and return to `planned` |
+| `implement` | `branch`, `description?` | updates `current` | Signal implementation start |
+| `review_code` | — | updates `current`, sets `reviewRoundStartedAt` | Enter code review phase |
+| `resolve_findings` | `resolutions` | updates `current`, snapshots to `reviewHistory` | Merge resolutions, transition to `resolved` |
+| `iterate` | `reason`, `source?` | updates `current`, snapshots, bumps `codeReviewIteration` | Return to `implementing` for another code-review round |
+| `harvest` | `uatProposals`, `kbProposals` | updates `current`, writes `harvest` field | Record UAT/KB harvest proposals |
+| `complete` | `summary?` | updates `current`, sets `completedAt` | Mark issue complete |
+| `close` | `reason` | updates `current`, sets `closedReason` | Abandon from any state |
+| `hydrate` | — | writes **separate** `hydrate` resource (does NOT mutate `current`) | Compact decision summary for autonomous loop |
+
+## State fields
+
+| Field | Set by | Description |
+|-------|--------|-------------|
+| `state` | every method | Current lifecycle state |
+| `title`, `description`, `labels` | `start` | Issue basics |
+| `priority`, `category`, `affectedAreas` | `triage` | Triage classification |
+| `triageDetail` | `triage` | Optional classification detail: `confidence`, `reasoning`, `isRegression`, `clarifyingQuestions`, `reproduced` |
+| `priorArt` | `record_prior_art` | Pre-planning knowledge lookup results |
+| `plan` | `plan` | Plan object with `summary`, `steps`, `dddAnalysis`, `testStrategy`, `reviewMatrix`, `potentialChallenges`, `planVersion` |
+| `planVersion` | `plan` | Current plan version number (bumped on every `plan` call) |
+| `reviews` | `record_review` | **Current round's** reviewer results (reset at every `review_plan`, `review_code`, `plan`, `reject_plan`) |
+| `reviewHistory` | `approve_plan`, `reject_plan`, `resolve_findings`, `iterate` | **Append-only** audit of every completed review round |
+| `codeReviewIteration` | `implement` (init), `iterate` (bump) | Code-review iteration counter |
+| `branch` | `implement` | Git branch name |
+| `resolutions` | `resolve_findings` | Cumulative map of finding → resolution |
+| `harvest` | `harvest` | UAT + KB harvest proposals |
+| `completedAt` | `complete` | Completion timestamp |
+| `closedReason` | `close` | Why the issue was abandoned |
+| `reviewRoundStartedAt` | `review_plan`, `review_code` | Timestamp used as `startedAt` in history snapshot |
+
+## Hydrate resource (separate from `current`)
+
+`hydrate()` writes a **separate** named resource under the `state` spec
+(name: `hydrate`) so the skill can read a compact summary without parsing
+the full `current` blob. The `hydrate` resource contains:
+
+| Field | Description |
+|-------|-------------|
+| `state` | Current lifecycle state |
+| `planVersion` | Current plan version |
+| `planIterationsThisVersion` | Number of `plan_review` rounds for this plan version |
+| `codeReviewIteration` | Current code-review iteration counter |
+| `blocking` | `{critical, high, total}` open blocking findings in current round |
+| `coverage` | `{complete, missing}` matrix coverage status |
+| `historyLength` | Total `reviewHistory` length |
+| `signature` | Stable hash over open CRIT/HIGH findings (for loop detection) |
+| `snapshotAt` | Timestamp |
+
+Read with:
+
+```bash
+swamp model method run <issue-name> hydrate
+swamp data get <issue-name> hydrate --json
+```
+
+`hydrate()` is idempotent and read-only with respect to `current` — calling
+it never mutates the lifecycle state.

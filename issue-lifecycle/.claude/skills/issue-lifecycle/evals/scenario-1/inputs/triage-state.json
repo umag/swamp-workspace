@@ -1,0 +1,36 @@
+{
+  "issueName": "swamp-status-json-output",
+  "state": "triaged",
+  "title": "Add machine-readable output to swamp status command",
+  "description": "CI pipelines that poll swamp status currently scrape the human-readable terminal output, which is fragile and breaks whenever the formatting changes. We need a way to get the status output in a structured format that scripts can reliably parse.",
+  "priority": "medium",
+  "category": "feature",
+  "confidence": "high",
+  "affectedAreas": [
+    "src/cli/commands/status.ts",
+    "src/formatters/status-formatter.ts",
+    "src/formatters/json-formatter.ts",
+    "tests/cli/status.test.ts",
+    "tests/formatters/json-formatter.test.ts",
+    "docs/cli-reference.md"
+  ],
+  "isRegression": false,
+  "priorArt": {
+    "uatScenarios": [
+      {
+        "path": "tests/uat/status-display.feature",
+        "summary": "human-readable status output for active issues",
+        "reusable": false
+      }
+    ],
+    "kbEntries": [
+      {
+        "path": "docs/ADR/0003-cli-output-formats.md",
+        "summary": "ADR for CLI output format conventions"
+      }
+    ]
+  },
+  "dddContext": {
+    "note": "The status command belongs to the CLI application layer. It reads from the IssueLifecycle aggregate (read-only) and formats it. No domain model changes required. The JSON formatter is a new infrastructure/presentation component."
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "context": "Tests whether the agent produces an implementation plan in the team's required BLUF presentation format with DDD-aware sections, including the correct length, structure, scope table, and review matrix. The task involves a CLI output change (adding --json flag), which should trigger the ux reviewer. The plan must follow specific formatting rules: no code, no marketing words, diagrams off, domain impact in exactly 4 lines.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "BLUF structure present",
+      "description": "plan.md contains all required BLUF sections: Goal, Approach, Domain impact, and a Scope section with a file table (presence of ## Goal, ## Approach, ## Domain impact, and a markdown table with File and Op columns)",
+      "max_score": 10
+    },
+    {
+      "name": "Domain impact exactly 4 lines",
+      "description": "The Domain impact section contains exactly 4 lines: one for Context (with existing/new and classification), one for Aggregates touched, one for New tactical patterns, and one for Crosses context boundary",
+      "max_score": 10
+    },
+    {
+      "name": "Scope table has DDD role column",
+      "description": "The scope/file table in plan.md has three columns: File, Op, and DDD role (or equivalent column showing the DDD role of each file)",
+      "max_score": 10
+    },
+    {
+      "name": "Plan length 40-80 lines",
+      "description": "plan.md is between 40 and 80 lines long",
+      "max_score": 8
+    },
+    {
+      "name": "No code blocks in plan",
+      "description": "plan.md contains NO fenced code blocks (no ``` or ~~~ blocks) anywhere in the document — only file paths, operation labels, and prose",
+      "max_score": 8
+    },
+    {
+      "name": "No marketing words",
+      "description": "plan.md does NOT contain any of: robust, comprehensive, elegant, seamless, modern, powerful, sophisticated, scalable (case-insensitive)",
+      "max_score": 6
+    },
+    {
+      "name": "ux=true in reviewMatrix",
+      "description": "plan.md mentions ux: true or ux=true in a reviewMatrix (either inline or in a YAML block), OR explicitly states the UX reviewer is included, because the change adds --json flag and modifies CLI output/JSON mode",
+      "max_score": 10
+    },
+    {
+      "name": "No Mermaid diagrams",
+      "description": "plan.md contains NO Mermaid diagram blocks (no ```mermaid blocks)",
+      "max_score": 6
+    },
+    {
+      "name": "Risks section conditional",
+      "description": "If plan.md includes a Risks section, it is prefixed with ## ⚠ Risks or ## Risks; if there are no risks, the section is omitted entirely (the plan does NOT contain the phrase 'no risks' or 'no breaking changes' as a Risks section header/content)",
+      "max_score": 6
+    },
+    {
+      "name": "Steps are numbered one-liners",
+      "description": "The Steps section contains numbered items where each item is a single line following the pattern 'verb + object + location' (e.g. 'Add JsonFormatter class in src/formatters/json-formatter.ts') with no multi-clause sentences",
+      "max_score": 8
+    },
+    {
+      "name": "Op column values correct",
+      "description": "The scope table Op column uses only the values A (add), M (modify), D (delete), or R (rename) — no other operation labels",
+      "max_score": 8
+    },
+    {
+      "name": "No why-this-matters justification",
+      "description": "plan.md does NOT contain a section or paragraph that justifies why the feature is needed or important (the plan is a contract — it describes what will be done, not why the feature matters)",
+      "max_score": 10
+    }
+  ]
+}

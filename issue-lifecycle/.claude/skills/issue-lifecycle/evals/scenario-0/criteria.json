@@ -1,0 +1,66 @@
+{
+  "context": "Tests whether the agent correctly scripts the issue lifecycle for a bug/regression, applying the skill's rules for file naming, reviewMatrix composition, bug-specific steps (reproduction, isRegression), worktree flag usage, and parallel reviewer fan-out. The scenario uses a real-looking authentication regression that touches session tokens and Redis, which should trigger security reviewer activation.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Issue-scoped plan filename",
+      "description": "The plan YAML filename in lifecycle.sh includes the issue name AND a version suffix (e.g. /tmp/plan-issue-<name>-v1.yaml), NOT a generic name like /tmp/plan.yaml or /tmp/plan-input.yaml",
+      "max_score": 12
+    },
+    {
+      "name": "Issue-scoped triage filename",
+      "description": "The triage YAML filename in lifecycle.sh includes the issue name (e.g. /tmp/triage-issue-<name>.yaml), NOT a generic name like /tmp/triage.yaml",
+      "max_score": 8
+    },
+    {
+      "name": "Issue-scoped findings filename",
+      "description": "The findings YAML filename in lifecycle.sh includes the issue name (e.g. /tmp/findings-issue-<name>.yaml), NOT a generic name like /tmp/findings.yaml",
+      "max_score": 8
+    },
+    {
+      "name": "security=true in reviewMatrix",
+      "description": "plan-input.yaml has reviewMatrix.security set to true (authentication/token/Redis cache work qualifies)",
+      "max_score": 10
+    },
+    {
+      "name": "code+adversarial always true",
+      "description": "plan-input.yaml has both reviewMatrix.code and reviewMatrix.adversarial set to true",
+      "max_score": 8
+    },
+    {
+      "name": "isRegression=true in triage",
+      "description": "The triage call in lifecycle.sh passes isRegression=true (users said 'it used to work', the bug was introduced by a recent deploy)",
+      "max_score": 8
+    },
+    {
+      "name": "Reproduction step in triage YAML",
+      "description": "triage-input.yaml contains a reproduced field with status (reproduced | could-not-reproduce | not-applicable) and notes containing Steps/Observed/Expected",
+      "max_score": 8
+    },
+    {
+      "name": "record_prior_art called",
+      "description": "lifecycle.sh includes a call to record_prior_art before the plan method call",
+      "max_score": 7
+    },
+    {
+      "name": "hydrate called after review",
+      "description": "lifecycle.sh includes a call to swamp model method run ... hydrate after the reviewer fan-out (record_review calls), followed by swamp data get ... hydrate --json",
+      "max_score": 8
+    },
+    {
+      "name": "Parallel reviewer fan-out",
+      "description": "lifecycle.sh shows the reviewer skills (review-code, review-adversarial, review-security) being invoked together as a batch, OR a comment explicitly stating they are run in parallel/simultaneously",
+      "max_score": 7
+    },
+    {
+      "name": "--repo-dir flag on swamp commands",
+      "description": "The swamp commands in lifecycle.sh include --repo-dir /workspace/myapp (or equivalent main repo path), because the script runs from a worktree",
+      "max_score": 10
+    },
+    {
+      "name": "Rich plan steps with files and risks",
+      "description": "plan-input.yaml steps are objects with order, description, files, and risks fields (not bare strings)",
+      "max_score": 6
+    }
+  ]
+}

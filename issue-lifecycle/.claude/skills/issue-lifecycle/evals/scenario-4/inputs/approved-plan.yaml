@@ -1,0 +1,41 @@
+summary: |
+  ## Summary
+  Add per-account rate limiting to the billing service so that a single account cannot
+  fire more than N charges per minute, protecting against runaway retry loops.
+
+  ## Documentation impact
+  Update docs/billing/rate-limiting.md with the new limits and the RateLimitRule VO.
+
+  ## UAT coverage
+  New scenarios needed — see Phase 6.
+
+steps:
+  - order: 1
+    description: "Add RateLimitRule value object in src/domain/billing/rate-limit-rule.ts"
+    files:
+      - "src/domain/billing/rate-limit-rule.ts"
+      - "src/domain/billing/__tests__/rate-limit-rule.test.ts"
+    risks: ""
+  - order: 2
+    description: "Extend RateLimiter to enforce a RateLimitRule per account"
+    files:
+      - "src/domain/billing/rate-limiter.ts"
+      - "src/domain/billing/__tests__/rate-limiter.test.ts"
+    risks: "Existing callers pass raw numeric limits — they must be updated to pass a RateLimitRule"
+  - order: 3
+    description: "Wire RateLimiter into BillingService.processCharge() to reject overlimit requests"
+    files:
+      - "src/application/billing/billing-service.ts"
+      - "src/application/billing/__tests__/billing-service.test.ts"
+    risks: ""
+
+potentialChallenges:
+  - "Thread safety of the rate counter under concurrent requests"
+  - "Clock skew when counting requests across distributed nodes"
+
+reviewMatrix:
+  code: true
+  adversarial: true
+  security: false
+  ux: false
+  skill: false

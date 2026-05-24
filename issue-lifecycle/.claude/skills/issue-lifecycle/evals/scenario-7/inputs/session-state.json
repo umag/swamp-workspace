@@ -1,0 +1,103 @@
+{
+  "state": "code_reviewing",
+  "title": "Add webhook retry backoff",
+  "description": "Retry failed webhook deliveries with exponential backoff to reduce thundering-herd load on downstream services.",
+  "priority": "high",
+  "category": "feature",
+  "affectedAreas": [
+    "src/infra/webhooks/",
+    "src/domain/webhooks/",
+    "src/application/webhooks/"
+  ],
+  "planVersion": 1,
+  "codeReviewIteration": 1,
+  "branch": "feat/webhook-retry-backoff",
+  "plan": {
+    "summary": "## Summary\nAdd exponential backoff with jitter to webhook retry scheduling using the existing RetryScheduler infrastructure.\n\n## Documentation impact\nUpdate docs/webhooks/retry-policy.md with new backoff parameters.\n\n## UAT coverage\nNew scenarios needed — see Phase 6.\n\n## PR\n(not yet opened)",
+    "dddAnalysis": "Context: Webhooks (existing, supporting). Adding RetryPolicy VO to encapsulate backoff config. No new aggregates; RetryScheduler (service) extended.",
+    "testStrategy": "Unit tests for RetryPolicy VO invariants (max delay cap, jitter range). Integration test via WebhookDeliveryService.scheduleRetry().",
+    "steps": [
+      {
+        "order": 1,
+        "description": "Add RetryPolicy value object in src/domain/webhooks/retry-policy.ts",
+        "files": ["src/domain/webhooks/retry-policy.ts", "src/domain/webhooks/__tests__/retry-policy.test.ts"],
+        "risks": ""
+      },
+      {
+        "order": 2,
+        "description": "Update RetryScheduler to accept a RetryPolicy and compute exponential backoff with jitter",
+        "files": ["src/infra/webhooks/retry-scheduler.ts", "src/infra/webhooks/__tests__/retry-scheduler.test.ts"],
+        "risks": "Existing callers pass a flat delay — update them to pass a RetryPolicy instance"
+      },
+      {
+        "order": 3,
+        "description": "Wire RetryPolicy into WebhookDeliveryService.scheduleRetry()",
+        "files": ["src/application/webhooks/webhook-delivery-service.ts", "src/application/webhooks/__tests__/webhook-delivery-service.test.ts"],
+        "risks": ""
+      }
+    ],
+    "potentialChallenges": [
+      "Clock drift between retry scheduler and event consumer",
+      "Max delay cap must be enforced as a VO invariant"
+    ],
+    "reviewMatrix": {
+      "code": true,
+      "adversarial": true,
+      "security": false,
+      "ux": false,
+      "skill": false
+    }
+  },
+  "reviews": [],
+  "priorArt": {
+    "uatScenarios": [
+      {
+        "path": "tests/uat/webhook-basic-delivery.feature",
+        "summary": "Happy-path webhook delivery",
+        "reusable": true
+      }
+    ],
+    "kbEntries": []
+  },
+  "reviewHistory": [
+    {
+      "planVersion": 1,
+      "iteration": 1,
+      "phase": "plan_review",
+      "critical": 0,
+      "high": 1,
+      "medium": 2,
+      "low": 0,
+      "reviewers": ["review-code", "review-adversarial"],
+      "outcome": "rejected_auto"
+    },
+    {
+      "planVersion": 1,
+      "iteration": 2,
+      "phase": "plan_review",
+      "critical": 0,
+      "high": 0,
+      "medium": 2,
+      "low": 0,
+      "reviewers": ["review-code", "review-adversarial"],
+      "outcome": "approved_human"
+    },
+    {
+      "planVersion": 1,
+      "iteration": 1,
+      "phase": "code_review",
+      "critical": 0,
+      "high": 1,
+      "medium": 1,
+      "low": 2,
+      "reviewers": ["review-code", "review-adversarial"],
+      "outcome": "rejected_auto"
+    }
+  ],
+  "triageDetail": {
+    "confidence": "high",
+    "isRegression": false,
+    "reasoning": "Clear feature request; existing RetryScheduler infrastructure makes this tractable.",
+    "clarifyingQuestions": []
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "context": "Tests whether the agent correctly produces knowledge harvest artifacts from a completed issue lifecycle, including properly formatted UAT proposals (Given/When/Then), ADR-style KB entries with correct kinds and frontmatter, and a harvest.yaml with committed flags. Key instructions tested: don't duplicate prior art UAT scenarios, include issue name in committed files' frontmatter, KB entry kinds, harvest.yaml structure.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Given/When/Then UAT format",
+      "description": "uat-proposals.md contains at least one UAT scenario written in Given/When/Then format (each scenario has a Given, When, and Then clause)",
+      "max_score": 10
+    },
+    {
+      "name": "No prior-art duplication",
+      "description": "uat-proposals.md does NOT propose scenarios that duplicate the existing prior art scenarios listed in inputs/lifecycle-state.json: 'payment-basic-flow.feature' (happy path payment) and 'payment-declined.feature' (card rejected) — new proposals must be for different scenarios",
+      "max_score": 12
+    },
+    {
+      "name": "UAT rationale cites source",
+      "description": "Each UAT proposal in uat-proposals.md includes a rationale that cites a specific lifecycle artifact (a finding ID/description, the reproduction, or a plan element) as the motivation",
+      "max_score": 8
+    },
+    {
+      "name": "KB entry kinds used correctly",
+      "description": "kb-proposals.md uses only the valid kinds: decision, pattern, anti-pattern, runbook, or postmortem — and each entry explicitly states its kind",
+      "max_score": 8
+    },
+    {
+      "name": "Anti-pattern KB entry present",
+      "description": "kb-proposals.md includes at least one entry with kind anti-pattern (the review history shows the initial plan derived the idempotency key from orderId only, which was rejected — a classic anti-pattern candidate)",
+      "max_score": 10
+    },
+    {
+      "name": "KB ADR-style frontmatter",
+      "description": "At least one KB proposal in kb-proposals.md is formatted as an ADR-style markdown file with a YAML frontmatter block (--- delimited) containing at minimum a title or kind field",
+      "max_score": 8
+    },
+    {
+      "name": "Issue name in committed KB frontmatter",
+      "description": "harvest.yaml committed KB entry bodies include an 'issue: payment-idempotency-fix' field in the frontmatter of the committed entries (so future Phase 2 lookups can trace them)",
+      "max_score": 10
+    },
+    {
+      "name": "harvest.yaml uatProposals array",
+      "description": "harvest.yaml contains a uatProposals key with an array of objects, each having at minimum: scenario (or equivalent content field), rationale, path, and committed (true or false)",
+      "max_score": 10
+    },
+    {
+      "name": "harvest.yaml kbProposals array",
+      "description": "harvest.yaml contains a kbProposals key with an array of objects, each having at minimum: kind, title, body, path, and committed (true or false)",
+      "max_score": 10
+    },
+    {
+      "name": "Stripe TTL scenario covered",
+      "description": "uat-proposals.md includes at least one scenario specifically covering the 24-hour idempotency key TTL edge case (the HIGH finding in code review that was resolved by adding a TTL-aware test)",
+      "max_score": 8
+    },
+    {
+      "name": "Regression scenario covered",
+      "description": "uat-proposals.md includes at least one scenario that covers the original regression: a retry after timeout resulting in a duplicate charge (the triage reproduction scenario)",
+      "max_score": 6
+    }
+  ]
+}
