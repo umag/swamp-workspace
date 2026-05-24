@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/issue-lifecycle"
-version: "2026.05.24.1"
+version: "2026.05.24.2"
 description: |
   Issue lifecycle model with 9 bundled Claude Code skills for DDD, TDD,
   moldable development, and parallel code review.
@@ -90,6 +90,7 @@ models:
 additionalFiles:
   - README.md
   - LICENSE.md
+  - CHANGELOG.md
 
 labels:
   - issue-tracking
