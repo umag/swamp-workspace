@@ -47,6 +47,31 @@ jobs:
         working-directory: ${{ matrix.extension }}
         run: deno task test
 
+      - name: Check model version matches manifest
+        working-directory: ${{ matrix.extension }}
+        run: |
+          set -eo pipefail
+          manifest_ver=$(grep -m1 '^version:' manifest.yaml \
+            | sed -E 's/^version:[[:space:]]*"?([^"]+)"?.*/\1/')
+          if [ -z "$manifest_ver" ]; then
+            echo "::error::could not read version from manifest.yaml"; exit 1
+          fi
+          rc=0
+          for f in extensions/models/*.ts; do
+            case "$f" in *_test.ts | *.test.ts) continue ;; esac
+            # Each model object's `version: "<calver>"` field must equal the
+            # manifest version, so the published model type version and the
+            # package version never drift (swamp warns when they do).
+            while IFS= read -r mv; do
+              if [ "$mv" != "$manifest_ver" ]; then
+                echo "::error file=${{ matrix.extension }}/$f::model version \"$mv\" != manifest \"$manifest_ver\""
+                rc=1
+              fi
+            done < <(grep -oE '^[[:space:]]*version:[[:space:]]*"[0-9][^"]*"' "$f" \
+              | grep -oE '"[0-9][^"]*"' | tr -d '"')
+          done
+          exit $rc
+
       - name: Format check (scripts)
         working-directory: scripts
         run: deno fmt --check
