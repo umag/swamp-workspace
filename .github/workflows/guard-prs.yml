@@ -1,0 +1,66 @@
+name: Guard PRs (owner-only)
+
+# First thing that runs on every opened/reopened PR. Pull requests authored by
+# anyone other than the repository owner are politely declined and closed, with
+# a pointer to open an issue instead.
+#
+# Uses `pull_request_target` (not `pull_request`) on purpose: it runs in the
+# BASE repo context with a write-capable GITHUB_TOKEN, so it can close PRs from
+# outside forks (a normal `pull_request` run from a fork gets a read-only token
+# and no secrets). It never checks out or runs the PR's code, so handling
+# untrusted contributions here is safe. Mirrors the github-script comment+close
+# pattern used by systeminit/swamp's auto-response workflow.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  owner-only:
+    name: owner-only
+    runs-on: ubuntu-latest
+    # Skip for the owner's own PRs; only act on everyone else's. To allow more
+    # authors later, swap this for an explicit allowlist check in the script.
+    if: github.event.pull_request.user.login != github.repository_owner
+    steps:
+      - name: Decline and close non-owner PR
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+            const owner = context.repo.owner;
+            const issuesUrl =
+              `${context.serverUrl}/${owner}/${context.repo.repo}/issues/new`;
+            const body = [
+              `Hi @${author} — thanks for taking the time to open this! 🙏`,
+              ``,
+              `This repository only accepts pull requests from its owner ` +
+              `(@${owner}), so I'm closing this one automatically. It's ` +
+              `nothing about your change.`,
+              ``,
+              `If you have an idea, an improvement, or found a bug, the best ` +
+              `way to contribute here is to **open an issue** and describe it:`,
+              ``,
+              `  ${issuesUrl}`,
+              ``,
+              `Your input is genuinely welcome there — thank you!`,
+            ].join("\n");
+            await github.rest.issues.createComment({
+              owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body,
+            });
+            await github.rest.pulls.update({
+              owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              state: "closed",
+            });
+            core.notice(`Closed PR #${pr.number} from @${author} (non-owner).`);
