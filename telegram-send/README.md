@@ -4,20 +4,21 @@ Send messages, photos, and documents to Telegram chats and channels from
 [swamp](https://github.com/systeminit/swamp) workflows, via the
 [Telegram Bot API](https://core.telegram.org/bots/api).
 
-A natural complement to [`@magistr/telegram-import`](https://swamp-club.com/extensions/@magistr/telegram-import),
+A natural complement to
+[`@magistr/telegram-import`](https://swamp-club.com/extensions/@magistr/telegram-import),
 which goes the other direction — importing Telegram exports into Obsidian.
 
 ## Features
 
 - **Four methods**: `getMe`, `sendMessage`, `sendPhoto`, `sendDocument`.
-- **Sensitive token storage**: `botToken` is marked `sensitive`, so swamp
-  routes it to a vault automatically. The plaintext never lives on disk in
-  the model instance YAML.
+- **Sensitive token storage**: `botToken` is marked `sensitive`, so swamp routes
+  it to a vault automatically. The plaintext never lives on disk in the model
+  instance YAML.
 - **Smart attachments**: `sendPhoto` and `sendDocument` accept an `https://`
   URL, a Telegram `file_id`, **or** a local filesystem path — the model picks
   multipart upload vs. JSON automatically.
-- **Optional default chat**: set `defaultChatId` on the instance and omit it
-  on every send. Method argument always wins if both are set.
+- **Optional default chat**: set `defaultChatId` on the instance and omit it on
+  every send. Method argument always wins if both are set.
 - **MarkdownV2 / HTML** formatting via `parseMode`.
 
 ## Install
@@ -39,9 +40,9 @@ swamp vault create local_encryption telegram
  swamp vault put telegram BOT_TOKEN='123456:ABCdef...' -f
 ```
 
-Get your numeric `chat_id` by messaging
-[@userinfobot](https://t.me/userinfobot) on Telegram, or send any message to
-your bot and `curl https://api.telegram.org/bot<TOKEN>/getUpdates`.
+Get your numeric `chat_id` by messaging [@userinfobot](https://t.me/userinfobot)
+on Telegram, or send any message to your bot and
+`curl https://api.telegram.org/bot<TOKEN>/getUpdates`.
 
 Create the model instance and wire the vault reference:
 
@@ -69,8 +70,8 @@ swamp model method run tg-bot getMe
 ```
 
 Returns a `botInfo` resource with the bot's `id`, `username`, and capability
-flags. Use this as the first call after onboarding a new token — it confirms
-the vault wiring works without sending a message.
+flags. Use this as the first call after onboarding a new token — it confirms the
+vault wiring works without sending a message.
 
 ### Send a text message
 
@@ -116,10 +117,10 @@ swamp model method run tg-bot sendMessage \
 
 ### Global arguments
 
-| Field           | Type     | Required | Notes                                                      |
-| --------------- | -------- | -------- | ---------------------------------------------------------- |
-| `botToken`      | `string` | yes      | Marked sensitive — store via vault reference.              |
-| `defaultChatId` | `string` | no       | Numeric ID, `@channelusername`, or `@username`.            |
+| Field           | Type     | Required | Notes                                           |
+| --------------- | -------- | -------- | ----------------------------------------------- |
+| `botToken`      | `string` | yes      | Marked sensitive — store via vault reference.   |
+| `defaultChatId` | `string` | no       | Numeric ID, `@channelusername`, or `@username`. |
 
 ### Method arguments
 

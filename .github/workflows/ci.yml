@@ -22,10 +22,7 @@ jobs:
           - good-planning
           - libvirt
           - pihole
-          # telegram-send is intentionally excluded until its pre-existing
-          # `deno task check` type errors (TS7006 implicit-any) and failing
-          # tests are fixed — adding it here would turn the matrix red and
-          # block extension-publish for every extension.
+          - telegram-send
     steps:
       - uses: actions/checkout@v4
 

@@ -1,12 +1,16 @@
 {
   "tasks": {
-    "check": "deno check extensions/models/telegram_send.ts",
+    "check": "deno check extensions/models/telegram_send.ts extensions/models/telegram_send_test.ts",
+    "test": "deno test extensions/models/telegram_send_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
   },
   "imports": {
     "zod": "npm:zod@4"
+  },
+  "compilerOptions": {
+    "noImplicitAny": false
   },
   "fmt": {
     "lineWidth": 80,

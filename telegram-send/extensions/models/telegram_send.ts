@@ -89,9 +89,12 @@ async function telegramMultipart(token, method, fields, fileField, filePath) {
 
 /**
  * Resolve the target chat: method `chatId` arg wins, else
- * `globalArgs.defaultChatId`. Throws if neither is set.
+ * `globalArgs.defaultChatId`. Throws if neither is set. Exported for tests.
  */
-function resolveChatId(args, context) {
+export function resolveChatId(
+  args: { chatId?: string },
+  context: { globalArgs: { defaultChatId?: string } },
+): string {
   const chatId = args.chatId ?? context.globalArgs.defaultChatId;
   if (!chatId) {
     throw new Error(
@@ -104,9 +107,9 @@ function resolveChatId(args, context) {
 /**
  * Heuristic: treat the string as a local path if it isn't an http(s) URL and
  * contains a slash. A bare token (no slash, no scheme) is assumed to be a
- * Telegram `file_id` and sent via JSON.
+ * Telegram `file_id` and sent via JSON. Exported for tests.
  */
-function isLocalPath(s) {
+export function isLocalPath(s: string): boolean {
   return !/^https?:\/\//i.test(s) && s.includes("/");
 }
 
