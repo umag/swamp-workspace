@@ -38,13 +38,14 @@ prompts:
         or PR plan (that is issue-lifecycle)
       - ddd — domain-driven design: building-block selection, bounded
         contexts, aggregates, and ubiquitous-language guidance
-      - tdd — red-green-refactor workflow enforcement for features and bug
-        fixes
+      - tdd — test-first red-green-refactor workflow, plus unit vs
+        integration test selection and test-file placement, for features
+        and bug fixes
       - moldable-dev — build contextual micro tools, query live system
         state, create reusable reports to reduce time-to-answer
-      - review-code — general code review for CLAUDE.md compliance, TDD,
-        type safety, imports, and organization (NOT domain modeling — that
-        is ddd)
+      - review-code — general code review for CLAUDE.md compliance, type
+        safety, imports, and code organization (NOT domain modeling → ddd;
+        NOT test-first workflow or test placement → tdd)
       - review-adversarial — adversarial review across 7 dimensions; assume
         code is broken
       - review-security — security audit (injection, secrets, supply chain,
