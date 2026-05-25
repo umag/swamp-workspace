@@ -1,0 +1,35 @@
+manifestVersion: 1
+name: "@magistr/dawarich"
+version: "2026.05.25.1"
+description: |
+  Dawarich self-hosted location-tracking API for swamp — read points, visits,
+  tracks, statistics, digests, geotagged photos, and service health, and update
+  user settings on a Dawarich instance.
+
+  Model:
+  - `@magistr/dawarich` — wraps the Dawarich `/api/v1/*` API. Methods: `health`,
+    `stats`, `points`, `tracked-months`, `visits`, `tracks`, `settings`,
+    `update-settings`, `digests`, and `photos`. Each call persists its result as
+    a swamp data resource for later CEL querying.
+
+  Authenticates with an API key from the Dawarich Account settings page; supply
+  it via a vault expression so it is never persisted in cleartext. Date-range
+  filtering and pagination are supported on the points, visits, tracks, and
+  photos methods.
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - dawarich.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - location
+  - gps
+  - self-hosted
+  - dawarich

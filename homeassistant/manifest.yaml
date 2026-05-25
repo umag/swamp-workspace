@@ -1,0 +1,35 @@
+manifestVersion: 1
+name: "@magistr/homeassistant"
+version: "2026.05.25.1"
+description: |
+  Home Assistant integration for swamp — query entity states, call services,
+  list and update automations, and fetch history and long-term sensor
+  statistics over the REST and WebSocket APIs.
+
+  Model:
+  - `@magistr/homeassistant` — `list-entities`, `get-state`, `call-service`,
+    `list-services`, `list-automations`, `get-automation-config`,
+    `update-automation`, `get-history` (JSON + CSV), `get-statistics`
+    (long-term WebSocket aggregates), and `backfill-to-vm` (bulk-import HA
+    statistics into VictoriaMetrics).
+
+  Authenticates with a long-lived access token, supports http/https, and
+  writes typed resources for every method so results are queryable as swamp
+  data.
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - homeassistant.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - home-automation
+  - homeassistant
+  - iot
+  - smart-home

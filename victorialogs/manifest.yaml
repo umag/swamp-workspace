@@ -1,0 +1,31 @@
+manifestVersion: 1
+name: "@magistr/victorialogs"
+version: "2026.05.25.1"
+description: |
+  VictoriaLogs query API — run LogsQL queries, field/stream stats, and hits
+  over time.
+
+  Model:
+  - `@magistr/victorialogs` — query a VictoriaLogs HTTP endpoint with LogsQL.
+    Methods: `query` (matching entries), `stats` (aggregations via a `| stats`
+    pipe), `container-log-status` (compare running Docker containers against
+    those actually logging to detect broken pipelines), `error-summary`
+    (group error/fatal/panic/OOM lines by container), and `compare-periods`
+    (diff log volume between a baseline and a comparison window to spot
+    services that went silent).
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - victorialogs.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - logs
+  - observability
+  - victorialogs

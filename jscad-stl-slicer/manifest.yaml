@@ -1,0 +1,20 @@
+manifestVersion: 1
+name: "@magistr/jscad-stl-slicer"
+version: "2026.05.25.1"
+description: >-
+  STL slicer — Z-plane slicing, orthographic projection, symmetry analysis,
+  feature detection, mesh comparison
+repository: "https://github.com/umag/swamp-workspace"
+models:
+  - jscad_stl_slicer.ts
+additionalFiles:
+  - README.md
+  - LICENSE.md
+platforms: []
+labels:
+  - cad
+  - jscad
+  - stl
+  - analysis
+dependencies:
+  - "@magistr/jscad-cad"
