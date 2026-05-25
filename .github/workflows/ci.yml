@@ -220,10 +220,36 @@ jobs:
         if: steps.manifest-changed.outputs.changed == 'true'
         uses: ./.github/actions/setup-swamp
 
-      - name: Publish changed extensions
+      - name: Authenticate swamp
         if: steps.manifest-changed.outputs.changed == 'true'
         env:
-          SWAMP_AUTH_TOKEN: ${{ secrets.SWAMP_AUTH_TOKEN }}
+          SWAMP_API_KEY: ${{ secrets.SWAMP_API_KEY }}
+          SWAMP_API_KEY_ID: ${{ secrets.SWAMP_API_KEY_ID }}
+        run: |
+          set -eo pipefail
+          if [ -z "$SWAMP_API_KEY" ]; then
+            echo "::error::SWAMP_API_KEY secret is not set" >&2
+            exit 1
+          fi
+          # swamp reads credentials from ~/.config/swamp/auth.json; it does NOT
+          # honour any token env var. Build that file from the API-key secrets
+          # (jq escapes the values safely).
+          mkdir -p "$HOME/.config/swamp"
+          jq -n \
+            --arg key "$SWAMP_API_KEY" \
+            --arg id "$SWAMP_API_KEY_ID" \
+            '{
+               serverUrl: "https://swamp-club.com",
+               apiKey: $key,
+               apiKeyId: $id,
+               username: "magistr",
+               collectives: ["bad-at-naming", "magistr"]
+             }' > "$HOME/.config/swamp/auth.json"
+          chmod 600 "$HOME/.config/swamp/auth.json"
+          swamp auth whoami
+
+      - name: Publish changed extensions
+        if: steps.manifest-changed.outputs.changed == 'true'
         run: |
           set -eo pipefail
           # Per-version release notes are immutable on the swamp registry —
