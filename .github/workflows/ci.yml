@@ -264,7 +264,11 @@ jobs:
           while IFS= read -r manifest; do
             [ -z "$manifest" ] && continue
             echo "Publishing $manifest"
+            # -y is REQUIRED in CI: without it `extension push` prompts
+            # "Push … to registry? [y/N]" and, with no TTY, defaults to No and
+            # silently cancels (exit 0 → false-green). -y also accepts the
+            # Deno.Command safety warning prompt.
             ( cd "$(dirname "$manifest")" \
-                && swamp extension push manifest.yaml \
+                && swamp extension push manifest.yaml -y \
                      --release-notes "$notes" )
           done <<< "${{ steps.manifest-changed.outputs.manifests }}"
