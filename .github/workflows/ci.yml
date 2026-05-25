@@ -24,7 +24,7 @@ jobs:
           - pihole
           - telegram-send
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
@@ -88,10 +88,10 @@ jobs:
           - extension: good-planning
             skill: good-planning
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
@@ -123,7 +123,7 @@ jobs:
 
       - name: Upload tessl report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tessl-${{ matrix.skill }}
           path: tessl-${{ matrix.skill }}.json
@@ -133,7 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
@@ -141,7 +141,7 @@ jobs:
           deno-version: v2.7.13
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
@@ -177,7 +177,7 @@ jobs:
 
       - name: Upload promptfoo report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: promptfoo-results
           path: |
@@ -190,7 +190,7 @@ jobs:
     needs: deno-check
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
