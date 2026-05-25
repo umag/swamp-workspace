@@ -168,9 +168,17 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -eo pipefail
+          # promptfoo exits 100 when ANY test assertion fails. That is expected
+          # here — the node check below is the real gate (>=90% trigger pass
+          # rate), and promptfoo still writes the --output JSON on a 100 exit.
+          # Any OTHER non-zero exit is a genuine error and must fail the step.
+          ec=0
           npx --yes promptfoo@0.121.12 eval \
             -c promptfoo.generated.yaml \
-            --output promptfoo-results.json
+            --output promptfoo-results.json || ec=$?
+          if [ "$ec" -ne 0 ] && [ "$ec" -ne 100 ]; then
+            echo "::error::promptfoo eval errored (exit $ec)"; exit "$ec"
+          fi
 
           node -e "
             const r = require('./promptfoo-results.json');
