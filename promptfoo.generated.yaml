@@ -15,9 +15,10 @@ prompts:
       You are a router choosing ONE Claude Code skill to handle a user query.
 
       Available skills (name — one-line purpose):
-      - issue-lifecycle — drive issue triage, planning, review,
-        implementation, harvest, and completion via the
-        @magistr/issue-lifecycle extension model
+      - issue-lifecycle — drive an issue through triage, planning, review
+        (incl. approving/rejecting the plan on review findings),
+        implementation, knowledge harvest (record prior art, search UAT/KB),
+        and completion via the @magistr/issue-lifecycle extension model
       - good-planning — convert an organization-level strategic choice into
         funded, synchronized, contingent, revisable commitments; audit plan
         governability via tripwires, signposts, and pullback ladders. NOT
