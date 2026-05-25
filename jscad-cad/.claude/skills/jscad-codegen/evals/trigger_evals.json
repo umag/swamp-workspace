@@ -1,0 +1,52 @@
+[
+  {
+    "query": "Generate a CAD model of a parametric gear from this description.",
+    "should_trigger": true
+  },
+  {
+    "query": "Create a 3D model of a mounting bracket and render it to STL.",
+    "should_trigger": true
+  },
+  { "query": "Write a JSCAD script for a hex nut.", "should_trigger": true },
+  {
+    "query": "Make a part: a 20mm cube with a centered 6mm bore.",
+    "should_trigger": true
+  },
+  {
+    "query": "Convert this text description into a CAD model and export an STL.",
+    "should_trigger": true
+  },
+  {
+    "query": "Fix my JSCAD script — main() isn't returning geometry.",
+    "should_trigger": true
+  },
+  {
+    "query": "Validate the STL output of this CadScript.",
+    "should_trigger": true
+  },
+
+  {
+    "query": "Add a custom DNS A-record on Porkbun for www.",
+    "should_trigger": false
+  },
+  {
+    "query": "Import my LiveJournal blog into the Obsidian vault.",
+    "should_trigger": false
+  },
+  {
+    "query": "Send a Telegram message to the ops channel.",
+    "should_trigger": false
+  },
+  {
+    "query": "Do a security review of the credential-loading path.",
+    "should_trigger": false
+  },
+  {
+    "query": "Triage this bug report and plan the implementation.",
+    "should_trigger": false
+  },
+  {
+    "query": "List the custom DNS records on the Pi-hole.",
+    "should_trigger": false
+  }
+]
