@@ -1,0 +1,38 @@
+manifestVersion: 1
+name: "@magistr/seadex"
+version: "2026.05.25.1"
+description: |
+  SeaDex (releases.moe) — best-release recommendations for anime, lookups by
+  AniList ID.
+
+  SeaDex is a community-curated index of the "best" anime releases, backed by a
+  public Pocketbase API at https://releases.moe. This model fetches a SeaDex
+  entry for an anime and normalises it into best + alternative releases (release
+  group, tracker, infoHash, file list, total size).
+
+  Model `@magistr/seadex` methods:
+  - `lookup-by-anilist-id` — fetch the SeaDex entry for an anime by its AniList
+    ID.
+  - `lookup-by-title` — resolve a title to an AniList ID via the public AniList
+    GraphQL API, then fetch the SeaDex entry.
+  - `lookup-many` — fan-out: look up an array of AniList IDs in a single
+    execution (one entry resource per input ID plus a summary), avoiding
+    per-call lock contention.
+  - `render-upgrades` — set filter markers (year, status, minScore) consumed by
+    a companion upgrades report.
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - seadex.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - anime
+  - releases
+  - seadex

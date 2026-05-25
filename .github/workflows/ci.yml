@@ -11,33 +11,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  discover:
+    name: discover extensions + skills
+    runs-on: ubuntu-latest
+    outputs:
+      extensions: ${{ steps.scan.outputs.extensions }}
+      skills: ${{ steps.scan.outputs.skills }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: scan
+        run: |
+          set -eo pipefail
+          # Auto-discovery: no hand-maintained matrix lists. Every top-level
+          # directory containing a manifest.yaml is treated as an extension.
+          exts=$(for m in */manifest.yaml; do [ -f "$m" ] && dirname "$m"; done \
+            | sort -u | jq -R . | jq -cs .)
+          echo "extensions=$exts" >> "$GITHUB_OUTPUT"
+          echo "Extensions: $exts"
+          # Every <ext>/.claude/skills/<skill>/SKILL.md is a tessl-reviewable
+          # skill (emitted as {extension, skill} pairs for the matrix).
+          skills=$(for s in */.claude/skills/*/SKILL.md; do
+              [ -f "$s" ] || continue
+              ext=${s%%/*}
+              skill=$(basename "$(dirname "$s")")
+              jq -nc --arg e "$ext" --arg k "$skill" '{extension:$e,skill:$k}'
+            done | jq -cs .)
+          echo "skills=$skills" >> "$GITHUB_OUTPUT"
+          echo "Skills: $skills"
+
   deno-check:
     name: deno (fmt, lint, check, test)
+    needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        extension:
-          - issue-lifecycle
-          - good-planning
-          - libvirt
-          - pihole
-          - telegram-send
-          - porkbun
-          - tubearchivist
-          - obsidian-vault
-          - obsidian-yt-archiver
-          - talos-node
-          - talm-cluster
-          - cozystack-platform
-          - cozystack-linstor
-          - jscad-cad
-          - juick
-          - fidonet-msgbase
-          - jabber
-          - skype
-          - livejournal-import
-          - telegram-import
+        extension: ${{ fromJson(needs.discover.outputs.extensions) }}
     steps:
       - uses: actions/checkout@v6
 
@@ -101,34 +110,13 @@ jobs:
 
   skill-review:
     name: skill-review (tessl)
+    needs: discover
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - extension: issue-lifecycle
-            skill: issue-lifecycle
-          - extension: issue-lifecycle
-            skill: ddd
-          - extension: issue-lifecycle
-            skill: tdd
-          - extension: issue-lifecycle
-            skill: moldable-dev
-          - extension: issue-lifecycle
-            skill: review-code
-          - extension: issue-lifecycle
-            skill: review-adversarial
-          - extension: issue-lifecycle
-            skill: review-security
-          - extension: issue-lifecycle
-            skill: review-ux
-          - extension: issue-lifecycle
-            skill: review-skill
-          - extension: good-planning
-            skill: good-planning
-          - extension: jscad-cad
-            skill: jscad-codegen
+        pair: ${{ fromJson(needs.discover.outputs.skills) }}
     steps:
       - uses: actions/checkout@v6
 
@@ -137,7 +125,7 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Review ${{ matrix.skill }} with tessl
+      - name: Review ${{ matrix.pair.skill }} with tessl
         env:
           # tessl authenticates from the TESSL_TOKEN env var (an API key minted
           # via `tessl api-key create`); the repo secret is named TESSL_API_KEY.
@@ -150,15 +138,15 @@ jobs:
           # piped to a file for the uploaded report; pipefail propagates the
           # tessl exit code through `tee`.
           npx --yes tessl@0.80.0 skill review \
-            "${{ matrix.extension }}/.claude/skills/${{ matrix.skill }}" \
-            --threshold 90 --json | tee "tessl-${{ matrix.skill }}.json"
+            "${{ matrix.pair.extension }}/.claude/skills/${{ matrix.pair.skill }}" \
+            --threshold 90 --json | tee "tessl-${{ matrix.pair.skill }}.json"
 
       - name: Upload tessl report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: tessl-${{ matrix.skill }}
-          path: tessl-${{ matrix.skill }}.json
+          name: tessl-${{ matrix.pair.skill }}
+          path: tessl-${{ matrix.pair.skill }}.json
 
   skill-trigger-eval:
     name: skill-trigger-eval (promptfoo, sonnet)

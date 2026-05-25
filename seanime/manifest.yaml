@@ -1,0 +1,28 @@
+manifestVersion: 1
+name: "@magistr/seanime"
+version: "2026.05.25.1"
+description: |
+  Seanime self-hosted anime server API — library, search, downloads, playback.
+
+  Model:
+  - `@magistr/seanime` — wraps the Seanime `/api/v1` REST surface: read server
+    status, the anime library collection, and missing episodes; trigger library
+    scans and the auto-downloader; list active torrents; and bulk-manage the
+    AniList PLANNING list by syncing auto-downloader rules and flipping eligible
+    entries to CURRENT (watching).
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - seanime.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - anime
+  - seanime
+  - self-hosted

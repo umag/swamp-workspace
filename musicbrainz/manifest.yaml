@@ -1,0 +1,28 @@
+manifestVersion: 1
+name: "@magistr/musicbrainz"
+version: "2026.05.25.1"
+description: |
+  MusicBrainz metadata — search, look up, and browse artists, release groups,
+  releases, recordings, and labels via the MusicBrainz Web Service v2.
+
+  Model:
+  - `@magistr/musicbrainz` — typed search/lookup/browse over the MusicBrainz
+    JSON API (built-in 1 req/sec rate limiting), a generic entity search, plus
+    Bandcamp-to-MusicBrainz helpers that scrape a Bandcamp discography and
+    generate release-editor seed URLs for releases missing from MusicBrainz.
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - musicbrainz.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - music
+  - metadata
+  - musicbrainz

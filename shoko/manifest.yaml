@@ -1,0 +1,33 @@
+manifestVersion: 1
+name: "@magistr/shoko"
+version: "2026.05.25.1"
+description: |
+  Shoko anime metadata server API — series, episodes, files, and metadata.
+
+  Model:
+  - `@magistr/shoko` — wraps the Shoko Server REST v3 API. Authenticate for a
+    long-lived API key, then read server status, dashboard stats, series,
+    episodes, files, import folders, and queue state, and trigger maintenance
+    actions (run import, rescan a folder, remove missing files, discover
+    available actions from the live OpenAPI spec).
+
+  The API key is marked sensitive so it is stored via the vault rather than
+  persisted in cleartext, and the status/action-discovery endpoints work
+  without authentication.
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - shoko.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - anime
+  - metadata
+  - shoko
+  - self-hosted

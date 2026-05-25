@@ -1,0 +1,33 @@
+manifestVersion: 1
+name: "@magistr/cadvisor"
+version: "2026.05.25.1"
+description: |
+  cAdvisor container metrics for swamp — deploy a cAdvisor container over SSH,
+  wire it in as a VictoriaMetrics scrape target, and query live and historical
+  container resource stats (memory, CPU, network).
+
+  Model:
+  - `@magistr/cadvisor` — `deploy` (idempotent: run the cAdvisor container and
+    append a scrape job to the VictoriaMetrics prometheus config), `status`
+    (report container + scrape-config state), `current-metrics` (per-container
+    memory/CPU/network straight from the cAdvisor `/api/v1.3/docker` API),
+    `top-memory` (top memory consumers over a lookback window via the
+    VictoriaMetrics range-query API), and `remove` (tear down the container and
+    scrape config).
+
+repository: "https://github.com/umag/swamp-workspace"
+
+models:
+  - cadvisor.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - metrics
+  - containers
+  - monitoring
+  - cadvisor
