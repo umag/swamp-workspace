@@ -2,6 +2,8 @@ import { z } from "npm:zod@4";
 import {
   connLabel,
   defineXml,
+  IDEMPOTENT_ERRORS,
+  isIdempotent,
   redactSecrets,
   virsh,
   virshTry,
@@ -190,16 +192,31 @@ export const model = {
     },
 
     start: {
-      description: "Start (activate) a virtual network",
+      description:
+        "Start (activate) a virtual network. Idempotent — succeeds if already active.",
       arguments: z.object({ name: z.string().describe("Network name") }),
       execute: async (args, context) => {
         const conn = context.globalArgs;
-        const result = await virsh(conn, ["net-start", args.name]);
-        context.logger.info(result.stdout.trim());
+        const res = await virshTry(conn, ["net-start", args.name]);
+        let message: string;
+        if (res.code !== 0) {
+          if (isIdempotent(res, IDEMPOTENT_ERRORS.networkAlreadyActive)) {
+            message = `Network ${args.name} is already active`;
+          } else {
+            throw new Error(
+              `virsh net-start failed (exit ${res.code}): ${
+                (res.stderr || res.stdout).slice(-500)
+              }`,
+            );
+          }
+        } else {
+          message = res.stdout.trim();
+        }
+        context.logger.info(message);
         const handle = await context.writeResource("actionResult", args.name, {
           network: args.name,
           action: "start",
-          message: result.stdout.trim(),
+          message,
           timestamp: new Date().toISOString(),
         });
         return { dataHandles: [handle] };
@@ -207,16 +224,31 @@ export const model = {
     },
 
     stop: {
-      description: "Stop (deactivate) a virtual network",
+      description:
+        "Stop (deactivate) a virtual network. Idempotent — succeeds if already inactive.",
       arguments: z.object({ name: z.string().describe("Network name") }),
       execute: async (args, context) => {
         const conn = context.globalArgs;
-        const result = await virsh(conn, ["net-destroy", args.name]);
-        context.logger.info(result.stdout.trim());
+        const res = await virshTry(conn, ["net-destroy", args.name]);
+        let message: string;
+        if (res.code !== 0) {
+          if (isIdempotent(res, IDEMPOTENT_ERRORS.networkNotActive)) {
+            message = `Network ${args.name} is already inactive`;
+          } else {
+            throw new Error(
+              `virsh net-destroy failed (exit ${res.code}): ${
+                (res.stderr || res.stdout).slice(-500)
+              }`,
+            );
+          }
+        } else {
+          message = res.stdout.trim();
+        }
+        context.logger.info(message);
         const handle = await context.writeResource("actionResult", args.name, {
           network: args.name,
           action: "stop",
-          message: result.stdout.trim(),
+          message,
           timestamp: new Date().toISOString(),
         });
         return { dataHandles: [handle] };

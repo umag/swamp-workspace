@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@bad-at-naming/libvirt"
-version: "2026.05.20.1"
+version: "2026.05.25.1"
 description: |
   Comprehensive libvirt/virsh management — VMs, networks, storage pools,
   volumes, snapshots, and host info — over SSH OR locally via a connection URI.

@@ -141,6 +141,14 @@ export const IDEMPOTENT_ERRORS = {
   diskNotFound: ["No disk found", "disk not found", "no target device"],
   /** `virsh pool-start` on an already-active pool. */
   poolAlreadyActive: ["already active"],
+  /**
+   * `virsh net-start` on an already-active network. Deliberately shares the
+   * "already active" substring with `poolAlreadyActive` — each set is anchored
+   * to its own resource (see the doc comment above), so do NOT dedupe them.
+   */
+  networkAlreadyActive: ["already active"],
+  /** `virsh net-destroy` on an inactive network ("network 'x' is not active"). */
+  networkNotActive: ["is not active"],
   /** `virsh pool-define-as`/`vol-create-as` for an object that exists. */
   alreadyExists: ["already exists"],
 } as const;

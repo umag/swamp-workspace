@@ -35,6 +35,8 @@ const FIXTURES_BY_NEEDLE: Record<string, string> = {
   "disk not found": "error: device not found: disk not found 'vdz'",
   "no target device": "error: no target device vdz",
   "already exists": "error: operation failed: pool 'default' already exists",
+  "is not active":
+    "error: Requested operation is not valid: network 'routed' is not active",
 };
 
 // Unrelated failures that must NOT be treated as idempotent by any set.
@@ -121,5 +123,55 @@ Deno.test("vmNotRunning requires the 'domain' anchor, not a bare 'not running'",
       "error: Requested operation is not valid: domain is not running",
       IDEMPOTENT_ERRORS.vmNotRunning,
     ),
+  );
+});
+
+// --- Network lifecycle idempotency (issue umag/swamp-workspace#1) ---
+// Real virsh strings captured live on host 192.168.88.242:
+//   net-start on an already-active network:
+//     "error: Requested operation is not valid: network is already active"
+//   net-destroy on an inactive network:
+//     "error: Requested operation is not valid: network 'routed' is not active"
+
+Deno.test("network start is a no-op on an already-active network", () => {
+  assert(
+    isIdempotent(
+      {
+        code: 1,
+        stdout: "",
+        stderr:
+          "error: Failed to start network routed\nerror: Requested operation is not valid: network is already active",
+      },
+      IDEMPOTENT_ERRORS.networkAlreadyActive,
+    ),
+  );
+});
+
+Deno.test("network stop is a no-op on an already-inactive network", () => {
+  assert(
+    isIdempotent(
+      {
+        code: 1,
+        stdout: "",
+        stderr:
+          "error: Failed to destroy network routed\nerror: Requested operation is not valid: network 'routed' is not active",
+      },
+      IDEMPOTENT_ERRORS.networkNotActive,
+    ),
+  );
+});
+
+Deno.test("networkNotActive does not swallow a VM 'domain is not running'", () => {
+  assertEquals(
+    isIdempotent(
+      {
+        code: 1,
+        stdout: "",
+        stderr:
+          "error: Requested operation is not valid: domain is not running",
+      },
+      IDEMPOTENT_ERRORS.networkNotActive,
+    ),
+    false,
   );
 });
