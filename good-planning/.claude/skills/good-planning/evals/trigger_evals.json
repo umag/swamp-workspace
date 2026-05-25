@@ -1,0 +1,52 @@
+[
+  {
+    "query": "We just had a strategy offsite — now turn it into a committed plan.",
+    "should_trigger": true
+  },
+  {
+    "query": "Audit whether our existing plan can actually be steered.",
+    "should_trigger": true
+  },
+  {
+    "query": "Build a plan with tripwires, signposts, and a pullback ladder.",
+    "should_trigger": true
+  },
+  {
+    "query": "What's the first binding crux and max tolerable loss for this strategy?",
+    "should_trigger": true
+  },
+  {
+    "query": "How do we know if our assumptions are breaking? Set up trigger points.",
+    "should_trigger": true
+  },
+  {
+    "query": "Convert this strategic choice into funded, synchronized, contingent commitments.",
+    "should_trigger": true
+  },
+  {
+    "query": "The plan looks good on paper but I'm not sure it's governable.",
+    "should_trigger": true
+  },
+
+  {
+    "query": "Triage this bug report and drive it through the lifecycle.",
+    "should_trigger": false
+  },
+  {
+    "query": "Write a failing test first for the retry scheduler.",
+    "should_trigger": false
+  },
+  { "query": "Draft our Q3 OKRs for the team.", "should_trigger": false },
+  {
+    "query": "Plan this sprint's tickets for the mobile team.",
+    "should_trigger": false
+  },
+  {
+    "query": "Generate a CAD model of a mounting bracket.",
+    "should_trigger": false
+  },
+  {
+    "query": "Do a security review of the credential-loading path.",
+    "should_trigger": false
+  }
+]
