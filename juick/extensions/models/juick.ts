@@ -83,7 +83,7 @@ async function juickApi(apiUrl: string, path: string) {
 /** Juick.com microblogging model: fetch feed messages, threads, user profiles, and import a user's full post history (with comments) as Obsidian-ready markdown. */
 export const model = {
   type: "@magistr/juick",
-  version: "2026.03.29.1",
+  version: "2026.05.25.1",
   globalArguments: GlobalArgsSchema,
 
   resources: {

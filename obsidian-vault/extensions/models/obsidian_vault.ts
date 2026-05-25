@@ -179,7 +179,7 @@ function fileParam(file: string): Record<string, string> {
 /** Obsidian vault model: manage notes, search, tags, links, daily notes, and frontmatter properties through the official Obsidian CLI. */
 export const model = {
   type: "@magistr/obsidian/vault",
-  version: "2026.03.28.2",
+  version: "2026.05.25.1",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",

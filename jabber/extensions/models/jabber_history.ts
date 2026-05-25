@@ -197,7 +197,7 @@ async function listHistoryFiles(historyDir: string): Promise<
 /** Psi/Psi+ Jabber (XMPP) chat-history model: list, read, search, and import DMs and MUC conferences into an Obsidian vault as markdown notes. */
 export const model = {
   type: "@magistr/jabber/history",
-  version: "2026.03.29.3",
+  version: "2026.05.25.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     summary: {

@@ -136,7 +136,7 @@ function noteSlug(msg: Record<string, unknown>): string {
  */
 export const model = {
   type: "@magistr/telegram/import",
-  version: "2026.03.28.2",
+  version: "2026.05.25.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     result: {

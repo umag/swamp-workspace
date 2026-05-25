@@ -399,7 +399,7 @@ function sanitize(name: string): string {
 /** Swamp model that imports LiveJournal entries (images, tags, mood, now playing, comments) into an Obsidian vault. */
 export const model = {
   type: "@magistr/livejournal/import",
-  version: "2026.03.29.1",
+  version: "2026.05.25.1",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",

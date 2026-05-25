@@ -501,7 +501,7 @@ function ftsToRecord(
 /** FidoNet JAM/Squish/FTS-0001 message base reader: list areas, read areas and netmail, and search messages by sender, FidoNet address, or text. */
 export const model = {
   type: "@magistr/fidonet-msgbase",
-  version: "2026.03.29.1",
+  version: "2026.05.25.1",
   globalArguments: GlobalArgsSchema,
 
   reports: ["@magistr/fidonet-summary", "@magistr/fidonet-messages"],
