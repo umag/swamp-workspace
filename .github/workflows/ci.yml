@@ -121,30 +121,20 @@ jobs:
           node-version: "20"
 
       - name: Review ${{ matrix.skill }} with tessl
+        env:
+          # tessl authenticates from the TESSL_TOKEN env var (an API key minted
+          # via `tessl api-key create`); the repo secret is named TESSL_API_KEY.
+          TESSL_TOKEN: ${{ secrets.TESSL_API_KEY }}
         run: |
           set -eo pipefail
-          npx --yes tessl@0.5.0 skill review \
-            "${{ matrix.extension }}/.claude/skills/${{ matrix.skill }}" --json \
-            | tee "tessl-${{ matrix.skill }}.json"
-
-          node -e "
-            const r = require('./tessl-${{ matrix.skill }}.json');
-            const scores = [
-              r.scores?.validation,
-              r.scores?.description,
-              r.scores?.content,
-            ].filter((s) => typeof s === 'number');
-            if (scores.length === 0) {
-              console.error('no scores in tessl output');
-              process.exit(1);
-            }
-            const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
-            console.log('avg=' + avg.toFixed(3));
-            if (avg < 0.90) {
-              console.error('FAIL: avg ' + avg.toFixed(3) + ' < 0.90');
-              process.exit(1);
-            }
-          "
+          # `--threshold 90` makes tessl exit non-zero when the skill scores
+          # below 90% (native gating; replaces the old hand-rolled JSON parser,
+          # whose score keys no longer match tessl's output schema). `--json` is
+          # piped to a file for the uploaded report; pipefail propagates the
+          # tessl exit code through `tee`.
+          npx --yes tessl@0.80.0 skill review \
+            "${{ matrix.extension }}/.claude/skills/${{ matrix.skill }}" \
+            --threshold 90 --json | tee "tessl-${{ matrix.skill }}.json"
 
       - name: Upload tessl report
         if: always()
@@ -178,7 +168,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -eo pipefail
-          npx --yes promptfoo@0.104.0 eval \
+          npx --yes promptfoo@0.121.12 eval \
             -c promptfoo.generated.yaml \
             --output promptfoo-results.json
 
