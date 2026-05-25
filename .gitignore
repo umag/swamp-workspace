@@ -6,9 +6,6 @@
 **/.claude/settings.local.json
 **/.claude/projects/
 
-# Generated promptfoo tests
-promptfoo.generated.yaml
-
 # Tessl project-local identity + init cruft (eval scenarios + tile.json ARE tracked)
 **/tessl.json
 **/.tessl/

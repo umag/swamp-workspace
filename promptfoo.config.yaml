@@ -27,17 +27,25 @@ prompts:
       You are a router choosing ONE Claude Code skill to handle a user query.
 
       Available skills (name — one-line purpose):
-      - issue-lifecycle — drive issue triage, planning, review,
-        implementation, harvest, and completion via the
-        @magistr/issue-lifecycle extension model
-      - ddd — domain-driven design building block selection and ubiquitous
-        language guidance
-      - tdd — red-green-refactor workflow enforcement for features and bug
-        fixes
+      - issue-lifecycle — drive an issue through triage, planning, review
+        (incl. approving/rejecting the plan on review findings),
+        implementation, knowledge harvest (record prior art, search UAT/KB),
+        and completion via the @magistr/issue-lifecycle extension model
+      - good-planning — convert an organization-level strategic choice into
+        funded, synchronized, contingent, revisable commitments; audit plan
+        governability via tripwires, signposts, and pullback ladders. NOT
+        for OKR drafting, sprint scheduling, or approving/rejecting an issue
+        or PR plan (that is issue-lifecycle)
+      - ddd — domain-driven design: building-block selection, bounded
+        contexts, aggregates, and ubiquitous-language guidance
+      - tdd — test-first red-green-refactor workflow, plus unit vs
+        integration test selection and test-file placement, for features
+        and bug fixes
       - moldable-dev — build contextual micro tools, query live system
         state, create reusable reports to reduce time-to-answer
-      - review-code — general code review (CLAUDE.md, DDD, TDD, types,
-        imports, organization)
+      - review-code — general code review for CLAUDE.md compliance, type
+        safety, imports, and code organization (NOT domain modeling → ddd;
+        NOT test-first workflow or test placement → tdd)
       - review-adversarial — adversarial review across 7 dimensions; assume
         code is broken
       - review-security — security audit (injection, secrets, supply chain,
@@ -46,6 +54,9 @@ prompts:
         messages, JSON mode, consistency)
       - review-skill — skill quality review (frontmatter, progressive
         disclosure, trigger precision, context window budget)
+      - jscad-codegen — generate, validate, and render JSCAD v2 CAD scripts
+        from natural language (text → STL/DXF/SVG/OBJ/3MF), fix JSCAD
+        scripts, validate STL output
 
       User query: "{{query}}"
 

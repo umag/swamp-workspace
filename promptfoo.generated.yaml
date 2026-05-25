@@ -1,0 +1,857 @@
+# GENERATED FILE — do not edit. Source of truth:
+#   - promptfoo.config.yaml (template)
+#   - .claude/skills/<name>/evals/trigger_evals.json (per-skill)
+# Regenerate: deno run --allow-read --allow-write scripts/build-promptfoo-tests.ts
+
+description: Skill routing evals — does the model pick the right skill?
+providers:
+  - id: 'anthropic:messages:claude-sonnet-4-5'
+    config:
+      max_tokens: 64
+      temperature: 0
+prompts:
+  - id: routing
+    raw: |
+      You are a router choosing ONE Claude Code skill to handle a user query.
+
+      Available skills (name — one-line purpose):
+      - issue-lifecycle — drive an issue through triage, planning, review
+        (incl. approving/rejecting the plan on review findings),
+        implementation, knowledge harvest (record prior art, search UAT/KB),
+        and completion via the @magistr/issue-lifecycle extension model
+      - good-planning — convert an organization-level strategic choice into
+        funded, synchronized, contingent, revisable commitments; audit plan
+        governability via tripwires, signposts, and pullback ladders. NOT
+        for OKR drafting, sprint scheduling, or approving/rejecting an issue
+        or PR plan (that is issue-lifecycle)
+      - ddd — domain-driven design: building-block selection, bounded
+        contexts, aggregates, and ubiquitous-language guidance
+      - tdd — test-first red-green-refactor workflow, plus unit vs
+        integration test selection and test-file placement, for features
+        and bug fixes
+      - moldable-dev — build contextual micro tools, query live system
+        state, create reusable reports to reduce time-to-answer
+      - review-code — general code review for CLAUDE.md compliance, type
+        safety, imports, and code organization (NOT domain modeling → ddd;
+        NOT test-first workflow or test placement → tdd)
+      - review-adversarial — adversarial review across 7 dimensions; assume
+        code is broken
+      - review-security — security audit (injection, secrets, supply chain,
+        OWASP Top 10)
+      - review-ux — CLI UX review (output formatting, help text, error
+        messages, JSON mode, consistency)
+      - review-skill — skill quality review (frontmatter, progressive
+        disclosure, trigger precision, context window budget)
+      - jscad-codegen — generate, validate, and render JSCAD v2 CAD scripts
+        from natural language (text → STL/DXF/SVG/OBJ/3MF), fix JSCAD
+        scripts, validate STL output
+
+      User query: "{{query}}"
+
+      Output ONLY the single skill name on one line (e.g. `review-code`),
+      or `none` if no skill applies. No prose, no punctuation, no quotes.
+tests:
+  - vars:
+      query: Do a code review on my latest changes before I commit.
+    description: 'review-code: route to "Do a code review on my latest changes before I commit."'
+    assert:
+      - type: contains
+        value: review-code
+  - vars:
+      query: /review-code
+    description: 'review-code: route to "/review-code"'
+    assert:
+      - type: contains
+        value: review-code
+  - vars:
+      query: Review my changes for CLAUDE.md compliance and type safety.
+    description: 'review-code: route to "Review my changes for CLAUDE.md compliance and type safety."'
+    assert:
+      - type: contains
+        value: review-code
+  - vars:
+      query: Check the imports and organization in the issue_lifecycle.ts refactor.
+    description: 'review-code: route to "Check the imports and organization in the issue_lifecycle.ts"'
+    assert:
+      - type: contains
+        value: review-code
+  - vars:
+      query: General review of this diff — is DDD respected? Tests present?
+    description: 'review-code: route to "General review of this diff — is DDD respected? Tests presen"'
+    assert:
+      - type: contains
+        value: review-code
+  - vars:
+      query: Review my code before I open the PR.
+    description: 'review-code: route to "Review my code before I open the PR."'
+    assert:
+      - type: contains
+        value: review-code
+  - vars:
+      query: Try to break my code — assume it's broken until proven otherwise.
+    description: 'review-code: reject from "Try to break my code — assume it''s broken until proven other"'
+    assert:
+      - type: not-contains
+        value: review-code
+  - vars:
+      query: Audit this credential-handling code for injection risks.
+    description: 'review-code: reject from "Audit this credential-handling code for injection risks."'
+    assert:
+      - type: not-contains
+        value: review-code
+  - vars:
+      query: Review the CLI output formatting and help text of the new command.
+    description: 'review-code: reject from "Review the CLI output formatting and help text of the new co"'
+    assert:
+      - type: not-contains
+        value: review-code
+  - vars:
+      query: Review my new SKILL.md for trigger precision and context budget.
+    description: 'review-code: reject from "Review my new SKILL.md for trigger precision and context bud"'
+    assert:
+      - type: not-contains
+        value: review-code
+  - vars:
+      query: Write a failing test first for this retry fix.
+    description: 'review-code: reject from "Write a failing test first for this retry fix."'
+    assert:
+      - type: not-contains
+        value: review-code
+  - vars:
+      query: 'Triage issue #99 and plan the implementation.'
+    description: 'review-code: reject from "Triage issue #99 and plan the implementation."'
+    assert:
+      - type: not-contains
+        value: review-code
+  - vars:
+      query: I want to explore the issue state blob through a custom view rather than reading the code.
+    description: 'moldable-dev: route to "I want to explore the issue state blob through a custom view"'
+    assert:
+      - type: contains
+        value: moldable-dev
+  - vars:
+      query: Build me a contextual inspector to debug why the retry scheduler stalls.
+    description: 'moldable-dev: route to "Build me a contextual inspector to debug why the retry sched"'
+    assert:
+      - type: contains
+        value: moldable-dev
+  - vars:
+      query: Query the swamp audit log to see which workflows ran overnight.
+    description: 'moldable-dev: route to "Query the swamp audit log to see which workflows ran overnig"'
+    assert:
+      - type: contains
+        value: moldable-dev
+  - vars:
+      query: I'm trying to understand this model's state — help me reduce time-to-answer.
+    description: 'moldable-dev: route to "I''m trying to understand this model''s state — help me reduce"'
+    assert:
+      - type: contains
+        value: moldable-dev
+  - vars:
+      query: Write a reusable swamp report that checks model freshness across the repo.
+    description: 'moldable-dev: route to "Write a reusable swamp report that checks model freshness ac"'
+    assert:
+      - type: contains
+        value: moldable-dev
+  - vars:
+      query: Use moldable development to investigate the slow workflow execution.
+    description: 'moldable-dev: route to "Use moldable development to investigate the slow workflow ex"'
+    assert:
+      - type: contains
+        value: moldable-dev
+  - vars:
+      query: Write a failing unit test for the new helper function.
+    description: 'moldable-dev: reject from "Write a failing unit test for the new helper function."'
+    assert:
+      - type: not-contains
+        value: moldable-dev
+  - vars:
+      query: Rename these technical classes to match the ubiquitous language.
+    description: 'moldable-dev: reject from "Rename these technical classes to match the ubiquitous langu"'
+    assert:
+      - type: not-contains
+        value: moldable-dev
+  - vars:
+      query: Review this code change for CLAUDE.md compliance.
+    description: 'moldable-dev: reject from "Review this code change for CLAUDE.md compliance."'
+    assert:
+      - type: not-contains
+        value: moldable-dev
+  - vars:
+      query: Audit the credential loading path for security issues.
+    description: 'moldable-dev: reject from "Audit the credential loading path for security issues."'
+    assert:
+      - type: not-contains
+        value: moldable-dev
+  - vars:
+      query: Start a new issue for the retry bug and plan the fix.
+    description: 'moldable-dev: reject from "Start a new issue for the retry bug and plan the fix."'
+    assert:
+      - type: not-contains
+        value: moldable-dev
+  - vars:
+      query: Review the error messages in the new CLI command.
+    description: 'moldable-dev: reject from "Review the error messages in the new CLI command."'
+    assert:
+      - type: not-contains
+        value: moldable-dev
+  - vars:
+      query: Review my new SKILL.md for trigger precision and context budget.
+    description: 'review-skill: route to "Review my new SKILL.md for trigger precision and context bud"'
+    assert:
+      - type: contains
+        value: review-skill
+  - vars:
+      query: /review-skill
+    description: 'review-skill: route to "/review-skill"'
+    assert:
+      - type: contains
+        value: review-skill
+  - vars:
+      query: Check this skill's frontmatter quality and progressive disclosure.
+    description: 'review-skill: route to "Check this skill''s frontmatter quality and progressive discl"'
+    assert:
+      - type: contains
+        value: review-skill
+  - vars:
+      query: Does my new skill overlap with existing ones? Check trigger uniqueness.
+    description: 'review-skill: route to "Does my new skill overlap with existing ones? Check trigger "'
+    assert:
+      - type: contains
+        value: review-skill
+  - vars:
+      query: Skill quality review — is the description precise enough?
+    description: 'review-skill: route to "Skill quality review — is the description precise enough?"'
+    assert:
+      - type: contains
+        value: review-skill
+  - vars:
+      query: Review the reference file organization in my new skill.
+    description: 'review-skill: route to "Review the reference file organization in my new skill."'
+    assert:
+      - type: contains
+        value: review-skill
+  - vars:
+      query: General code review for CLAUDE.md compliance.
+    description: 'review-skill: reject from "General code review for CLAUDE.md compliance."'
+    assert:
+      - type: not-contains
+        value: review-skill
+  - vars:
+      query: Adversarial review — try to break the new retry scheduler.
+    description: 'review-skill: reject from "Adversarial review — try to break the new retry scheduler."'
+    assert:
+      - type: not-contains
+        value: review-skill
+  - vars:
+      query: Security audit on the credential loader.
+    description: 'review-skill: reject from "Security audit on the credential loader."'
+    assert:
+      - type: not-contains
+        value: review-skill
+  - vars:
+      query: Review the CLI error messages on the new command.
+    description: 'review-skill: reject from "Review the CLI error messages on the new command."'
+    assert:
+      - type: not-contains
+        value: review-skill
+  - vars:
+      query: Write a failing test first for the jitter helper.
+    description: 'review-skill: reject from "Write a failing test first for the jitter helper."'
+    assert:
+      - type: not-contains
+        value: review-skill
+  - vars:
+      query: Triage this issue and plan the fix with DDD.
+    description: 'review-skill: reject from "Triage this issue and plan the fix with DDD."'
+    assert:
+      - type: not-contains
+        value: review-skill
+  - vars:
+      query: Help me decide whether this retry logic should be a domain service or a value object.
+    description: 'ddd: route to "Help me decide whether this retry logic should be a domain s"'
+    assert:
+      - type: contains
+        value: ddd
+  - vars:
+      query: I'm adding a new aggregate to the issue lifecycle — what are the building block rules?
+    description: 'ddd: route to "I''m adding a new aggregate to the issue lifecycle — what are"'
+    assert:
+      - type: contains
+        value: ddd
+  - vars:
+      query: Rename these tech-jargon classes to use ubiquitous language from the domain.
+    description: 'ddd: route to "Rename these tech-jargon classes to use ubiquitous language "'
+    assert:
+      - type: contains
+        value: ddd
+  - vars:
+      query: Should this be an entity or a value object? It has an ID but is immutable after creation.
+    description: 'ddd: route to "Should this be an entity or a value object? It has an ID but"'
+    assert:
+      - type: contains
+        value: ddd
+  - vars:
+      query: What's the difference between a repository and a domain service in this codebase?
+    description: 'ddd: route to "What''s the difference between a repository and a domain serv"'
+    assert:
+      - type: contains
+        value: ddd
+  - vars:
+      query: Check whether my new code follows DDD principles for bounded contexts.
+    description: 'ddd: route to "Check whether my new code follows DDD principles for bounded"'
+    assert:
+      - type: contains
+        value: ddd
+  - vars:
+      query: Write me a failing test for the retry backoff before I implement it.
+    description: 'ddd: reject from "Write me a failing test for the retry backoff before I imple"'
+    assert:
+      - type: not-contains
+        value: ddd
+  - vars:
+      query: Do a security review of the credential-loading path.
+    description: 'ddd: reject from "Do a security review of the credential-loading path."'
+    assert:
+      - type: not-contains
+        value: ddd
+  - vars:
+      query: The CLI output for this command is confusing — review the help text.
+    description: 'ddd: reject from "The CLI output for this command is confusing — review the he"'
+    assert:
+      - type: not-contains
+        value: ddd
+  - vars:
+      query: 'Triage issue #42 and create an implementation plan.'
+    description: 'ddd: reject from "Triage issue #42 and create an implementation plan."'
+    assert:
+      - type: not-contains
+        value: ddd
+  - vars:
+      query: Query the swamp audit log to see which workflows ran overnight.
+    description: 'ddd: reject from "Query the swamp audit log to see which workflows ran overnig"'
+    assert:
+      - type: not-contains
+        value: ddd
+  - vars:
+      query: Review this SKILL.md frontmatter for trigger precision.
+    description: 'ddd: reject from "Review this SKILL.md frontmatter for trigger precision."'
+    assert:
+      - type: not-contains
+        value: ddd
+  - vars:
+      query: Do an adversarial review of the new retry scheduler — assume it's broken.
+    description: 'review-adversarial: route to "Do an adversarial review of the new retry scheduler — assume"'
+    assert:
+      - type: contains
+        value: review-adversarial
+  - vars:
+      query: /review-adversarial
+    description: 'review-adversarial: route to "/review-adversarial"'
+    assert:
+      - type: contains
+        value: review-adversarial
+  - vars:
+      query: Try to break my code across all 7 dimensions.
+    description: 'review-adversarial: route to "Try to break my code across all 7 dimensions."'
+    assert:
+      - type: contains
+        value: review-adversarial
+  - vars:
+      query: Stress test this state-transition code and find the bugs.
+    description: 'review-adversarial: route to "Stress test this state-transition code and find the bugs."'
+    assert:
+      - type: contains
+        value: review-adversarial
+  - vars:
+      query: Find the idempotency and resource-leak bugs in this extension.
+    description: 'review-adversarial: route to "Find the idempotency and resource-leak bugs in this extensio"'
+    assert:
+      - type: contains
+        value: review-adversarial
+  - vars:
+      query: Adversarial review for the new code that touches external APIs.
+    description: 'review-adversarial: route to "Adversarial review for the new code that touches external AP"'
+    assert:
+      - type: contains
+        value: review-adversarial
+  - vars:
+      query: Standard code review for CLAUDE.md compliance.
+    description: 'review-adversarial: reject from "Standard code review for CLAUDE.md compliance."'
+    assert:
+      - type: not-contains
+        value: review-adversarial
+  - vars:
+      query: Audit the credential loader for OWASP Top 10 risks.
+    description: 'review-adversarial: reject from "Audit the credential loader for OWASP Top 10 risks."'
+    assert:
+      - type: not-contains
+        value: review-adversarial
+  - vars:
+      query: Review the help text and error messages on the new CLI command.
+    description: 'review-adversarial: reject from "Review the help text and error messages on the new CLI comma"'
+    assert:
+      - type: not-contains
+        value: review-adversarial
+  - vars:
+      query: Review my new skill for trigger precision.
+    description: 'review-adversarial: reject from "Review my new skill for trigger precision."'
+    assert:
+      - type: not-contains
+        value: review-adversarial
+  - vars:
+      query: Write a failing test for the retry jitter first.
+    description: 'review-adversarial: reject from "Write a failing test for the retry jitter first."'
+    assert:
+      - type: not-contains
+        value: review-adversarial
+  - vars:
+      query: Triage this bug and record prior art before planning.
+    description: 'review-adversarial: reject from "Triage this bug and record prior art before planning."'
+    assert:
+      - type: not-contains
+        value: review-adversarial
+  - vars:
+      query: 'Triage issue #42 and plan the fix.'
+    description: 'issue-lifecycle: route to "Triage issue #42 and plan the fix."'
+    assert:
+      - type: contains
+        value: issue-lifecycle
+  - vars:
+      query: Start a new issue for the retry bug and drive it through the lifecycle.
+    description: 'issue-lifecycle: route to "Start a new issue for the retry bug and drive it through the"'
+    assert:
+      - type: contains
+        value: issue-lifecycle
+  - vars:
+      query: File an issue for the broken jitter and create a plan with DDD analysis.
+    description: 'issue-lifecycle: route to "File an issue for the broken jitter and create a plan with D"'
+    assert:
+      - type: contains
+        value: issue-lifecycle
+  - vars:
+      query: Record prior art before we plan — search UAT and KB for existing retry scenarios.
+    description: 'issue-lifecycle: route to "Record prior art before we plan — search UAT and KB for exis"'
+    assert:
+      - type: contains
+        value: issue-lifecycle
+  - vars:
+      query: Iterate autonomously on the code-review findings until zero CRITICAL and HIGH remain.
+    description: 'issue-lifecycle: route to "Iterate autonomously on the code-review findings until zero "'
+    assert:
+      - type: contains
+        value: issue-lifecycle
+  - vars:
+      query: Harvest the UAT and KB proposals from this issue before completing it.
+    description: 'issue-lifecycle: route to "Harvest the UAT and KB proposals from this issue before comp"'
+    assert:
+      - type: contains
+        value: issue-lifecycle
+  - vars:
+      query: Reject the current plan — the reviewers found a HIGH finding.
+    description: 'issue-lifecycle: route to "Reject the current plan — the reviewers found a HIGH finding"'
+    assert:
+      - type: contains
+        value: issue-lifecycle
+  - vars:
+      query: Submit a swamp bug report on GitHub for the upstream repo.
+    description: 'issue-lifecycle: reject from "Submit a swamp bug report on GitHub for the upstream repo."'
+    assert:
+      - type: not-contains
+        value: issue-lifecycle
+  - vars:
+      query: Help me pick the right DDD building block for this new class.
+    description: 'issue-lifecycle: reject from "Help me pick the right DDD building block for this new class"'
+    assert:
+      - type: not-contains
+        value: issue-lifecycle
+  - vars:
+      query: Write a failing test first for the new helper function.
+    description: 'issue-lifecycle: reject from "Write a failing test first for the new helper function."'
+    assert:
+      - type: not-contains
+        value: issue-lifecycle
+  - vars:
+      query: Do an adversarial review of this credential loader.
+    description: 'issue-lifecycle: reject from "Do an adversarial review of this credential loader."'
+    assert:
+      - type: not-contains
+        value: issue-lifecycle
+  - vars:
+      query: Build a moldable inspector to query the swamp audit log.
+    description: 'issue-lifecycle: reject from "Build a moldable inspector to query the swamp audit log."'
+    assert:
+      - type: not-contains
+        value: issue-lifecycle
+  - vars:
+      query: Review the CLI output of this new command for consistency.
+    description: 'review-ux: route to "Review the CLI output of this new command for consistency."'
+    assert:
+      - type: contains
+        value: review-ux
+  - vars:
+      query: /review-ux
+    description: 'review-ux: route to "/review-ux"'
+    assert:
+      - type: contains
+        value: review-ux
+  - vars:
+      query: The error messages on failure are unclear — review them.
+    description: 'review-ux: route to "The error messages on failure are unclear — review them."'
+    assert:
+      - type: contains
+        value: review-ux
+  - vars:
+      query: Check the help text and JSON mode of the new command.
+    description: 'review-ux: route to "Check the help text and JSON mode of the new command."'
+    assert:
+      - type: contains
+        value: review-ux
+  - vars:
+      query: UX review for the new subcommand before I ship it.
+    description: 'review-ux: route to "UX review for the new subcommand before I ship it."'
+    assert:
+      - type: contains
+        value: review-ux
+  - vars:
+      query: Review the output format of this command against the rest of the CLI.
+    description: 'review-ux: route to "Review the output format of this command against the rest of"'
+    assert:
+      - type: contains
+        value: review-ux
+  - vars:
+      query: General code review for CLAUDE.md and types.
+    description: 'review-ux: reject from "General code review for CLAUDE.md and types."'
+    assert:
+      - type: not-contains
+        value: review-ux
+  - vars:
+      query: Adversarial review — assume the code is broken.
+    description: 'review-ux: reject from "Adversarial review — assume the code is broken."'
+    assert:
+      - type: not-contains
+        value: review-ux
+  - vars:
+      query: Security audit on the credential loader.
+    description: 'review-ux: reject from "Security audit on the credential loader."'
+    assert:
+      - type: not-contains
+        value: review-ux
+  - vars:
+      query: Review my new SKILL.md for trigger precision.
+    description: 'review-ux: reject from "Review my new SKILL.md for trigger precision."'
+    assert:
+      - type: not-contains
+        value: review-ux
+  - vars:
+      query: Write a failing test first for this CLI option.
+    description: 'review-ux: reject from "Write a failing test first for this CLI option."'
+    assert:
+      - type: not-contains
+        value: review-ux
+  - vars:
+      query: Triage this bug report and plan the fix.
+    description: 'review-ux: reject from "Triage this bug report and plan the fix."'
+    assert:
+      - type: not-contains
+        value: review-ux
+  - vars:
+      query: Do a security review of the credential-loading path.
+    description: 'review-security: route to "Do a security review of the credential-loading path."'
+    assert:
+      - type: contains
+        value: review-security
+  - vars:
+      query: /review-security
+    description: 'review-security: route to "/review-security"'
+    assert:
+      - type: contains
+        value: review-security
+  - vars:
+      query: Check this input parser for injection and validation issues.
+    description: 'review-security: route to "Check this input parser for injection and validation issues."'
+    assert:
+      - type: contains
+        value: review-security
+  - vars:
+      query: Audit the filesystem writes — any path traversal risks?
+    description: 'review-security: route to "Audit the filesystem writes — any path traversal risks?"'
+    assert:
+      - type: contains
+        value: review-security
+  - vars:
+      query: Security audit for the new API client that sends auth tokens.
+    description: 'review-security: route to "Security audit for the new API client that sends auth tokens"'
+    assert:
+      - type: contains
+        value: review-security
+  - vars:
+      query: Vulnerability check on the new dependency we just added.
+    description: 'review-security: route to "Vulnerability check on the new dependency we just added."'
+    assert:
+      - type: contains
+        value: review-security
+  - vars:
+      query: Standard code review for DDD and CLAUDE.md compliance.
+    description: 'review-security: reject from "Standard code review for DDD and CLAUDE.md compliance."'
+    assert:
+      - type: not-contains
+        value: review-security
+  - vars:
+      query: Adversarial review — try to break my retry scheduler.
+    description: 'review-security: reject from "Adversarial review — try to break my retry scheduler."'
+    assert:
+      - type: not-contains
+        value: review-security
+  - vars:
+      query: Review the CLI help text and error messages for UX.
+    description: 'review-security: reject from "Review the CLI help text and error messages for UX."'
+    assert:
+      - type: not-contains
+        value: review-security
+  - vars:
+      query: Review this new skill for context budget and trigger precision.
+    description: 'review-security: reject from "Review this new skill for context budget and trigger precisi"'
+    assert:
+      - type: not-contains
+        value: review-security
+  - vars:
+      query: Write a failing test first for the input parser.
+    description: 'review-security: reject from "Write a failing test first for the input parser."'
+    assert:
+      - type: not-contains
+        value: review-security
+  - vars:
+      query: Triage this bug report and plan the implementation.
+    description: 'review-security: reject from "Triage this bug report and plan the implementation."'
+    assert:
+      - type: not-contains
+        value: review-security
+  - vars:
+      query: 'Write a failing test first, then I''ll implement the jitter helper.'
+    description: 'tdd: route to "Write a failing test first, then I''ll implement the jitter h"'
+    assert:
+      - type: contains
+        value: tdd
+  - vars:
+      query: 'Let''s do TDD on this — red, green, refactor.'
+    description: 'tdd: route to "Let''s do TDD on this — red, green, refactor."'
+    assert:
+      - type: contains
+        value: tdd
+  - vars:
+      query: 'Before I fix this bug, add a regression test that currently fails.'
+    description: 'tdd: route to "Before I fix this bug, add a regression test that currently "'
+    assert:
+      - type: contains
+        value: tdd
+  - vars:
+      query: 'I need to implement the new method test-first, can you show me the red step?'
+    description: 'tdd: route to "I need to implement the new method test-first, can you show "'
+    assert:
+      - type: contains
+        value: tdd
+  - vars:
+      query: Add an integration test for the approve_plan gate.
+    description: 'tdd: route to "Add an integration test for the approve_plan gate."'
+    assert:
+      - type: contains
+        value: tdd
+  - vars:
+      query: Where should this unit test live — next to the source or in an integration/ dir?
+    description: 'tdd: route to "Where should this unit test live — next to the source or in "'
+    assert:
+      - type: contains
+        value: tdd
+  - vars:
+      query: Should this be modeled as an aggregate or an entity?
+    description: 'tdd: reject from "Should this be modeled as an aggregate or an entity?"'
+    assert:
+      - type: not-contains
+        value: tdd
+  - vars:
+      query: Look for injection risks in the user-input parser.
+    description: 'tdd: reject from "Look for injection risks in the user-input parser."'
+    assert:
+      - type: not-contains
+        value: tdd
+  - vars:
+      query: The error message on failure is unclear — review the wording.
+    description: 'tdd: reject from "The error message on failure is unclear — review the wording"'
+    assert:
+      - type: not-contains
+        value: tdd
+  - vars:
+      query: Do an adversarial review of this credential-handling code.
+    description: 'tdd: reject from "Do an adversarial review of this credential-handling code."'
+    assert:
+      - type: not-contains
+        value: tdd
+  - vars:
+      query: Triage this new bug report and plan the fix.
+    description: 'tdd: reject from "Triage this new bug report and plan the fix."'
+    assert:
+      - type: not-contains
+        value: tdd
+  - vars:
+      query: Build a moldable inspector to explore the issue state blob.
+    description: 'tdd: reject from "Build a moldable inspector to explore the issue state blob."'
+    assert:
+      - type: not-contains
+        value: tdd
+  - vars:
+      query: We just had a strategy offsite — now turn it into a committed plan.
+    description: 'good-planning: route to "We just had a strategy offsite — now turn it into a committe"'
+    assert:
+      - type: contains
+        value: good-planning
+  - vars:
+      query: Audit whether our existing plan can actually be steered.
+    description: 'good-planning: route to "Audit whether our existing plan can actually be steered."'
+    assert:
+      - type: contains
+        value: good-planning
+  - vars:
+      query: 'Build a plan with tripwires, signposts, and a pullback ladder.'
+    description: 'good-planning: route to "Build a plan with tripwires, signposts, and a pullback ladde"'
+    assert:
+      - type: contains
+        value: good-planning
+  - vars:
+      query: What's the first binding crux and max tolerable loss for this strategy?
+    description: 'good-planning: route to "What''s the first binding crux and max tolerable loss for thi"'
+    assert:
+      - type: contains
+        value: good-planning
+  - vars:
+      query: How do we know if our assumptions are breaking? Set up trigger points.
+    description: 'good-planning: route to "How do we know if our assumptions are breaking? Set up trigg"'
+    assert:
+      - type: contains
+        value: good-planning
+  - vars:
+      query: 'Convert this strategic choice into funded, synchronized, contingent commitments.'
+    description: 'good-planning: route to "Convert this strategic choice into funded, synchronized, con"'
+    assert:
+      - type: contains
+        value: good-planning
+  - vars:
+      query: The plan looks good on paper but I'm not sure it's governable.
+    description: 'good-planning: route to "The plan looks good on paper but I''m not sure it''s governabl"'
+    assert:
+      - type: contains
+        value: good-planning
+  - vars:
+      query: Triage this bug report and drive it through the lifecycle.
+    description: 'good-planning: reject from "Triage this bug report and drive it through the lifecycle."'
+    assert:
+      - type: not-contains
+        value: good-planning
+  - vars:
+      query: Write a failing test first for the retry scheduler.
+    description: 'good-planning: reject from "Write a failing test first for the retry scheduler."'
+    assert:
+      - type: not-contains
+        value: good-planning
+  - vars:
+      query: Draft our Q3 OKRs for the team.
+    description: 'good-planning: reject from "Draft our Q3 OKRs for the team."'
+    assert:
+      - type: not-contains
+        value: good-planning
+  - vars:
+      query: Plan this sprint's tickets for the mobile team.
+    description: 'good-planning: reject from "Plan this sprint''s tickets for the mobile team."'
+    assert:
+      - type: not-contains
+        value: good-planning
+  - vars:
+      query: Generate a CAD model of a mounting bracket.
+    description: 'good-planning: reject from "Generate a CAD model of a mounting bracket."'
+    assert:
+      - type: not-contains
+        value: good-planning
+  - vars:
+      query: Do a security review of the credential-loading path.
+    description: 'good-planning: reject from "Do a security review of the credential-loading path."'
+    assert:
+      - type: not-contains
+        value: good-planning
+  - vars:
+      query: Generate a CAD model of a parametric gear from this description.
+    description: 'jscad-codegen: route to "Generate a CAD model of a parametric gear from this descript"'
+    assert:
+      - type: contains
+        value: jscad-codegen
+  - vars:
+      query: Create a 3D model of a mounting bracket and render it to STL.
+    description: 'jscad-codegen: route to "Create a 3D model of a mounting bracket and render it to STL"'
+    assert:
+      - type: contains
+        value: jscad-codegen
+  - vars:
+      query: Write a JSCAD script for a hex nut.
+    description: 'jscad-codegen: route to "Write a JSCAD script for a hex nut."'
+    assert:
+      - type: contains
+        value: jscad-codegen
+  - vars:
+      query: 'Make a part: a 20mm cube with a centered 6mm bore.'
+    description: 'jscad-codegen: route to "Make a part: a 20mm cube with a centered 6mm bore."'
+    assert:
+      - type: contains
+        value: jscad-codegen
+  - vars:
+      query: Convert this text description into a CAD model and export an STL.
+    description: 'jscad-codegen: route to "Convert this text description into a CAD model and export an"'
+    assert:
+      - type: contains
+        value: jscad-codegen
+  - vars:
+      query: Fix my JSCAD script — main() isn't returning geometry.
+    description: 'jscad-codegen: route to "Fix my JSCAD script — main() isn''t returning geometry."'
+    assert:
+      - type: contains
+        value: jscad-codegen
+  - vars:
+      query: Validate the STL output of this CadScript.
+    description: 'jscad-codegen: route to "Validate the STL output of this CadScript."'
+    assert:
+      - type: contains
+        value: jscad-codegen
+  - vars:
+      query: Add a custom DNS A-record on Porkbun for www.
+    description: 'jscad-codegen: reject from "Add a custom DNS A-record on Porkbun for www."'
+    assert:
+      - type: not-contains
+        value: jscad-codegen
+  - vars:
+      query: Import my LiveJournal blog into the Obsidian vault.
+    description: 'jscad-codegen: reject from "Import my LiveJournal blog into the Obsidian vault."'
+    assert:
+      - type: not-contains
+        value: jscad-codegen
+  - vars:
+      query: Send a Telegram message to the ops channel.
+    description: 'jscad-codegen: reject from "Send a Telegram message to the ops channel."'
+    assert:
+      - type: not-contains
+        value: jscad-codegen
+  - vars:
+      query: Do a security review of the credential-loading path.
+    description: 'jscad-codegen: reject from "Do a security review of the credential-loading path."'
+    assert:
+      - type: not-contains
+        value: jscad-codegen
+  - vars:
+      query: Triage this bug report and plan the implementation.
+    description: 'jscad-codegen: reject from "Triage this bug report and plan the implementation."'
+    assert:
+      - type: not-contains
+        value: jscad-codegen
+  - vars:
+      query: List the custom DNS records on the Pi-hole.
+    description: 'jscad-codegen: reject from "List the custom DNS records on the Pi-hole."'
+    assert:
+      - type: not-contains
+        value: jscad-codegen

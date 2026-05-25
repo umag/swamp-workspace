@@ -1,0 +1,17 @@
+manifestVersion: 1
+name: "@magistr/talm-cluster"
+version: "2026.05.25.1"
+description: "Talos cluster lifecycle management via talm — init, configure, template nodes, apply configs, bootstrap, and health checks"
+repository: "https://github.com/umag/swamp-workspace"
+models:
+  - talm_cluster.ts
+additionalFiles:
+  - README.md
+  - LICENSE.md
+platforms: []
+labels:
+  - talos
+  - talm
+  - kubernetes
+  - infrastructure
+  - cluster

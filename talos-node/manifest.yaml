@@ -1,0 +1,15 @@
+manifestVersion: 1
+name: "@magistr/talos-node"
+version: "2026.05.25.1"
+description: "Talos Linux node management via talosctl - provision, bootstrap, patch, upgrade, health check, and more"
+repository: "https://github.com/umag/swamp-workspace"
+models:
+  - talos.ts
+additionalFiles:
+  - README.md
+  - LICENSE.md
+platforms: []
+labels:
+  - talos
+  - kubernetes
+  - infrastructure
