@@ -3,15 +3,15 @@
 All notable changes to `@magistr/issue-lifecycle`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
-## 2026.05.25.2
+## 2026.05.25.3
 
 - Ships the `2026.05.24.x` skill changes (BLUF plan format + implementation
   discipline) that never reached the registry because CI's deno-check matrix was
   red 2026-05-21…05-25. No model schema/method changes — model type version
   stays `2026.04.30.1`. First version actually published through the fully
-  repaired CI path (real setup-swamp binary download + API-key auth.json).
-  `2026.05.25.1` was tagged but its publish failed on auth and never reached the
-  registry.
+  repaired CI path (setup-swamp binary + API-key auth.json + `-y`).
+  `2026.05.25.1` (inert SWAMP_AUTH_TOKEN) and `2026.05.25.2` (push prompt
+  cancelled with no TTY) were tagged but never reached the registry.
 
 ## 2026.05.24.2
 
