@@ -1,1 +1,4 @@
-{ "description": "TDD implementation guide with integration mapping", "include": ["./inputs"] }
+{
+  "description": "TDD implementation guide with integration mapping",
+  "include": ["./inputs"]
+}

@@ -1,1 +1,4 @@
-{ "description": "BLUF plan presentation for CLI feature", "include": ["./inputs"] }
+{
+  "description": "BLUF plan presentation for CLI feature",
+  "include": ["./inputs"]
+}

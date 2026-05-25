@@ -10,13 +10,14 @@ All notable changes to `@magistr/issue-lifecycle`. Versions are CalVer
 
 ## 2026.05.24.1 — plan presentation + implementation discipline
 
-Skill changes (bundled `issue-lifecycle` skill). No model schema/method
-changes — model type version stays `2026.04.30.1`.
+Skill changes (bundled `issue-lifecycle` skill). No model schema/method changes
+— model type version stays `2026.04.30.1`.
 
 ### Plan presentation
-- New skimmable **BLUF plan format**: Goal / Approach / Domain impact (exactly
-  4 lines) / Scope table with a `DDD role` column / conditional Risks /
-  numbered one-line Steps / Review coverage / Non-goals / Open questions.
+
+- New skimmable **BLUF plan format**: Goal / Approach / Domain impact (exactly 4
+  lines) / Scope table with a `DDD role` column / conditional Risks / numbered
+  one-line Steps / Review coverage / Non-goals / Open questions.
 - Front-loaded **"Plan output format (always)"** pointer in `SKILL.md` so the
   format applies even when a plan is produced outside the full lifecycle flow.
 - Opt-in references for **HTML-artifact escalation**, **Wardley maps**
@@ -26,16 +27,18 @@ changes — model type version stays `2026.04.30.1`.
   this format.
 
 ### Implementation discipline (`implementation.md` Step 2)
-- **Anchor changes in existing code**: map integration points first
-  (grep callers/entry points), reuse or extend, no parallel code paths.
-- **Right-size backward compatibility**: no compat shims, migrations, or
-  version flags for unreleased / in-development code with no external
-  consumers. New `adversarial-review.md` "Right-size backward compatibility"
-  check enforces it at plan time.
+
+- **Anchor changes in existing code**: map integration points first (grep
+  callers/entry points), reuse or extend, no parallel code paths.
+- **Right-size backward compatibility**: no compat shims, migrations, or version
+  flags for unreleased / in-development code with no external consumers. New
+  `adversarial-review.md` "Right-size backward compatibility" check enforces it
+  at plan time.
 - Explicit **RED / GREEN / REFACTOR** phases; refactor **in-place, never
   deferred** to a follow-up issue or "later".
 
 ### Validation
+
 - Behaviors validated with tessl evals: BLUF plan format scored 100/100;
   integrate-with-existing-code and no-needless-backward-compat guards at 100%.
 

@@ -50,19 +50,29 @@
       {
         "order": 1,
         "description": "Add IdempotencyKey value object to domain/payments/",
-        "files": ["src/domain/payments/IdempotencyKey.ts", "src/domain/payments/__tests__/IdempotencyKey.test.ts"],
+        "files": [
+          "src/domain/payments/IdempotencyKey.ts",
+          "src/domain/payments/__tests__/IdempotencyKey.test.ts"
+        ],
         "risks": ""
       },
       {
         "order": 2,
         "description": "Update PaymentIntent to generate and expose IdempotencyKey",
-        "files": ["src/domain/payments/PaymentIntent.ts", "tests/payments/PaymentIntent.test.ts"],
+        "files": [
+          "src/domain/payments/PaymentIntent.ts",
+          "tests/payments/PaymentIntent.test.ts"
+        ],
         "risks": "PaymentIntent is the aggregate root — must preserve existing invariants"
       },
       {
         "order": 3,
         "description": "Thread IdempotencyKey through PaymentService and PaymentGatewayClient",
-        "files": ["src/payments/PaymentService.ts", "src/payments/PaymentGatewayClient.ts", "tests/payments/PaymentService.test.ts"],
+        "files": [
+          "src/payments/PaymentService.ts",
+          "src/payments/PaymentGatewayClient.ts",
+          "tests/payments/PaymentService.test.ts"
+        ],
         "risks": "Existing callers of PaymentService pass no idempotency key — need to verify no backwards-compat breakage"
       }
     ],

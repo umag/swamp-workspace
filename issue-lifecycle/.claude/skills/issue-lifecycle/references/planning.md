@@ -5,20 +5,20 @@
 - State: `triaged` (or `planned`, for revisions)
 - Phase 1 triage detail captured (priority, category, confidence at minimum)
 
-Phase 2 has two parts: a **knowledge lookup** (entry side of the UAT/KB
-process) and the plan itself.
+Phase 2 has two parts: a **knowledge lookup** (entry side of the UAT/KB process)
+and the plan itself.
 
 ## Step 6: Knowledge lookup (entry side)
 
-Before writing the plan, search existing UAT and KB for prior art. This
-closes the loop with Phase 6 (harvest) — the diff between what you find here
-and what emerges during the lifecycle becomes the harvest candidates.
+Before writing the plan, search existing UAT and KB for prior art. This closes
+the loop with Phase 6 (harvest) — the diff between what you find here and what
+emerges during the lifecycle becomes the harvest candidates.
 
 ### UAT lookup
 
-Read `agent-constraints/uat-conventions.md` at the repo root to locate the
-UAT test base and its conventions. If it doesn't exist, fall back to scanning
-for common locations:
+Read `agent-constraints/uat-conventions.md` at the repo root to locate the UAT
+test base and its conventions. If it doesn't exist, fall back to scanning for
+common locations:
 
 - `tests/uat/`
 - `uat/`
@@ -81,10 +81,10 @@ swamp model method run <issue-name> plan \
   --input-file /tmp/plan-issue-<issue-name>-v1.yaml
 ```
 
-**Issue-scoped and version-scoped filenames are required.** Do NOT use
-generic names like `/tmp/plan.yaml` — they collide with stale content from
-previous lifecycle sessions, and unrelated content can silently leak into the
-current plan. Always use `/tmp/plan-issue-<issue-name>-v<N>.yaml`.
+**Issue-scoped and version-scoped filenames are required.** Do NOT use generic
+names like `/tmp/plan.yaml` — they collide with stale content from previous
+lifecycle sessions, and unrelated content can silently leak into the current
+plan. Always use `/tmp/plan-issue-<issue-name>-v<N>.yaml`.
 
 The YAML file shape:
 
@@ -109,7 +109,7 @@ potentialChallenges:
 reviewMatrix:
   code: true
   adversarial: true
-  security: true    # touching auth — enable
+  security: true # touching auth — enable
   ux: false
   skill: false
 ```
@@ -125,33 +125,38 @@ convention so Phase 6 (harvest) can parse them:
 
 ```markdown
 ## Summary
+
 <one paragraph — what the plan does>
 
 ## Documentation impact
+
 <files/docs that will need updating, or "none">
 
 ## UAT coverage
-<existing scenarios that cover this change, or "new scenarios needed — see Phase 6">
+
+<existing scenarios that cover this change, or "new scenarios needed — see Phase
+6">
 
 ## PR
+
 <to be appended after the PR is opened>
 ```
 
 ## Step 8: Apply repo-specific planning conventions
 
 Read `agent-constraints/planning-conventions.md` at the repo root for
-repo-specific overrides: required analysis sections, documentation checks,
-test strategy templates, UAT assessment rules. If it doesn't exist, the
-canonical defaults above apply.
+repo-specific overrides: required analysis sections, documentation checks, test
+strategy templates, UAT assessment rules. If it doesn't exist, the canonical
+defaults above apply.
 
 ## Step 9: Present the plan
 
 Render the plan in the **skimmable BLUF format** defined in
-[plan-presentation.md](plan-presentation.md) — Goal, Approach, Domain impact
-(4 lines), Scope table with a DDD-role column, Risks (only if any), one-line
-Steps, Non-goals, Open questions. Read that file before presenting; it carries
-the hard rules (40–80 lines, no code, DDD red flags surfaced as risks,
-diagrams off by default) plus the escalation triggers for an HTML artifact
+[plan-presentation.md](plan-presentation.md) — Goal, Approach, Domain impact (4
+lines), Scope table with a DDD-role column, Risks (only if any), one-line Steps,
+Non-goals, Open questions. Read that file before presenting; it carries the hard
+rules (40–80 lines, no code, DDD red flags surfaced as risks, diagrams off by
+default) plus the escalation triggers for an HTML artifact
 ([plan-html-artifacts.md](plan-html-artifacts.md)) and Wardley maps for
 strategic issues ([plan-wardley.md](plan-wardley.md)). The same format governs
 every later presentation of the plan to the human, including the approval gate
@@ -163,8 +168,8 @@ finding, and risk verbatim.
 
 After presenting, **immediately** proceed to Phase 3
 ([adversarial-review.md](adversarial-review.md)) — planning and adversarial
-review are paired. Do not stop for human feedback between plan and first
-review; the review informs the first human decision point.
+review are paired. Do not stop for human feedback between plan and first review;
+the review informs the first human decision point.
 
 ## Next phase
 

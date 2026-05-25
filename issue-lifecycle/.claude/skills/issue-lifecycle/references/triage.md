@@ -14,8 +14,8 @@ swamp model create @magistr/issue-lifecycle <issue-name>
 ```
 
 Pick a descriptive name. If the repo uses a numbered scheme, reuse that
-convention. Otherwise, short-kebab-case based on the issue title
-(e.g. `auth-timeout-fix`, `export-csv-slow`).
+convention. Otherwise, short-kebab-case based on the issue title (e.g.
+`auth-timeout-fix`, `export-csv-slow`).
 
 ### 2. Call `start`
 
@@ -36,8 +36,8 @@ labels:
 
 ### 3. Investigate with moldable-dev
 
-**Before classifying**, invoke `tessl__moldable-dev` to build whatever
-inspector you need to understand the problem domain:
+**Before classifying**, invoke `tessl__moldable-dev` to build whatever inspector
+you need to understand the problem domain:
 
 - Query live model / resource state
 - Grep the codebase for affected areas
@@ -65,7 +65,7 @@ Where the YAML file contains:
 affectedAreas:
   - "src/auth/"
   - "docs/api/auth.md"
-clarifyingQuestions: []  # populate if confidence is low
+clarifyingQuestions: [] # populate if confidence is low
 ```
 
 **Classification guidance:**
@@ -97,8 +97,8 @@ proceed to planning until the human clarifies.
 security work.**
 
 Before planning a fix, reproduce the issue to confirm the failure mode. Read
-`agent-constraints/triage-conventions.md` for repo-specific reproduction
-steps. If it doesn't exist, create a minimal reproduction in `/tmp/` using the
+`agent-constraints/triage-conventions.md` for repo-specific reproduction steps.
+If it doesn't exist, create a minimal reproduction in `/tmp/` using the
 project's standard tooling.
 
 Record the outcome by re-calling `triage` (or adding a follow-up note; the
@@ -116,7 +116,7 @@ With the file updated to include:
 affectedAreas: [...]
 clarifyingQuestions: []
 reproduced:
-  status: reproduced        # reproduced | could-not-reproduce | not-applicable
+  status: reproduced # reproduced | could-not-reproduce | not-applicable
   notes: |
     Steps: 1. ...
     Observed: ...
@@ -124,9 +124,9 @@ reproduced:
 ```
 
 If the bug **cannot be reproduced**, set `status: could-not-reproduce`, note
-why, and **ask the human how to proceed** before planning. It may mean the
-issue description is incomplete, the bug is environment-specific, or the
-underlying code has already changed.
+why, and **ask the human how to proceed** before planning. It may mean the issue
+description is incomplete, the bug is environment-specific, or the underlying
+code has already changed.
 
 ## Next phase
 

@@ -1,1 +1,4 @@
-{ "description": "Autonomous loop handover on loop detection", "include": ["./inputs"] }
+{
+  "description": "Autonomous loop handover on loop detection",
+  "include": ["./inputs"]
+}

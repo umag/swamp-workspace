@@ -23,18 +23,18 @@ anytime with `swamp model method run <name> hydrate` for a compact summary or
 ## Core Principles (sacred — never violate)
 
 1. **Never auto-approve.** `approve_plan` is **only** called after the human
-   explicitly says one of: `approve`, `approved`, `looks good`, `ship it`,
-   `go`, `LGTM`. Review-finding resolution is autonomous; **approval is not**.
+   explicitly says one of: `approve`, `approved`, `looks good`, `ship it`, `go`,
+   `LGTM`. Review-finding resolution is autonomous; **approval is not**.
 2. **Never skip the approval gate.** Even when the autonomous loop exits with
-   zero blocking findings, you still present to the human and wait. The
-   autonomy is on finding resolution, not on approval.
-3. **Persist everything through the model.** Every decision goes through a
-   model method so state survives context compression and session resumption.
-   Never keep lifecycle state only in the conversation.
-4. **File unrelated issues immediately.** If you discover a bug, code smell,
-   or problem during investigation that is NOT related to the current issue,
-   file it as a new issue. Do not try to fix it in the current work span.
-   Scope creep is the single fastest way to derail a lifecycle.
+   zero blocking findings, you still present to the human and wait. The autonomy
+   is on finding resolution, not on approval.
+3. **Persist everything through the model.** Every decision goes through a model
+   method so state survives context compression and session resumption. Never
+   keep lifecycle state only in the conversation.
+4. **File unrelated issues immediately.** If you discover a bug, code smell, or
+   problem during investigation that is NOT related to the current issue, file
+   it as a new issue. Do not try to fix it in the current work span. Scope creep
+   is the single fastest way to derail a lifecycle.
 
 ## Repository configuration (agent-constraints/)
 
@@ -53,20 +53,19 @@ corresponding phase; if not, documented defaults in each reference file apply.
 
 ## Phase dispatch (read ONE file per phase)
 
-| Phase | Model states | Reference file |
-|-------|-------------|----------------|
-| 1. Triage | `filed → triaged` | [references/triage.md](references/triage.md) |
-| 2. Planning | `triaged → planned` | [references/planning.md](references/planning.md) |
-| 3. Adversarial review | `planned ↔ reviewing → approved` | [references/adversarial-review.md](references/adversarial-review.md) |
-| 4. Implementation | `approved → implementing` | [references/implementation.md](references/implementation.md) |
-| 5. Code review | `implementing ↔ code_reviewing → resolved` | [references/code-review.md](references/code-review.md) |
-| 6. Knowledge harvest (optional) | `resolved → harvested → complete` | [references/knowledge-harvest.md](references/knowledge-harvest.md) |
+| Phase                           | Model states                               | Reference file                                                       |
+| ------------------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| 1. Triage                       | `filed → triaged`                          | [references/triage.md](references/triage.md)                         |
+| 2. Planning                     | `triaged → planned`                        | [references/planning.md](references/planning.md)                     |
+| 3. Adversarial review           | `planned ↔ reviewing → approved`           | [references/adversarial-review.md](references/adversarial-review.md) |
+| 4. Implementation               | `approved → implementing`                  | [references/implementation.md](references/implementation.md)         |
+| 5. Code review                  | `implementing ↔ code_reviewing → resolved` | [references/code-review.md](references/code-review.md)               |
+| 6. Knowledge harvest (optional) | `resolved → harvested → complete`          | [references/knowledge-harvest.md](references/knowledge-harvest.md)   |
 
-Phase 3 and Phase 5 both drive a generic **autonomous iteration loop**
-(reject → revise → re-review until zero CRITICAL and zero HIGH, with
-safeguards). The loop logic lives in
-[references/autonomous-loop.md](references/autonomous-loop.md) — read it
-alongside whichever review phase is active.
+Phase 3 and Phase 5 both drive a generic **autonomous iteration loop** (reject →
+revise → re-review until zero CRITICAL and zero HIGH, with safeguards). The loop
+logic lives in [references/autonomous-loop.md](references/autonomous-loop.md) —
+read it alongside whichever review phase is active.
 
 State machine diagram + transition guards + method reference live in
 [references/state-machine.md](references/state-machine.md). Review matrix
@@ -76,8 +75,8 @@ activation rules (which of the 5 reviewers to run when) live in
 ## Plan output format (always)
 
 Whenever you **write or present an implementation plan** — at planning Step 9,
-at the approval gate, or any time you are asked to produce a plan for an issue
-— render it in the skimmable BLUF format defined in
+at the approval gate, or any time you are asked to produce a plan for an issue —
+render it in the skimmable BLUF format defined in
 [references/plan-presentation.md](references/plan-presentation.md). Read that
 file before emitting the plan. Non-negotiable highlights: Goal / Approach /
 Domain impact (exactly 4 lines) / Scope table with a `DDD role` column /
@@ -87,11 +86,11 @@ lifecycle flow.
 
 ## Worktree note
 
-If you are in a Claude Code worktree (`.claude/worktrees/`), the worktree is
-not an initialized swamp repository. Add `--repo-dir <path-to-main-repo>` to
-all `swamp` commands, where the main repo is the parent of the
-`.claude/worktrees/` directory. Every example in the reference files assumes
-you run from the main repo; adapt as needed.
+If you are in a Claude Code worktree (`.claude/worktrees/`), the worktree is not
+an initialized swamp repository. Add `--repo-dir <path-to-main-repo>` to all
+`swamp` commands, where the main repo is the parent of the `.claude/worktrees/`
+directory. Every example in the reference files assumes you run from the main
+repo; adapt as needed.
 
 ## Resuming a session
 
@@ -102,9 +101,9 @@ swamp model method run <issue-name> hydrate
 swamp data get <issue-name> hydrate --json
 ```
 
-The hydrate output reports current state, planVersion, blocking finding
-counts, matrix coverage, iteration cursors, and review history length. Use it
-to dispatch to the right phase reference without reading the full state blob.
+The hydrate output reports current state, planVersion, blocking finding counts,
+matrix coverage, iteration cursors, and review history length. Use it to
+dispatch to the right phase reference without reading the full state blob.
 
 For the full state:
 
@@ -114,15 +113,15 @@ swamp data get <issue-name> current --json
 
 ## Related skills
 
-| Need | Use skill |
-|------|-----------|
-| Pre-triage investigation | `tessl__moldable-dev` |
-| DDD analysis in planning | `tessl__ddd` |
-| TDD test strategy in planning | `tessl__tdd` |
-| Code review (matrix entry `code`) | `tessl__review-code` |
+| Need                                            | Use skill                   |
+| ----------------------------------------------- | --------------------------- |
+| Pre-triage investigation                        | `tessl__moldable-dev`       |
+| DDD analysis in planning                        | `tessl__ddd`                |
+| TDD test strategy in planning                   | `tessl__tdd`                |
+| Code review (matrix entry `code`)               | `tessl__review-code`        |
 | Adversarial review (matrix entry `adversarial`) | `tessl__review-adversarial` |
-| Security review (matrix entry `security`) | `tessl__review-security` |
-| UX review (matrix entry `ux`) | `tessl__review-ux` |
-| Skill review (matrix entry `skill`) | `tessl__review-skill` |
-| File a GitHub bug/feature (unrelated) | `swamp-issue` |
-| Debug swamp itself | `swamp-troubleshooting` |
+| Security review (matrix entry `security`)       | `tessl__review-security`    |
+| UX review (matrix entry `ux`)                   | `tessl__review-ux`          |
+| Skill review (matrix entry `skill`)             | `tessl__review-skill`       |
+| File a GitHub bug/feature (unrelated)           | `swamp-issue`               |
+| Debug swamp itself                              | `swamp-troubleshooting`     |

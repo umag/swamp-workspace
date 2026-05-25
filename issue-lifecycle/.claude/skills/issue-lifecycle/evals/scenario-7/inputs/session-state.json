@@ -20,19 +20,28 @@
       {
         "order": 1,
         "description": "Add RetryPolicy value object in src/domain/webhooks/retry-policy.ts",
-        "files": ["src/domain/webhooks/retry-policy.ts", "src/domain/webhooks/__tests__/retry-policy.test.ts"],
+        "files": [
+          "src/domain/webhooks/retry-policy.ts",
+          "src/domain/webhooks/__tests__/retry-policy.test.ts"
+        ],
         "risks": ""
       },
       {
         "order": 2,
         "description": "Update RetryScheduler to accept a RetryPolicy and compute exponential backoff with jitter",
-        "files": ["src/infra/webhooks/retry-scheduler.ts", "src/infra/webhooks/__tests__/retry-scheduler.test.ts"],
+        "files": [
+          "src/infra/webhooks/retry-scheduler.ts",
+          "src/infra/webhooks/__tests__/retry-scheduler.test.ts"
+        ],
         "risks": "Existing callers pass a flat delay — update them to pass a RetryPolicy instance"
       },
       {
         "order": 3,
         "description": "Wire RetryPolicy into WebhookDeliveryService.scheduleRetry()",
-        "files": ["src/application/webhooks/webhook-delivery-service.ts", "src/application/webhooks/__tests__/webhook-delivery-service.test.ts"],
+        "files": [
+          "src/application/webhooks/webhook-delivery-service.ts",
+          "src/application/webhooks/__tests__/webhook-delivery-service.test.ts"
+        ],
         "risks": ""
       }
     ],

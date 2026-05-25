@@ -1,1 +1,4 @@
-{ "description": "Session resume with hydrate dispatch and branch checkout", "include": ["./inputs"] }
+{
+  "description": "Session resume with hydrate dispatch and branch checkout",
+  "include": ["./inputs"]
+}
