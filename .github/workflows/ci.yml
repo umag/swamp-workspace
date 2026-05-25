@@ -82,7 +82,7 @@ jobs:
 
       - name: Type check (scripts)
         working-directory: scripts
-        run: deno check build-promptfoo-tests.ts
+        run: deno check build-promptfoo-tests.ts build-ci-report.ts
 
   skill-review:
     name: skill-review (tessl)
@@ -206,6 +206,58 @@ jobs:
           path: |
             promptfoo.generated.yaml
             promptfoo-results.json
+
+  pr-report:
+    name: pr-report (sticky comment)
+    runs-on: ubuntu-latest
+    needs: [skill-review, skill-trigger-eval]
+    # Always run on PRs so the reports post even when a gate fails.
+    if: always() && github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.7.13
+
+      - name: Download all gate artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Build full reports
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          deno run --allow-read --allow-write --allow-env \
+            scripts/build-ci-report.ts artifacts
+
+      - name: Upsert sticky PR comments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -eo pipefail
+          upsert() {
+            local marker="$1" file="$2" id
+            # Find an existing comment carrying this marker; edit it in place,
+            # else create a new one. Keeps one sticky comment per report.
+            id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments?per_page=100" \
+              --jq "map(select(.body | contains(\"$marker\"))) | .[0].id // empty")
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" \
+                -F body=@"$file" >/dev/null
+              echo "updated comment $id ($marker)"
+            else
+              gh pr comment "$PR" --body-file "$file"
+            fi
+          }
+          upsert "ci-report:tessl" tessl-report.md
+          upsert "ci-report:promptfoo" promptfoo-report.md
 
   extension-publish:
     name: extension-publish (on manifest version bump)
