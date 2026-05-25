@@ -1,0 +1,25 @@
+# BEGIN swamp managed section - DO NOT EDIT
+
+# Runtime data (not needed in version control)
+.swamp/
+
+# Local extension sources (developer-specific, not shared)
+.swamp-sources.yaml
+
+# Claude Code configuration (managed by swamp)
+.claude/worktrees/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
+# END swamp managed section
+
+.DS_Store
+node_modules/
+
+# Local-only (not part of the published package)
+/models/
+CLAUDE.md
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/jscad-codegen/

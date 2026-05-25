@@ -1,0 +1,58 @@
+name: "@magistr/juick-to-obsidian"
+description: Fetch Juick user posts with comments and import into Obsidian vault
+tags: {}
+inputs:
+  properties:
+    uname:
+      type: string
+      description: Juick username
+    folder:
+      type: string
+      default: juick
+      description: Obsidian folder for imported notes
+  required:
+    - uname
+jobs:
+  - name: fetch
+    description: Fetch all user posts from Juick with comments and format for Obsidian
+    dependsOn: []
+    weight: 0
+    steps:
+      - name: get-posts
+        description: Fetch all posts with pagination, comments, and Obsidian formatting
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: juick
+          methodName: getUserPosts
+          inputs:
+            uname: ${{ inputs.uname }}
+            folder: ${{ inputs.folder }}
+            withComments: true
+  - name: import
+    description: Create notes in Obsidian vault
+    dependsOn:
+      - job: fetch
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: create-note-${{ self.post.mid }}
+        description: Create Obsidian note for Juick post
+        forEach:
+          item: post
+          in: ${{ data.latest("juick", "posts_" + inputs.uname).attributes.posts }}
+        dependsOn: []
+        weight: 0
+        allowFailure: true
+        task:
+          type: model_method
+          modelIdOrName: my-vault
+          methodName: create
+          inputs:
+            name: ${{ self.post.obsidianPath }}
+            content: ${{ self.post.obsidianContent }}
+            overwrite: true
+version: 1

@@ -1,0 +1,17 @@
+manifestVersion: 1
+name: "@magistr/juick"
+version: "2026.03.29.1"
+description: "Juick.com microblogging API - fetch posts, comments, threads, and import to Obsidian"
+repository: "https://github.com/umag/swamp-workspace"
+models:
+  - juick.ts
+workflows:
+  - juick-to-obsidian.yaml
+additionalFiles:
+  - README.md
+  - LICENSE.md
+platforms: []
+labels:
+  - juick
+  - obsidian
+  - import
