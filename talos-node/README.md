@@ -11,8 +11,8 @@ and waiting on cluster health. Long-running and connection-sensitive operations
 such as `connection refused` and `deadline exceeded`.
 
 The `talosctl` binary must be available in `PATH`. Two checks gate the mutating
-methods: `talosctl-available` (binary present) and `talosconfig-exists`
-(the configured `talosconfig` path resolves when set).
+methods: `talosctl-available` (binary present) and `talosconfig-exists` (the
+configured `talosconfig` path resolves when set).
 
 ## Configuration
 
@@ -79,20 +79,20 @@ swamp model method run cp1 health --input waitTimeout=2m
 
 ## Methods
 
-| Method        | Purpose                                                       |
-| ------------- | ------------------------------------------------------------- |
-| `version`     | Get Talos version info for the node.                          |
-| `services`    | List all node services (factory output, one per service).     |
-| `etcdMembers` | List etcd cluster members.                                    |
-| `kubeconfig`  | Retrieve the cluster kubeconfig (stored as sensitive output). |
+| Method        | Purpose                                                             |
+| ------------- | ------------------------------------------------------------------- |
+| `version`     | Get Talos version info for the node.                                |
+| `services`    | List all node services (factory output, one per service).           |
+| `etcdMembers` | List etcd cluster members.                                          |
+| `kubeconfig`  | Retrieve the cluster kubeconfig (stored as sensitive output).       |
 | `applyConfig` | Apply a machine config YAML (`auto`/`reboot`/`no-reboot`/`staged`). |
-| `bootstrap`   | Bootstrap the cluster — first control-plane node only.        |
-| `reboot`      | Reboot the node (`default` or `powercycle`).                  |
-| `shutdown`    | Shut down the node, optionally forced.                        |
-| `reset`       | Reset the node and wipe state (graceful by default).          |
-| `upgrade`     | Upgrade Talos to a given installer image.                     |
-| `patchConfig` | Patch the machine config with a YAML patch file.              |
-| `health`      | Wait for and report cluster health.                           |
+| `bootstrap`   | Bootstrap the cluster — first control-plane node only.              |
+| `reboot`      | Reboot the node (`default` or `powercycle`).                        |
+| `shutdown`    | Shut down the node, optionally forced.                              |
+| `reset`       | Reset the node and wipe state (graceful by default).                |
+| `upgrade`     | Upgrade Talos to a given installer image.                           |
+| `patchConfig` | Patch the machine config with a YAML patch file.                    |
+| `health`      | Wait for and report cluster health.                                 |
 
 ## License
 

@@ -6,9 +6,9 @@ links, queues them for download in a self-hosted
 archived video metadata so you can keep durable, offline copies of every video
 you reference in your notes. It walks every `.md` file under the vault (or a
 chosen subfolder), extracts unique video IDs from `watch`, `youtu.be`, `embed`,
-and `shorts` URLs, checks each ID against TubeArchivist, queues anything missing,
-and triggers the pending-download task — all idempotently, so re-running only
-queues what is not yet archived.
+and `shorts` URLs, checks each ID against TubeArchivist, queues anything
+missing, and triggers the pending-download task — all idempotently, so
+re-running only queues what is not yet archived.
 
 ## Model configuration
 

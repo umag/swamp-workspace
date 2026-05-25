@@ -52,14 +52,14 @@ swamp model method run cozystack-linstor applyStorageClasses \
 
 ## Methods
 
-| Method                        | Description                                              |
-| ----------------------------- | -------------------------------------------------------- |
-| `getLinstorControllerStatus`  | Report whether the `linstor-controller` deployment is ready |
-| `listNodes`                   | List Linstor cluster nodes with addresses and state      |
-| `listStoragePools`            | List Linstor storage pools (capacity, free space, state) across all nodes |
-| `createZfsPool`               | Create a ZFS-backed Linstor storage pool on a node; skips if it already exists |
-| `setZfsFailmode`              | Set `failmode=continue` on a node's ZFS pool             |
-| `applyStorageClasses`         | Apply a storage-class YAML manifest via `kubectl apply`  |
+| Method                       | Description                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `getLinstorControllerStatus` | Report whether the `linstor-controller` deployment is ready                    |
+| `listNodes`                  | List Linstor cluster nodes with addresses and state                            |
+| `listStoragePools`           | List Linstor storage pools (capacity, free space, state) across all nodes      |
+| `createZfsPool`              | Create a ZFS-backed Linstor storage pool on a node; skips if it already exists |
+| `setZfsFailmode`             | Set `failmode=continue` on a node's ZFS pool                                   |
+| `applyStorageClasses`        | Apply a storage-class YAML manifest via `kubectl apply`                        |
 
 ## License
 

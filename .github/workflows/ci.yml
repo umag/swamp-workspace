@@ -23,6 +23,21 @@ jobs:
           - libvirt
           - pihole
           - telegram-send
+          - porkbun
+          - tubearchivist
+          - obsidian-vault
+          - obsidian-yt-archiver
+          - talos-node
+          - talm-cluster
+          - cozystack-platform
+          - cozystack-linstor
+          - jscad-cad
+          - juick
+          - fidonet-msgbase
+          - jabber
+          - skype
+          - livejournal-import
+          - telegram-import
     steps:
       - uses: actions/checkout@v6
 

@@ -220,7 +220,7 @@ export const model = {
           let notesCreated = 0;
           let imagesCopied = 0;
           let filesCopied = 0;
-          const dataHandles = [];
+          const dataHandles: unknown[] = [];
 
           for (const msg of messages) {
             const slug = noteSlug(msg);
@@ -269,7 +269,9 @@ export const model = {
                 body.push(`![[${attachFolder}/${photoFilename}]]`, "");
               } catch (e) {
                 errors.push(
-                  `Failed to copy image ${photoFilename}: ${e.message}`,
+                  `Failed to copy image ${photoFilename}: ${
+                    e instanceof Error ? e.message : String(e)
+                  }`,
                 );
               }
             }
@@ -291,7 +293,11 @@ export const model = {
                   filesCopied++;
                   body.push(`![[${attachFolder}/${fileName}]]`, "");
                 } catch (e) {
-                  errors.push(`Failed to copy file ${fileName}: ${e.message}`);
+                  errors.push(
+                    `Failed to copy file ${fileName}: ${
+                      e instanceof Error ? e.message : String(e)
+                    }`,
+                  );
                 }
               }
             }
@@ -308,7 +314,11 @@ export const model = {
                 filesCopied++;
                 body.push(`![[${attachFolder}/${fileName}]]`, "");
               } catch (e) {
-                errors.push(`Failed to copy video ${fileName}: ${e.message}`);
+                errors.push(
+                  `Failed to copy video ${fileName}: ${
+                    e instanceof Error ? e.message : String(e)
+                  }`,
+                );
               }
             }
 
@@ -326,7 +336,11 @@ export const model = {
               );
               notesCreated++;
             } catch (e) {
-              errors.push(`Failed to create note ${notePath}: ${e.message}`);
+              errors.push(
+                `Failed to create note ${notePath}: ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
             }
 
             // Write post resource (factory pattern)

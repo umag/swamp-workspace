@@ -689,7 +689,9 @@ export const model = {
             }));
           } catch (e) {
             throw new Error(
-              `Area '${areaName}' not found or unreadable: ${e.message}`,
+              `Area '${areaName}' not found or unreadable: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
             );
           }
         }

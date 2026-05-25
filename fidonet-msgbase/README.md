@@ -1,13 +1,13 @@
 # @magistr/fidonet-msgbase
 
-A read-only FidoNet message base reader for swamp. It parses classic
-echomail and netmail stores directly off disk — JAM (`.jhr`/`.jdx`/`.jdt`),
-Squish (`.sqd`/`.sqi`), and FTS-0001 `.msg` files — without any external
-tooling. Areas are listed with their message counts, individual areas and the
-netmail folder can be read, and every area can be searched by sender name,
-FidoNet address, or free text. Bodies are decoded as UTF-8 with an automatic
-fall back to CP866 so legacy Cyrillic messages render correctly, and origin
-lines and node/point addresses are extracted from the message text.
+A read-only FidoNet message base reader for swamp. It parses classic echomail
+and netmail stores directly off disk — JAM (`.jhr`/`.jdx`/`.jdt`), Squish
+(`.sqd`/`.sqi`), and FTS-0001 `.msg` files — without any external tooling. Areas
+are listed with their message counts, individual areas and the netmail folder
+can be read, and every area can be searched by sender name, FidoNet address, or
+free text. Bodies are decoded as UTF-8 with an automatic fall back to CP866 so
+legacy Cyrillic messages render correctly, and origin lines and node/point
+addresses are extracted from the message text.
 
 ## Configuration
 
@@ -61,8 +61,8 @@ Both reports run on method output and are wired into the model:
 
 - `@magistr/fidonet-summary` — area stats, top senders, date range, and a
   monthly message distribution.
-- `@magistr/fidonet-messages` — renders the found messages as readable
-  Markdown, stripping kludges, tearlines, and SEEN-BY control lines.
+- `@magistr/fidonet-messages` — renders the found messages as readable Markdown,
+  stripping kludges, tearlines, and SEEN-BY control lines.
 
 ## License
 

@@ -194,7 +194,11 @@ export const model = {
         } catch (e) {
           return {
             pass: false,
-            errors: [`kubectl not available: ${e.message}`],
+            errors: [
+              `kubectl not available: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            ],
           };
         }
       },
@@ -239,7 +243,11 @@ export const model = {
         } catch (e) {
           return {
             pass: false,
-            errors: [`Cannot check linstor-controller: ${e.message}`],
+            errors: [
+              `Cannot check linstor-controller: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            ],
           };
         }
       },
@@ -298,7 +306,9 @@ export const model = {
             "linstor-controller-status",
             {
               success: false,
-              message: `linstor-controller not found: ${e.message}`,
+              message: `linstor-controller not found: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
               timestamp: new Date().toISOString(),
             },
           );
@@ -320,7 +330,7 @@ export const model = {
 
         const data = JSON.parse(stdout);
         const nodes = data[0]?.nodes || data.nodes || data || [];
-        const handles = [];
+        const handles: unknown[] = [];
         const now = new Date().toISOString();
 
         for (const node of nodes) {
@@ -355,7 +365,7 @@ export const model = {
 
         const data = JSON.parse(stdout);
         const pools = data[0]?.stor_pools || data.stor_pools || data || [];
-        const handles = [];
+        const handles: unknown[] = [];
         const now = new Date().toISOString();
 
         for (const pool of pools) {

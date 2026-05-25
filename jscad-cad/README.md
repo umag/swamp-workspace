@@ -6,9 +6,9 @@ a [JSCAD](https://openjscad.xyz/) CadScript — a JavaScript module that exports
 `STL`, `STL-ASCII`, `DXF`, `SVG`, `OBJ`, or `3MF` format.
 
 The extension ships the **jscad-codegen** Claude Code skill (under
-`.claude/skills/jscad-codegen/`), which teaches feature-based modeling,
-geometry positioning, and reverse-engineering of existing parts so an agent can
-author correct JSCAD v2 scripts.
+`.claude/skills/jscad-codegen/`), which teaches feature-based modeling, geometry
+positioning, and reverse-engineering of existing parts so an agent can author
+correct JSCAD v2 scripts.
 
 ## Model
 
@@ -17,15 +17,17 @@ author correct JSCAD v2 scripts.
 
 ## Method
 
-| Method | Purpose                                                          |
+| Method | Purpose                                                         |
 | ------ | --------------------------------------------------------------- |
 | `run`  | Evaluate a CadScript and serialize geometry to an OutputFormat. |
 
 `run` arguments:
 
-- `script` (string, required) — JSCAD JavaScript defining `main(params) → geometry`.
+- `script` (string, required) — JSCAD JavaScript defining
+  `main(params) → geometry`.
 - `parameters` (object, default `{}`) — key/value parameters passed to `main`.
-- `outputFormat` (enum, default `stl`) — one of `stl`, `stl-ascii`, `dxf`, `svg`, `obj`, `3mf`.
+- `outputFormat` (enum, default `stl`) — one of `stl`, `stl-ascii`, `dxf`,
+  `svg`, `obj`, `3mf`.
 
 It writes three data artifacts: `result` (render summary), `output` (the CAD
 file bytes), and `log` (evaluation warnings).

@@ -1,9 +1,10 @@
 # @magistr/porkbun
 
 Porkbun DNS record management for [swamp](https://github.com/systeminit/swamp).
-Full CRUD over the [Porkbun DNS API v3](https://porkbun.com/api/json/v3/documentation)
-for every common record type: `A`, `AAAA`, `MX`, `CNAME`, `ALIAS`, `TXT`, `NS`,
-`SRV`, `TLSA`, `CAA`, `HTTPS`, `SVCB`, and `SSHFP`.
+Full CRUD over the
+[Porkbun DNS API v3](https://porkbun.com/api/json/v3/documentation) for every
+common record type: `A`, `AAAA`, `MX`, `CNAME`, `ALIAS`, `TXT`, `NS`, `SRV`,
+`TLSA`, `CAA`, `HTTPS`, `SVCB`, and `SSHFP`.
 
 ## Model
 
@@ -28,15 +29,15 @@ an API key + secret key pair under **Account → API Access**.
 
 ## Methods
 
-| Method             | Purpose                                              |
-| ------------------ | ---------------------------------------------------- |
-| `ping`             | Test credentials and return your public IP address   |
-| `list`             | List all DNS records for the domain                  |
-| `get`              | Get records by subdomain + type                      |
-| `create`           | Create a new record                                  |
-| `update`           | Update an existing record by ID                      |
-| `delete`           | Delete a record by ID                                |
-| `deleteByNameType` | Delete records by subdomain + type                   |
+| Method             | Purpose                                            |
+| ------------------ | -------------------------------------------------- |
+| `ping`             | Test credentials and return your public IP address |
+| `list`             | List all DNS records for the domain                |
+| `get`              | Get records by subdomain + type                    |
+| `create`           | Create a new record                                |
+| `update`           | Update an existing record by ID                    |
+| `delete`           | Delete a record by ID                              |
+| `deleteByNameType` | Delete records by subdomain + type                 |
 
 ## Usage
 

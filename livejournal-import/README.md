@@ -3,13 +3,13 @@
 A swamp model that imports a LiveJournal blog into an Obsidian vault. It walks
 the journal index, fetches every entry in light format, converts the post HTML
 to Markdown, downloads inline images as vault attachments, and writes one
-Markdown note per post. Each note carries YAML frontmatter with the title,
-date, source URL, LiveJournal post id, tags, and (when present) the entry's
-mood and now-playing fields. Reader comments are extracted and appended to the
-note under a Comments section. The model writes a per-post data resource plus a
-final import summary (total posts, notes created, images copied, and any
-errors). It relies on the local `obsidian` CLI to resolve the vault path and to
-create notes.
+Markdown note per post. Each note carries YAML frontmatter with the title, date,
+source URL, LiveJournal post id, tags, and (when present) the entry's mood and
+now-playing fields. Reader comments are extracted and appended to the note under
+a Comments section. The model writes a per-post data resource plus a final
+import summary (total posts, notes created, images copied, and any errors). It
+relies on the local `obsidian` CLI to resolve the vault path and to create
+notes.
 
 ## Configuration
 

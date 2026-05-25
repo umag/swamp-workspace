@@ -257,7 +257,7 @@ export const model = {
       execute: async (_args, context) => {
         const { stdout } = await talosctl(context.globalArgs, ["services"]);
         const lines = stdout.trim().split("\n");
-        const handles = [];
+        const handles: unknown[] = [];
         // Parse tabular: NODE  SERVICE  STATE  HEALTH  ...
         for (let i = 1; i < lines.length; i++) {
           const parts = lines[i].trim().split(/\s+/);
@@ -287,7 +287,7 @@ export const model = {
           "members",
         ]);
         const lines = stdout.trim().split("\n");
-        const handles = [];
+        const handles: unknown[] = [];
         // Parse tabular: NODE  ID  HOSTNAME  PEER URLS  CLIENT URLS  LEARNER
         for (let i = 1; i < lines.length; i++) {
           const parts = lines[i].trim().split(/\s+/);

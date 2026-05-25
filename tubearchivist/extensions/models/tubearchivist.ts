@@ -23,7 +23,7 @@ async function api(
   const headers = {
     Authorization: `Token ${token}`,
     "Content-Type": "application/json",
-    ...options.headers,
+    ...(options.headers as Record<string, unknown> | undefined),
   };
   const response = await fetch(url, { ...options, headers });
   if (!response.ok) {

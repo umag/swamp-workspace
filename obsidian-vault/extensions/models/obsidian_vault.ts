@@ -93,7 +93,12 @@ const OperationResultSchema = z.object({
 });
 
 // Run an obsidian CLI command and return stdout as text
-async function runObsidian(command, params, vault, bareFlags = undefined) {
+async function runObsidian(
+  command: string,
+  params: Record<string, string>,
+  vault: string,
+  bareFlags: string[] | undefined = undefined,
+) {
   const args = [command];
   if (vault) {
     args.push(`vault=${vault}`);
@@ -129,7 +134,12 @@ async function runObsidian(command, params, vault, bareFlags = undefined) {
 }
 
 // Run command with format=json and parse the result
-async function runObsidianJson(command, params, vault, bareFlags = undefined) {
+async function runObsidianJson(
+  command: string,
+  params: Record<string, string>,
+  vault: string,
+  bareFlags: string[] | undefined = undefined,
+) {
   const stdout = await runObsidian(
     command,
     { ...params, format: "json" },
@@ -145,15 +155,15 @@ async function runObsidianJson(command, params, vault, bareFlags = undefined) {
 }
 
 // Parse plain-text line-per-item output into string array
-function parseLines(stdout) {
+function parseLines(stdout: string): string[] {
   if (!stdout) return [];
   return stdout.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
 }
 
 // Parse TSV output into key-value objects
-function parseTsv(stdout) {
+function parseTsv(stdout: string): Record<string, string> {
   if (!stdout) return {};
-  const result = {};
+  const result: Record<string, string> = {};
   for (const line of stdout.split("\n")) {
     const [key, ...rest] = line.split("\t");
     if (key) result[key.trim()] = rest.join("\t").trim();
@@ -162,7 +172,7 @@ function parseTsv(stdout) {
 }
 
 // Resolve file= vs path= depending on whether the name contains /
-function fileParam(file) {
+function fileParam(file: string): Record<string, string> {
   return file.includes("/") ? { path: file } : { file };
 }
 
@@ -259,7 +269,7 @@ export const model = {
       }),
       execute: async (args, context) => {
         // `files` does not support format=json — returns plain text lines
-        const params = {};
+        const params: Record<string, string> = {};
         if (args.folder) params.folder = args.folder;
         if (args.ext) params.ext = args.ext;
         const stdout = await runObsidian(
@@ -344,7 +354,7 @@ export const model = {
       }),
       execute: async (args, context) => {
         const nameKey = args.name.includes("/") ? "path" : "name";
-        const params = { [nameKey]: args.name };
+        const params: Record<string, string> = { [nameKey]: args.name };
         if (args.content) params.content = args.content;
         if (args.template) params.template = args.template;
         const bareFlags = args.overwrite ? ["overwrite"] : undefined;
@@ -489,7 +499,7 @@ export const model = {
       }),
       execute: async (args, context) => {
         // search:context returns [{file, matches: [{line, text}]}]
-        const params = { query: args.query };
+        const params: Record<string, string> = { query: args.query };
         if (args.path) params.path = args.path;
         if (args.limit) params.limit = String(args.limit);
         const data = await runObsidianJson(
@@ -817,7 +827,7 @@ export const model = {
           .describe("Property type hint"),
       }),
       execute: async (args, context) => {
-        const params = {
+        const params: Record<string, string> = {
           ...fileParam(args.file),
           name: args.name,
           value: args.value,

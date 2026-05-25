@@ -199,7 +199,7 @@ export const model = {
         const { domain, apiKey, secretApiKey } = context.globalArgs;
         const { subdomain, type, content, ttl, prio, notes } = args;
 
-        const body = {
+        const body: Record<string, unknown> = {
           type,
           content,
           ttl: ttl || 600,
@@ -243,7 +243,7 @@ export const model = {
         const { domain, apiKey, secretApiKey } = context.globalArgs;
         const { recordId, subdomain, type, content, ttl, prio } = args;
 
-        const body = { type, content };
+        const body: Record<string, unknown> = { type, content };
         if (subdomain) body.name = subdomain;
         if (ttl !== undefined) body.ttl = ttl;
         if (prio !== undefined) body.prio = prio;

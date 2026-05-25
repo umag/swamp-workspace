@@ -36,19 +36,19 @@ const innerD = hddD;
 
 const outerW = innerW + 2 * wall;
 const outerH = innerH + 2 * wall;
-const outerD = innerD + wall;   // back wall only — front open
+const outerD = innerD + wall; // back wall only — front open
 ```
 
 ### Step 3 — Derive named center coordinates
 
-In JSCAD, all primitives are centered at origin by default.
-`center:` sets where the center of the primitive lands in world space.
+In JSCAD, all primitives are centered at origin by default. `center:` sets where
+the center of the primitive lands in world space.
 
 ```javascript
 // Y: front (open) = -outerD/2, back (wall outer face) = +outerD/2
 // Inner depth spans: Y = -outerD/2  to  Y = outerD/2 - wall
 // Center of inner depth:
-const innerYCenter = -outerD / 2 + innerD / 2;   // = -wall/2
+const innerYCenter = -outerD / 2 + innerD / 2; // = -wall/2
 
 // Z: bottom plate top face = +wall/2, top plate bottom face = wall + innerH
 // Center of inner height:
@@ -59,20 +59,30 @@ const innerZCenter = wall / 2 + innerH / 2;
 
 ```javascript
 // ✅ All parts share the same reference — easy to verify alignment
-const bottom = cuboid({ size: [outerW, outerD, wall],
-  center: [0, innerYCenter, 0] });
+const bottom = cuboid({
+  size: [outerW, outerD, wall],
+  center: [0, innerYCenter, 0],
+});
 
-const top = cuboid({ size: [outerW, outerD, wall],
-  center: [0, innerYCenter, wall + innerH] });
+const top = cuboid({
+  size: [outerW, outerD, wall],
+  center: [0, innerYCenter, wall + innerH],
+});
 
-const leftWall = cuboid({ size: [wall, outerD, outerH],
-  center: [-(innerW/2 + wall/2), innerYCenter, innerZCenter] });
+const leftWall = cuboid({
+  size: [wall, outerD, outerH],
+  center: [-(innerW / 2 + wall / 2), innerYCenter, innerZCenter],
+});
 
-const rib = cuboid({ size: [gap, innerD, outerH],
-  center: [ribX, innerYCenter, innerZCenter] });   // same innerYCenter!
+const rib = cuboid({
+  size: [gap, innerD, outerH],
+  center: [ribX, innerYCenter, innerZCenter],
+}); // same innerYCenter!
 
-const shelf = cuboid({ size: [innerW, innerD, gap],
-  center: [0, innerYCenter, wall + hddH + gap/2] });
+const shelf = cuboid({
+  size: [innerW, innerD, gap],
+  center: [0, innerYCenter, wall + hddH + gap / 2],
+});
 ```
 
 ---
@@ -80,11 +90,12 @@ const shelf = cuboid({ size: [innerW, innerD, gap],
 ## Checklist Before Writing Any Part
 
 - [ ] All dimensions declared as named constants
-- [ ] `innerYCenter`, `innerZCenter` (and `innerXCenter` if needed) computed once
+- [ ] `innerYCenter`, `innerZCenter` (and `innerXCenter` if needed) computed
+      once
 - [ ] Every `center:` uses only those named constants — no inline arithmetic
 - [ ] Back wall, ribs, and shelf all use the **same** `innerYCenter`
 - [ ] Cutter shapes for boolean subtract are **larger** than the wall they cut
-  (add +2 to the cutting dimension to avoid co-planar faces)
+      (add +2 to the cutting dimension to avoid co-planar faces)
 
 ---
 

@@ -35,12 +35,12 @@ globalArguments:
 methods: {}
 ```
 
-| Argument            | Required | Default        | Description                                       |
-| ------------------- | -------- | -------------- | ------------------------------------------------- |
-| `zipPath`           | yes      | —              | Path to the Telegram export zip file.             |
-| `vault`             | yes      | —              | Obsidian vault name.                              |
-| `folder`            | no       | `Telegram`     | Target folder in the vault for imported notes.    |
-| `attachmentsFolder` | no       | `attachments`  | Attachments folder name inside the target folder. |
+| Argument            | Required | Default       | Description                                       |
+| ------------------- | -------- | ------------- | ------------------------------------------------- |
+| `zipPath`           | yes      | —             | Path to the Telegram export zip file.             |
+| `vault`             | yes      | —             | Obsidian vault name.                              |
+| `folder`            | no       | `Telegram`    | Target folder in the vault for imported notes.    |
+| `attachmentsFolder` | no       | `attachments` | Attachments folder name inside the target folder. |
 
 ## Usage
 

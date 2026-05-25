@@ -306,7 +306,7 @@ export const model = {
           );
         }
 
-        const handles = [];
+        const handles: unknown[] = [];
 
         for (const file of matching) {
           const content = await Deno.readTextFile(file.path);
@@ -614,7 +614,11 @@ export const model = {
               );
             }
           } catch (e) {
-            context.logger.warn(`Failed to write ${safeFile}: ${e.message}`);
+            context.logger.warn(
+              `Failed to write ${safeFile}: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
             skipped++;
           }
         }

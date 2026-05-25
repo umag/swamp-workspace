@@ -24,15 +24,16 @@ globalArguments:
 
 ## Methods
 
-- `list` — list all conversations (filter with `chatType: all | dm | conference`)
-  with per-conversation message counts and first/last timestamps.
+- `list` — list all conversations (filter with
+  `chatType: all | dm | conference`) with per-conversation message counts and
+  first/last timestamps.
 - `read` — read messages from conversations matching a `jid` substring; `limit`
   caps the number of returned messages (0 = all).
 - `search` — full-text search message bodies across conversations; supports
   `chatType` filtering and a `limit` on results.
-- `importToObsidian` — write each conversation as a markdown note. Provide either
-  `vault` (resolved via the `obsidian` CLI) or `vaultPath` (a direct filesystem
-  path); `folder` sets the in-vault target folder (default `Jabber`).
+- `importToObsidian` — write each conversation as a markdown note. Provide
+  either `vault` (resolved via the `obsidian` CLI) or `vaultPath` (a direct
+  filesystem path); `folder` sets the in-vault target folder (default `Jabber`).
 
 ## Usage
 

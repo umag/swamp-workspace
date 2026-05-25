@@ -5,11 +5,11 @@ of Kubernetes. It wraps `kubectl` and `helm` against a Cozystack management
 cluster to install the operator, apply the platform Package CR, bootstrap CNI
 networking (PodCIDR assignment and `flux-tenants` patching), and manage
 applications and tenants. Read-only methods report operator, flux-tenants,
-platform-package, HelmRelease, workload, and node-PodCIDR health, while
-write methods create/update/delete apps, create tenants, and fetch app
-credentials or per-tenant kubeconfigs. Both `kubectl` and `helm` must be on
-`PATH`; pre-flight checks verify cluster reachability and the helm binary
-before mutating methods run.
+platform-package, HelmRelease, workload, and node-PodCIDR health, while write
+methods create/update/delete apps, create tenants, and fetch app credentials or
+per-tenant kubeconfigs. Both `kubectl` and `helm` must be on `PATH`; pre-flight
+checks verify cluster reachability and the helm binary before mutating methods
+run.
 
 ## Configuration
 
@@ -21,8 +21,8 @@ type: "@magistr/cozystack-platform"
 typeVersion: "2026.03.13.1"
 name: cozystack
 globalArguments:
-  kubeconfig: /path/to/kubeconfig   # optional
-  context: my-cluster               # optional
+  kubeconfig: /path/to/kubeconfig # optional
+  context: my-cluster # optional
 methods: {}
 ```
 

@@ -37,16 +37,16 @@ methods: {}
 
 ## Methods
 
-| Method            | Purpose                                                          |
-| ----------------- | ---------------------------------------------------------------- |
-| `getClusterState` | Report which of secrets/values/talosconfig/kubeconfig exist      |
-| `init`            | `talm init --preset <preset> --name <name>` + regen talosconfig  |
-| `configure`       | Write `values.yaml` (endpoint, floating IP, image, CIDRs)        |
-| `templateNode`    | `talm template` a node config, fixing install disk + DHCP        |
-| `apply`           | `talm apply -f <nodeFile>` (optional `--insecure` for maint.)    |
-| `bootstrap`       | `talosctl bootstrap` etcd on a node endpoint                     |
-| `kubeconfig`      | `talosctl kubeconfig` into the cluster dir                       |
-| `health`          | `talosctl health --wait-timeout <t>` against a node              |
+| Method            | Purpose                                                         |
+| ----------------- | --------------------------------------------------------------- |
+| `getClusterState` | Report which of secrets/values/talosconfig/kubeconfig exist     |
+| `init`            | `talm init --preset <preset> --name <name>` + regen talosconfig |
+| `configure`       | Write `values.yaml` (endpoint, floating IP, image, CIDRs)       |
+| `templateNode`    | `talm template` a node config, fixing install disk + DHCP       |
+| `apply`           | `talm apply -f <nodeFile>` (optional `--insecure` for maint.)   |
+| `bootstrap`       | `talosctl bootstrap` etcd on a node endpoint                    |
+| `kubeconfig`      | `talosctl kubeconfig` into the cluster dir                      |
+| `health`          | `talosctl health --wait-timeout <t>` against a node             |
 
 ## Usage
 

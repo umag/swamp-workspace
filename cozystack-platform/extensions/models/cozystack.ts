@@ -230,7 +230,11 @@ export const model = {
         } catch (e) {
           return {
             pass: false,
-            errors: [`kubectl not available: ${e.message}`],
+            errors: [
+              `kubectl not available: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            ],
           };
         }
       },
@@ -344,7 +348,9 @@ export const model = {
             "operator-status",
             {
               success: false,
-              message: `Operator not found: ${e.message}`,
+              message: `Operator not found: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
               timestamp: new Date().toISOString(),
             },
           );
@@ -385,7 +391,7 @@ export const model = {
           const replicas = deploy.status?.readyReplicas || 0;
           const desired = deploy.spec?.replicas || 1;
 
-          const warnings = [];
+          const warnings: string[] = [];
           if (!hasHostNetwork) warnings.push("hostNetwork not set");
           if (!hasNotReadyToleration) {
             warnings.push("missing not-ready toleration");
@@ -413,7 +419,9 @@ export const model = {
             "flux-tenants-status",
             {
               success: false,
-              message: `flux-tenants not found: ${e.message}`,
+              message: `flux-tenants not found: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
               timestamp: new Date().toISOString(),
             },
           );
@@ -439,7 +447,7 @@ export const model = {
         );
         const nodes = JSON.parse(stdout);
         let allAssigned = true;
-        const warnings = [];
+        const warnings: string[] = [];
 
         for (const node of nodes.items || []) {
           const name = node.metadata.name;
@@ -503,7 +511,9 @@ export const model = {
             "platform-package-status",
             {
               success: false,
-              message: `Platform Package not found: ${e.message}`,
+              message: `Platform Package not found: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
               timestamp: new Date().toISOString(),
             },
           );
@@ -529,7 +539,7 @@ export const model = {
           5,
         );
         const data = JSON.parse(stdout);
-        const handles = [];
+        const handles: unknown[] = [];
         for (const item of data.items || []) {
           const spec = item.spec || {};
           const app = spec.application || {};
@@ -583,7 +593,7 @@ export const model = {
           );
         }
 
-        const handles = [];
+        const handles: unknown[] = [];
         const kindsToQuery = args.kind
           ? resourceNames.filter((r) =>
             r.toLowerCase().includes(args.kind.toLowerCase())
@@ -784,7 +794,7 @@ export const model = {
           "json",
         ]);
         const data = JSON.parse(stdout);
-        const handles = [];
+        const handles: unknown[] = [];
         for (const item of data.items || []) {
           const conditions = item.status?.conditions;
           const handle = await context.writeResource(
@@ -887,7 +897,7 @@ export const model = {
           5,
         );
         const data = JSON.parse(stdout);
-        const handles = [];
+        const handles: unknown[] = [];
         for (const item of data.items || []) {
           const conditions = item.status?.conditions;
           const handle = await context.writeResource(
@@ -925,7 +935,7 @@ export const model = {
           "json",
         ]);
         const data = JSON.parse(stdout);
-        const handles = [];
+        const handles: unknown[] = [];
         for (const item of data.items || []) {
           const s = item.status || {};
           const handle = await context.writeResource(
@@ -966,9 +976,9 @@ export const model = {
           "json",
         ]);
         const secret = JSON.parse(stdout);
-        const decoded = {};
+        const decoded: Record<string, string> = {};
         for (const [key, val] of Object.entries(secret.data || {})) {
-          decoded[key] = atob(val);
+          decoded[key] = atob(val as string);
         }
         const handle = await context.writeResource("secret", args.name, {
           name: secret.metadata.name,
@@ -1168,7 +1178,7 @@ export const model = {
             : []),
         ];
 
-        const warnings = [];
+        const warnings: string[] = [];
 
         // 1. Install operator via Helm
         const helmArgs = [
@@ -1451,7 +1461,7 @@ export const model = {
           3,
         );
         const nodes = JSON.parse(stdout);
-        const warnings = [];
+        const warnings: string[] = [];
         let assigned = 0;
 
         // Parse base subnet
@@ -1490,7 +1500,9 @@ export const model = {
             assigned++;
           } catch (e) {
             warnings.push(
-              `Failed to assign ${cidr} to ${node.metadata.name}: ${e.message}`,
+              `Failed to assign ${cidr} to ${node.metadata.name}: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
             );
           }
         }
@@ -1527,7 +1539,7 @@ export const model = {
           5,
         );
         const data = JSON.parse(stdout);
-        const handles = [];
+        const handles: unknown[] = [];
         let readyCount = 0;
         let totalCount = 0;
 
@@ -1582,7 +1594,7 @@ export const model = {
           .describe("External IPs to set on the ingress service"),
       }),
       execute: async (args, context) => {
-        const warnings = [];
+        const warnings: string[] = [];
 
         // Build the patch for the tenant resource
         const tenantPatch = {
@@ -1635,12 +1647,14 @@ export const model = {
             );
           } catch (err) {
             warnings.push(
-              `Failed to patch ingress service externalIPs: ${err.message}`,
+              `Failed to patch ingress service externalIPs: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
             );
           }
         }
 
-        const features = [];
+        const features: string[] = [];
         if (args.ingress) features.push("ingress");
         if (args.monitoring) features.push("monitoring");
         if (args.etcd) features.push("etcd");

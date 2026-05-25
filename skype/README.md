@@ -4,9 +4,9 @@ A swamp model that reads a desktop Skype SQLite database (`main.db`) and turns
 it into queryable swamp data. It lists the profiles found under a Skype data
 directory, enumerates conversations with message counts, lists contacts, reads a
 single conversation, searches messages by sender or text, and exports every
-conversation as Markdown chat logs (for Obsidian) either as swamp data or written
-straight into a vault directory. All reads are done via the `sqlite3` CLI, so
-`sqlite3` must be on `PATH`.
+conversation as Markdown chat logs (for Obsidian) either as swamp data or
+written straight into a vault directory. All reads are done via the `sqlite3`
+CLI, so `sqlite3` must be on `PATH`.
 
 ## Requirements
 
@@ -17,7 +17,8 @@ straight into a vault directory. All reads are done via the `sqlite3` CLI, so
 ## Configuration
 
 The model takes two global arguments: `basePath` (the Skype data directory that
-holds profile subdirectories) and `profile` (the profile directory name to read).
+holds profile subdirectories) and `profile` (the profile directory name to
+read).
 
 ```yaml
 type: "@magistr/skype"
@@ -44,8 +45,9 @@ methods: {}
   default 200).
 - `exportToObsidian` — format every conversation as an Obsidian note and emit it
   as swamp data (args `folder` default `Skype`, `minMessages` default 1).
-- `importToObsidian` — same, but write the notes directly into a vault directory,
-  chunking large conversations (args `folder`, `vaultPath`, `minMessages`).
+- `importToObsidian` — same, but write the notes directly into a vault
+  directory, chunking large conversations (args `folder`, `vaultPath`,
+  `minMessages`).
 
 ## Usage
 

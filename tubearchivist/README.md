@@ -1,9 +1,9 @@
 # @magistr/tubearchivist
 
 TubeArchivist API integration for swamp — manage your self-hosted YouTube
-archive directly from swamp models. This extension wraps the TubeArchivist
-REST API to list and inspect archived videos, manage subscribed channels,
-drive the download queue, trigger maintenance tasks (rescan, reindex, backups,
+archive directly from swamp models. This extension wraps the TubeArchivist REST
+API to list and inspect archived videos, manage subscribed channels, drive the
+download queue, trigger maintenance tasks (rescan, reindex, backups,
 Elasticsearch snapshots), search across all indexes, and read library
 statistics. Every method persists its result as a typed swamp resource so the
 data can be referenced with CEL expressions downstream.
@@ -60,27 +60,27 @@ swamp model method run my-archive create-snapshot
 
 ## Methods
 
-| Method | Description |
-| --- | --- |
-| `list-videos` | List videos with optional `page`, `channel`, `watch`, `type` filters |
-| `get-video` | Get a single video by `youtube_id` |
-| `delete-video` | Delete a video by `youtube_id` |
-| `list-channels` | List channels, filterable by subscription status |
-| `subscribe` | Subscribe to one or more YouTube channels |
-| `add-to-queue` | Add video or playlist IDs to the download queue |
-| `list-queue` | List the current download queue |
-| `start-download` | Trigger downloading of pending queue items |
-| `rescan` | Rescan the filesystem for new or removed videos |
-| `refresh` | Reindex specified videos, channels, or playlists |
-| `update-subscribed` | Check subscribed channels for new uploads |
-| `search` | Search across all indexes |
-| `mark-watched` | Mark a video watched or unwatched |
-| `stats` | Read video library statistics |
-| `backup` | Trigger a new backup |
-| `list-backups` | List available backup files |
-| `create-snapshot` | Create an Elasticsearch snapshot |
-| `list-snapshots` | List available Elasticsearch snapshots |
-| `ping` | Health check the API |
+| Method              | Description                                                          |
+| ------------------- | -------------------------------------------------------------------- |
+| `list-videos`       | List videos with optional `page`, `channel`, `watch`, `type` filters |
+| `get-video`         | Get a single video by `youtube_id`                                   |
+| `delete-video`      | Delete a video by `youtube_id`                                       |
+| `list-channels`     | List channels, filterable by subscription status                     |
+| `subscribe`         | Subscribe to one or more YouTube channels                            |
+| `add-to-queue`      | Add video or playlist IDs to the download queue                      |
+| `list-queue`        | List the current download queue                                      |
+| `start-download`    | Trigger downloading of pending queue items                           |
+| `rescan`            | Rescan the filesystem for new or removed videos                      |
+| `refresh`           | Reindex specified videos, channels, or playlists                     |
+| `update-subscribed` | Check subscribed channels for new uploads                            |
+| `search`            | Search across all indexes                                            |
+| `mark-watched`      | Mark a video watched or unwatched                                    |
+| `stats`             | Read video library statistics                                        |
+| `backup`            | Trigger a new backup                                                 |
+| `list-backups`      | List available backup files                                          |
+| `create-snapshot`   | Create an Elasticsearch snapshot                                     |
+| `list-snapshots`    | List available Elasticsearch snapshots                               |
+| `ping`              | Health check the API                                                 |
 
 ## License
 
