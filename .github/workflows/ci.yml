@@ -47,6 +47,31 @@ jobs:
         working-directory: ${{ matrix.extension }}
         run: deno task test
 
+      - name: Check model version matches manifest
+        working-directory: ${{ matrix.extension }}
+        run: |
+          set -eo pipefail
+          manifest_ver=$(grep -m1 '^version:' manifest.yaml \
+            | sed -E 's/^version:[[:space:]]*"?([^"]+)"?.*/\1/')
+          if [ -z "$manifest_ver" ]; then
+            echo "::error::could not read version from manifest.yaml"; exit 1
+          fi
+          rc=0
+          for f in extensions/models/*.ts; do
+            case "$f" in *_test.ts | *.test.ts) continue ;; esac
+            # Each model object's `version: "<calver>"` field must equal the
+            # manifest version, so the published model type version and the
+            # package version never drift (swamp warns when they do).
+            while IFS= read -r mv; do
+              if [ "$mv" != "$manifest_ver" ]; then
+                echo "::error file=${{ matrix.extension }}/$f::model version \"$mv\" != manifest \"$manifest_ver\""
+                rc=1
+              fi
+            done < <(grep -oE '^[[:space:]]*version:[[:space:]]*"[0-9][^"]*"' "$f" \
+              | grep -oE '"[0-9][^"]*"' | tr -d '"')
+          done
+          exit $rc
+
       - name: Format check (scripts)
         working-directory: scripts
         run: deno fmt --check
@@ -57,7 +82,7 @@ jobs:
 
       - name: Type check (scripts)
         working-directory: scripts
-        run: deno check build-promptfoo-tests.ts
+        run: deno check build-promptfoo-tests.ts build-ci-report.ts
 
   skill-review:
     name: skill-review (tessl)
@@ -96,30 +121,20 @@ jobs:
           node-version: "20"
 
       - name: Review ${{ matrix.skill }} with tessl
+        env:
+          # tessl authenticates from the TESSL_TOKEN env var (an API key minted
+          # via `tessl api-key create`); the repo secret is named TESSL_API_KEY.
+          TESSL_TOKEN: ${{ secrets.TESSL_API_KEY }}
         run: |
           set -eo pipefail
-          npx --yes tessl@0.5.0 skill review \
-            "${{ matrix.extension }}/.claude/skills/${{ matrix.skill }}" --json \
-            | tee "tessl-${{ matrix.skill }}.json"
-
-          node -e "
-            const r = require('./tessl-${{ matrix.skill }}.json');
-            const scores = [
-              r.scores?.validation,
-              r.scores?.description,
-              r.scores?.content,
-            ].filter((s) => typeof s === 'number');
-            if (scores.length === 0) {
-              console.error('no scores in tessl output');
-              process.exit(1);
-            }
-            const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
-            console.log('avg=' + avg.toFixed(3));
-            if (avg < 0.90) {
-              console.error('FAIL: avg ' + avg.toFixed(3) + ' < 0.90');
-              process.exit(1);
-            }
-          "
+          # `--threshold 90` makes tessl exit non-zero when the skill scores
+          # below 90% (native gating; replaces the old hand-rolled JSON parser,
+          # whose score keys no longer match tessl's output schema). `--json` is
+          # piped to a file for the uploaded report; pipefail propagates the
+          # tessl exit code through `tee`.
+          npx --yes tessl@0.80.0 skill review \
+            "${{ matrix.extension }}/.claude/skills/${{ matrix.skill }}" \
+            --threshold 90 --json | tee "tessl-${{ matrix.skill }}.json"
 
       - name: Upload tessl report
         if: always()
@@ -153,9 +168,17 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -eo pipefail
-          npx --yes promptfoo@0.104.0 eval \
+          # promptfoo exits 100 when ANY test assertion fails. That is expected
+          # here — the node check below is the real gate (>=90% trigger pass
+          # rate), and promptfoo still writes the --output JSON on a 100 exit.
+          # Any OTHER non-zero exit is a genuine error and must fail the step.
+          ec=0
+          npx --yes promptfoo@0.121.12 eval \
             -c promptfoo.generated.yaml \
-            --output promptfoo-results.json
+            --output promptfoo-results.json || ec=$?
+          if [ "$ec" -ne 0 ] && [ "$ec" -ne 100 ]; then
+            echo "::error::promptfoo eval errored (exit $ec)"; exit "$ec"
+          fi
 
           node -e "
             const r = require('./promptfoo-results.json');
@@ -183,6 +206,58 @@ jobs:
           path: |
             promptfoo.generated.yaml
             promptfoo-results.json
+
+  pr-report:
+    name: pr-report (sticky comment)
+    runs-on: ubuntu-latest
+    needs: [skill-review, skill-trigger-eval]
+    # Always run on PRs so the reports post even when a gate fails.
+    if: always() && github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.7.13
+
+      - name: Download all gate artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Build full reports
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          deno run --allow-read --allow-write --allow-env \
+            scripts/build-ci-report.ts artifacts
+
+      - name: Upsert sticky PR comments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -eo pipefail
+          upsert() {
+            local marker="$1" file="$2" id
+            # Find an existing comment carrying this marker; edit it in place,
+            # else create a new one. Keeps one sticky comment per report.
+            id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments?per_page=100" \
+              --jq "map(select(.body | contains(\"$marker\"))) | .[0].id // empty")
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" \
+                -F body=@"$file" >/dev/null
+              echo "updated comment $id ($marker)"
+            else
+              gh pr comment "$PR" --body-file "$file"
+            fi
+          }
+          upsert "ci-report:tessl" tessl-report.md
+          upsert "ci-report:promptfoo" promptfoo-report.md
 
   extension-publish:
     name: extension-publish (on manifest version bump)

@@ -950,7 +950,7 @@ async function readState(ctx: ReadWriteCtx): Promise<PlanState | null> {
  */
 export const model = {
   type: "@magistr/good-planning",
-  version: "2026.04.30.1",
+  version: "2026.05.01.1",
 
   globalArguments: z.object({}),
 

@@ -86,7 +86,7 @@ const ActionResultSchema = z.object({
  */
 export const model = {
   type: "@bad-at-naming/libvirt/network",
-  version: "2026.05.20.1",
+  version: "2026.05.25.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     network: {
