@@ -1,35 +1,36 @@
 # @magistr/pihole
 
-Pi-hole custom DNS record management for [swamp](https://github.com/systeminit/swamp).
-List, add, delete, and **declaratively sync** local DNS A-records on a
-[Pi-hole](https://pi-hole.net/) v6 (FTL) appliance.
+Pi-hole custom DNS record management for
+[swamp](https://github.com/systeminit/swamp). List, add, delete, and
+**declaratively sync** local DNS A-records on a [Pi-hole](https://pi-hole.net/)
+v6 (FTL) appliance.
 
 ## Model
 
-| Type | What it manages |
-|------|-----------------|
+| Type              | What it manages                                                                 |
+| ----------------- | ------------------------------------------------------------------------------- |
 | `@magistr/pihole` | Custom DNS host records: list, add, add-record, delete-record, sync, sync-clean |
 
 ## globalArguments
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `host` | yes | — | Pi-hole host, e.g. `pihole.local` or `10.0.0.53`. May include a scheme/port (`https://pi.lan:8443`). |
-| `password` | yes | — | Pi-hole web password. **Use a vault reference** — see below. |
-| `scheme` | no | `http` | `http` or `https`. Use `https` so the password is not sent in cleartext. |
-| `caCert` | no | — | Inline PEM CA certificate to trust a self-signed Pi-hole HTTPS cert. |
-| `records` | no | — | Declarative list of `{ ip, hostname }` used by `add`, `sync`, `sync-clean`. |
+| Field      | Required | Default | Description                                                                                          |
+| ---------- | -------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| `host`     | yes      | —       | Pi-hole host, e.g. `pihole.local` or `10.0.0.53`. May include a scheme/port (`https://pi.lan:8443`). |
+| `password` | yes      | —       | Pi-hole web password. **Use a vault reference** — see below.                                         |
+| `scheme`   | no       | `http`  | `http` or `https`. Use `https` so the password is not sent in cleartext.                             |
+| `caCert`   | no       | —       | Inline PEM CA certificate to trust a self-signed Pi-hole HTTPS cert.                                 |
+| `records`  | no       | —       | Declarative list of `{ ip, hostname }` used by `add`, `sync`, `sync-clean`.                          |
 
 ## Methods
 
-| Method | Arguments | Description |
-|--------|-----------|-------------|
-| `list` | — | List all custom DNS records → `dns-records` resource. |
-| `add` | — | Add every record in `records` (idempotent: already-present records report `unchanged`/`success`). |
-| `add-record` | `ip`, `hostname` | Add a single record (idempotent). |
-| `delete-record` | `ip`, `hostname` | Delete a single record (idempotent: an absent record reports success). |
-| `sync` | `deleteExtras?` | Add records from `records` that are missing; optionally delete extras. |
-| `sync-clean` | — | Declarative converge: add missing **and** delete anything not in `records`. |
+| Method          | Arguments        | Description                                                                                       |
+| --------------- | ---------------- | ------------------------------------------------------------------------------------------------- |
+| `list`          | —                | List all custom DNS records → `dns-records` resource.                                             |
+| `add`           | —                | Add every record in `records` (idempotent: already-present records report `unchanged`/`success`). |
+| `add-record`    | `ip`, `hostname` | Add a single record (idempotent).                                                                 |
+| `delete-record` | `ip`, `hostname` | Delete a single record (idempotent: an absent record reports success).                            |
+| `sync`          | `deleteExtras?`  | Add records from `records` that are missing; optionally delete extras.                            |
+| `sync-clean`    | —                | Declarative converge: add missing **and** delete anything not in `records`.                       |
 
 `add`, `sync`, and `sync-clean` are **best-effort**: every record is attempted,
 per-record failures are captured in the result resource (with a redacted error),
@@ -62,16 +63,16 @@ swamp model method run my-dns sync --json
 
 ## Authentication & HTTPS
 
-The web password is authenticated against the FTL API. **It is marked sensitive**
-and is never persisted in cleartext; captured API error bodies are redacted
-before they are logged or stored.
+The web password is authenticated against the FTL API. **It is marked
+sensitive** and is never persisted in cleartext; captured API error bodies are
+redacted before they are logged or stored.
 
 - **`scheme: http` (default)** sends the password over an unencrypted
   connection. Acceptable on a trusted LAN, but you will see a runtime warning.
   Prefer `https`.
 - **`scheme: https`** with a publicly-trusted certificate needs nothing extra.
-- **Self-signed HTTPS**: paste the appliance's CA certificate (PEM contents,
-  not a path) into `caCert`:
+- **Self-signed HTTPS**: paste the appliance's CA certificate (PEM contents, not
+  a path) into `caCert`:
 
   ```yaml
   globalArguments:
@@ -93,8 +94,10 @@ long-running automation never exhausts Pi-hole's concurrent-session limit.
 ## Resources produced
 
 - `dns-records` — `{ records[], count, timestamp }`
-- `add-result` / `delete-result` — `{ results: [{ ip, hostname, success, error? }], succeeded, failed, timestamp }`
-- `sync-result` — `{ added[], deleted[], unchanged[], failed: [{ ip, hostname, error }], summary, timestamp }`
+- `add-result` / `delete-result` —
+  `{ results: [{ ip, hostname, success, error? }], succeeded, failed, timestamp }`
+- `sync-result` —
+  `{ added[], deleted[], unchanged[], failed: [{ ip, hostname, error }], summary, timestamp }`
 
 Reference results downstream with CEL, e.g.
 `data.latest("my-dns", "dns-records").attributes.count`.

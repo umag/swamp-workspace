@@ -2,18 +2,18 @@
 
 Comprehensive [libvirt](https://libvirt.org/)/`virsh` management for
 [swamp](https://github.com/systeminit/swamp) — virtual machines, networks,
-storage pools, volumes, snapshots, and hypervisor host info. Drive your
-KVM/QEMU homelab or workstation declaratively, **over SSH or locally via a
-connection URI**.
+storage pools, volumes, snapshots, and hypervisor host info. Drive your KVM/QEMU
+homelab or workstation declaratively, **over SSH or locally via a connection
+URI**.
 
 ## Models
 
-| Model | What it manages |
-|-------|-----------------|
-| `@bad-at-naming/libvirt/vm` | Domain lifecycle (start/stop/define/undefine/snapshot), CPU/memory tuning, disk/NIC hotplug, block/net/CPU/memory stats, guest-agent queries |
-| `@bad-at-naming/libvirt/network` | Virtual network lifecycle (list/get/define/start/stop/autostart) and DHCP lease inspection |
-| `@bad-at-naming/libvirt/storage` | Storage pool and volume management (create/build/resize/clone/delete) |
-| `@bad-at-naming/libvirt/host` | Hypervisor host info, capabilities, SMBIOS sysinfo, node CPU/memory stats, device list, static routes |
+| Model                            | What it manages                                                                                                                              |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@bad-at-naming/libvirt/vm`      | Domain lifecycle (start/stop/define/undefine/snapshot), CPU/memory tuning, disk/NIC hotplug, block/net/CPU/memory stats, guest-agent queries |
+| `@bad-at-naming/libvirt/network` | Virtual network lifecycle (list/get/define/start/stop/autostart) and DHCP lease inspection                                                   |
+| `@bad-at-naming/libvirt/storage` | Storage pool and volume management (create/build/resize/clone/delete)                                                                        |
+| `@bad-at-naming/libvirt/host`    | Hypervisor host info, capabilities, SMBIOS sysinfo, node CPU/memory stats, device list, static routes                                        |
 
 ## Connection modes
 
@@ -31,8 +31,8 @@ In both modes the optional `uri` argument selects the libvirt connection.
 ## Prerequisites
 
 - **SSH mode**: ssh access to the hypervisor; `virsh` installed there.
-- **Local/URI mode**: `libvirt-client` (provides `virsh`) installed on the
-  swamp host, and a reachable libvirt daemon.
+- **Local/URI mode**: `libvirt-client` (provides `virsh`) installed on the swamp
+  host, and a reachable libvirt daemon.
 
 ## Quick start
 
@@ -72,9 +72,9 @@ Idempotency is detected by matching anchored substrings in `virsh` stderr (see
 
 ## Security notes
 
-- On the SSH path every argument is shell-quoted, so VM/network/volume names
-  and other inputs cannot inject shell commands. In local mode arguments are
-  passed directly to the process (no shell at all).
+- On the SSH path every argument is shell-quoted, so VM/network/volume names and
+  other inputs cannot inject shell commands. In local mode arguments are passed
+  directly to the process (no shell at all).
 - **SSH host keys** use `StrictHostKeyChecking=accept-new`: the hypervisor's key
   is pinned to your default `known_hosts` on first connect (trust-on-first-use)
   and a later **changed** key is refused. This requires a writable

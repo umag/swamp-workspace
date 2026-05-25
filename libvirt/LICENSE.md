@@ -3,8 +3,8 @@ MIT License
 Copyright (c) 2026 magistr
 
 Portions (local / connection-URI support) adapted from
-github.com/evrardjp/swamp-local-libvirt, Copyright (c) 2026 evrardjp,
-also under the MIT License.
+github.com/evrardjp/swamp-local-libvirt, Copyright (c) 2026 evrardjp, also under
+the MIT License.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
