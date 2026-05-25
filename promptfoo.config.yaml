@@ -36,14 +36,15 @@ prompts:
         governability via tripwires, signposts, and pullback ladders. NOT
         for OKR drafting, sprint scheduling, or approving/rejecting an issue
         or PR plan (that is issue-lifecycle)
-      - ddd — domain-driven design building block selection and ubiquitous
-        language guidance
+      - ddd — domain-driven design: building-block selection, bounded
+        contexts, aggregates, and ubiquitous-language guidance
       - tdd — red-green-refactor workflow enforcement for features and bug
         fixes
       - moldable-dev — build contextual micro tools, query live system
         state, create reusable reports to reduce time-to-answer
-      - review-code — general code review (CLAUDE.md, DDD, TDD, types,
-        imports, organization)
+      - review-code — general code review for CLAUDE.md compliance, TDD,
+        type safety, imports, and organization (NOT domain modeling — that
+        is ddd)
       - review-adversarial — adversarial review across 7 dimensions; assume
         code is broken
       - review-security — security audit (injection, secrets, supply chain,
