@@ -18,9 +18,11 @@ description: |
   photos methods.
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - dawarich.ts
+  - extensions/models/dawarich.ts
 
 additionalFiles:
   - README.md

@@ -22,9 +22,11 @@ description: |
     a companion upgrades report.
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - seadex.ts
+  - extensions/models/seadex.ts
 
 additionalFiles:
   - README.md

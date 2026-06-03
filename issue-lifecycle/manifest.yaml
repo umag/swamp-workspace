@@ -72,6 +72,8 @@ description: |
   - `review-skill` — skill quality review
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 skills:
   - issue-lifecycle
@@ -85,7 +87,7 @@ skills:
   - review-skill
 
 models:
-  - issue_lifecycle.ts
+  - extensions/models/issue_lifecycle.ts
 
 additionalFiles:
   - README.md

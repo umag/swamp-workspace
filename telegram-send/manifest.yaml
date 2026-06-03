@@ -19,9 +19,11 @@ description: |
   direction — importing Telegram channel exports into Obsidian.
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - telegram_send.ts
+  - extensions/models/telegram_send.ts
 
 additionalFiles:
   - README.md

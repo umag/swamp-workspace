@@ -15,9 +15,11 @@ description: |
     services that went silent).
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - victorialogs.ts
+  - extensions/models/victorialogs.ts
 
 additionalFiles:
   - README.md
