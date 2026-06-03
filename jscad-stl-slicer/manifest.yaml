@@ -5,8 +5,10 @@ description: >-
   STL slicer — Z-plane slicing, orthographic projection, symmetry analysis,
   feature detection, mesh comparison
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 models:
-  - jscad_stl_slicer.ts
+  - extensions/models/jscad_stl_slicer.ts
 additionalFiles:
   - README.md
   - LICENSE.md

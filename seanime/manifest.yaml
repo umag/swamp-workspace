@@ -12,9 +12,11 @@ description: |
     entries to CURRENT (watching).
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - seanime.ts
+  - extensions/models/seanime.ts
 
 additionalFiles:
   - README.md

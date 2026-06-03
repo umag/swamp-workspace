@@ -3,8 +3,10 @@ name: "@magistr/telegram-import"
 version: "2026.05.25.1"
 description: "Import Telegram channel export (zip) with posts, images, files, and videos into Obsidian vault"
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 models:
-  - telegram_import.ts
+  - extensions/models/telegram_import.ts
 additionalFiles:
   - README.md
   - LICENSE.md

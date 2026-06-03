@@ -3,11 +3,13 @@ name: "@magistr/fidonet-msgbase"
 version: "2026.05.25.1"
 description: "FidoNet JAM/Squish/FTS-0001 message base reader — browse areas, read messages, search by sender/address/text"
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 models:
-  - fidonet_msgbase.ts
+  - extensions/models/fidonet_msgbase.ts
 reports:
-  - fidonet_summary.ts
-  - fidonet_messages.ts
+  - extensions/reports/fidonet_summary.ts
+  - extensions/reports/fidonet_messages.ts
 additionalFiles:
   - README.md
   - LICENSE.md

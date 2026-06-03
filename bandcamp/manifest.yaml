@@ -17,9 +17,11 @@ description: |
   need no credentials.
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - bandcamp.ts
+  - extensions/models/bandcamp.ts
 
 additionalFiles:
   - README.md

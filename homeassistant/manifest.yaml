@@ -18,9 +18,11 @@ description: |
   data.
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - homeassistant.ts
+  - extensions/models/homeassistant.ts
 
 additionalFiles:
   - README.md

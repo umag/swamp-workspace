@@ -69,12 +69,14 @@ description: |
   - `audit` — answer the four diagnostic questions (one per layer)
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 skills:
   - good-planning
 
 models:
-  - good_planning.ts
+  - extensions/models/good_planning.ts
 
 additionalFiles:
   - README.md

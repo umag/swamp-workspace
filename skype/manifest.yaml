@@ -3,8 +3,10 @@ name: "@magistr/skype"
 version: "2026.05.25.1"
 description: "Skype SQLite database reader — conversations, contacts, messages, search, Obsidian export"
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 models:
-  - skype.ts
+  - extensions/models/skype.ts
 additionalFiles:
   - README.md
   - LICENSE.md

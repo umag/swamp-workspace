@@ -15,9 +15,11 @@ description: |
     memory usage rankings).
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - victoriametrics.ts
+  - extensions/models/victoriametrics.ts
 
 additionalFiles:
   - README.md

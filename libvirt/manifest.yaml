@@ -23,12 +23,14 @@ description: |
   (github.com/evrardjp/swamp-local-libvirt) — see README for credit.
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - libvirt_vm.ts
-  - libvirt_network.ts
-  - libvirt_storage.ts
-  - libvirt_host.ts
+  - extensions/models/libvirt_vm.ts
+  - extensions/models/libvirt_network.ts
+  - extensions/models/libvirt_storage.ts
+  - extensions/models/libvirt_host.ts
 
 additionalFiles:
   - README.md

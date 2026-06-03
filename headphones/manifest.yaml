@@ -16,9 +16,11 @@ description: |
   albums marked downloaded but absent from disk.
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - headphones.ts
+  - extensions/models/headphones.ts
 
 additionalFiles:
   - README.md

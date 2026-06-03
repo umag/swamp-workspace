@@ -3,8 +3,10 @@ name: "@magistr/anilist"
 version: "2026.05.25.1"
 description: "AniList GraphQL API — search and fetch anime/manga, media details, user lists, and trending"
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 models:
-  - anilist.ts
+  - extensions/models/anilist.ts
 additionalFiles:
   - README.md
   - LICENSE.md

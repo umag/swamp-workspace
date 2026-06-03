@@ -12,9 +12,11 @@ description: |
     generate release-editor seed URLs for releases missing from MusicBrainz.
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - musicbrainz.ts
+  - extensions/models/musicbrainz.ts
 
 additionalFiles:
   - README.md

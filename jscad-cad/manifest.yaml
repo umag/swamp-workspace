@@ -6,9 +6,11 @@ description: >-
   STL/DXF/SVG/OBJ/3MF. Includes jscad-codegen Claude Code skill.
 
 repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
 
 models:
-  - jscad_cad.ts
+  - extensions/models/jscad_cad.ts
 
 additionalFiles:
   - README.md
