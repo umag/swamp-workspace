@@ -8,7 +8,7 @@ paths:
 models:
   - extensions/models/juick.ts
 workflows:
-  - juick-to-obsidian.yaml
+  - extensions/workflows/juick-to-obsidian.yaml
 additionalFiles:
   - README.md
   - LICENSE.md
