@@ -164,6 +164,7 @@ PROMPT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('
 TOKEN=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('token',''))" 2>/dev/null)
 GIT_URL=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('gitRepoUrl',''))" 2>/dev/null)
 MODEL=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('model',''))" 2>/dev/null)
+EFFORT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('effort',''))" 2>/dev/null)
 
 export HOME=/workspace
 export CLAUDE_CODE_OAUTH_TOKEN="\$TOKEN"
@@ -181,9 +182,9 @@ if [ -n "\$GIT_URL" ]; then
   git clone --depth 1 -- "\$GIT_URL" /workspace/repo >/dev/null 2>&1 && WORKDIR=/workspace/repo
 fi
 
-SAY "running claude model=\${MODEL:-default}"
+SAY "running claude model=\${MODEL:-default} effort=\${EFFORT:-default}"
 cd "\$WORKDIR"
-RESULT=\$(claude --print \${MODEL:+--model "\$MODEL"} "\$PROMPT" 2>&1)
+RESULT=\$(claude --print \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>&1)
 CLAUDE_EXIT=\$?
 SAY "claude exit=\$CLAUDE_EXIT len=\$(printf "%s" "\$RESULT" | wc -c)"
 [ \$CLAUDE_EXIT -ne 0 ] && RESULT="ERROR: claude exit=\$CLAUDE_EXIT: \$RESULT"
@@ -207,7 +208,7 @@ while true; do sleep 3600; done
  */
 export const model = {
   type: "@magistr/firecracker",
-  version: "2026.06.09.19",
+  version: "2026.06.09.20",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {

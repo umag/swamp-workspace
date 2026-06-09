@@ -52,9 +52,11 @@ EOF
 swamp model method run fc-tasks deploy
 
 # 2. Queue a prompt (served on the next guest GET /task)
+#    effort defaults to "low" to keep sandboxed runs fast/cheap; raise per task.
 swamp model method run fc-tasks inject_task \
   --input prompt="Summarise the README in this repo" \
-  --input model=claude-opus-4-8
+  --input model=claude-opus-4-8 \
+  --input effort=low
 
 # 3. Block until the guest POSTs its result (or times out)
 swamp model method run fc-tasks collect_result --input timeoutSeconds=600
@@ -72,7 +74,8 @@ Typically driven by the `@magistr/fc-run-agent` workflow, which sequences
 - `deploy` — write `tap-server.py` to the host and start it; waits for the port
   to bind before returning.
 - `inject_task` — queue the next job (`prompt`, optional `gitRepoUrl`, optional
-  `model`).
+  `model`, and `effort` — `low`/`medium`/`high`/`xhigh`/`max`, default `low`,
+  passed to the guest's `claude --print --effort`).
 - `collect_result` — poll for the guest's `POST /result`; blocks until a result
   arrives or `timeoutSeconds` elapses.
 - `stop` — precision-kill the server via its PID sidecar.

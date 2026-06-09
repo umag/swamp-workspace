@@ -69,6 +69,29 @@ Deno.test("inject_task: rejects a non-HTTPS (scp-style) git URL", () => {
   assertFalse(r.success);
 });
 
+Deno.test("inject_task: defaults effort to low", () => {
+  const parsed = model.methods.inject_task.arguments.parse({
+    prompt: "do the thing",
+  });
+  assertEquals(parsed.effort, "low");
+});
+
+Deno.test("inject_task: accepts an explicit effort level", () => {
+  const parsed = model.methods.inject_task.arguments.parse({
+    prompt: "do the thing",
+    effort: "xhigh",
+  });
+  assertEquals(parsed.effort, "xhigh");
+});
+
+Deno.test("inject_task: rejects an unknown effort level", () => {
+  const r = model.methods.inject_task.arguments.safeParse({
+    prompt: "do the thing",
+    effort: "ultra",
+  });
+  assertFalse(r.success);
+});
+
 Deno.test("collect_result: rejects a timeout below the minimum", () => {
   const r = model.methods.collect_result.arguments.safeParse({
     timeoutSeconds: 5,

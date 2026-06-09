@@ -77,7 +77,10 @@ Host bootstrap: `install_firecracker`, `install_guest_kernel`, `setup_tap`,
   tear down. Leaves a warm `agent-snapshot.{snap,mem}` for fast restore.
 - **`@magistr/fc-run-agent`** — run a Claude Code agent task inside a microVM
   (TAP + host NAT for egress), with a `type:always` cleanup job so the VMM and
-  task server are always torn down.
+  task server are always torn down. The guest runs
+  `claude --print --model <model> --effort <effort>`, taking the model and
+  effort from the injected task (effort defaults to `low` via
+  `@magistr/fc-task-server`).
 
 ## Security notes
 

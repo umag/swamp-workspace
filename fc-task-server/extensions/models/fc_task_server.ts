@@ -196,7 +196,7 @@ const ActionSchema = z.object({
  */
 export const model = {
   type: "@magistr/fc-task-server",
-  version: "2026.06.09.2",
+  version: "2026.06.09.3",
   globalArguments: GlobalArgsSchema,
   resources: {
     serverState: {
@@ -339,6 +339,10 @@ export const model = {
         model: z.string().optional().describe(
           "Claude model id passed to `claude --print --model` inside the guest (e.g. claude-opus-4-8, claude-haiku-4-5-20251001). Empty/omitted uses Claude Code's default.",
         ),
+        effort: z.enum(["low", "medium", "high", "xhigh", "max"]).default("low")
+          .describe(
+            "Reasoning effort passed to `claude --print --effort` inside the guest. Defaults to 'low' to keep sandboxed agent runs fast and cheap; raise per task when the work is intelligence-sensitive. 'max' is Opus-tier only.",
+          ),
       }),
       execute: async (args, context) => {
         const { host, user, tapPort } = context.globalArgs;
@@ -347,6 +351,7 @@ export const model = {
           prompt: args.prompt,
           ...(args.gitRepoUrl ? { gitRepoUrl: args.gitRepoUrl } : {}),
           ...(args.model ? { model: args.model } : {}),
+          effort: args.effort,
         };
         const taskJson = shellEsc(JSON.stringify(task));
 
