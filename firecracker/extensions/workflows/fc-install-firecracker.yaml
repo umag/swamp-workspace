@@ -1,0 +1,36 @@
+name: "@magistr/fc-install-firecracker"
+description: >
+  Download and install the latest Firecracker binary on the remote host.
+  Run once to upgrade from an old version that lacks /entropy-device support.
+version: 1
+inputs:
+  properties:
+    host:
+      type: string
+      default: firecracker.example.com
+    vmName:
+      type: string
+      default: fc-agent-1
+    socketPath:
+      type: string
+      default: /tmp/fc-agent-1.socket
+  required:
+    - host
+
+jobs:
+  - name: install
+    steps:
+      - name: install-firecracker
+        description: Install latest Firecracker release binary
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.vmName }}
+          methodName: install_firecracker
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.socketPath }}
+          inputs: {}
+        dependsOn: []
+    dependsOn: []

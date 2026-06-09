@@ -1,0 +1,260 @@
+name: "@magistr/fc-run-agent"
+description: >
+  Run a Claude Code agent task inside a Firecracker microVM.
+  Guest reaches the internet via TAP networking + host NAT.
+  A simple TCP HTTP server on the host TAP IP serves the task JSON
+  (with OAuth token) to the guest and collects the result.
+
+  Two-job structure ensures cleanup always runs:
+    Job 1 (run-agent): setup-tap → ensure-vmm-ready → deploy-server → restore-snapshot → inject-task → collect-result
+    Job 2 (cleanup):   depends on run-agent with type:always → stop-server → kill-vmm → pre-warm-next
+
+  CRITICAL ordering: deploy-server runs BEFORE restore-snapshot so the TCP
+  server is listening when the VM resumes and the guest begins polling.
+version: 1
+inputs:
+  properties:
+    vmName:
+      type: string
+      description: Name of the firecracker swamp model instance (e.g. fc-agent-1)
+    host:
+      type: string
+      description: SSH host running Firecracker (e.g. firecracker.example.com)
+    socketPath:
+      type: string
+      description: Firecracker API socket path on the host
+      default: /tmp/fc-agent-1.socket
+    tapIp:
+      type: string
+      description: Host IP on the TAP interface (guest default gateway)
+      default: "172.16.0.1"
+    tapPort:
+      type: integer
+      description: TCP port for the task/result HTTP server
+      default: 8080
+    snapshotPath:
+      type: string
+      description: Path to the pre-baked VM snapshot file
+      default: /opt/firecracker/agent-snapshot.snap
+    memFilePath:
+      type: string
+      description: Path to the pre-baked VM memory file
+      default: /opt/firecracker/agent-snapshot.mem
+    prompt:
+      type: string
+      description: Task prompt to send to claude inside the microVM
+    model:
+      type: string
+      description: Claude model id for `claude --print --model` inside the guest (e.g. claude-opus-4-8, claude-haiku-4-5-20251001)
+      default: claude-opus-4-8
+    gitRepoUrl:
+      type: string
+      description: Optional HTTPS git repo URL to clone inside the guest before running the task
+      default: ""
+    timeoutSeconds:
+      type: integer
+      description: Maximum seconds to wait for the agent task to complete
+      default: 300
+    oauthToken:
+      type: string
+      description: Claude Code OAuth token (injected into task JSON served to guest)
+      default: ${{ vault.get(hashi, CLAUDE_CODE_OAUTH_TOKEN) }}
+  required:
+    - vmName
+    - host
+    - prompt
+    - oauthToken
+
+jobs:
+  - name: run-agent
+    description: >
+      Main job: setup TAP → start warm VMM → server up → restore snapshot → inject task → collect result.
+      Cleanup job (below) always runs after this regardless of success/failure.
+    steps:
+      - name: setup-tap
+        description: >
+          Idempotent TAP device setup: creates tap0, assigns host IP, enables
+          NAT masquerade so the guest can reach api.anthropic.com directly.
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.vmName }}
+          methodName: setup_tap
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.socketPath }}
+          inputs:
+            tapName: tap0
+            hostIp: ${{ inputs.tapIp }}
+            guestSubnet: "172.16.0.0/24"
+        dependsOn: []
+
+      - name: ensure-vmm-ready
+        description: >
+          Idempotent VMM start: reuses warm process if PID sidecar shows it alive,
+          otherwise starts fresh.
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.vmName }}
+          methodName: start_vmm
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.socketPath }}
+          inputs: {}
+        dependsOn:
+          - step: setup-tap
+            condition:
+              type: succeeded
+
+      - name: deploy-server
+        description: >
+          Start TCP task/result server on tapIp:tapPort BEFORE restore-snapshot
+          so it is ready when the VM resumes and begins polling GET /task.
+        task:
+          type: model_method
+          modelType: "@magistr/fc-task-server"
+          modelName: ${{ inputs.vmName }}-taskserver
+          methodName: deploy
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            tapIp: ${{ inputs.tapIp }}
+            tapPort: ${{ inputs.tapPort }}
+            oauthToken: ${{ inputs.oauthToken }}
+          inputs: {}
+        dependsOn:
+          - step: ensure-vmm-ready
+            condition:
+              type: succeeded
+
+      - name: restore-snapshot
+        description: >
+          Restore snapshot AFTER server deployed — VM resumes and immediately
+          finds the TCP task server ready on tapIp:tapPort.
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.vmName }}
+          methodName: restore
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.socketPath }}
+          inputs:
+            snapshotPath: ${{ inputs.snapshotPath }}
+            memFilePath: ${{ inputs.memFilePath }}
+        dependsOn:
+          - step: deploy-server
+            condition:
+              type: succeeded
+
+      - name: inject-task
+        description: Write task JSON to file; server delivers it on next guest GET /task
+        task:
+          type: model_method
+          modelType: "@magistr/fc-task-server"
+          modelName: ${{ inputs.vmName }}-taskserver
+          methodName: inject_task
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            tapIp: ${{ inputs.tapIp }}
+            tapPort: ${{ inputs.tapPort }}
+            oauthToken: ${{ inputs.oauthToken }}
+          inputs:
+            prompt: ${{ inputs.prompt }}
+            gitRepoUrl: ${{ inputs.gitRepoUrl }}
+            model: ${{ inputs.model }}
+        dependsOn:
+          - step: restore-snapshot
+            condition:
+              type: succeeded
+
+      - name: collect-result
+        description: Poll for result file written by guest POST /result
+        task:
+          type: model_method
+          modelType: "@magistr/fc-task-server"
+          modelName: ${{ inputs.vmName }}-taskserver
+          methodName: collect_result
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            tapIp: ${{ inputs.tapIp }}
+            tapPort: ${{ inputs.tapPort }}
+            oauthToken: ${{ inputs.oauthToken }}
+          inputs:
+            timeoutSeconds: ${{ inputs.timeoutSeconds }}
+        dependsOn:
+          - step: inject-task
+            condition:
+              type: succeeded
+
+    dependsOn: []
+
+  - name: cleanup
+    description: >
+      Always-run cleanup: stop TCP server (PID kill), kill VMM (PID kill),
+      pre-warm a fresh Firecracker for next run. Runs regardless of run-agent outcome.
+    steps:
+      - name: stop-server
+        description: Kill TCP server via PID sidecar
+        allowFailure: true
+        task:
+          type: model_method
+          modelType: "@magistr/fc-task-server"
+          modelName: ${{ inputs.vmName }}-taskserver
+          methodName: stop
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            tapIp: ${{ inputs.tapIp }}
+            tapPort: ${{ inputs.tapPort }}
+            oauthToken: ${{ inputs.oauthToken }}
+        dependsOn: []
+
+      - name: kill-vmm
+        description: Kill Firecracker process via PID sidecar, clean socket files
+        allowFailure: true
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.vmName }}
+          methodName: kill_vmm
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.socketPath }}
+          inputs: {}
+        dependsOn:
+          - step: stop-server
+            condition:
+              type: always
+
+      - name: pre-warm-next
+        description: >
+          Start a fresh Firecracker process so next run finds a warm VMM.
+          Idempotent — no-op if already warm.
+        allowFailure: true
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.vmName }}
+          methodName: start_vmm
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.socketPath }}
+          inputs: {}
+        dependsOn:
+          - step: kill-vmm
+            condition:
+              type: always
+
+    dependsOn:
+      - job: run-agent
+        condition:
+          type: always

@@ -1,0 +1,39 @@
+manifestVersion: 1
+name: "@magistr/fc-task-server"
+version: "2026.06.09.2"
+description: |
+  Host↔guest task/result control-plane server for Firecracker microVM agents.
+  This is NOT an internet proxy — the guest reaches api.anthropic.com directly
+  via its TAP interface + host NAT.
+
+  Model `@magistr/fc-task-server` deploys a small Python TCP HTTP server on the
+  host TAP interface that:
+  - serves the per-run job (prompt + model + CLAUDE_CODE_OAUTH_TOKEN, validated
+    `sk-ant…` prefix, injected at serve time) on `GET /task`, and
+  - collects the agent's output on `POST /result`.
+
+  Methods: `deploy` (write + start the server, wait for the port to bind),
+  `inject_task` (queue prompt/model/git-repo for the next GET /task),
+  `collect_result` (block until the guest POSTs a result or timeout), and
+  `stop` (precision-kill via PID sidecar). Pairs with `@magistr/firecracker`.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/fc_task_server.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - firecracker
+  - microvm
+  - agent
+  - task-server
+  - claude-code
+  - isolation

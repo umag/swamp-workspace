@@ -1,0 +1,366 @@
+name: "@magistr/fc-bake-snapshot"
+description: >
+  Update the agent script in the rootfs, boot a fresh Firecracker VM, wait for
+  the agent to reach the polling-for-task state, snapshot, then tear down.
+  Leaves /opt/firecracker/agent-snapshot.{snap,mem} ready for fc-run-agent.
+  Uses only @magistr/firecracker methods — no @adam/cfgmgmt dependency.
+version: 1
+inputs:
+  properties:
+    host:
+      type: string
+      description: SSH host running Firecracker
+      default: firecracker.example.com
+    bakeVmName:
+      type: string
+      description: Model name for the bake VM (ephemeral — no stored definition needed)
+      default: fc-bake
+    prodVmName:
+      type: string
+      description: Model name for the production VM (used for pre-warm)
+      default: fc-agent-1
+    bakeSocketPath:
+      type: string
+      description: Firecracker API socket path used during bake
+      default: /tmp/fc-bake.socket
+    prodSocketPath:
+      type: string
+      description: Production Firecracker socket path (pre-warmed after bake)
+      default: /tmp/fc-agent-1.socket
+    rootfsPath:
+      type: string
+      description: Path to the rootfs ext4 image on the host
+      default: /opt/firecracker/rootfs.ext4
+    snapshotPath:
+      type: string
+      description: Host path to write the snapshot file
+      default: /opt/firecracker/agent-snapshot.snap
+    memFilePath:
+      type: string
+      description: Host path to write the memory file
+      default: /opt/firecracker/agent-snapshot.mem
+    vcpuCount:
+      type: integer
+      description: Number of vCPUs for the bake VM
+      default: 1
+    memSizeMib:
+      type: integer
+      description: Memory in MiB for the bake VM
+      default: 512
+    tapName:
+      type: string
+      description: TAP device name on the host
+      default: tap0
+    tapHostIp:
+      type: string
+      description: IP assigned to the TAP interface on the host (guest gateway)
+      default: "172.16.0.1"
+    guestIp:
+      type: string
+      description: Guest IP address
+      default: "172.16.0.2"
+  required:
+    - host
+
+jobs:
+  - name: cleanup
+    description: Kill any running Firecracker processes before bake
+    steps:
+      - name: kill-bake-vmm
+        description: Kill any stale bake Firecracker process
+        allowFailure: true
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: kill_vmm
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs: {}
+        dependsOn: []
+
+      - name: kill-prod-vmm
+        description: Kill any running production Firecracker process
+        allowFailure: true
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.prodVmName }}
+          methodName: kill_vmm
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.prodSocketPath }}
+          inputs: {}
+        dependsOn: []
+
+    dependsOn: []
+
+  - name: bake
+    description: >
+      Update agent script, boot VM, wait for agent to reach polling state,
+      then snapshot. Cleanup and pre-warm at the end.
+    steps:
+      - name: setup-tap
+        description: Idempotent TAP device + NAT setup
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: setup_tap
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs:
+            tapName: ${{ inputs.tapName }}
+            hostIp: ${{ inputs.tapHostIp }}
+            guestSubnet: "172.16.0.0/24"
+        dependsOn: []
+
+      - name: update-agent-script
+        description: Deploy the TAP+wget agent to the rootfs (VM must be stopped)
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: update_agent_script
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs:
+            rootfsPath: ${{ inputs.rootfsPath }}
+        dependsOn:
+          - step: setup-tap
+            condition:
+              type: succeeded
+
+      - name: start-bake-vmm
+        description: Start fresh Firecracker process on bake socket
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: start_vmm
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs: {}
+        dependsOn:
+          - step: update-agent-script
+            condition:
+              type: succeeded
+
+      - name: configure
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: configure
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs:
+            vcpuCount: ${{ inputs.vcpuCount }}
+            memSizeMib: ${{ inputs.memSizeMib }}
+        dependsOn:
+          - step: start-bake-vmm
+            condition:
+              type: succeeded
+
+      - name: set-entropy-device
+        description: Configure virtio-rng so guest TLS/crypto does not block on /dev/random
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: set_entropy_device
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs: {}
+        dependsOn:
+          - step: start-bake-vmm
+            condition:
+              type: succeeded
+
+      - name: set-boot
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: set_boot
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs:
+            kernelImagePath: /opt/firecracker/vmlinux
+            bootArgs: console=ttyS0 reboot=k panic=1 pci=off init=/opt/fc-agent.sh ip=${{ inputs.guestIp }}::${{ inputs.tapHostIp }}:255.255.255.0::eth0:off
+        dependsOn:
+          - step: configure
+            condition:
+              type: succeeded
+
+      - name: set-drive
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: set_drive
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs:
+            driveId: rootfs
+            pathOnHost: ${{ inputs.rootfsPath }}
+            isRootDevice: true
+            isReadOnly: false
+        dependsOn:
+          - step: configure
+            condition:
+              type: succeeded
+
+      - name: set-network
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: set_network
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs:
+            ifaceId: eth0
+            hostDevName: ${{ inputs.tapName }}
+        dependsOn:
+          - step: configure
+            condition:
+              type: succeeded
+
+      - name: start-vm
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: start
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+        dependsOn:
+          - step: set-boot
+            condition:
+              type: succeeded
+          - step: set-drive
+            condition:
+              type: succeeded
+          - step: set-network
+            condition:
+              type: succeeded
+          - step: set-entropy-device
+            condition:
+              type: succeeded
+
+      - name: wait-agent
+        description: Wait for agent to print "polling for task" on serial console
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: wait_serial
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs:
+            target: "polling for task"
+            logPath: /var/log/fc-bake.socket.log
+            timeoutSeconds: 60
+        dependsOn:
+          - step: start-vm
+            condition:
+              type: succeeded
+
+      - name: pause-vm
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: pause
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+        dependsOn:
+          - step: wait-agent
+            condition:
+              type: succeeded
+
+      - name: snapshot-vm
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: snapshot
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs:
+            snapshotPath: ${{ inputs.snapshotPath }}
+            memFilePath: ${{ inputs.memFilePath }}
+            snapshotType: Full
+        dependsOn:
+          - step: pause-vm
+            condition:
+              type: succeeded
+
+      - name: kill-bake-vmm
+        description: Clean up the bake VM process
+        allowFailure: true
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.bakeVmName }}
+          methodName: kill_vmm
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.bakeSocketPath }}
+          inputs: {}
+        dependsOn:
+          - step: snapshot-vm
+            condition:
+              type: always
+
+      - name: pre-warm-prod
+        description: Start a fresh production Firecracker process (warm for next run)
+        allowFailure: true
+        task:
+          type: model_method
+          modelType: "@magistr/firecracker"
+          modelName: ${{ inputs.prodVmName }}
+          methodName: start_vmm
+          globalArgs:
+            host: ${{ inputs.host }}
+            user: root
+            socketPath: ${{ inputs.prodSocketPath }}
+          inputs: {}
+        dependsOn:
+          - step: kill-bake-vmm
+            condition:
+              type: always
+
+    dependsOn:
+      - job: cleanup
+        condition:
+          type: always

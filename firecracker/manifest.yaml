@@ -1,0 +1,49 @@
+manifestVersion: 1
+name: "@magistr/firecracker"
+version: "2026.06.09.19"
+description: |
+  Firecracker microVM lifecycle management via SSH + the Unix-socket REST API.
+  One model instance = one microVM socket.
+
+  Model `@magistr/firecracker`:
+  - Configure machine, boot source, drives, network interfaces, vsock, entropy.
+  - start / stop / pause / resume; send_ctrl_alt_del.
+  - snapshot / restore; wait_serial (poll serial log for snapshot baking).
+  - kill_vmm (precision kill via PID sidecar); start_vmm (idempotent warm-start).
+  - Host bootstrap: install_firecracker, install_guest_kernel (modern CI
+    vmlinux), setup_tap, build_ubuntu_rootfs (debootstrap Ubuntu + glibc Claude
+    Code, init=/opt/fc-agent.sh), update_agent_script (deploy PID-1 agent).
+
+  Workflows:
+  - `@magistr/fc-install-firecracker` — install/upgrade the Firecracker binary.
+  - `@magistr/fc-bake-snapshot` — boot, wait for agent poll-state, snapshot,
+    tear down — leaves a warm agent snapshot for fast restore.
+  - `@magistr/fc-run-agent` — run a Claude Code agent task inside a microVM,
+    with guaranteed cleanup.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/firecracker.ts
+
+workflows:
+  - extensions/workflows/fc-install-firecracker.yaml
+  - extensions/workflows/fc-bake-snapshot.yaml
+  - extensions/workflows/fc-run-agent.yaml
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - firecracker
+  - microvm
+  - kvm
+  - virtualization
+  - vm
+  - aws
+  - homelab
