@@ -14,6 +14,7 @@ import {
   buildSetupTapScript,
   model,
   netnsExecPrefix,
+  shortHash,
 } from "./firecracker.ts";
 import { isValidSshHost } from "./lib/ssh.ts";
 
@@ -160,10 +161,25 @@ Deno.test("buildSetupTapScript: netns branch builds the namespace + veth + scope
   );
   // in-ns egress NAT scoped to the guest subnet
   assertStringIncludes(s, "-s '172.16.0.0/24' -o fcveth0 -j MASQUERADE");
-  // host egress NAT scoped to THIS VM's veth subnet (unique per VM)
-  assertStringIncludes(s, "-s '10.0.5.0/30' -o \"$UP\" -j MASQUERADE");
-  // root-side veth name derived from the veth host IP (unique in root ns)
-  assertStringIncludes(s, "fcv10051");
+  // host egress NAT scoped to THIS VM's veth subnet + comment-tagged for teardown
+  assertStringIncludes(
+    s,
+    "-s '10.0.5.0/30' -o \"$UP\" -m comment --comment 'fc-netns:fc-1' -j MASQUERADE",
+  );
+  // root-side veth name derived from the namespace hash (unique in root ns)
+  assertStringIncludes(s, "fcv" + shortHash("fc-1"));
+});
+
+Deno.test("buildSetupTapScript: distinct namespaces get distinct root veth names", () => {
+  const veth = (ns: string) =>
+    buildSetupTapScript({ ...tapArgs, netns: ns, vethSubnet: "10.0.0.0/30" })
+      .match(/fcv[0-9a-f]+/)?.[0];
+  assertEquals(veth("fc-1") === veth("fc-2"), false);
+});
+
+Deno.test("shortHash is deterministic and hex", () => {
+  assertEquals(shortHash("fc-1"), shortHash("fc-1"));
+  assertEquals(/^[0-9a-f]+$/.test(shortHash("fc-agent-7")), true);
 });
 
 Deno.test("buildSetupTapScript: netns branch uses scoped FORWARD, never -P FORWARD ACCEPT", () => {
@@ -201,6 +217,17 @@ Deno.test("setup_tap: rejects a malformed veth subnet", () => {
     vethSubnet: "not-a-cidr",
   });
   assertFalse(r.success);
+});
+
+Deno.test("setup_tap: rejects a malformed hostIp and guestSubnet", () => {
+  assertFalse(
+    model.methods.setup_tap.arguments.safeParse({ hostIp: "999.1" })
+      .success,
+  );
+  assertFalse(
+    model.methods.setup_tap.arguments.safeParse({ guestSubnet: "10.0.0.0" })
+      .success,
+  );
 });
 
 Deno.test("globalArguments: rejects a netns name with shell metacharacters", () => {
