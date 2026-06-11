@@ -150,3 +150,18 @@ Deno.test("buildDeployFabricCmd runs the daemon in the netns with the shared que
   assert(c.includes("FC_OAUTH_TOKEN="), "token passed to the daemon env");
   assert(c.includes("base64 -d"), "server script written via base64");
 });
+
+Deno.test("fabric daemon stamps claims with worker netns + time (liveness/recycle)", () => {
+  assert(
+    FABRIC_SERVER_PY.includes('NETNS + "__"'),
+    "a claimed task must be tagged with the claiming worker's netns",
+  );
+  assert(
+    FABRIC_SERVER_PY.includes("os.utime(dst, None)"),
+    "claim must stamp a claim time so a watchdog can measure stall age",
+  );
+  assert(
+    FABRIC_SERVER_PY.includes('os.environ.get("FC_NETNS"'),
+    "daemon must know its own worker netns",
+  );
+});

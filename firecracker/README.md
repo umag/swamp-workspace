@@ -117,6 +117,9 @@ factory + queue (one `swamp model method run` each, no workflow authoring):
   tasks are running); returns task ids. The daemon injects the OAuth token at
   serve time, so it is never written to the queue.
 - **`poll`** — collect completed results by id + the pending count (idempotent).
+- **`fabric_recycle --input timeoutSeconds=…`** — liveness watchdog: re-queue
+  tasks claimed longer than the timeout (a wedged worker) and restart the stuck
+  workers, so a hung agent never permanently loses a pool slot. Call periodically.
 - **`fabric_down`** — reap the whole pool (VMs, netns, NAT, daemons, queue).
 
 Workers are reused across tasks (warm-VM reuse, no per-task restore). `submit`

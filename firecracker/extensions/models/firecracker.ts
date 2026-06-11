@@ -365,15 +365,20 @@ RESULTS_DIR = os.environ["FC_RESULTS_DIR"]
 TOKEN = os.environ.get("FC_OAUTH_TOKEN", "")
 BIND_IP = os.environ.get("FC_BIND_IP", "172.16.0.1")
 BIND_PORT = int(os.environ.get("FC_BIND_PORT", "8080"))
+NETNS = os.environ.get("FC_NETNS", "w")
 
 def claim_next():
     for path in sorted(glob.glob(os.path.join(QUEUE_DIR, "*.json"))):
-        dst = os.path.join(CLAIMED_DIR, os.path.basename(path))
+        # Encode the claiming worker's netns so a watchdog (fabric_recycle) can
+        # tell which worker is stuck on a claimed task; utime stamps the claim
+        # time so stall age = now - mtime.
+        dst = os.path.join(CLAIMED_DIR, NETNS + "__" + os.path.basename(path))
         try:
             os.rename(path, dst)
         except OSError:
             continue
         try:
+            os.utime(dst, None)
             with open(dst) as f:
                 return json.load(f)
         except Exception:
@@ -457,7 +462,7 @@ export function buildDeployFabricCmd(
     } FC_RESULTS_DIR=${shellEsc(paths.resultsDir)}`,
     `export FC_OAUTH_TOKEN=${shellEsc(oauthToken)} FC_BIND_IP=${
       shellEsc(bindIp)
-    } FC_BIND_PORT=${port}`,
+    } FC_BIND_PORT=${port} FC_NETNS=${shellEsc(netns)}`,
     `setsid ${netnsExecPrefix(netns)}python3 ${
       shellEsc(paths.serverPath)
     } </dev/null >/dev/null 2>&1 & echo $! > ${shellEsc(pidFile)}`,
@@ -468,6 +473,60 @@ export function buildDeployFabricCmd(
     },${port}))" 2>/dev/null && break; sleep 0.1; done`,
     `echo deployed`,
   ].join("\n");
+}
+
+/** Options for bringing up one fabric worker (shared by fabric_up + fabric_recycle). */
+export interface FabricWorkerOpts {
+  netnsPrefix: string;
+  tapName: string;
+  tapIp: string;
+  guestSubnet: string;
+  port: number;
+  oauthToken: string;
+  snapshotPath: string;
+  memFilePath: string;
+}
+
+/** Bring up (or restart) worker `i`: clean any stale/wedged instance, set up its
+ * netns tap, start a fresh VMM, deploy the fabric daemon on the shared queue, and
+ * restore the warm snapshot. Reused by fabric_up (initial pool) and fabric_recycle
+ * (restart a stalled worker) — idempotent thanks to the leading kill. */
+export async function bringUpWorker(
+  host: string,
+  user: string,
+  i: number,
+  o: FabricWorkerOpts,
+  paths: ReturnType<typeof fabricPaths>,
+): Promise<string> {
+  const netns = `${o.netnsPrefix}-${i}`;
+  const socketPath = `/tmp/${o.netnsPrefix}-${i}.socket`;
+  const vethSubnet = `10.0.${i}.0/30`;
+  const srvPid = `/tmp/${o.netnsPrefix}-${i}.server.pid`;
+  await sshExec(host, user, buildKillVmmCmd(socketPath, netns));
+  await sshExec(
+    host,
+    user,
+    buildSetupTapScript({
+      tapName: o.tapName,
+      hostIp: o.tapIp,
+      prefix: 24,
+      guestSubnet: o.guestSubnet,
+      netns,
+      vethSubnet,
+    }),
+  );
+  await sshExec(host, user, buildStartVmmCmd(socketPath, netns));
+  await sshExec(
+    host,
+    user,
+    buildDeployFabricCmd(netns, o.tapIp, o.port, paths, o.oauthToken, srvPid),
+  );
+  await sshCurl(host, user, socketPath, "PUT", "/snapshot/load", {
+    snapshot_path: o.snapshotPath,
+    mem_file_path: o.memFilePath,
+    resume_vm: true,
+  });
+  return netns;
 }
 
 // --- Agent script (shared by build_ubuntu_rootfs + update_agent_script) ---
@@ -1646,45 +1705,11 @@ export const model = {
             shellEsc(paths.resultsDir)
           }`,
         );
-        const bringUp = async (i: number): Promise<string> => {
-          const netns = `${args.netnsPrefix}-${i}`;
-          const socketPath = `/tmp/${args.netnsPrefix}-${i}.socket`;
-          const vethSubnet = `10.0.${i}.0/30`;
-          const srvPid = `/tmp/${args.netnsPrefix}-${i}.server.pid`;
-          await sshExec(
-            host,
-            user,
-            buildSetupTapScript({
-              tapName: args.tapName,
-              hostIp: args.tapIp,
-              prefix: 24,
-              guestSubnet: args.guestSubnet,
-              netns,
-              vethSubnet,
-            }),
-          );
-          await sshExec(host, user, buildStartVmmCmd(socketPath, netns));
-          await sshExec(
-            host,
-            user,
-            buildDeployFabricCmd(
-              netns,
-              args.tapIp,
-              args.port,
-              paths,
-              args.oauthToken,
-              srvPid,
-            ),
-          );
-          await sshCurl(host, user, socketPath, "PUT", "/snapshot/load", {
-            snapshot_path: args.snapshotPath,
-            mem_file_path: args.memFilePath,
-            resume_vm: true,
-          });
-          return netns;
-        };
         const workers = await Promise.all(
-          Array.from({ length: args.concurrency }, (_, k) => bringUp(k + 1)),
+          Array.from(
+            { length: args.concurrency },
+            (_, k) => bringUpWorker(host, user, k + 1, args, paths),
+          ),
         );
         context.logger.info(
           `fabric_up: ${workers.length} warm worker(s) ready on queue ${args.queueRoot}`,
@@ -1837,6 +1862,70 @@ export const model = {
         );
         const handle = await context.writeResource("fabric", "current", {
           status: "down",
+          timestamp: new Date().toISOString(),
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    fabric_recycle: {
+      description:
+        "Liveness watchdog: re-queue tasks claimed longer than `timeoutSeconds` ago (a wedged/hung worker) and restart the workers that were stuck on them, so a hung agent never permanently loses a pool slot. Idempotent; call periodically while a fabric is up.",
+      arguments: z.object({
+        concurrency: z.number().int().min(1).max(64).default(4),
+        timeoutSeconds: z.number().int().min(1).default(600),
+        queueRoot: z.string().regex(PATH_RE).default("/tmp/fc-fabric"),
+        netnsPrefix: z.string().regex(NETNS_RE).default("fcw"),
+        tapName: z.string().regex(IFACE_RE).default("tap0"),
+        tapIp: z.string().regex(IPV4_RE).default("172.16.0.1"),
+        guestSubnet: z.string().regex(CIDR_RE).default("172.16.0.0/24"),
+        port: z.number().int().default(8080),
+        snapshotPath: z.string().regex(PATH_RE).default(
+          "/opt/firecracker/agent-snapshot.snap",
+        ),
+        memFilePath: z.string().regex(PATH_RE).default(
+          "/opt/firecracker/agent-snapshot.mem",
+        ),
+        oauthToken: z.string(),
+      }),
+      execute: async (args, context) => {
+        const { host, user } = context.globalArgs;
+        const paths = fabricPaths(args.queueRoot);
+        // Re-queue claimed tasks older than the timeout (strip the netns prefix
+        // to restore the original queue name) and emit each stalled worker netns.
+        const scan = [
+          `now=$(date +%s)`,
+          `for f in ${
+            shellEsc(paths.claimedDir)
+          }/*.json; do [ -e "$f" ] || continue;`,
+          `  age=$(( now - $(stat -c %Y "$f") ));`,
+          `  if [ "$age" -gt ${args.timeoutSeconds} ]; then`,
+          `    b=$(basename "$f"); ns=\${b%%__*}; orig=\${b#*__};`,
+          `    mv "$f" ${
+            shellEsc(paths.queueDir)
+          }/"$orig" 2>/dev/null || rm -f "$f";`,
+          `    echo "$ns";`,
+          `  fi;`,
+          `done`,
+        ].join("\n");
+        const { stdout } = await sshExec(host, user, scan);
+        const stalled = [...new Set(stdout.trim().split("\n").filter(Boolean))];
+        const restarted: string[] = [];
+        for (const ns of stalled) {
+          const i = Number(ns.split("-").pop());
+          if (Number.isFinite(i) && i >= 1) {
+            await bringUpWorker(host, user, i, args, paths);
+            restarted.push(ns);
+          }
+        }
+        context.logger.info(
+          `fabric_recycle: re-queued + restarted ${restarted.length} stalled worker(s)${
+            restarted.length ? ": " + restarted.join(",") : ""
+          }`,
+        );
+        const handle = await context.writeResource("fabric", "current", {
+          status: "recycled",
+          restarted,
           timestamp: new Date().toISOString(),
         });
         return { dataHandles: [handle] };
