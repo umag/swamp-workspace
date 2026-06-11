@@ -314,7 +314,9 @@ fi
 
 SAY "running claude model=\${MODEL:-default} effort=\${EFFORT:-default}"
 cd "\$WORKDIR"
-RESULT=\$(claude --print \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>&1)
+# --dangerously-skip-permissions: the microVM itself is the sandbox, so the
+# agent runs unattended without permission prompts (which would hang --print).
+RESULT=\$(claude --print --dangerously-skip-permissions \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>&1)
 CLAUDE_EXIT=\$?
 SAY "claude exit=\$CLAUDE_EXIT len=\$(printf "%s" "\$RESULT" | wc -c)"
 [ \$CLAUDE_EXIT -ne 0 ] && RESULT="ERROR: claude exit=\$CLAUDE_EXIT: \$RESULT"
@@ -338,7 +340,7 @@ while true; do sleep 3600; done
  */
 export const model = {
   type: "@magistr/firecracker",
-  version: "2026.06.11.2",
+  version: "2026.06.11.3",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {
