@@ -250,7 +250,7 @@ async function sshCurlJson<T>(
 // for the old guest kernel, polls the host task server (172.16.0.1:8080) for a task,
 // runs Claude Code authenticated SOLELY via CLAUDE_CODE_OAUTH_TOKEN, and POSTs
 // the result back. As PID 1 it must never exit, so it idles at the end.
-const AGENT_SCRIPT = `#!/bin/sh
+export const AGENT_SCRIPT = `#!/bin/sh
 # PID 1 under Firecracker (init=/opt/fc-agent.sh): mount our own fs, never exit.
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mount -t proc proc /proc 2>/dev/null || true
@@ -262,6 +262,10 @@ SAY "agent started (ubuntu)"
 
 export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
 mkdir -p /workspace
+export HOME=/workspace
+# The agent is PID 1 / root; IS_SANDBOX=1 lets claude accept
+# --dangerously-skip-permissions as root (the microVM is the sandbox).
+export IS_SANDBOX=1
 
 ip link set lo up 2>/dev/null || true
 ip link set eth0 up 2>/dev/null || true
@@ -281,28 +285,7 @@ fcntl.ioctl(fd, RNDADDENTROPY, buf)
 os.close(fd)
 " 2>/dev/null || true
 
-SAY "polling for task"
-while true; do
-  TASK_JSON=\$(curl -s -m 15 http://172.16.0.1:8080/task 2>/dev/null)
-  [ -n "\$TASK_JSON" ] && break
-  sleep 1
-done
-SAY "got task"
-
-printf "%s" "\$TASK_JSON" > /tmp/task.json
-PROMPT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('prompt',''))" 2>/dev/null)
-TOKEN=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('token',''))" 2>/dev/null)
-GIT_URL=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('gitRepoUrl',''))" 2>/dev/null)
-MODEL=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('model',''))" 2>/dev/null)
-EFFORT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('effort',''))" 2>/dev/null)
-
-export HOME=/workspace
-export CLAUDE_CODE_OAUTH_TOKEN="\$TOKEN"
-# The agent is PID 1 / root; IS_SANDBOX=1 lets claude accept
-# --dangerously-skip-permissions as root (the microVM is the sandbox).
-export IS_SANDBOX=1
-
-SAY "syncing clock"
+# Sync the clock once from the task server's Date header (HEAD, does not consume a task).
 DATE_HDR=\$(curl -sfI -m 10 http://172.16.0.1:8080/task 2>/dev/null | grep -i "^date:" | sed "s/^[^:]*: *//" | tr -d "\\r")
 [ -n "\$DATE_HDR" ] && date -s "\$DATE_HDR" >/dev/null 2>&1 || true
 SAY "clock=\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -310,26 +293,56 @@ SAY "clock=\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # Auth comes ONLY from CLAUDE_CODE_OAUTH_TOKEN. Config holds the onboarding flag only.
 printf '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}' > /workspace/.claude.json
 
-WORKDIR=/workspace
-if [ -n "\$GIT_URL" ]; then
-  git clone --depth 1 -- "\$GIT_URL" /workspace/repo >/dev/null 2>&1 && WORKDIR=/workspace/repo
-fi
+# WARM WORKER LOOP: poll for a task -> run it -> POST the result tagged with its
+# id -> loop back and poll for the next one. The VM is reused across many tasks
+# with NO per-task restore (warm-VM reuse). PID 1 never exits: the loop is
+# infinite, idle-polling when the queue is empty. Backward-compatible with a
+# single-shot task server (it unlinks the one task after serving, so the next
+# poll is empty and the worker simply idle-polls; an absent id is fine).
+SAY "worker ready; polling for tasks"
+while true; do
+  TASK_JSON=""
+  while true; do
+    TASK_JSON=\$(curl -s -m 15 http://172.16.0.1:8080/task 2>/dev/null)
+    [ -n "\$TASK_JSON" ] && break
+    sleep 1
+  done
 
-SAY "running claude model=\${MODEL:-default} effort=\${EFFORT:-default}"
-cd "\$WORKDIR"
-# --dangerously-skip-permissions: the microVM itself is the sandbox, so the
-# agent runs unattended without permission prompts (which would hang --print).
-RESULT=\$(claude --print --dangerously-skip-permissions \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>&1)
-CLAUDE_EXIT=\$?
-SAY "claude exit=\$CLAUDE_EXIT len=\$(printf "%s" "\$RESULT" | wc -c)"
-[ \$CLAUDE_EXIT -ne 0 ] && RESULT="ERROR: claude exit=\$CLAUDE_EXIT: \$RESULT"
+  printf "%s" "\$TASK_JSON" > /tmp/task.json
+  ID=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('id',''))" 2>/dev/null)
+  PROMPT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('prompt',''))" 2>/dev/null)
+  TOKEN=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('token',''))" 2>/dev/null)
+  GIT_URL=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('gitRepoUrl',''))" 2>/dev/null)
+  MODEL=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('model',''))" 2>/dev/null)
+  EFFORT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('effort',''))" 2>/dev/null)
+  SAY "got task \${ID:-?}"
 
-printf "%s" "\$RESULT" > /tmp/result.txt
-curl -s -m 20 -X POST --data-binary @/tmp/result.txt -H "Content-Type: text/plain" -H "Expect:" http://172.16.0.1:8080/result >/dev/null 2>&1
-SAY "done"
+  export CLAUDE_CODE_OAUTH_TOKEN="\$TOKEN"
 
-# PID 1 must never exit (kernel would panic). Idle until the host kills the VM.
-while true; do sleep 3600; done
+  # Fresh per-task workspace so a reused worker never leaks state between tasks.
+  WORKDIR="/workspace/job-\${ID:-x}"
+  rm -rf "\$WORKDIR"; mkdir -p "\$WORKDIR"
+  if [ -n "\$GIT_URL" ]; then
+    git clone --depth 1 -- "\$GIT_URL" "\$WORKDIR/repo" >/dev/null 2>&1 && WORKDIR="\$WORKDIR/repo"
+  fi
+
+  SAY "running claude task=\${ID:-?} model=\${MODEL:-default} effort=\${EFFORT:-default}"
+  cd "\$WORKDIR"
+  # --dangerously-skip-permissions: the microVM itself is the sandbox, so the
+  # agent runs unattended without permission prompts (which would hang --print).
+  RESULT=\$(claude --print --dangerously-skip-permissions \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>&1)
+  CLAUDE_EXIT=\$?
+  SAY "claude task=\${ID:-?} exit=\$CLAUDE_EXIT len=\$(printf "%s" "\$RESULT" | wc -c)"
+  [ \$CLAUDE_EXIT -ne 0 ] && RESULT="ERROR: claude exit=\$CLAUDE_EXIT: \$RESULT"
+
+  printf "%s" "\$RESULT" > /tmp/result.txt
+  # Tag the result with the task id (query param + header) so a queue server can
+  # correlate it; a single-shot server that ignores the id still gets the body.
+  curl -s -m 20 -X POST --data-binary @/tmp/result.txt -H "Content-Type: text/plain" -H "X-Task-Id: \${ID}" -H "Expect:" "http://172.16.0.1:8080/result?id=\${ID}" >/dev/null 2>&1
+  cd /
+  rm -rf "/workspace/job-\${ID:-x}"
+  SAY "task \${ID:-?} done; polling for next"
+done
 `;
 
 // --- Model ---
