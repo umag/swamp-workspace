@@ -105,6 +105,44 @@ for this.
   effort from the injected task (effort defaults to `low` via
   `@magistr/fc-task-server`).
 
+## Fast task fabric (warm worker pool + queue)
+
+To run many agent tasks quickly without a per-task workflow, the model exposes a
+factory + queue (one `swamp model method run` each, no workflow authoring):
+
+- **`fabric_up --input concurrency=N`** — factory: fans out `N` warm worker VMs
+  (each in its own netns, restored once, running the looping agent) that pull
+  from a shared host queue. One call brings up the whole pool concurrently.
+- **`submit`** — enqueue tasks (NON-BLOCKING, callable any time — including
+  while tasks are running); returns task ids. The daemon injects the OAuth token
+  at serve time, so it is never written to the queue.
+- **`poll`** — collect completed results by id + the pending count (idempotent).
+- **`fabric_recycle --input timeoutSeconds=…`** — liveness watchdog: restart any
+  worker whose claimed task is older than the timeout, **then** re-queue that
+  task so a fresh worker re-runs it — a hung agent never permanently loses a
+  pool slot. Call periodically. Execution is **at-least-once**: `timeoutSeconds`
+  must exceed the longest expected task runtime, or a legitimately slow task
+  will be killed and re-run (recycle reaps on claim age, not on a liveness
+  probe). The recycle is clobber-safe — the killed worker is dead before its
+  task is re-dispatched, and the daemon only accepts a result from the worker
+  that still holds the live claim (a stale late result is dropped).
+- **`fabric_down`** — reap the whole pool (VMs, netns, NAT, daemons, queue). It
+  **discovers the live pool from host state** (netns list + socket/pid files for
+  the prefix), so it reaps every worker regardless of the `concurrency` it was
+  brought up with — no leak on a mismatch.
+
+Workers are reused across tasks (warm-VM reuse, no per-task restore). `submit`
+and `poll` touch only the host queue — not the minutes-long agent run — so they
+neither hold the swamp `__global__` lock for a task's duration nor require a
+per-task workflow. The concurrency cap is the `concurrency` parameter
+(configurable; ~512 MiB RAM per worker). A malformed task is quarantined to
+`<queueRoot>/failed/` with an error result (it never wedges a pool slot). A
+partial `fabric_up` records the workers that did start (status `degraded`) so
+`fabric_down`/`fabric_recycle` can still reconcile. **Note:** after changing the
+agent script the warm snapshot must be re-baked (`@magistr/fc-bake-snapshot`) so
+the pool boots the looping worker; daemon/queue changes need no re-bake (the
+daemon is deployed fresh on each `fabric_up`).
+
 ## Security notes
 
 - SSH host-key checking is intentionally disabled — scope to trusted networks.
@@ -112,6 +150,13 @@ for this.
   interpolated into remote shell commands.
 - The microVM reaches the internet directly via TAP + host NAT; this model does
   not proxy guest traffic.
+- Fabric task prompts are **trusted operator input**: they run with full tool
+  access inside the VM and can read the OAuth token injected into that VM. The
+  token is never written to the queue/claimed files or daemon logs, but it is
+  reachable by the agent and is currently passed to the daemon via an
+  environment export in the deploy command (visible transiently in host process
+  args). The fabric queue lives under a predictable `/tmp` path — keep the host
+  single-tenant and trusted. (Hardening these is tracked as a follow-up.)
 
 ## License
 
