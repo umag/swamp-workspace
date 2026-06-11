@@ -68,6 +68,10 @@ Lifecycle: `status`, `configure`, `set_boot`, `set_drive`, `set_network`,
 Host bootstrap: `install_firecracker`, `install_guest_kernel`, `setup_tap`,
 `build_ubuntu_rootfs`, `update_agent_script`.
 
+Task fabric (many tasks over a warm pool): `fabric_up`, `submit`, `poll`,
+`fabric_recycle`, `fabric_down` — see
+[Fast task fabric](#fast-task-fabric-warm-worker-pool--queue).
+
 ## Running multiple microVMs concurrently (network isolation)
 
 Many clones of **one** base snapshot can run at the same time on one host
