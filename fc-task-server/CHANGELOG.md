@@ -3,6 +3,13 @@
 All notable changes to `@magistr/fc-task-server`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.12.1 — publish docs
+
+### Changed
+
+- The CHANGELOG is now bundled in the published archive (added to
+  `additionalFiles`). No model behaviour change.
+
 ## 2026.06.11.3 — concurrency-safe control-plane paths
 
 ### Fixed

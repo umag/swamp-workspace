@@ -3,6 +3,14 @@
 All notable changes to `@magistr/firecracker`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.12.1 — publish docs
+
+### Changed
+
+- The CHANGELOG is now bundled in the published archive (added to
+  `additionalFiles`), and the README's Methods list points at the task-fabric
+  methods. No model behaviour change.
+
 ## 2026.06.11.7 — Fast task fabric (warm worker pool + queue)
 
 ### Added

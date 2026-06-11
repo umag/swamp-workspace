@@ -227,7 +227,7 @@ const ActionSchema = z.object({
  */
 export const model = {
   type: "@magistr/fc-task-server",
-  version: "2026.06.11.3",
+  version: "2026.06.12.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     serverState: {
