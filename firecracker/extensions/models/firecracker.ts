@@ -334,9 +334,7 @@ export function buildDiscoverWorkersCmd(netnsPrefix: string): string {
   // new line). Keep the whole pipeline on one line.
   const sources =
     `ip netns list 2>/dev/null | awk '{print $1}'; ls -1d /tmp/${p}-*.socket /tmp/${p}-*.server.pid 2>/dev/null | xargs -r -n1 basename | sed -e 's/[.]socket$//' -e 's/[.]server[.]pid$//'`;
-  return `{ ${sources}; } | grep -E ${
-    shellEsc(`^${pRe}-[0-9]+$`)
-  } | sort -u`;
+  return `{ ${sources}; } | grep -E ${shellEsc(`^${pRe}-[0-9]+$`)} | sort -u`;
 }
 
 /** Build the `start_vmm` shell command. Extracted so `fabric_up` reuses the
@@ -1952,7 +1950,11 @@ export const model = {
         // caller-supplied count: netns names + leftover socket/pid files. This is
         // what prevents a worker leak when fabric_down is called with a smaller
         // concurrency than fabric_up used.
-        const { stdout } = await sshExec(host, user, buildDiscoverWorkersCmd(p));
+        const { stdout } = await sshExec(
+          host,
+          user,
+          buildDiscoverWorkersCmd(p),
+        );
         const indices = new Set<number>();
         for (const ns of stdout.trim().split("\n").filter(Boolean)) {
           const i = workerIndexFromNetns(ns);

@@ -113,19 +113,19 @@ factory + queue (one `swamp model method run` each, no workflow authoring):
 - **`fabric_up --input concurrency=N`** — factory: fans out `N` warm worker VMs
   (each in its own netns, restored once, running the looping agent) that pull
   from a shared host queue. One call brings up the whole pool concurrently.
-- **`submit`** — enqueue tasks (NON-BLOCKING, callable any time — including while
-  tasks are running); returns task ids. The daemon injects the OAuth token at
-  serve time, so it is never written to the queue.
+- **`submit`** — enqueue tasks (NON-BLOCKING, callable any time — including
+  while tasks are running); returns task ids. The daemon injects the OAuth token
+  at serve time, so it is never written to the queue.
 - **`poll`** — collect completed results by id + the pending count (idempotent).
 - **`fabric_recycle --input timeoutSeconds=…`** — liveness watchdog: restart any
-  worker whose claimed task is older than the timeout, **then** re-queue that task
-  so a fresh worker re-runs it — a hung agent never permanently loses a pool slot.
-  Call periodically. Execution is **at-least-once**: `timeoutSeconds` must exceed
-  the longest expected task runtime, or a legitimately slow task will be killed
-  and re-run (recycle reaps on claim age, not on a liveness probe). The recycle is
-  clobber-safe — the killed worker is dead before its task is re-dispatched, and
-  the daemon only accepts a result from the worker that still holds the live claim
-  (a stale late result is dropped).
+  worker whose claimed task is older than the timeout, **then** re-queue that
+  task so a fresh worker re-runs it — a hung agent never permanently loses a
+  pool slot. Call periodically. Execution is **at-least-once**: `timeoutSeconds`
+  must exceed the longest expected task runtime, or a legitimately slow task
+  will be killed and re-run (recycle reaps on claim age, not on a liveness
+  probe). The recycle is clobber-safe — the killed worker is dead before its
+  task is re-dispatched, and the daemon only accepts a result from the worker
+  that still holds the live claim (a stale late result is dropped).
 - **`fabric_down`** — reap the whole pool (VMs, netns, NAT, daemons, queue). It
   **discovers the live pool from host state** (netns list + socket/pid files for
   the prefix), so it reaps every worker regardless of the `concurrency` it was
@@ -153,10 +153,10 @@ daemon is deployed fresh on each `fabric_up`).
 - Fabric task prompts are **trusted operator input**: they run with full tool
   access inside the VM and can read the OAuth token injected into that VM. The
   token is never written to the queue/claimed files or daemon logs, but it is
-  reachable by the agent and is currently passed to the daemon via an environment
-  export in the deploy command (visible transiently in host process args). The
-  fabric queue lives under a predictable `/tmp` path — keep the host single-tenant
-  and trusted. (Hardening these is tracked as a follow-up.)
+  reachable by the agent and is currently passed to the daemon via an
+  environment export in the deploy command (visible transiently in host process
+  args). The fabric queue lives under a predictable `/tmp` path — keep the host
+  single-tenant and trusted. (Hardening these is tracked as a follow-up.)
 
 ## License
 

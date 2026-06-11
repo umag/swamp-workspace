@@ -26,7 +26,10 @@ function assert(cond: boolean, msg: string): void {
 
 async function daemonRunnable(): Promise<boolean> {
   try {
-    const st = await Deno.permissions.query({ name: "run", command: "python3" });
+    const st = await Deno.permissions.query({
+      name: "run",
+      command: "python3",
+    });
     if (st.state !== "granted") return false;
     const out = await new Deno.Command("python3", { args: ["-c", "0"] })
       .output();
@@ -41,7 +44,8 @@ async function bashRunnable(): Promise<boolean> {
   try {
     const st = await Deno.permissions.query({ name: "run", command: "bash" });
     if (st.state !== "granted") return false;
-    return (await new Deno.Command("bash", { args: ["-c", ":"] }).output()).success;
+    return (await new Deno.Command("bash", { args: ["-c", ":"] }).output())
+      .success;
   } catch {
     return false;
   }
@@ -59,7 +63,14 @@ interface Daemon {
 async function startDaemon(netns: string, root?: string): Promise<Daemon> {
   const dir = root ?? await Deno.makeTempDir({ prefix: "fcfab-" });
   const paths = fabricPaths(dir);
-  for (const d of [paths.queueDir, paths.claimedDir, paths.resultsDir, paths.failedDir]) {
+  for (
+    const d of [
+      paths.queueDir,
+      paths.claimedDir,
+      paths.resultsDir,
+      paths.failedDir,
+    ]
+  ) {
     await Deno.mkdir(d, { recursive: true });
   }
   await Deno.writeTextFile(paths.serverPath, FABRIC_SERVER_PY);
@@ -81,7 +92,9 @@ async function startDaemon(netns: string, root?: string): Promise<Daemon> {
   }).spawn();
   for (let i = 0; i < 100; i++) {
     try {
-      const r = await fetch(`http://127.0.0.1:${port}/task`, { method: "HEAD" });
+      const r = await fetch(`http://127.0.0.1:${port}/task`, {
+        method: "HEAD",
+      });
       await r.body?.cancel();
       break;
     } catch {
@@ -139,23 +152,32 @@ function dirNames(dir: string): string[] {
 }
 
 Deno.test({
-  name: "daemon: atomic claim serves each task to exactly one worker (no double-dispatch)",
+  name:
+    "daemon: atomic claim serves each task to exactly one worker (no double-dispatch)",
   ignore: !DAEMON_OK,
   fn: async () => {
     const d = await startDaemon("w-1");
     try {
       const ids = ["aaaa", "bbbb", "cccc", "dddd"];
       for (let i = 0; i < ids.length; i++) {
-        await seedTask(d.paths, String(1000 + i), ids[i], { id: ids[i], prompt: "x" });
+        await seedTask(d.paths, String(1000 + i), ids[i], {
+          id: ids[i],
+          prompt: "x",
+        });
       }
       // Fire MORE concurrent pollers than there are tasks.
       const results = await Promise.all(
         Array.from({ length: 10 }, () => getTask(d.port)),
       );
-      const served = results.filter((r) => r.status === 200).map((r) => r.body!.id);
+      const served = results.filter((r) => r.status === 200).map((r) =>
+        r.body!.id
+      );
       const empties = results.filter((r) => r.status === 204).length;
       assert(new Set(served).size === served.length, "no task served twice");
-      assert(new Set(served).size === ids.length, "every task served exactly once");
+      assert(
+        new Set(served).size === ids.length,
+        "every task served exactly once",
+      );
       assert(empties === 10 - ids.length, "surplus pollers get 204");
       const full = results.find((r) => r.status === 200)!.body!;
       assert(full.token === "sk-ant-secret", "token injected at serve time");
@@ -166,7 +188,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "daemon: POST result writes results/<id>.txt and clears the worker's claim",
+  name:
+    "daemon: POST result writes results/<id>.txt and clears the worker's claim",
   ignore: !DAEMON_OK,
   fn: async () => {
     const d = await startDaemon("w-1");
@@ -178,9 +201,13 @@ Deno.test({
         dirNames(d.paths.claimedDir).some((n) => n.includes("task1")),
         "claim recorded under the worker netns",
       );
-      assert(await postResult(d.port, "task1", "the-answer") === 200, "post ok");
       assert(
-        await Deno.readTextFile(`${d.paths.resultsDir}/task1.txt`) === "the-answer",
+        await postResult(d.port, "task1", "the-answer") === 200,
+        "post ok",
+      );
+      assert(
+        await Deno.readTextFile(`${d.paths.resultsDir}/task1.txt`) ===
+          "the-answer",
         "result stored by id",
       );
       assert(
@@ -194,7 +221,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "daemon: a stale late result cannot clobber another worker's re-claimed task (requeue race)",
+  name:
+    "daemon: a stale late result cannot clobber another worker's re-claimed task (requeue race)",
   ignore: !DAEMON_OK,
   fn: async () => {
     const root = await Deno.makeTempDir({ prefix: "fcfab-" });
@@ -205,16 +233,26 @@ Deno.test({
       const a = await getTask(d1.port);
       assert(a.status === 200 && a.body!.id === "shared", "w-1 claimed it");
       // Simulate fabric_recycle requeueing w-1's stalled claim back to the queue.
-      const claim1 = dirNames(d1.paths.claimedDir).find((n) => n.startsWith("w-1__"))!;
+      const claim1 = dirNames(d1.paths.claimedDir).find((n) =>
+        n.startsWith("w-1__")
+      )!;
       const orig = claim1.slice(claim1.indexOf("__") + 2);
-      await Deno.rename(`${d1.paths.claimedDir}/${claim1}`, `${d1.paths.queueDir}/${orig}`);
+      await Deno.rename(
+        `${d1.paths.claimedDir}/${claim1}`,
+        `${d1.paths.queueDir}/${orig}`,
+      );
       // w-2 re-claims the requeued task.
       const b = await getTask(d2.port);
       assert(b.status === 200 && b.body!.id === "shared", "w-2 re-claimed it");
-      const claim2 = dirNames(d2.paths.claimedDir).find((n) => n.startsWith("w-2__"))!;
+      const claim2 = dirNames(d2.paths.claimedDir).find((n) =>
+        n.startsWith("w-2__")
+      )!;
       // The OLD slow worker (w-1) now posts a stale result: must be DROPPED and
       // must NOT delete w-2's live claim.
-      assert(await postResult(d1.port, "shared", "STALE-from-w1") === 200, "stale post acked");
+      assert(
+        await postResult(d1.port, "shared", "STALE-from-w1") === 200,
+        "stale post acked",
+      );
       assert(
         dirNames(d2.paths.claimedDir).includes(claim2),
         "w-2's claim survives the stale post (no cross-worker deletion)",
@@ -227,9 +265,13 @@ Deno.test({
       }
       assert(!wrote, "the stale worker wrote no result");
       // The live claim holder (w-2) posts and wins.
-      assert(await postResult(d2.port, "shared", "REAL-from-w2") === 200, "live post ok");
       assert(
-        await Deno.readTextFile(`${root}/results/shared.txt`) === "REAL-from-w2",
+        await postResult(d2.port, "shared", "REAL-from-w2") === 200,
+        "live post ok",
+      );
+      assert(
+        await Deno.readTextFile(`${root}/results/shared.txt`) ===
+          "REAL-from-w2",
         "only the live claim holder's result is recorded",
       );
     } finally {
@@ -240,24 +282,32 @@ Deno.test({
 });
 
 Deno.test({
-  name: "daemon: a malformed task is quarantined to failed/ and never wedges the queue",
+  name:
+    "daemon: a malformed task is quarantined to failed/ and never wedges the queue",
   ignore: !DAEMON_OK,
   fn: async () => {
     const d = await startDaemon("w-1");
     try {
       // Poison sorts ahead of the good task (lower seq).
-      await Deno.writeTextFile(`${d.paths.queueDir}/1000-poison.json`, "{ this is not json");
+      await Deno.writeTextFile(
+        `${d.paths.queueDir}/1000-poison.json`,
+        "{ this is not json",
+      );
       await seedTask(d.paths, "1001", "good", { id: "good", prompt: "x" });
       // One poll: claim_next hits the poison, quarantines it, and continues to the
       // good task in the same call.
       const t = await getTask(d.port);
-      assert(t.status === 200 && t.body!.id === "good", "good task served despite poison ahead of it");
+      assert(
+        t.status === 200 && t.body!.id === "good",
+        "good task served despite poison ahead of it",
+      );
       assert(
         dirNames(d.paths.failedDir).some((n) => n.includes("poison")),
         "poison quarantined to failed/",
       );
       assert(
-        (await Deno.readTextFile(`${d.paths.resultsDir}/poison.txt`)).startsWith("ERROR"),
+        (await Deno.readTextFile(`${d.paths.resultsDir}/poison.txt`))
+          .startsWith("ERROR"),
         "poison surfaced an error result keyed by id",
       );
       assert(
@@ -284,8 +334,14 @@ Deno.test("buildQueuePayload excludes the OAuth token (credential-hygiene bounda
       JSON.stringify(["effort", "gitRepoUrl", "id", "model", "prompt"]),
     "exactly the 5 non-secret fields are serialized",
   );
-  assert(!JSON.stringify(p).toLowerCase().includes("token"), "no token key in the queue payload");
-  assert(!JSON.stringify(p).includes("sk-ant"), "no credential value in the queue payload");
+  assert(
+    !JSON.stringify(p).toLowerCase().includes("token"),
+    "no token key in the queue payload",
+  );
+  assert(
+    !JSON.stringify(p).includes("sk-ant"),
+    "no credential value in the queue payload",
+  );
   assert(
     p.id === "id1" && p.prompt === "hi" && p.model === "m" &&
       p.effort === "low" && p.gitRepoUrl === "u",
@@ -299,44 +355,74 @@ Deno.test("buildQueuePayload excludes the OAuth token (credential-hygiene bounda
 });
 
 Deno.test("parsePollOutput decodes the id->result map and the pending count", () => {
-  const stdout = `===alpha===\n${btoa("hello")}\n===beta===\n${btoa("world")}\nPENDING=3\n`;
+  const stdout = `===alpha===\n${btoa("hello")}\n===beta===\n${
+    btoa("world")
+  }\nPENDING=3\n`;
   const { completed, pending } = parsePollOutput(stdout);
   assert(completed.alpha === "hello", "alpha decoded from base64");
   assert(completed.beta === "world", "beta decoded from base64");
   assert(pending === 3, "pending count parsed");
   const empty = parsePollOutput("PENDING=0\n");
-  assert(Object.keys(empty.completed).length === 0 && empty.pending === 0, "no results, zero pending");
+  assert(
+    Object.keys(empty.completed).length === 0 && empty.pending === 0,
+    "no results, zero pending",
+  );
   const bad = parsePollOutput("===corrupt===\n!!!not-base64!!!\nPENDING=0\n");
-  assert(bad.completed.corrupt === "", "a corrupt result line decodes to empty, never throws");
+  assert(
+    bad.completed.corrupt === "",
+    "a corrupt result line decodes to empty, never throws",
+  );
 });
 
 Deno.test({
   // Regression guard for the live bug the re-smoke caught: a brace group split
   // across newlines with a leading/orphaned pipe is a bash syntax error.
-  name: "buildDiscoverWorkersCmd emits syntactically valid bash (plain/hyphenated/dotted prefix)",
+  name:
+    "buildDiscoverWorkersCmd emits syntactically valid bash (plain/hyphenated/dotted prefix)",
   ignore: !BASH_OK,
   fn: async () => {
     for (const pfx of ["fcw", "fc-w", "fc.w"]) {
       const cmd = buildDiscoverWorkersCmd(pfx);
-      const out = await new Deno.Command("bash", { args: ["-n", "-c", cmd] }).output();
+      const out = await new Deno.Command("bash", { args: ["-n", "-c", cmd] })
+        .output();
       assert(
         out.success,
-        `bash -n rejected discover cmd for prefix '${pfx}': ${new TextDecoder().decode(out.stderr)}`,
+        `bash -n rejected discover cmd for prefix '${pfx}': ${
+          new TextDecoder().decode(out.stderr)
+        }`,
       );
-      assert(cmd.includes("grep -E"), "discover must filter to the prefix's worker netns");
+      assert(
+        cmd.includes("grep -E"),
+        "discover must filter to the prefix's worker netns",
+      );
     }
   },
 });
 
 Deno.test("workerIndexFromNetns maps a netns to its worker slot and rejects junk", () => {
   assert(workerIndexFromNetns("fcw-3") === 3, "default prefix");
-  assert(workerIndexFromNetns("fc-w-12") === 12, "hyphenated prefix -> trailing int");
-  assert(workerIndexFromNetns("fcw-0") === null, "0 rejected (slots are 1-based)");
+  assert(
+    workerIndexFromNetns("fc-w-12") === 12,
+    "hyphenated prefix -> trailing int",
+  );
+  assert(
+    workerIndexFromNetns("fcw-0") === null,
+    "0 rejected (slots are 1-based)",
+  );
   assert(workerIndexFromNetns("fcw-256") === 256, "upper bound accepted");
-  assert(workerIndexFromNetns("fcw-257") === null, "just past the upper bound rejected");
-  assert(workerIndexFromNetns("fcw-999") === null, "out-of-range index rejected");
+  assert(
+    workerIndexFromNetns("fcw-257") === null,
+    "just past the upper bound rejected",
+  );
+  assert(
+    workerIndexFromNetns("fcw-999") === null,
+    "out-of-range index rejected",
+  );
   assert(workerIndexFromNetns("fcw-abc") === null, "non-numeric rejected");
-  assert(workerIndexFromNetns("default") === null, "a netns with no index is rejected");
+  assert(
+    workerIndexFromNetns("default") === null,
+    "a netns with no index is rejected",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -345,20 +431,41 @@ Deno.test("workerIndexFromNetns maps a netns to its worker slot and rejects junk
 // ---------------------------------------------------------------------------
 
 Deno.test("agent script is a warm worker loop, not one-shot", () => {
-  assert(AGENT_SCRIPT.includes("worker ready; polling for tasks"), "announces the worker loop");
-  assert(AGENT_SCRIPT.includes("http://172.16.0.1:8080/task"), "polls for tasks");
-  assert(AGENT_SCRIPT.includes("claude --print --dangerously-skip-permissions"), "runs claude unattended");
-  assert(!AGENT_SCRIPT.includes("sleep 3600"), "loops rather than idling forever after one task");
+  assert(
+    AGENT_SCRIPT.includes("worker ready; polling for tasks"),
+    "announces the worker loop",
+  );
+  assert(
+    AGENT_SCRIPT.includes("http://172.16.0.1:8080/task"),
+    "polls for tasks",
+  );
+  assert(
+    AGENT_SCRIPT.includes("claude --print --dangerously-skip-permissions"),
+    "runs claude unattended",
+  );
+  assert(
+    !AGENT_SCRIPT.includes("sleep 3600"),
+    "loops rather than idling forever after one task",
+  );
 });
 
 Deno.test("worker tags each result with its task id (queue correlation)", () => {
-  assert(AGENT_SCRIPT.includes("/result?id="), "result POST carries the id in the query");
-  assert(AGENT_SCRIPT.includes("X-Task-Id:"), "result POST carries the X-Task-Id header");
+  assert(
+    AGENT_SCRIPT.includes("/result?id="),
+    "result POST carries the id in the query",
+  );
+  assert(
+    AGENT_SCRIPT.includes("X-Task-Id:"),
+    "result POST carries the X-Task-Id header",
+  );
 });
 
 Deno.test("reused worker gets a fresh per-task workspace and keeps the sandbox posture", () => {
   assert(AGENT_SCRIPT.includes("/workspace/job-"), "fresh per-task workspace");
-  assert(AGENT_SCRIPT.includes("IS_SANDBOX=1"), "IS_SANDBOX stays set for root skip-permissions");
+  assert(
+    AGENT_SCRIPT.includes("IS_SANDBOX=1"),
+    "IS_SANDBOX stays set for root skip-permissions",
+  );
 });
 
 Deno.test("fabricPaths derives queue/claimed/results/failed under one root", () => {
@@ -371,7 +478,10 @@ Deno.test("fabricPaths derives queue/claimed/results/failed under one root", () 
 
 Deno.test("buildStartVmmCmd launches firecracker in the given netns and reuses a warm process", () => {
   const c = buildStartVmmCmd("/tmp/fcw-1.socket", "fcw-1");
-  assert(c.includes("ip netns exec 'fcw-1' firecracker --api-sock"), "launches in the netns");
+  assert(
+    c.includes("ip netns exec 'fcw-1' firecracker --api-sock"),
+    "launches in the netns",
+  );
   assert(c.includes("alive:"), "reuses a warm VMM if already alive");
   const root = buildStartVmmCmd("/tmp/fc.socket");
   assert(!root.includes("ip netns exec"), "no netns -> root-namespace launch");
@@ -380,16 +490,35 @@ Deno.test("buildStartVmmCmd launches firecracker in the given netns and reuses a
 Deno.test("buildKillVmmCmd reaps PID + socket + netns + NAT for the given worker", () => {
   const c = buildKillVmmCmd("/tmp/fcw-1.socket", "fcw-1");
   assert(c.includes("ip netns del 'fcw-1'"), "deletes the netns");
-  assert(c.includes("fc-netns:fcw-1"), "flushes this worker's tagged NAT rules");
+  assert(
+    c.includes("fc-netns:fcw-1"),
+    "flushes this worker's tagged NAT rules",
+  );
   assert(c.includes("kill -9"), "escalates to SIGKILL");
 });
 
 Deno.test("buildDeployFabricCmd runs the daemon in the netns with the shared queue env", () => {
   const p = fabricPaths("/tmp/fc-fabric");
-  const c = buildDeployFabricCmd("fcw-1", "172.16.0.1", 8080, p, "sk-ant-xxx", "/tmp/fcw-1.server.pid");
-  assert(c.includes("ip netns exec 'fcw-1' python3"), "daemon runs inside the worker netns");
-  assert(c.includes("FC_QUEUE_DIR='/tmp/fc-fabric/queue'"), "shared queue dir wired");
-  assert(c.includes("FC_FAILED_DIR='/tmp/fc-fabric/failed'"), "failed/quarantine dir wired");
+  const c = buildDeployFabricCmd(
+    "fcw-1",
+    "172.16.0.1",
+    8080,
+    p,
+    "sk-ant-xxx",
+    "/tmp/fcw-1.server.pid",
+  );
+  assert(
+    c.includes("ip netns exec 'fcw-1' python3"),
+    "daemon runs inside the worker netns",
+  );
+  assert(
+    c.includes("FC_QUEUE_DIR='/tmp/fc-fabric/queue'"),
+    "shared queue dir wired",
+  );
+  assert(
+    c.includes("FC_FAILED_DIR='/tmp/fc-fabric/failed'"),
+    "failed/quarantine dir wired",
+  );
   assert(c.includes("FC_OAUTH_TOKEN="), "token passed to the daemon env");
   assert(c.includes("base64 -d"), "server script written via base64");
 });
