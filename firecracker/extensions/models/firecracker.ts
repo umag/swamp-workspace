@@ -298,6 +298,9 @@ EFFORT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('
 
 export HOME=/workspace
 export CLAUDE_CODE_OAUTH_TOKEN="\$TOKEN"
+# The agent is PID 1 / root; IS_SANDBOX=1 lets claude accept
+# --dangerously-skip-permissions as root (the microVM is the sandbox).
+export IS_SANDBOX=1
 
 SAY "syncing clock"
 DATE_HDR=\$(curl -sfI -m 10 http://172.16.0.1:8080/task 2>/dev/null | grep -i "^date:" | sed "s/^[^:]*: *//" | tr -d "\\r")
@@ -340,7 +343,7 @@ while true; do sleep 3600; done
  */
 export const model = {
   type: "@magistr/firecracker",
-  version: "2026.06.11.3",
+  version: "2026.06.11.4",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {
