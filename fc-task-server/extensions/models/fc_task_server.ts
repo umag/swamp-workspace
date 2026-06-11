@@ -6,6 +6,33 @@ function shellEsc(s: string): string {
 }
 
 const HTTPS_URL_RE = /^https?:\/\/[a-zA-Z0-9._-]+(:[0-9]{1,5})?(\/.*)?$/;
+// Network namespace name — conservative, shell-safe.
+const NETNS_RE = /^[a-zA-Z0-9_.-]{1,32}$/;
+
+/** Host control-plane file paths for the task server. Keyed by tapPort AND by
+ * netns when set: a network namespace does not isolate /tmp, and every guest
+ * pins port 8080, so concurrent VMs would otherwise share one task/result file
+ * on the host and race (tasks misroute, results clobber). With no netns the keys
+ * are port-only, so the single-VM paths are unchanged. */
+export function controlPlanePaths(
+  tapPort: number,
+  netns?: string,
+): {
+  serverPath: string;
+  pidFile: string;
+  taskPath: string;
+  resultPath: string;
+  logPath: string;
+} {
+  const key = netns ? `${netns}-${tapPort}` : `${tapPort}`;
+  return {
+    serverPath: `/tmp/fc-tap-server-${key}.py`,
+    pidFile: `/tmp/fc-tap-server-${key}.pid`,
+    taskPath: `/tmp/fc-task-${key}.json`,
+    resultPath: `/tmp/fc-result-${key}.txt`,
+    logPath: `/tmp/fc-tap-server-${key}.log`,
+  };
+}
 
 const GlobalArgsSchema = z.object({
   host: z.string().describe("SSH host running Firecracker"),
@@ -16,6 +43,10 @@ const GlobalArgsSchema = z.object({
   tapPort: z.number().int().min(1024).max(65535).default(8080).describe(
     "TCP port for the task/result HTTP server (default: 8080)",
   ),
+  netns: z.union([z.literal(""), z.string().regex(NETNS_RE)]).optional()
+    .describe(
+      "Optional network namespace the tapIp lives in (matches @magistr/firecracker's netns for this VM). When set, deploy binds the server INSIDE the namespace (ip netns exec) so the isolated guest can reach it. Omit for the single-VM root-namespace path.",
+    ),
   // Validate the OAuth token prefix up front so a corrupted secret fails fast
   // with a clear message instead of silently 401-ing inside the microVM.
   // A valid Anthropic token starts with `sk-ant-` (e.g. sk-ant-oat01-…).
@@ -196,7 +227,7 @@ const ActionSchema = z.object({
  */
 export const model = {
   type: "@magistr/fc-task-server",
-  version: "2026.06.09.3",
+  version: "2026.06.11.3",
   globalArguments: GlobalArgsSchema,
   resources: {
     serverState: {
@@ -269,12 +300,13 @@ export const model = {
         "Write tap-server.py to the Firecracker host and start it. The server listens on tapIp:tapPort (TCP) and serves task JSON (with OAuth token injected) on GET /task and accepts results on POST /result.",
       arguments: z.object({}),
       execute: async (_args: unknown, context) => {
-        const { host, user, tapIp, tapPort, oauthToken } = context.globalArgs;
-
-        const serverPath = `/tmp/fc-tap-server-${tapPort}.py`;
-        const pidFile = `/tmp/fc-tap-server-${tapPort}.pid`;
-        const taskPath = `/tmp/fc-task-${tapPort}.json`;
-        const resultPath = `/tmp/fc-result-${tapPort}.txt`;
+        const { host, user, tapIp, tapPort, oauthToken, netns } =
+          context.globalArgs;
+        // When the VM runs in a namespace, the server must bind tapIp INSIDE it.
+        const nsx = netns ? `ip netns exec ${shellEsc(netns)} ` : "";
+        // Paths are keyed by netns too — /tmp is NOT namespace-isolated.
+        const { serverPath, pidFile, taskPath, resultPath, logPath } =
+          controlPlanePaths(tapPort, netns);
 
         const b64Script = btoa(TAP_SERVER_PY);
 
@@ -292,11 +324,9 @@ export const model = {
           `export FC_RESULT_PATH=${shellEsc(resultPath)}`,
           `export FC_BIND_IP=${shellEsc(tapIp)}`,
           `export FC_BIND_PORT=${tapPort}`,
-          `( python3 ${
-            shellEsc(serverPath)
-          } serve > /tmp/fc-tap-server-${tapPort}.log 2>&1 & SRV=$!; echo $SRV > ${
-            shellEsc(pidFile)
-          }; echo $SRV )`,
+          `( ${nsx}python3 ${shellEsc(serverPath)} serve > ${
+            shellEsc(logPath)
+          } 2>&1 & SRV=$!; echo $SRV > ${shellEsc(pidFile)}; echo $SRV )`,
         ].join("\n");
 
         const result = await sshExec(host, user, startCmd);
@@ -307,7 +337,7 @@ export const model = {
           host,
           user,
           `for i in $(seq 1 30); do ` +
-            `python3 -c "import socket; s=socket.socket(); s.settimeout(0.1); s.connect((${
+            `${nsx}python3 -c "import socket; s=socket.socket(); s.settimeout(0.1); s.connect((${
               shellEsc(tapIp)
             }, ${tapPort})); s.close()" 2>/dev/null && exit 0; sleep 0.1; done; ` +
             `echo "tap-server not ready after 3s" >&2; exit 1`,
@@ -345,7 +375,7 @@ export const model = {
           ),
       }),
       execute: async (args, context) => {
-        const { host, user, tapPort } = context.globalArgs;
+        const { host, user, tapPort, netns } = context.globalArgs;
 
         const task = {
           prompt: args.prompt,
@@ -355,9 +385,10 @@ export const model = {
         };
         const taskJson = shellEsc(JSON.stringify(task));
 
-        const serverPath = `/tmp/fc-tap-server-${tapPort}.py`;
-        const taskPath = `/tmp/fc-task-${tapPort}.json`;
-        const resultPath = `/tmp/fc-result-${tapPort}.txt`;
+        const { serverPath, taskPath, resultPath } = controlPlanePaths(
+          tapPort,
+          netns,
+        );
 
         await sshExec(
           host,
@@ -384,11 +415,12 @@ export const model = {
         timeoutSeconds: z.number().int().min(10).max(3600).default(300),
       }),
       execute: async (args, context) => {
-        const { host, user, tapPort } = context.globalArgs;
+        const { host, user, tapPort, netns } = context.globalArgs;
 
-        const serverPath = `/tmp/fc-tap-server-${tapPort}.py`;
-        const taskPath = `/tmp/fc-task-${tapPort}.json`;
-        const resultPath = `/tmp/fc-result-${tapPort}.txt`;
+        const { serverPath, taskPath, resultPath } = controlPlanePaths(
+          tapPort,
+          netns,
+        );
 
         const result = await sshExec(
           host,
@@ -412,10 +444,9 @@ export const model = {
       description: "Kill the tap-server process via PID sidecar.",
       arguments: z.object({}),
       execute: async (_args: unknown, context) => {
-        const { host, user, tapPort } = context.globalArgs;
+        const { host, user, tapPort, netns } = context.globalArgs;
 
-        const serverPath = `/tmp/fc-tap-server-${tapPort}.py`;
-        const pidFile = `/tmp/fc-tap-server-${tapPort}.pid`;
+        const { serverPath, pidFile } = controlPlanePaths(tapPort, netns);
         const cmd = [
           `if [ -f ${shellEsc(pidFile)} ]; then`,
           `  PID=$(cat ${shellEsc(pidFile)});`,

@@ -33,7 +33,13 @@ swamp extension pull @magistr/fc-task-server
 | `user`       | no       | `root`       | SSH username                                |
 | `tapIp`      | no       | `172.16.0.1` | Host IP on the TAP interface (server binds) |
 | `tapPort`    | no       | `8080`       | TCP port for the task/result server         |
+| `netns`      | no       | —            | Network namespace the tapIp lives in        |
 | `oauthToken` | yes      | —            | Claude Code OAuth token (`sk-ant…`)         |
+
+> **Multiple VMs:** set `netns` to the same namespace as the VM's
+> `@magistr/firecracker` instance and `deploy` binds the server **inside** it
+> (`ip netns exec`), so each isolated guest reaches its own task server at the
+> same `172.16.0.1:8080`. Leave `netns` empty for the single-VM path.
 
 ```bash
 swamp model create @magistr/fc-task-server fc-tasks

@@ -9,7 +9,7 @@ import {
   assertEquals,
   assertFalse,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { model } from "./fc_task_server.ts";
+import { controlPlanePaths, model } from "./fc_task_server.ts";
 import { isValidSshHost } from "./lib/ssh.ts";
 
 const baseArgs = {
@@ -131,4 +131,52 @@ Deno.test("isValidSshHost rejects empty and placeholder hosts", () => {
   assertEquals(isValidSshHost("fc.example.com"), true);
   assertFalse(isValidSshHost(""));
   assertFalse(isValidSshHost("null"));
+});
+
+// --- per-VM network namespace (netns) ---
+
+Deno.test("globalArguments: accepts an optional netns", () => {
+  const r = model.globalArguments.safeParse({
+    ...baseArgs,
+    netns: "fc-agent-1",
+  });
+  assertEquals(r.success, true);
+});
+
+Deno.test("globalArguments: rejects a netns name with shell metacharacters", () => {
+  const r = model.globalArguments.safeParse({
+    ...baseArgs,
+    netns: "fc; rm -rf /",
+  });
+  assertFalse(r.success);
+});
+
+Deno.test("globalArguments: accepts an empty netns (root-namespace default)", () => {
+  const r = model.globalArguments.safeParse({ ...baseArgs, netns: "" });
+  assertEquals(r.success, true);
+});
+
+// --- control-plane path keying (concurrency safety) ---
+
+Deno.test("controlPlanePaths: no netns keeps port-only keys (single-VM unchanged)", () => {
+  const p = controlPlanePaths(8080);
+  assertEquals(p.taskPath, "/tmp/fc-task-8080.json");
+  assertEquals(p.resultPath, "/tmp/fc-result-8080.txt");
+  assertEquals(p.pidFile, "/tmp/fc-tap-server-8080.pid");
+  assertEquals(p.serverPath, "/tmp/fc-tap-server-8080.py");
+  assertEquals(p.logPath, "/tmp/fc-tap-server-8080.log");
+});
+
+Deno.test("controlPlanePaths: netns keys the paths so concurrent VMs don't share /tmp", () => {
+  const a = controlPlanePaths(8080, "fc-agent-1");
+  const b = controlPlanePaths(8080, "fc-agent-2");
+  assertEquals(a.taskPath, "/tmp/fc-task-fc-agent-1-8080.json");
+  assertEquals(a.resultPath, "/tmp/fc-result-fc-agent-1-8080.txt");
+  // distinct VMs (same guest port 8080) get distinct task/result files
+  assertEquals(a.taskPath === b.taskPath, false);
+  assertEquals(a.resultPath === b.resultPath, false);
+});
+
+Deno.test("controlPlanePaths: empty netns is treated as no-netns", () => {
+  assertEquals(controlPlanePaths(8080, "").taskPath, "/tmp/fc-task-8080.json");
 });

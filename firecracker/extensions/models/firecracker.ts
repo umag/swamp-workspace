@@ -9,6 +9,132 @@ function shellEsc(s: string): string {
 const PATH_RE = /^[^\x00-\x1f\x7f`$\\;|&'"()*?[\]{}<>!#~\s]+$/;
 // Linux interface name: max 15 chars, alphanumeric + underscore + dot + hyphen
 const IFACE_RE = /^[a-zA-Z0-9_.-]{1,15}$/;
+// Network namespace name — conservative, shell-safe.
+const NETNS_RE = /^[a-zA-Z0-9_.-]{1,32}$/;
+// IPv4 dotted-quad and CIDR (a.b.c.d/prefix) — for veth/host addressing.
+const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const CIDR_RE = /^(?:\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+
+/** Add `k` to the last octet of a dotted-quad IPv4 address (no carry — `k`
+ * must keep the octet in range, which holds for the /30 veth convention). */
+export function addToIp(ip: string, k: number): string {
+  const parts = ip.split(".");
+  parts[3] = String(Number(parts[3]) + k);
+  return parts.join(".");
+}
+
+/** Deterministic short hex hash (djb2). Derives a unique, <=15-char root-side
+ * veth name from the per-VM namespace, so two VMs never collide on the veth
+ * name in the root namespace regardless of their veth subnets. */
+export function shortHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(16);
+}
+
+/** Inputs to {@link buildSetupTapScript}: the guest-facing tap (tapName/hostIp/
+ * prefix/guestSubnet) plus, in netns mode, the namespace name and host↔ns veth
+ * subnet. */
+export interface TapSetupArgs {
+  tapName: string;
+  hostIp: string;
+  prefix: number;
+  guestSubnet: string;
+  netns?: string;
+  vethSubnet?: string;
+}
+
+/** Build the `setup_tap` shell script.
+ *
+ * With no `netns` the output is the historical root-namespace recipe, kept
+ * byte-identical so the single-VM path never regresses. With `netns` set it
+ * builds an isolated namespace so many clones of one base snapshot run without
+ * overlap (the upstream Firecracker "network for clones" pattern): the guest's
+ * baked tap/IP live inside the namespace, a veth pair links it to the host, and
+ * a veth-subnet-scoped double MASQUERADE carries egress. Per-VM uniqueness comes
+ * from `netns` + `vethSubnet`; the root-side veth name is derived from a hash of
+ * the namespace so concurrent VMs never collide in the root namespace, and the
+ * host-side rules are comment-tagged so kill_vmm can flush exactly this VM's. */
+export function buildSetupTapScript(args: TapSetupArgs): string {
+  const tap = shellEsc(args.tapName);
+  const cidr = shellEsc(args.hostIp + "/" + args.prefix);
+  const hostIp = shellEsc(args.hostIp);
+  const guestSubnet = shellEsc(args.guestSubnet);
+
+  if (!args.netns) {
+    return [
+      `ip link show ${tap} 2>/dev/null || ip tuntap add dev ${tap} mode tap`,
+      `ip addr show ${tap} | grep -q ${hostIp} || ip addr add ${cidr} dev ${tap}`,
+      `ip link set ${tap} up`,
+      `sysctl -w net.ipv4.ip_forward=1 -q`,
+      `iptables -t nat -C POSTROUTING -s ${guestSubnet} -j MASQUERADE 2>/dev/null || ` +
+      `iptables -t nat -A POSTROUTING -s ${guestSubnet} -j MASQUERADE`,
+      `echo ok`,
+    ].join("\n");
+  }
+
+  const ns = shellEsc(args.netns);
+  const nsx = `ip netns exec ${ns}`;
+  const vethSubnet = args.vethSubnet ?? "10.0.0.0/30";
+  const vethNet = vethSubnet.split("/")[0];
+  const vethPrefix = vethSubnet.split("/")[1];
+  const vethHostIp = addToIp(vethNet, 1); // root-side address (guest ns gateway)
+  const vethNsIp = addToIp(vethNet, 2); // namespace-side address
+  // Root-side veth name must be unique in the root ns and <=15 chars; derive it
+  // from a hash of the (unique) namespace so distinct VMs never collide. The
+  // ns-side peer is fixed (isolated in the namespace).
+  const rootVeth = shellEsc(("fcv" + shortHash(args.netns)).slice(0, 15));
+  const nsVeth = "fcveth0";
+  const vethHostCidr = shellEsc(vethHostIp + "/" + vethPrefix);
+  const vethNsCidr = shellEsc(vethNsIp + "/" + vethPrefix);
+  const vethSubnetEsc = shellEsc(vethSubnet);
+  const vethHostIpEsc = shellEsc(vethHostIp);
+  // Tag host-namespace-side rules so kill_vmm can flush exactly this VM's rules.
+  const cmt = shellEsc("fc-netns:" + args.netns);
+
+  return [
+    // Namespace + the guest's baked tap, INSIDE the namespace.
+    `ip netns add ${ns} 2>/dev/null || true`,
+    `${nsx} ip link set lo up`,
+    `${nsx} ip link show ${tap} 2>/dev/null || ${nsx} ip tuntap add dev ${tap} mode tap`,
+    `${nsx} ip addr add ${cidr} dev ${tap} 2>/dev/null || true`,
+    `${nsx} ip link set ${tap} up`,
+    // veth pair: root <-> namespace.
+    `ip link show ${rootVeth} 2>/dev/null || ip link add ${rootVeth} type veth peer name ${nsVeth} netns ${ns}`,
+    `ip addr add ${vethHostCidr} dev ${rootVeth} 2>/dev/null || true`,
+    `ip link set ${rootVeth} up`,
+    `${nsx} ip addr add ${vethNsCidr} dev ${nsVeth} 2>/dev/null || true`,
+    `${nsx} ip link set ${nsVeth} up`,
+    `${nsx} ip route replace default via ${vethHostIpEsc}`,
+    // Forwarding: host + inside the namespace (tap <-> veth).
+    `sysctl -w net.ipv4.ip_forward=1 -q`,
+    `${nsx} sysctl -w net.ipv4.ip_forward=1 -q`,
+    // In-namespace egress NAT: guest subnet out via the ns-side veth.
+    `${nsx} iptables -t nat -C POSTROUTING -s ${guestSubnet} -o ${nsVeth} -j MASQUERADE 2>/dev/null || ` +
+    `${nsx} iptables -t nat -A POSTROUTING -s ${guestSubnet} -o ${nsVeth} -j MASQUERADE`,
+    // Scoped FORWARD inside the namespace (never -P FORWARD ACCEPT).
+    `${nsx} iptables -C FORWARD -i ${tap} -o ${nsVeth} -j ACCEPT 2>/dev/null || ${nsx} iptables -A FORWARD -i ${tap} -o ${nsVeth} -j ACCEPT`,
+    `${nsx} iptables -C FORWARD -i ${nsVeth} -o ${tap} -j ACCEPT 2>/dev/null || ${nsx} iptables -A FORWARD -i ${nsVeth} -o ${tap} -j ACCEPT`,
+    // Host egress NAT: veth subnet out via the default-route interface.
+    // Comment-tagged so kill_vmm can flush exactly this VM's host-side rules.
+    `UP=$(ip route show default | awk '{print $5; exit}')`,
+    `iptables -t nat -C POSTROUTING -s ${vethSubnetEsc} -o "$UP" -m comment --comment ${cmt} -j MASQUERADE 2>/dev/null || ` +
+    `iptables -t nat -A POSTROUTING -s ${vethSubnetEsc} -o "$UP" -m comment --comment ${cmt} -j MASQUERADE`,
+    // Scoped host FORWARD for the root-side veth (never -P FORWARD ACCEPT).
+    `iptables -C FORWARD -i ${rootVeth} -m comment --comment ${cmt} -j ACCEPT 2>/dev/null || iptables -A FORWARD -i ${rootVeth} -m comment --comment ${cmt} -j ACCEPT`,
+    `iptables -C FORWARD -o ${rootVeth} -m comment --comment ${cmt} -j ACCEPT 2>/dev/null || iptables -A FORWARD -o ${rootVeth} -m comment --comment ${cmt} -j ACCEPT`,
+    `echo ok`,
+  ].join("\n");
+}
+
+/** The `ip netns exec <netns> ` command prefix, or an empty string when no
+ * namespace is set. Used to launch processes (firecracker, the task server)
+ * inside a per-VM namespace. */
+export function netnsExecPrefix(netns?: string): string {
+  return netns ? `ip netns exec ${shellEsc(netns)} ` : "";
+}
 
 const GlobalArgsSchema = z.object({
   host: z.string().describe(
@@ -18,6 +144,10 @@ const GlobalArgsSchema = z.object({
   socketPath: z.string().regex(PATH_RE).describe(
     "Path to the Firecracker Unix socket on the remote host (e.g. /run/firecracker.socket). One model instance = one microVM socket.",
   ),
+  netns: z.union([z.literal(""), z.string().regex(NETNS_RE)]).optional()
+    .describe(
+      "Optional Linux network namespace for this microVM. When set, start_vmm launches Firecracker inside it (ip netns exec) and kill_vmm tears it down — lets many clones of one base snapshot run without IP/gateway overlap. Pair with setup_tap's netns mode. Omit for the single-VM root-namespace path (unchanged).",
+    ),
 });
 
 // --- Output schemas ---
@@ -168,6 +298,9 @@ EFFORT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('
 
 export HOME=/workspace
 export CLAUDE_CODE_OAUTH_TOKEN="\$TOKEN"
+# The agent is PID 1 / root; IS_SANDBOX=1 lets claude accept
+# --dangerously-skip-permissions as root (the microVM is the sandbox).
+export IS_SANDBOX=1
 
 SAY "syncing clock"
 DATE_HDR=\$(curl -sfI -m 10 http://172.16.0.1:8080/task 2>/dev/null | grep -i "^date:" | sed "s/^[^:]*: *//" | tr -d "\\r")
@@ -184,7 +317,9 @@ fi
 
 SAY "running claude model=\${MODEL:-default} effort=\${EFFORT:-default}"
 cd "\$WORKDIR"
-RESULT=\$(claude --print \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>&1)
+# --dangerously-skip-permissions: the microVM itself is the sandbox, so the
+# agent runs unattended without permission prompts (which would hang --print).
+RESULT=\$(claude --print --dangerously-skip-permissions \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>&1)
 CLAUDE_EXIT=\$?
 SAY "claude exit=\$CLAUDE_EXIT len=\$(printf "%s" "\$RESULT" | wc -c)"
 [ \$CLAUDE_EXIT -ne 0 ] && RESULT="ERROR: claude exit=\$CLAUDE_EXIT: \$RESULT"
@@ -208,7 +343,7 @@ while true; do sleep 3600; done
  */
 export const model = {
   type: "@magistr/firecracker",
-  version: "2026.06.09.20",
+  version: "2026.06.11.4",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {
@@ -754,6 +889,12 @@ export const model = {
         vsockUdsPath: z.string().regex(PATH_RE).optional().describe(
           "Override vsock UDS path for this instance (vsock_override) — required when running concurrent VMs from the same snapshot",
         ),
+        ifaceId: z.string().regex(/^[a-zA-Z0-9_-]{1,32}$/).optional().describe(
+          "Network interface id baked into the snapshot (e.g. 'eth0') to remap on restore. Pair with hostDevName to emit network_overrides — lets a clone bind its own per-VM tap.",
+        ),
+        hostDevName: z.string().regex(IFACE_RE).optional().describe(
+          "Host tap device to bind the baked interface to on restore (network_overrides). Requires ifaceId.",
+        ),
       }),
       execute: async (args, context) => {
         const { host, user, socketPath } = context.globalArgs;
@@ -765,14 +906,25 @@ export const model = {
         if (args.vsockUdsPath) {
           body.vsock_override = { uds_path: args.vsockUdsPath };
         }
+        if (args.ifaceId && args.hostDevName) {
+          body.network_overrides = [
+            { iface_id: args.ifaceId, host_dev_name: args.hostDevName },
+          ];
+        }
         await sshCurl(host, user, socketPath, "PUT", "/snapshot/load", body);
-        context.logger.info(`snapshot restored from ${args.snapshotPath}`);
+        context.logger.info(
+          `snapshot restored from ${args.snapshotPath}${
+            args.hostDevName
+              ? ` (iface ${args.ifaceId}→${args.hostDevName})`
+              : ""
+          }`,
+        );
         const handle = await context.writeResource("action", "restore", {
           action: "restore",
           success: true,
           message: `Snapshot restored from ${args.snapshotPath}${
             args.vsockUdsPath ? ` (vsock: ${args.vsockUdsPath})` : ""
-          }`,
+          }${args.hostDevName ? ` (tap: ${args.hostDevName})` : ""}`,
           timestamp: new Date().toISOString(),
         });
         return { dataHandles: [handle] };
@@ -926,6 +1078,24 @@ export const model = {
             shellEsc(vsock + ".task.json")
           } ${shellEsc(vsock + ".result.txt")};`
           : "";
+        // Tear down the per-VM namespace (removes the in-ns tap + both veth ends).
+        const netns = context.globalArgs.netns;
+        // Remove the namespace (drops the in-ns tap + both veth ends), then
+        // flush the host-side rules setup_tap tagged with this VM's comment.
+        // Delete by line number (re-queried each pass) to avoid iptables-save
+        // quoting issues; loops until no tagged rule remains in each chain.
+        const cmt = shellEsc("fc-netns:" + netns);
+        const netnsCleanup = netns
+          ? [
+            `ip netns del ${shellEsc(netns)} 2>/dev/null || true`,
+            `for tc in nat:POSTROUTING filter:FORWARD; do`,
+            `  T=\${tc%%:*}; C=\${tc##*:};`,
+            `  while N=$(iptables -t "$T" -L "$C" --line-numbers -n 2>/dev/null | grep -F ${cmt} | head -1 | awk '{print $1}'); [ -n "$N" ]; do`,
+            `    iptables -t "$T" -D "$C" "$N" 2>/dev/null || break;`,
+            `  done;`,
+            `done`,
+          ].join("\n")
+          : "";
         // Precision kill: use PID sidecar (avoids pkill which kills all firecracker processes).
         // SIGTERM first → 0.5s wait → SIGKILL if still alive. Fallback to fuser if no sidecar.
         const cmd = [
@@ -940,10 +1110,15 @@ export const model = {
           `fi`,
           `rm -f ${shellEsc(socketPath)}`,
           vsockCleanup,
+          netnsCleanup,
           `echo ok`,
         ].join("\n");
         const { stdout } = await sshExec(host, user, cmd);
-        context.logger.info(`kill_vmm: ${stdout.trim()}`);
+        context.logger.info(
+          `kill_vmm: ${stdout.trim()}${
+            netns ? ` (netns ${netns} removed)` : ""
+          }`,
+        );
         const handle = await context.writeResource("action", "kill_vmm", {
           action: "kill_vmm",
           success: true,
@@ -1140,51 +1315,37 @@ export const model = {
         tapName: z.string().regex(IFACE_RE).default("tap0").describe(
           "TAP device name (default: tap0)",
         ),
-        hostIp: z.string().default("172.16.0.1").describe(
+        hostIp: z.string().regex(IPV4_RE).default("172.16.0.1").describe(
           "Host IP on the TAP subnet (guest default gateway)",
         ),
         prefix: z.number().int().min(16).max(30).default(24).describe(
           "Subnet prefix length (default: 24 → /24)",
         ),
-        guestSubnet: z.string().default("172.16.0.0/24").describe(
-          "Guest subnet for NAT masquerade rule",
+        guestSubnet: z.string().regex(CIDR_RE).default("172.16.0.0/24")
+          .describe(
+            "Guest subnet for NAT masquerade rule",
+          ),
+        netns: z.union([z.literal(""), z.string().regex(NETNS_RE)]).optional()
+          .describe(
+            "Optional network namespace. When set, the tap + veth + NAT are built INSIDE this namespace so many clones of one base snapshot run without overlap (reusing the same guest IP). Omit for the single-VM root-namespace path (unchanged).",
+          ),
+        vethSubnet: z.string().regex(CIDR_RE).default("10.0.0.0/30").describe(
+          "Host↔namespace veth subnet (netns mode only). MUST be unique per concurrent VM; .1 is the host side, .2 the namespace side. Derive per-VM (e.g. 10.0.<index>.0/30).",
         ),
       }),
       execute: async (args, context) => {
         const { host, user } = context.globalArgs;
-        const cmd = [
-          // Create TAP if not present
-          `ip link show ${
-            shellEsc(args.tapName)
-          } 2>/dev/null || ip tuntap add dev ${
-            shellEsc(args.tapName)
-          } mode tap`,
-          // Assign IP if not already assigned
-          `ip addr show ${shellEsc(args.tapName)} | grep -q ${
-            shellEsc(args.hostIp)
-          } || ip addr add ${shellEsc(args.hostIp + "/" + args.prefix)} dev ${
-            shellEsc(args.tapName)
-          }`,
-          `ip link set ${shellEsc(args.tapName)} up`,
-          `sysctl -w net.ipv4.ip_forward=1 -q`,
-          // Add masquerade rule if not already present
-          `iptables -t nat -C POSTROUTING -s ${
-            shellEsc(args.guestSubnet)
-          } -j MASQUERADE 2>/dev/null || ` +
-          `iptables -t nat -A POSTROUTING -s ${
-            shellEsc(args.guestSubnet)
-          } -j MASQUERADE`,
-          `echo ok`,
-        ].join("\n");
+        const cmd = buildSetupTapScript(args);
         const { stdout } = await sshExec(host, user, cmd);
+        const where = args.netns ? ` netns=${args.netns}` : "";
         context.logger.info(
-          `setup_tap: ${args.tapName} ${args.hostIp}/${args.prefix} NAT ${args.guestSubnet} (${stdout.trim()})`,
+          `setup_tap: ${args.tapName} ${args.hostIp}/${args.prefix} NAT ${args.guestSubnet}${where} (${stdout.trim()})`,
         );
         const handle = await context.writeResource("action", "setup_tap", {
           action: "setup_tap",
           success: true,
           message:
-            `TAP ${args.tapName} ready: host=${args.hostIp}/${args.prefix} NAT=${args.guestSubnet}`,
+            `TAP ${args.tapName} ready: host=${args.hostIp}/${args.prefix} NAT=${args.guestSubnet}${where}`,
           timestamp: new Date().toISOString(),
         });
         return { dataHandles: [handle] };
@@ -1227,7 +1388,12 @@ export const model = {
           `fi`,
           `rm -f ${shellEsc(socketPath)} ${shellEsc(pidFile)}`,
           vsockCleanup,
-          `setsid firecracker --api-sock ${
+          // When netns is set, launch Firecracker inside the namespace so its
+          // tap binds the in-ns device. The API socket is a host filesystem
+          // path, so restore/configure sshCurl calls still reach it from root.
+          `setsid ${
+            netnsExecPrefix(context.globalArgs.netns)
+          }firecracker --api-sock ${
             shellEsc(socketPath)
           } --level Error </dev/null >${shellEsc(logPath)} 2>&1 &`,
           `FC_PID=$!`,
