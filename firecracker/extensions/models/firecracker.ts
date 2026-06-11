@@ -243,6 +243,233 @@ async function sshCurlJson<T>(
   }
 }
 
+// --- Fast task fabric: warm worker-VM pool + shared queue (factory pattern) ---
+//
+// `fabric_up` is a rule-6 factory: ONE call fans out N warm worker VMs (each in
+// its own netns, restored from the snapshot, running the looping AGENT_SCRIPT)
+// that pull from a SHARED host queue served by a per-VM daemon. `submit`
+// enqueues (non-blocking, any time — including while tasks run); `poll` collects
+// results by id; `fabric_down` reaps the pool. submit/poll touch only the host
+// queue, never the minutes-long agent run, so they neither hold the swamp
+// __global__ lock for a task's duration nor need a per-task workflow.
+
+/** Per-fabric shared host paths under one queue root. */
+export function fabricPaths(queueRoot: string): {
+  queueDir: string;
+  claimedDir: string;
+  resultsDir: string;
+  serverPath: string;
+} {
+  return {
+    queueDir: `${queueRoot}/queue`,
+    claimedDir: `${queueRoot}/claimed`,
+    resultsDir: `${queueRoot}/results`,
+    serverPath: `${queueRoot}/fabric-server.py`,
+  };
+}
+
+/** Build the `start_vmm` shell command. Extracted so `fabric_up` reuses the
+ * exact VMM-launch recipe the `start_vmm` method uses (no parallel logic). */
+export function buildStartVmmCmd(
+  socketPath: string,
+  netns?: string,
+  logPath?: string,
+  vsockUdsPath?: string,
+): string {
+  const pidFile = socketPath + ".pid";
+  const socketBasename = socketPath.split("/").pop() ?? "firecracker";
+  const lp = logPath ?? `/var/log/${socketBasename}.log`;
+  const vsockCleanup = vsockUdsPath
+    ? `rm -f ${shellEsc(vsockUdsPath)} ${vsockUdsPath}_*;`
+    : "";
+  return [
+    `if [ -f ${shellEsc(pidFile)} ]; then`,
+    `  PID=$(cat ${shellEsc(pidFile)});`,
+    `  if kill -0 "$PID" 2>/dev/null && test -S ${shellEsc(socketPath)}; then`,
+    `    echo "alive:$PID"; exit 0;`,
+    `  fi;`,
+    `fi`,
+    `rm -f ${shellEsc(socketPath)} ${shellEsc(pidFile)}`,
+    vsockCleanup,
+    `setsid ${netnsExecPrefix(netns)}firecracker --api-sock ${
+      shellEsc(socketPath)
+    } --level Error </dev/null >${shellEsc(lp)} 2>&1 &`,
+    `FC_PID=$!`,
+    `echo $FC_PID > ${shellEsc(pidFile)}`,
+    `for i in $(seq 1 30); do test -S ${
+      shellEsc(socketPath)
+    } && break; sleep 0.1; done`,
+    `test -S ${
+      shellEsc(socketPath)
+    } || { echo "socket not ready after 3s"; exit 1; }`,
+    `echo "started:$FC_PID"`,
+  ].join("\n");
+}
+
+/** Build the `kill_vmm` teardown command. Extracted so `fabric_down` reaps each
+ * worker exactly as `kill_vmm` does (PID kill + socket + vsock + netns + NAT). */
+export function buildKillVmmCmd(
+  socketPath: string,
+  netns?: string,
+  vsockUdsPath?: string,
+): string {
+  const pidFile = socketPath + ".pid";
+  const vsock = vsockUdsPath ?? "";
+  const vsockCleanup = vsock
+    ? `rm -f ${shellEsc(vsock)} ${vsock}_* ${shellEsc(vsock + ".task.json")} ${
+      shellEsc(vsock + ".result.txt")
+    };`
+    : "";
+  const cmt = shellEsc("fc-netns:" + (netns ?? ""));
+  const netnsCleanup = netns
+    ? [
+      `ip netns del ${shellEsc(netns)} 2>/dev/null || true`,
+      `for tc in nat:POSTROUTING filter:FORWARD; do`,
+      `  T=\${tc%%:*}; C=\${tc##*:};`,
+      `  while N=$(iptables -t "$T" -L "$C" --line-numbers -n 2>/dev/null | grep -F ${cmt} | head -1 | awk '{print $1}'); [ -n "$N" ]; do`,
+      `    iptables -t "$T" -D "$C" "$N" 2>/dev/null || break;`,
+      `  done;`,
+      `done`,
+    ].join("\n")
+    : "";
+  return [
+    `if [ -f ${shellEsc(pidFile)} ]; then`,
+    `  PID=$(cat ${shellEsc(pidFile)});`,
+    `  kill "$PID" 2>/dev/null; sleep 0.5;`,
+    `  kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null;`,
+    `  rm -f ${shellEsc(pidFile)};`,
+    `elif test -S ${shellEsc(socketPath)}; then`,
+    `  PID=$(fuser ${shellEsc(socketPath)} 2>/dev/null | tr -d ' ');`,
+    `  [ -n "$PID" ] && { kill "$PID" 2>/dev/null; sleep 0.5; kill -9 "$PID" 2>/dev/null; };`,
+    `fi`,
+    `rm -f ${shellEsc(socketPath)}`,
+    vsockCleanup,
+    netnsCleanup,
+    `echo ok`,
+  ].join("\n");
+}
+
+/** The fabric queue daemon. Serves the next QUEUED task (atomic claim) on
+ * GET /task with the OAuth token injected at serve time, and stores POSTed
+ * results by id on POST /result?id=. One instance runs per worker netns; all
+ * instances share the queue/claimed/results dirs on the host filesystem
+ * (netns isolates only the network, so the shared dirs work across workers). */
+export const FABRIC_SERVER_PY = `#!/usr/bin/env python3
+import os, json, glob
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
+
+QUEUE_DIR = os.environ["FC_QUEUE_DIR"]
+CLAIMED_DIR = os.environ["FC_CLAIMED_DIR"]
+RESULTS_DIR = os.environ["FC_RESULTS_DIR"]
+TOKEN = os.environ.get("FC_OAUTH_TOKEN", "")
+BIND_IP = os.environ.get("FC_BIND_IP", "172.16.0.1")
+BIND_PORT = int(os.environ.get("FC_BIND_PORT", "8080"))
+
+def claim_next():
+    for path in sorted(glob.glob(os.path.join(QUEUE_DIR, "*.json"))):
+        dst = os.path.join(CLAIMED_DIR, os.path.basename(path))
+        try:
+            os.rename(path, dst)
+        except OSError:
+            continue
+        try:
+            with open(dst) as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+    def do_GET(self):
+        if not self.path.startswith("/task"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        task = claim_next()
+        if task is None:
+            self.send_response(204)
+            self.end_headers()
+            return
+        task["token"] = TOKEN
+        body = json.dumps(task).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_POST(self):
+        if not self.path.startswith("/result"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        q = parse_qs(urlparse(self.path).query)
+        tid = (q.get("id", [""])[0]) or self.headers.get("X-Task-Id", "")
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(n) if n else b""
+        if tid:
+            tmp = os.path.join(RESULTS_DIR, tid + ".txt.tmp")
+            with open(tmp, "wb") as f:
+                f.write(body)
+            os.rename(tmp, os.path.join(RESULTS_DIR, tid + ".txt"))
+            for c in glob.glob(os.path.join(CLAIMED_DIR, "*" + tid + ".json")):
+                try:
+                    os.unlink(c)
+                except OSError:
+                    pass
+        self.send_response(200)
+        self.end_headers()
+
+ThreadingHTTPServer((BIND_IP, BIND_PORT), H).serve_forever()
+`;
+
+/** Build the command that deploys + starts the fabric daemon inside a worker's
+ * netns, bound to the guest gateway, sharing the fabric queue dirs. */
+export function buildDeployFabricCmd(
+  netns: string,
+  bindIp: string,
+  port: number,
+  paths: {
+    queueDir: string;
+    claimedDir: string;
+    resultsDir: string;
+    serverPath: string;
+  },
+  oauthToken: string,
+  pidFile: string,
+): string {
+  const b64 = btoa(FABRIC_SERVER_PY);
+  return [
+    `mkdir -p ${shellEsc(paths.queueDir)} ${shellEsc(paths.claimedDir)} ${
+      shellEsc(paths.resultsDir)
+    }`,
+    `echo ${shellEsc(b64)} | base64 -d > ${shellEsc(paths.serverPath)}`,
+    `if [ -f ${shellEsc(pidFile)} ]; then kill "$(cat ${
+      shellEsc(pidFile)
+    })" 2>/dev/null || true; rm -f ${shellEsc(pidFile)}; fi`,
+    `export FC_QUEUE_DIR=${shellEsc(paths.queueDir)} FC_CLAIMED_DIR=${
+      shellEsc(paths.claimedDir)
+    } FC_RESULTS_DIR=${shellEsc(paths.resultsDir)}`,
+    `export FC_OAUTH_TOKEN=${shellEsc(oauthToken)} FC_BIND_IP=${
+      shellEsc(bindIp)
+    } FC_BIND_PORT=${port}`,
+    `setsid ${netnsExecPrefix(netns)}python3 ${
+      shellEsc(paths.serverPath)
+    } </dev/null >/dev/null 2>&1 & echo $! > ${shellEsc(pidFile)}`,
+    `for i in $(seq 1 30); do ${
+      netnsExecPrefix(netns)
+    }python3 -c "import socket;s=socket.socket();s.settimeout(0.1);s.connect((${
+      JSON.stringify(bindIp)
+    },${port}))" 2>/dev/null && break; sleep 0.1; done`,
+    `echo deployed`,
+  ].join("\n");
+}
+
 // --- Agent script (shared by build_ubuntu_rootfs + update_agent_script) ---
 //
 // Runs as PID 1 inside the Ubuntu guest (booted with init=/opt/fc-agent.sh).
@@ -376,6 +603,25 @@ export const model = {
       schema: ActionResultSchema,
       lifetime: "1h",
       garbageCollection: 10,
+    },
+    fabric: {
+      description: "Fabric pool state (queueRoot, concurrency, workers).",
+      schema: z.record(z.string(), z.unknown()),
+      lifetime: "infinite",
+      garbageCollection: 5,
+    },
+    submitted: {
+      description: "Ids of tasks enqueued onto the fabric in a submit call.",
+      schema: z.record(z.string(), z.unknown()),
+      lifetime: "24h",
+      garbageCollection: 20,
+    },
+    results: {
+      description:
+        "Completed fabric task results (id -> output) + pending count.",
+      schema: z.record(z.string(), z.unknown()),
+      lifetime: "24h",
+      garbageCollection: 20,
     },
   },
   checks: {
@@ -1084,48 +1330,8 @@ export const model = {
       }),
       execute: async (args, context) => {
         const { host, user, socketPath } = context.globalArgs;
-        const pidFile = socketPath + ".pid";
-        const vsock = args.vsockUdsPath ?? "";
-        const vsockCleanup = vsock
-          ? `rm -f ${shellEsc(vsock)} ${vsock}_* ${
-            shellEsc(vsock + ".task.json")
-          } ${shellEsc(vsock + ".result.txt")};`
-          : "";
-        // Tear down the per-VM namespace (removes the in-ns tap + both veth ends).
         const netns = context.globalArgs.netns;
-        // Remove the namespace (drops the in-ns tap + both veth ends), then
-        // flush the host-side rules setup_tap tagged with this VM's comment.
-        // Delete by line number (re-queried each pass) to avoid iptables-save
-        // quoting issues; loops until no tagged rule remains in each chain.
-        const cmt = shellEsc("fc-netns:" + netns);
-        const netnsCleanup = netns
-          ? [
-            `ip netns del ${shellEsc(netns)} 2>/dev/null || true`,
-            `for tc in nat:POSTROUTING filter:FORWARD; do`,
-            `  T=\${tc%%:*}; C=\${tc##*:};`,
-            `  while N=$(iptables -t "$T" -L "$C" --line-numbers -n 2>/dev/null | grep -F ${cmt} | head -1 | awk '{print $1}'); [ -n "$N" ]; do`,
-            `    iptables -t "$T" -D "$C" "$N" 2>/dev/null || break;`,
-            `  done;`,
-            `done`,
-          ].join("\n")
-          : "";
-        // Precision kill: use PID sidecar (avoids pkill which kills all firecracker processes).
-        // SIGTERM first → 0.5s wait → SIGKILL if still alive. Fallback to fuser if no sidecar.
-        const cmd = [
-          `if [ -f ${shellEsc(pidFile)} ]; then`,
-          `  PID=$(cat ${shellEsc(pidFile)});`,
-          `  kill "$PID" 2>/dev/null; sleep 0.5;`,
-          `  kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null;`,
-          `  rm -f ${shellEsc(pidFile)};`,
-          `elif test -S ${shellEsc(socketPath)}; then`,
-          `  PID=$(fuser ${shellEsc(socketPath)} 2>/dev/null | tr -d ' ');`,
-          `  [ -n "$PID" ] && { kill "$PID" 2>/dev/null; sleep 0.5; kill -9 "$PID" 2>/dev/null; };`,
-          `fi`,
-          `rm -f ${shellEsc(socketPath)}`,
-          vsockCleanup,
-          netnsCleanup,
-          `echo ok`,
-        ].join("\n");
+        const cmd = buildKillVmmCmd(socketPath, netns, args.vsockUdsPath);
         const { stdout } = await sshExec(host, user, cmd);
         context.logger.info(
           `kill_vmm: ${stdout.trim()}${
@@ -1378,47 +1584,12 @@ export const model = {
       }),
       execute: async (args, context) => {
         const { host, user, socketPath } = context.globalArgs;
-        const pidFile = socketPath + ".pid";
-        const socketBasename = socketPath.split("/").pop() ?? "firecracker";
-        const logPath = args.logPath ??
-          `/var/log/${socketBasename}.log`;
-        const vsockCleanup = args.vsockUdsPath
-          ? `rm -f ${shellEsc(args.vsockUdsPath)} ${args.vsockUdsPath}_*;`
-          : "";
-
-        // Check if already alive via PID sidecar, then start fresh if not.
-        // On fresh start: remove stale socket + vsock UDS files so restore-snapshot
-        // doesn't hit EADDRINUSE when Firecracker binds the vsock backend.
-        // Polls 100ms × 30 = 3s max for socket readiness (vs hardcoded sleep 1).
-        const cmd = [
-          `if [ -f ${shellEsc(pidFile)} ]; then`,
-          `  PID=$(cat ${shellEsc(pidFile)});`,
-          `  if kill -0 "$PID" 2>/dev/null && test -S ${
-            shellEsc(socketPath)
-          }; then`,
-          `    echo "alive:$PID"; exit 0;`,
-          `  fi;`,
-          `fi`,
-          `rm -f ${shellEsc(socketPath)} ${shellEsc(pidFile)}`,
-          vsockCleanup,
-          // When netns is set, launch Firecracker inside the namespace so its
-          // tap binds the in-ns device. The API socket is a host filesystem
-          // path, so restore/configure sshCurl calls still reach it from root.
-          `setsid ${
-            netnsExecPrefix(context.globalArgs.netns)
-          }firecracker --api-sock ${
-            shellEsc(socketPath)
-          } --level Error </dev/null >${shellEsc(logPath)} 2>&1 &`,
-          `FC_PID=$!`,
-          `echo $FC_PID > ${shellEsc(pidFile)}`,
-          `for i in $(seq 1 30); do test -S ${
-            shellEsc(socketPath)
-          } && break; sleep 0.1; done`,
-          `test -S ${
-            shellEsc(socketPath)
-          } || { echo "socket not ready after 3s"; exit 1; }`,
-          `echo "started:$FC_PID"`,
-        ].join("\n");
+        const cmd = buildStartVmmCmd(
+          socketPath,
+          context.globalArgs.netns,
+          args.logPath,
+          args.vsockUdsPath,
+        );
 
         const { stdout } = await sshExec(host, user, cmd);
         const line = stdout.trim();
@@ -1434,6 +1605,238 @@ export const model = {
           message: reused
             ? `Reused warm VMM at ${socketPath} (${line})`
             : `Started VMM at ${socketPath} (${line})`,
+          timestamp: new Date().toISOString(),
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    // ==================== Fast task fabric (factory + queue) ====================
+
+    fabric_up: {
+      description:
+        "Factory: spawn a warm worker-VM pool. Fans out `concurrency` netns microVMs (each restored from the snapshot and running the looping agent) that pull tasks from a shared host queue served by a per-VM fabric daemon. One call brings up the whole pool concurrently; submit/poll/fabric_down drive it afterwards.",
+      arguments: z.object({
+        concurrency: z.number().int().min(1).max(64).default(4).describe(
+          "Pool size = max concurrent worker VMs (configurable; ~512MiB RAM each)",
+        ),
+        snapshotPath: z.string().regex(PATH_RE).default(
+          "/opt/firecracker/agent-snapshot.snap",
+        ),
+        memFilePath: z.string().regex(PATH_RE).default(
+          "/opt/firecracker/agent-snapshot.mem",
+        ),
+        queueRoot: z.string().regex(PATH_RE).default("/tmp/fc-fabric"),
+        netnsPrefix: z.string().regex(NETNS_RE).default("fcw"),
+        tapName: z.string().regex(IFACE_RE).default("tap0"),
+        tapIp: z.string().regex(IPV4_RE).default("172.16.0.1"),
+        guestSubnet: z.string().regex(CIDR_RE).default("172.16.0.0/24"),
+        port: z.number().int().default(8080),
+        oauthToken: z.string().describe(
+          "Claude Code OAuth token; the daemon injects it at serve time (never written to the queue)",
+        ),
+      }),
+      execute: async (args, context) => {
+        const { host, user } = context.globalArgs;
+        const paths = fabricPaths(args.queueRoot);
+        await sshExec(
+          host,
+          user,
+          `mkdir -p ${shellEsc(paths.queueDir)} ${shellEsc(paths.claimedDir)} ${
+            shellEsc(paths.resultsDir)
+          }`,
+        );
+        const bringUp = async (i: number): Promise<string> => {
+          const netns = `${args.netnsPrefix}-${i}`;
+          const socketPath = `/tmp/${args.netnsPrefix}-${i}.socket`;
+          const vethSubnet = `10.0.${i}.0/30`;
+          const srvPid = `/tmp/${args.netnsPrefix}-${i}.server.pid`;
+          await sshExec(
+            host,
+            user,
+            buildSetupTapScript({
+              tapName: args.tapName,
+              hostIp: args.tapIp,
+              prefix: 24,
+              guestSubnet: args.guestSubnet,
+              netns,
+              vethSubnet,
+            }),
+          );
+          await sshExec(host, user, buildStartVmmCmd(socketPath, netns));
+          await sshExec(
+            host,
+            user,
+            buildDeployFabricCmd(
+              netns,
+              args.tapIp,
+              args.port,
+              paths,
+              args.oauthToken,
+              srvPid,
+            ),
+          );
+          await sshCurl(host, user, socketPath, "PUT", "/snapshot/load", {
+            snapshot_path: args.snapshotPath,
+            mem_file_path: args.memFilePath,
+            resume_vm: true,
+          });
+          return netns;
+        };
+        const workers = await Promise.all(
+          Array.from({ length: args.concurrency }, (_, k) => bringUp(k + 1)),
+        );
+        context.logger.info(
+          `fabric_up: ${workers.length} warm worker(s) ready on queue ${args.queueRoot}`,
+        );
+        const handle = await context.writeResource("fabric", "current", {
+          queueRoot: args.queueRoot,
+          concurrency: args.concurrency,
+          netnsPrefix: args.netnsPrefix,
+          port: args.port,
+          workers,
+          status: "up",
+          timestamp: new Date().toISOString(),
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    submit: {
+      description:
+        "Enqueue agent tasks onto the fabric queue (NON-BLOCKING, callable any time — including while tasks are running). Returns the generated task ids. Workers pull and run them as slots free up; the daemon injects the OAuth token at serve time so it is never written to the queue.",
+      arguments: z.object({
+        queueRoot: z.string().regex(PATH_RE).default("/tmp/fc-fabric"),
+        tasks: z.array(
+          z.object({
+            prompt: z.string(),
+            model: z.string().optional(),
+            effort: z.string().optional(),
+            gitRepoUrl: z.string().optional(),
+          }),
+        ).min(1),
+      }),
+      execute: async (args, context) => {
+        const { host, user } = context.globalArgs;
+        const paths = fabricPaths(args.queueRoot);
+        const ids: string[] = [];
+        const writes: string[] = [`mkdir -p ${shellEsc(paths.queueDir)}`];
+        const base = Date.now();
+        for (let k = 0; k < args.tasks.length; k++) {
+          const t = args.tasks[k];
+          const id = crypto.randomUUID();
+          ids.push(id);
+          const seq = String(base + k).padStart(16, "0");
+          const b64 = btoa(JSON.stringify({
+            id,
+            prompt: t.prompt,
+            model: t.model ?? "",
+            effort: t.effort ?? "",
+            gitRepoUrl: t.gitRepoUrl ?? "",
+          }));
+          const tmp = `${paths.queueDir}/.${seq}-${id}.json.tmp`;
+          const fin = `${paths.queueDir}/${seq}-${id}.json`;
+          // tmp + atomic rename so a worker never claims a half-written task file
+          writes.push(
+            `echo ${shellEsc(b64)} | base64 -d > ${shellEsc(tmp)} && mv ${
+              shellEsc(tmp)
+            } ${shellEsc(fin)}`,
+          );
+        }
+        await sshExec(host, user, writes.join("\n"));
+        context.logger.info(`submit: enqueued ${ids.length} task(s)`);
+        const handle = await context.writeResource("submitted", "current", {
+          ids,
+          count: ids.length,
+          timestamp: new Date().toISOString(),
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    poll: {
+      description:
+        "Collect completed task results from the fabric (NON-BLOCKING, idempotent). Returns a map of task id -> result for every result posted so far (optionally filtered to `ids`), plus the number still pending in the queue.",
+      arguments: z.object({
+        queueRoot: z.string().regex(PATH_RE).default("/tmp/fc-fabric"),
+        ids: z.array(z.string()).optional().describe(
+          "If given, only report these ids",
+        ),
+      }),
+      execute: async (args, context) => {
+        const { host, user } = context.globalArgs;
+        const paths = fabricPaths(args.queueRoot);
+        const cmd = [
+          `for f in ${
+            shellEsc(paths.resultsDir)
+          }/*.txt; do [ -e "$f" ] || continue; n=$(basename "$f" .txt); printf '===%s===\\n' "$n"; base64 -w0 "$f"; printf '\\n'; done`,
+          `printf 'PENDING=%s\\n' "$(ls ${shellEsc(paths.queueDir)} ${
+            shellEsc(paths.claimedDir)
+          } 2>/dev/null | grep -c '[.]json$' || echo 0)"`,
+        ].join("\n");
+        const { stdout } = await sshExec(host, user, cmd);
+        const completed: Record<string, string> = {};
+        const re = /===(.+?)===\n([^\n]*)\n/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(stdout)) !== null) {
+          try {
+            completed[m[1]] = atob(m[2]);
+          } catch {
+            completed[m[1]] = "";
+          }
+        }
+        const pendingMatch = stdout.match(/PENDING=(\d+)/);
+        const pending = pendingMatch ? Number(pendingMatch[1]) : 0;
+        const wanted = args.ids
+          ? Object.fromEntries(
+            Object.entries(completed).filter(([k]) => args.ids!.includes(k)),
+          )
+          : completed;
+        context.logger.info(
+          `poll: ${Object.keys(wanted).length} completed, ${pending} pending`,
+        );
+        const handle = await context.writeResource("results", "current", {
+          completed: wanted,
+          completedCount: Object.keys(wanted).length,
+          pending,
+          timestamp: new Date().toISOString(),
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    fabric_down: {
+      description:
+        "Tear down the whole fabric: reap every worker VM (PID + socket + netns + NAT, exactly as kill_vmm), stop the daemons, and remove the queue root. Idempotent.",
+      arguments: z.object({
+        concurrency: z.number().int().min(1).max(64).default(4),
+        netnsPrefix: z.string().regex(NETNS_RE).default("fcw"),
+        queueRoot: z.string().regex(PATH_RE).default("/tmp/fc-fabric"),
+      }),
+      execute: async (args, context) => {
+        const { host, user } = context.globalArgs;
+        const reap = async (i: number): Promise<void> => {
+          const netns = `${args.netnsPrefix}-${i}`;
+          const socketPath = `/tmp/${args.netnsPrefix}-${i}.socket`;
+          const srvPid = `/tmp/${args.netnsPrefix}-${i}.server.pid`;
+          await sshExec(
+            host,
+            user,
+            `if [ -f ${shellEsc(srvPid)} ]; then kill "$(cat ${
+              shellEsc(srvPid)
+            })" 2>/dev/null || true; rm -f ${shellEsc(srvPid)}; fi`,
+          );
+          await sshExec(host, user, buildKillVmmCmd(socketPath, netns));
+        };
+        await Promise.all(
+          Array.from({ length: args.concurrency }, (_, k) => reap(k + 1)),
+        );
+        await sshExec(host, user, `rm -rf ${shellEsc(args.queueRoot)}`);
+        context.logger.info(
+          `fabric_down: reaped ${args.concurrency} worker(s), removed ${args.queueRoot}`,
+        );
+        const handle = await context.writeResource("fabric", "current", {
+          status: "down",
           timestamp: new Date().toISOString(),
         });
         return { dataHandles: [handle] };

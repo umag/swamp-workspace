@@ -105,6 +105,28 @@ for this.
   effort from the injected task (effort defaults to `low` via
   `@magistr/fc-task-server`).
 
+## Fast task fabric (warm worker pool + queue)
+
+To run many agent tasks quickly without a per-task workflow, the model exposes a
+factory + queue (one `swamp model method run` each, no workflow authoring):
+
+- **`fabric_up --input concurrency=N`** — factory: fans out `N` warm worker VMs
+  (each in its own netns, restored once, running the looping agent) that pull
+  from a shared host queue. One call brings up the whole pool concurrently.
+- **`submit`** — enqueue tasks (NON-BLOCKING, callable any time — including while
+  tasks are running); returns task ids. The daemon injects the OAuth token at
+  serve time, so it is never written to the queue.
+- **`poll`** — collect completed results by id + the pending count (idempotent).
+- **`fabric_down`** — reap the whole pool (VMs, netns, NAT, daemons, queue).
+
+Workers are reused across tasks (warm-VM reuse, no per-task restore). `submit`
+and `poll` touch only the host queue — not the minutes-long agent run — so they
+neither hold the swamp `__global__` lock for a task's duration nor require a
+per-task workflow. The concurrency cap is the `concurrency` parameter
+(configurable; ~512 MiB RAM per worker). **Note:** after changing the agent
+script the warm snapshot must be re-baked (`@magistr/fc-bake-snapshot`) so the
+pool boots the looping worker.
+
 ## Security notes
 
 - SSH host-key checking is intentionally disabled — scope to trusted networks.
