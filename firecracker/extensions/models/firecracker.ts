@@ -1714,7 +1714,7 @@ export const model = {
         context.logger.info(
           `fabric_up: ${workers.length} warm worker(s) ready on queue ${args.queueRoot}`,
         );
-        const handle = await context.writeResource("fabric", "current", {
+        const handle = await context.writeResource("fabric", "fabric", {
           queueRoot: args.queueRoot,
           concurrency: args.concurrency,
           netnsPrefix: args.netnsPrefix,
@@ -1770,7 +1770,7 @@ export const model = {
         }
         await sshExec(host, user, writes.join("\n"));
         context.logger.info(`submit: enqueued ${ids.length} task(s)`);
-        const handle = await context.writeResource("submitted", "current", {
+        const handle = await context.writeResource("submitted", "submitted", {
           ids,
           count: ids.length,
           timestamp: new Date().toISOString(),
@@ -1820,7 +1820,7 @@ export const model = {
         context.logger.info(
           `poll: ${Object.keys(wanted).length} completed, ${pending} pending`,
         );
-        const handle = await context.writeResource("results", "current", {
+        const handle = await context.writeResource("results", "results", {
           completed: wanted,
           completedCount: Object.keys(wanted).length,
           pending,
@@ -1860,7 +1860,7 @@ export const model = {
         context.logger.info(
           `fabric_down: reaped ${args.concurrency} worker(s), removed ${args.queueRoot}`,
         );
-        const handle = await context.writeResource("fabric", "current", {
+        const handle = await context.writeResource("fabric", "fabric", {
           status: "down",
           timestamp: new Date().toISOString(),
         });
@@ -1923,7 +1923,7 @@ export const model = {
             restarted.length ? ": " + restarted.join(",") : ""
           }`,
         );
-        const handle = await context.writeResource("fabric", "current", {
+        const handle = await context.writeResource("fabric", "fabric", {
           status: "recycled",
           restarted,
           timestamp: new Date().toISOString(),
