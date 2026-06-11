@@ -68,6 +68,29 @@ Lifecycle: `status`, `configure`, `set_boot`, `set_drive`, `set_network`,
 Host bootstrap: `install_firecracker`, `install_guest_kernel`, `setup_tap`,
 `build_ubuntu_rootfs`, `update_agent_script`.
 
+## Running multiple microVMs concurrently (network isolation)
+
+Many clones of **one** base snapshot can run at the same time on one host
+without IP/gateway/task-server overlap — by isolation, not by re-addressing the
+guest. The guest image is unchanged (it keeps its baked `172.16.0.2` / gateway
+`172.16.0.1`); each VM gets its own **network namespace** where that same
+address is reused collision-free (the upstream Firecracker "network for clones"
+pattern).
+
+Set `netns` in `globalArguments` and use `setup_tap`'s netns mode per VM:
+
+- `setup_tap --input netns=fc-1 --input vethSubnet=10.0.1.0/30` builds the tap +
+  veth + scoped NAT **inside** namespace `fc-1`.
+- With `netns` on the instance, `start_vmm` launches Firecracker via
+  `ip netns exec`, and `kill_vmm` tears the namespace down.
+- `vethSubnet` (the host↔namespace /30) **must be unique per concurrent VM** —
+  derive it and the namespace name from the same per-VM index (e.g.
+  `netns=fc-agent-3`, `vethSubnet=10.0.3.0/30`).
+
+Leave `netns` empty (the default) for the single-VM root-namespace path, which
+is unchanged. The `fc-run-agent` workflow exposes `netns` / `vethSubnet` inputs
+for this.
+
 ## Workflows
 
 - **`@magistr/fc-install-firecracker`** — download and install the latest

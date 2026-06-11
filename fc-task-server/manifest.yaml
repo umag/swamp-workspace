@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/fc-task-server"
-version: "2026.06.09.3"
+version: "2026.06.11.2"
 description: |
   Host↔guest task/result control-plane server for Firecracker microVM agents.
   This is NOT an internet proxy — the guest reaches api.anthropic.com directly

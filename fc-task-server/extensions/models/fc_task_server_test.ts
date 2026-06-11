@@ -132,3 +132,26 @@ Deno.test("isValidSshHost rejects empty and placeholder hosts", () => {
   assertFalse(isValidSshHost(""));
   assertFalse(isValidSshHost("null"));
 });
+
+// --- per-VM network namespace (netns) ---
+
+Deno.test("globalArguments: accepts an optional netns", () => {
+  const r = model.globalArguments.safeParse({
+    ...baseArgs,
+    netns: "fc-agent-1",
+  });
+  assertEquals(r.success, true);
+});
+
+Deno.test("globalArguments: rejects a netns name with shell metacharacters", () => {
+  const r = model.globalArguments.safeParse({
+    ...baseArgs,
+    netns: "fc; rm -rf /",
+  });
+  assertFalse(r.success);
+});
+
+Deno.test("globalArguments: accepts an empty netns (root-namespace default)", () => {
+  const r = model.globalArguments.safeParse({ ...baseArgs, netns: "" });
+  assertEquals(r.success, true);
+});

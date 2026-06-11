@@ -6,6 +6,8 @@ function shellEsc(s: string): string {
 }
 
 const HTTPS_URL_RE = /^https?:\/\/[a-zA-Z0-9._-]+(:[0-9]{1,5})?(\/.*)?$/;
+// Network namespace name — conservative, shell-safe.
+const NETNS_RE = /^[a-zA-Z0-9_.-]{1,32}$/;
 
 const GlobalArgsSchema = z.object({
   host: z.string().describe("SSH host running Firecracker"),
@@ -16,6 +18,10 @@ const GlobalArgsSchema = z.object({
   tapPort: z.number().int().min(1024).max(65535).default(8080).describe(
     "TCP port for the task/result HTTP server (default: 8080)",
   ),
+  netns: z.union([z.literal(""), z.string().regex(NETNS_RE)]).optional()
+    .describe(
+      "Optional network namespace the tapIp lives in (matches @magistr/firecracker's netns for this VM). When set, deploy binds the server INSIDE the namespace (ip netns exec) so the isolated guest can reach it. Omit for the single-VM root-namespace path.",
+    ),
   // Validate the OAuth token prefix up front so a corrupted secret fails fast
   // with a clear message instead of silently 401-ing inside the microVM.
   // A valid Anthropic token starts with `sk-ant-` (e.g. sk-ant-oat01-…).
@@ -196,7 +202,7 @@ const ActionSchema = z.object({
  */
 export const model = {
   type: "@magistr/fc-task-server",
-  version: "2026.06.09.3",
+  version: "2026.06.11.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     serverState: {
@@ -269,7 +275,10 @@ export const model = {
         "Write tap-server.py to the Firecracker host and start it. The server listens on tapIp:tapPort (TCP) and serves task JSON (with OAuth token injected) on GET /task and accepts results on POST /result.",
       arguments: z.object({}),
       execute: async (_args: unknown, context) => {
-        const { host, user, tapIp, tapPort, oauthToken } = context.globalArgs;
+        const { host, user, tapIp, tapPort, oauthToken, netns } =
+          context.globalArgs;
+        // When the VM runs in a namespace, the server must bind tapIp INSIDE it.
+        const nsx = netns ? `ip netns exec ${shellEsc(netns)} ` : "";
 
         const serverPath = `/tmp/fc-tap-server-${tapPort}.py`;
         const pidFile = `/tmp/fc-tap-server-${tapPort}.pid`;
@@ -292,7 +301,7 @@ export const model = {
           `export FC_RESULT_PATH=${shellEsc(resultPath)}`,
           `export FC_BIND_IP=${shellEsc(tapIp)}`,
           `export FC_BIND_PORT=${tapPort}`,
-          `( python3 ${
+          `( ${nsx}python3 ${
             shellEsc(serverPath)
           } serve > /tmp/fc-tap-server-${tapPort}.log 2>&1 & SRV=$!; echo $SRV > ${
             shellEsc(pidFile)
@@ -307,7 +316,7 @@ export const model = {
           host,
           user,
           `for i in $(seq 1 30); do ` +
-            `python3 -c "import socket; s=socket.socket(); s.settimeout(0.1); s.connect((${
+            `${nsx}python3 -c "import socket; s=socket.socket(); s.settimeout(0.1); s.connect((${
               shellEsc(tapIp)
             }, ${tapPort})); s.close()" 2>/dev/null && exit 0; sleep 0.1; done; ` +
             `echo "tap-server not ready after 3s" >&2; exit 1`,
