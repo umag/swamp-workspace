@@ -258,14 +258,85 @@ export function fabricPaths(queueRoot: string): {
   queueDir: string;
   claimedDir: string;
   resultsDir: string;
+  failedDir: string;
   serverPath: string;
 } {
   return {
     queueDir: `${queueRoot}/queue`,
     claimedDir: `${queueRoot}/claimed`,
     resultsDir: `${queueRoot}/results`,
+    failedDir: `${queueRoot}/failed`,
     serverPath: `${queueRoot}/fabric-server.py`,
   };
+}
+
+/** The exact JSON object `submit` serializes into the queue for one task. The
+ * OAuth token is deliberately ABSENT here — the daemon injects it at serve time —
+ * so this is the credential-hygiene boundary the queue file must never cross.
+ * Pure; unit-tested. */
+export function buildQueuePayload(
+  t: { prompt: string; model?: string; effort?: string; gitRepoUrl?: string },
+  id: string,
+): {
+  id: string;
+  prompt: string;
+  model: string;
+  effort: string;
+  gitRepoUrl: string;
+} {
+  return {
+    id,
+    prompt: t.prompt,
+    model: t.model ?? "",
+    effort: t.effort ?? "",
+    gitRepoUrl: t.gitRepoUrl ?? "",
+  };
+}
+
+/** Parse the `poll` daemon stdout (`===id===\n<base64>\n` lines + `PENDING=N`)
+ * into a decoded id->result map and the pending count. Pure; unit-tested. */
+export function parsePollOutput(
+  stdout: string,
+): { completed: Record<string, string>; pending: number } {
+  const completed: Record<string, string> = {};
+  const re = /===(.+?)===\n([^\n]*)\n/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(stdout)) !== null) {
+    try {
+      completed[m[1]] = atob(m[2]);
+    } catch {
+      completed[m[1]] = "";
+    }
+  }
+  const pendingMatch = stdout.match(/PENDING=(\d+)/);
+  return { completed, pending: pendingMatch ? Number(pendingMatch[1]) : 0 };
+}
+
+/** Worker index from a netns name like `fcw-3` (or a hyphenated prefix, `fc-w-3`):
+ * the trailing hyphen-delimited integer, or null if absent / out of [1,256]. Used
+ * by fabric_recycle + fabric_down to map a netns back to its worker slot. */
+export function workerIndexFromNetns(ns: string): number | null {
+  const i = Number(ns.split("-").pop());
+  return Number.isInteger(i) && i >= 1 && i <= 256 ? i : null;
+}
+
+/** Shell pipeline that lists the live worker netns for `netnsPrefix` by
+ * enumerating `ip netns list` + any leftover socket/pid files. fabric_down uses
+ * it to reap the ACTUAL pool (not a caller-supplied count). Exported so its shell
+ * syntax is regression-tested (`bash -n`). */
+export function buildDiscoverWorkersCmd(netnsPrefix: string): string {
+  const p = netnsPrefix;
+  // Escape regex metachars (NETNS_RE permits '.') so a dotted prefix can't loosen
+  // the discovery filter into matching unrelated namespaces.
+  const pRe = p.replace(/[.\\+*?^$()[\]{}|]/g, "\\$&");
+  // Single line on purpose: a brace group + a pipe split across newlines is a
+  // bash syntax error (a pipe may neither start nor be orphaned after `}` on a
+  // new line). Keep the whole pipeline on one line.
+  const sources =
+    `ip netns list 2>/dev/null | awk '{print $1}'; ls -1d /tmp/${p}-*.socket /tmp/${p}-*.server.pid 2>/dev/null | xargs -r -n1 basename | sed -e 's/[.]socket$//' -e 's/[.]server[.]pid$//'`;
+  return `{ ${sources}; } | grep -E ${
+    shellEsc(`^${pRe}-[0-9]+$`)
+  } | sort -u`;
 }
 
 /** Build the `start_vmm` shell command. Extracted so `fabric_up` reuses the
@@ -362,6 +433,7 @@ from urllib.parse import urlparse, parse_qs
 QUEUE_DIR = os.environ["FC_QUEUE_DIR"]
 CLAIMED_DIR = os.environ["FC_CLAIMED_DIR"]
 RESULTS_DIR = os.environ["FC_RESULTS_DIR"]
+FAILED_DIR = os.environ.get("FC_FAILED_DIR", os.path.join(os.path.dirname(CLAIMED_DIR), "failed"))
 TOKEN = os.environ.get("FC_OAUTH_TOKEN", "")
 BIND_IP = os.environ.get("FC_BIND_IP", "172.16.0.1")
 BIND_PORT = int(os.environ.get("FC_BIND_PORT", "8080"))
@@ -377,12 +449,30 @@ def claim_next():
             os.rename(path, dst)
         except OSError:
             continue
+        os.utime(dst, None)
         try:
-            os.utime(dst, None)
             with open(dst) as f:
                 return json.load(f)
         except Exception:
-            return None
+            # Poison task (malformed JSON). Quarantine it so it never wedges a
+            # pool slot or re-fails every recycle window, surface an error result
+            # keyed by the id parsed from the filename, then keep serving the
+            # next queued task (don't abandon the whole poll on one bad file).
+            base = os.path.basename(dst)
+            tid = base[len(NETNS) + 2:].rsplit(".json", 1)[0].split("-", 1)[-1]
+            try:
+                with open(os.path.join(RESULTS_DIR, tid + ".txt"), "w") as rf:
+                    rf.write("ERROR: malformed task json")
+            except Exception:
+                pass
+            try:
+                os.replace(dst, os.path.join(FAILED_DIR, base))
+            except Exception:
+                try:
+                    os.unlink(dst)
+                except OSError:
+                    pass
+            continue
     return None
 
 class H(BaseHTTPRequestHandler):
@@ -418,15 +508,26 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", "0") or "0")
         body = self.rfile.read(n) if n else b""
         if tid:
-            tmp = os.path.join(RESULTS_DIR, tid + ".txt.tmp")
-            with open(tmp, "wb") as f:
-                f.write(body)
-            os.rename(tmp, os.path.join(RESULTS_DIR, tid + ".txt"))
-            for c in glob.glob(os.path.join(CLAIMED_DIR, "*" + tid + ".json")):
+            # Only THIS worker's OWN-netns claim for this id counts. Atomically
+            # unlink it first as the gate to writing the result: if our claim is
+            # gone (fabric_recycle re-queued it and another worker re-claimed it),
+            # this is a stale late result -> drop it. Scoping the match to our
+            # NETNS prefix means a slow/late worker can never delete another
+            # worker's freshly re-claimed file (the requeue-race clobber).
+            claimed = None
+            for c in sorted(glob.glob(
+                os.path.join(CLAIMED_DIR, NETNS + "__*" + tid + ".json"))):
                 try:
                     os.unlink(c)
+                    claimed = c
+                    break
                 except OSError:
                     pass
+            if claimed is not None:
+                tmp = os.path.join(RESULTS_DIR, tid + ".txt.tmp")
+                with open(tmp, "wb") as f:
+                    f.write(body)
+                os.rename(tmp, os.path.join(RESULTS_DIR, tid + ".txt"))
         self.send_response(200)
         self.end_headers()
 
@@ -439,12 +540,7 @@ export function buildDeployFabricCmd(
   netns: string,
   bindIp: string,
   port: number,
-  paths: {
-    queueDir: string;
-    claimedDir: string;
-    resultsDir: string;
-    serverPath: string;
-  },
+  paths: ReturnType<typeof fabricPaths>,
   oauthToken: string,
   pidFile: string,
 ): string {
@@ -452,14 +548,16 @@ export function buildDeployFabricCmd(
   return [
     `mkdir -p ${shellEsc(paths.queueDir)} ${shellEsc(paths.claimedDir)} ${
       shellEsc(paths.resultsDir)
-    }`,
+    } ${shellEsc(paths.failedDir)}`,
     `echo ${shellEsc(b64)} | base64 -d > ${shellEsc(paths.serverPath)}`,
     `if [ -f ${shellEsc(pidFile)} ]; then kill "$(cat ${
       shellEsc(pidFile)
     })" 2>/dev/null || true; rm -f ${shellEsc(pidFile)}; fi`,
     `export FC_QUEUE_DIR=${shellEsc(paths.queueDir)} FC_CLAIMED_DIR=${
       shellEsc(paths.claimedDir)
-    } FC_RESULTS_DIR=${shellEsc(paths.resultsDir)}`,
+    } FC_RESULTS_DIR=${shellEsc(paths.resultsDir)} FC_FAILED_DIR=${
+      shellEsc(paths.failedDir)
+    }`,
     `export FC_OAUTH_TOKEN=${shellEsc(oauthToken)} FC_BIND_IP=${
       shellEsc(bindIp)
     } FC_BIND_PORT=${port} FC_NETNS=${shellEsc(netns)}`,
@@ -642,7 +740,7 @@ done
  */
 export const model = {
   type: "@magistr/firecracker",
-  version: "2026.06.11.4",
+  version: "2026.06.11.7",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {
@@ -1703,16 +1801,32 @@ export const model = {
           user,
           `mkdir -p ${shellEsc(paths.queueDir)} ${shellEsc(paths.claimedDir)} ${
             shellEsc(paths.resultsDir)
-          }`,
+          } ${shellEsc(paths.failedDir)}`,
         );
-        const workers = await Promise.all(
+        // Bring up workers concurrently but tolerate partial failure: a worker
+        // that fails to come up must NOT discard the fabric resource (which would
+        // orphan the workers that DID start, with no recorded state for
+        // fabric_down to reap). Record what came up, then surface failures.
+        const settled = await Promise.allSettled(
           Array.from(
             { length: args.concurrency },
             (_, k) => bringUpWorker(host, user, k + 1, args, paths),
           ),
         );
+        const workers = settled
+          .filter((s): s is PromiseFulfilledResult<string> =>
+            s.status === "fulfilled"
+          )
+          .map((s) => s.value);
+        const failures = settled
+          .map((s, k) =>
+            s.status === "rejected" ? `${args.netnsPrefix}-${k + 1}` : null
+          )
+          .filter((x): x is string => x !== null);
         context.logger.info(
-          `fabric_up: ${workers.length} warm worker(s) ready on queue ${args.queueRoot}`,
+          `fabric_up: ${workers.length}/${args.concurrency} warm worker(s) ready on queue ${args.queueRoot}${
+            failures.length ? `; FAILED: ${failures.join(",")}` : ""
+          }`,
         );
         const handle = await context.writeResource("fabric", "fabric", {
           queueRoot: args.queueRoot,
@@ -1720,9 +1834,17 @@ export const model = {
           netnsPrefix: args.netnsPrefix,
           port: args.port,
           workers,
-          status: "up",
+          failures,
+          status: failures.length ? "degraded" : "up",
           timestamp: new Date().toISOString(),
         });
+        if (failures.length) {
+          throw new Error(
+            `fabric_up: ${failures.length} worker(s) failed to start (${
+              failures.join(",")
+            }); ${workers.length} are up and recorded — run fabric_recycle or fabric_down to reconcile`,
+          );
+        }
         return { dataHandles: [handle] };
       },
     },
@@ -1752,13 +1874,7 @@ export const model = {
           const id = crypto.randomUUID();
           ids.push(id);
           const seq = String(base + k).padStart(16, "0");
-          const b64 = btoa(JSON.stringify({
-            id,
-            prompt: t.prompt,
-            model: t.model ?? "",
-            effort: t.effort ?? "",
-            gitRepoUrl: t.gitRepoUrl ?? "",
-          }));
+          const b64 = btoa(JSON.stringify(buildQueuePayload(t, id)));
           const tmp = `${paths.queueDir}/.${seq}-${id}.json.tmp`;
           const fin = `${paths.queueDir}/${seq}-${id}.json`;
           // tmp + atomic rename so a worker never claims a half-written task file
@@ -1800,18 +1916,7 @@ export const model = {
           } 2>/dev/null | grep -c '[.]json$' || echo 0)"`,
         ].join("\n");
         const { stdout } = await sshExec(host, user, cmd);
-        const completed: Record<string, string> = {};
-        const re = /===(.+?)===\n([^\n]*)\n/g;
-        let m: RegExpExecArray | null;
-        while ((m = re.exec(stdout)) !== null) {
-          try {
-            completed[m[1]] = atob(m[2]);
-          } catch {
-            completed[m[1]] = "";
-          }
-        }
-        const pendingMatch = stdout.match(/PENDING=(\d+)/);
-        const pending = pendingMatch ? Number(pendingMatch[1]) : 0;
+        const { completed, pending } = parsePollOutput(stdout);
         const wanted = args.ids
           ? Object.fromEntries(
             Object.entries(completed).filter(([k]) => args.ids!.includes(k)),
@@ -1832,18 +1937,34 @@ export const model = {
 
     fabric_down: {
       description:
-        "Tear down the whole fabric: reap every worker VM (PID + socket + netns + NAT, exactly as kill_vmm), stop the daemons, and remove the queue root. Idempotent.",
+        "Tear down the whole fabric: reap every worker VM (PID + socket + netns + NAT, exactly as kill_vmm), stop the daemons, and remove the queue root. Discovers the live workers by enumerating the host (netns list + socket/pid files for the prefix) so it reaps the ACTUAL pool regardless of the size it was brought up with — no worker leaks on a concurrency mismatch. `concurrency` is only a lower-bound fallback. Idempotent.",
       arguments: z.object({
-        concurrency: z.number().int().min(1).max(64).default(4),
+        concurrency: z.number().int().min(1).max(64).default(4).describe(
+          "Lower-bound fallback only; the real pool is discovered from host state",
+        ),
         netnsPrefix: z.string().regex(NETNS_RE).default("fcw"),
         queueRoot: z.string().regex(PATH_RE).default("/tmp/fc-fabric"),
       }),
       execute: async (args, context) => {
         const { host, user } = context.globalArgs;
+        const p = args.netnsPrefix;
+        // Discover the live pool from host state (source of truth), not from the
+        // caller-supplied count: netns names + leftover socket/pid files. This is
+        // what prevents a worker leak when fabric_down is called with a smaller
+        // concurrency than fabric_up used.
+        const { stdout } = await sshExec(host, user, buildDiscoverWorkersCmd(p));
+        const indices = new Set<number>();
+        for (const ns of stdout.trim().split("\n").filter(Boolean)) {
+          const i = workerIndexFromNetns(ns);
+          if (i !== null) indices.add(i);
+        }
+        // Union with the fallback range so a half-torn-down worker (netns already
+        // gone but NAT/pidfile lingering) is still cleaned.
+        for (let i = 1; i <= args.concurrency; i++) indices.add(i);
         const reap = async (i: number): Promise<void> => {
-          const netns = `${args.netnsPrefix}-${i}`;
-          const socketPath = `/tmp/${args.netnsPrefix}-${i}.socket`;
-          const srvPid = `/tmp/${args.netnsPrefix}-${i}.server.pid`;
+          const netns = `${p}-${i}`;
+          const socketPath = `/tmp/${p}-${i}.socket`;
+          const srvPid = `/tmp/${p}-${i}.server.pid`;
           await sshExec(
             host,
             user,
@@ -1853,15 +1974,16 @@ export const model = {
           );
           await sshExec(host, user, buildKillVmmCmd(socketPath, netns));
         };
-        await Promise.all(
-          Array.from({ length: args.concurrency }, (_, k) => reap(k + 1)),
-        );
+        await Promise.all([...indices].map((i) => reap(i)));
         await sshExec(host, user, `rm -rf ${shellEsc(args.queueRoot)}`);
         context.logger.info(
-          `fabric_down: reaped ${args.concurrency} worker(s), removed ${args.queueRoot}`,
+          `fabric_down: reaped ${indices.size} worker(s) [${
+            [...indices].sort((a, b) => a - b).join(",")
+          }], removed ${args.queueRoot}`,
         );
         const handle = await context.writeResource("fabric", "fabric", {
           status: "down",
+          reaped: [...indices].sort((a, b) => a - b),
           timestamp: new Date().toISOString(),
         });
         return { dataHandles: [handle] };
@@ -1891,35 +2013,58 @@ export const model = {
       execute: async (args, context) => {
         const { host, user } = context.globalArgs;
         const paths = fabricPaths(args.queueRoot);
-        // Re-queue claimed tasks older than the timeout (strip the netns prefix
-        // to restore the original queue name) and emit each stalled worker netns.
+        // 1. Identify claims older than the timeout WITHOUT moving them yet —
+        //    capture each stalled claim's full basename. (Requeue happens in step
+        //    3, only AFTER the owning worker is killed, so a slow-but-alive worker
+        //    can never POST a late result for a task we've already re-dispatched.)
         const scan = [
           `now=$(date +%s)`,
           `for f in ${
             shellEsc(paths.claimedDir)
           }/*.json; do [ -e "$f" ] || continue;`,
           `  age=$(( now - $(stat -c %Y "$f") ));`,
-          `  if [ "$age" -gt ${args.timeoutSeconds} ]; then`,
-          `    b=$(basename "$f"); ns=\${b%%__*}; orig=\${b#*__};`,
-          `    mv "$f" ${
-            shellEsc(paths.queueDir)
-          }/"$orig" 2>/dev/null || rm -f "$f";`,
-          `    echo "$ns";`,
-          `  fi;`,
+          `  if [ "$age" -gt ${args.timeoutSeconds} ]; then basename "$f"; fi;`,
           `done`,
         ].join("\n");
         const { stdout } = await sshExec(host, user, scan);
-        const stalled = [...new Set(stdout.trim().split("\n").filter(Boolean))];
+        const stalledFiles = stdout.trim().split("\n").filter(Boolean);
+        const stalledNs = [
+          ...new Set(stalledFiles.map((b) => b.split("__")[0]).filter(Boolean)),
+        ];
+        // 2. Restart each stalled worker FIRST. bringUpWorker kills the wedged VM
+        //    (and its in-VM agent), so by the time we requeue in step 3 the old
+        //    worker is dead and cannot clobber the re-dispatched task.
         const restarted: string[] = [];
-        for (const ns of stalled) {
-          const i = Number(ns.split("-").pop());
-          if (Number.isFinite(i) && i >= 1) {
+        for (const ns of stalledNs) {
+          const i = workerIndexFromNetns(ns);
+          if (i === null) continue;
+          try {
             await bringUpWorker(host, user, i, args, paths);
             restarted.push(ns);
+          } catch (e) {
+            // A single failed restart must not abort the method before step 3 —
+            // the captured claims still get requeued; the next recycle retries.
+            context.logger.info(
+              `fabric_recycle: restart of ${ns} failed (${
+                e instanceof Error ? e.message : String(e)
+              }); its task is still requeued for another worker`,
+            );
           }
         }
+        // 3. Now requeue exactly the claims we captured in step 1 (strip the netns
+        //    prefix to restore the original queue name). A claim whose worker
+        //    finished just in time is already gone -> the mv no-ops.
+        if (stalledFiles.length) {
+          const mvs = stalledFiles.map((b) => {
+            const orig = b.includes("__") ? b.slice(b.indexOf("__") + 2) : b;
+            return `mv ${shellEsc(`${paths.claimedDir}/${b}`)} ${
+              shellEsc(`${paths.queueDir}/${orig}`)
+            } 2>/dev/null || true`;
+          });
+          await sshExec(host, user, mvs.join("\n"));
+        }
         context.logger.info(
-          `fabric_recycle: re-queued + restarted ${restarted.length} stalled worker(s)${
+          `fabric_recycle: restarted ${restarted.length} stalled worker(s) + re-queued ${stalledFiles.length} task(s)${
             restarted.length ? ": " + restarted.join(",") : ""
           }`,
         );
