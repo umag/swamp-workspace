@@ -91,6 +91,10 @@ guess**. Call `triage` with `confidence=low` and populate `clarifyingQuestions`
 with specific things you need the human to answer, then stop and ask. Do not
 proceed to planning until the human clarifies.
 
+**Triage is single-shot.** `triage` may only be called once — classification
+freezes after it. If you misclassified, close and re-file. Reproduction is the
+exception: record it later via `record_reproduction` (Step 5).
+
 ### 5. Reproduce the bug
 
 **Bugs and regressions only — skip for features, improvements, refactors, and
@@ -101,27 +105,31 @@ Before planning a fix, reproduce the issue to confirm the failure mode. Read
 If it doesn't exist, create a minimal reproduction in `/tmp/` using the
 project's standard tooling.
 
-Record the outcome by re-calling `triage` (or adding a follow-up note; the
-`reproduced` field is part of `triageDetail`):
+**Two legal paths.** Reproduced the bug already? Include `reproduced:` in the
+Step 4 triage call's YAML (single call, no second method needed). Reproduction
+deferred? Record it later with `record_reproduction` — it stays available
+through planning (`triaged` and `planned` states; calling it from any later
+state is rejected), and a second call overwrites the first, so a
+`could-not-reproduce` can be upgraded to `reproduced` after a retry:
 
 ```bash
-swamp model method run <issue-name> triage \
-  --input priority=high --input category=bug \
-  --input-file /tmp/triage-issue-<issue-name>.yaml
+swamp model method run <issue-name> record_reproduction \
+  --input status=reproduced \
+  --input-file /tmp/record-reproduction-issue-<issue-name>.yaml
 ```
 
-With the file updated to include:
+Where the YAML carries the multiline notes:
 
 ```yaml
-affectedAreas: [...]
-clarifyingQuestions: []
-reproduced:
-  status: reproduced # reproduced | could-not-reproduce | not-applicable
-  notes: |
-    Steps: 1. ...
-    Observed: ...
-    Expected: ...
+notes: |
+  Steps: 1. ...
+  Observed: ...
+  Expected: ...
 ```
+
+(`status` is one of `reproduced` | `could-not-reproduce` | `not-applicable`. The
+method merges into `triageDetail.reproduced` only — classification is
+untouched.)
 
 If the bug **cannot be reproduced**, set `status: could-not-reproduce`, note
 why, and **ask the human how to proceed** before planning. It may mean the issue

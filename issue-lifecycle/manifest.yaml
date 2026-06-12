@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/issue-lifecycle"
-version: "2026.06.12.1"
+version: "2026.06.12.2"
 description: |
   Issue lifecycle model with 9 bundled Claude Code skills for DDD, TDD,
   moldable development, and parallel code review.
@@ -41,6 +41,8 @@ description: |
   - `start` — file a new issue
   - `triage` — classify with optional confidence/regression/reproduction
   - `record_prior_art` — record existing UAT scenarios and KB entries
+  - `record_reproduction` — record/update the bug-reproduction outcome after
+    triage (optional; callable from triaged or planned)
   - `plan` — create/revise plan with DDD analysis, TDD strategy, review matrix
   - `review_plan` — enter plan review phase
   - `record_review` — record one reviewer's findings
