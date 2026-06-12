@@ -3,6 +3,17 @@
 All notable changes to `@magistr/firecracker`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.12.2 — UTF-8-safe fabric base64
+
+### Fixed
+
+- `submit` and `poll` now encode/decode the queue payload as UTF-8
+  (`utf8ToBase64` + `TextDecoder`) instead of `btoa`/`atob`, which only handle
+  Latin1 — `submit` threw "characters outside of the Latin1 range" and `poll`
+  corrupted multibyte chars on any task prompt or result embedding non-ASCII
+  file content (emoji, box-drawing, CJK). Adds a round-trip regression test. No
+  other behaviour change.
+
 ## 2026.06.12.1 — publish docs
 
 ### Changed
