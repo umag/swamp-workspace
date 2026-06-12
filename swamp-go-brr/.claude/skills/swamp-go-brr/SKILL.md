@@ -16,13 +16,15 @@ description: >
 
 # swamp-go-brr — autonomous merkle-DAG development loop
 
-`@magistr/swamp-go-brr/gobrr` is a PURE DAG state machine — it owns
-**orchestration** (the Task DAG + scheduler) and **recursion** (follow-up
-expansion) and never touches the filesystem. The host **code-ownership** boundary
-(build the WorkOrder, apply the returned envelope behind the allowlist ACL) is a
-separate side-effectful model, `@magistr/swamp-go-brr/source-integration`. A
-Firecracker microVM runs only one small piece of work per leaf, given the
-practices + context it needs.
+Four models, four responsibilities — the agent drives them inline (no driver
+script):
+
+| Model | Owns |
+|-------|------|
+| `gobrr` | PURE DAG state machine: Task DAG, scheduler, follow-up recursion; never touches the filesystem |
+| `source-integration` | host code-ownership: build WorkOrder, apply the envelope behind the allowlist ACL |
+| `@magistr/firecracker` fabric | executor: one leaf = one `claude --print` in a microVM |
+| `docker-verify` | the deterministic green gate |
 
 ## Sacred rules (front-loaded — never violate)
 
@@ -39,22 +41,10 @@ practices + context it needs.
 3. **CONCRETE CAPS.** Defaults: `maxConcurrentVMs=5`, `maxAttempts=2`,
    `maxFollowupDepth=3`, `maxInvocations=100`, `wallclockSeconds=7200`,
    `stallN=2`, `stallK=3`. Concurrency IS supported but has two HARD
-   requirements (verified 2026-06-11):
-   (a) **netns per leaf.** The baked snapshot freezes every guest at
-   `172.16.0.2` / gw `172.16.0.1:8080`, so concurrent clones collide unless each
-   runs in its own Linux network namespace. Use `@magistr/firecracker`
-   ≥ `2026.06.11.2` (`netns` global arg → `start_vmm`/`kill_vmm` via
-   `ip netns exec`; `setup_tap --input netns=<run>-<leaf> --input vethSubnet=10.0.N.0/30`,
-   a UNIQUE /30 per concurrent leaf) and `@magistr/fc-task-server`
-   ≥ `2026.06.11.3` (keys its `/tmp/fc-{task,result}-<netns>-<port>` files by
-   netns; older versions clobber across VMs). Pin BOTH in `config.pinnedVersions`.
-   (b) **single-process fan-out.** Launch the concurrent leaves from ONE swamp
-   process — a workflow with parallel jobs or `forEach … concurrency: N`. NEVER
-   spawn N separate `swamp` CLI invocations per leaf: each grabs the
-   `__global__` datastore lock for its whole run (held while the VM works) and
-   they serialize → most time out at 60s. `maxConcurrentVMs` is a host-resource
-   guard (≈512 MiB RAM per restored VM); raise it as headroom allows. Only
-   wallclock + invocation count are *enforced*; dollar cost is advisory.
+   requirements: a network namespace per leaf (pinned substrate versions,
+   fail closed on mismatch) and single-process fan-out (NEVER N parallel
+   `swamp` CLI invocations — they serialize on the global datastore lock).
+   Details + version pins: [references/concurrency.md](references/concurrency.md).
 4. **STALL HANDOVER.** On `stalled`/cap halt, present the `haltReason` + the
    enumerated `haltOptions` + the `stallCulprits`, and hand to the human. Do not
    spin.
@@ -74,6 +64,26 @@ practices + context it needs.
 | Work contract | WorkOrder→prompt, WorkResult←envelope, the gate | [references/work-contract.md](references/work-contract.md) |
 | Practices | what to inject into each leaf's prompt | [references/practices.md](references/practices.md) |
 | Report / halt | hydrate, complete, stall/cap handover | [references/reporting.md](references/reporting.md) |
+
+## Minimal flow (abbreviated — full loop in references/inline-loop.md)
+
+```bash
+# 0. Pre-flight: human confirms repoScope, verifyCommand, verifyInputs (rule 2)
+swamp model method run <run> start --input intake=... --input config=...
+swamp model method run <run> seed_tasks --input tasks=...   # file-scoped DAG
+swamp model method run fab fabric_up --input concurrency=5 ...  # once per run
+
+# 1. Loop until all-green / stalled:
+swamp model method run <run> next --input owner=<driverId>
+swamp data get <run> decision --json                  # leased? → drive batch:
+swamp model method run si build_workorder ...         # allowlist slice → prompt
+swamp model method run fab submit ... && ... poll ... # claude --print in microVM
+swamp model method run si apply ...                   # @@EDIT envelope → jj change
+jj edit <changeId> && swamp model method run dv verify ...  # gate in isolation
+swamp model method run <run> report --input taskId=... --input verifyExitCode=...
+
+# 2. all-green → complete; fabric_down. stalled → hand to human (rule 4).
+```
 
 ## Resuming
 
