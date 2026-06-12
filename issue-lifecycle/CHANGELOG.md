@@ -3,6 +3,20 @@
 All notable changes to `@magistr/issue-lifecycle`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.12.3 — eval scenario-9: resume-dispatch from the TDD sub-cycle
+
+Evals only. **No model schema/method changes — model type version stays
+`2026.06.12.2`.**
+
+- New eval scenario-9: a resumed session at `writing_tests` must dispatch via
+  SKILL.md's resume table to `references/test-review.md` and drive the Phase 4a
+  loop through the autonomous gate. Fixture is mid-loop (one `rejected_auto`
+  test round, two named HIGH findings, current round reset); criteria are
+  order-anchored and mechanically scorable (orientation comment block, Phase 4a
+  verbs proxy, `tests_approved` as the final state-mutating call). Closes the
+  eval gap recorded in the `tdd-subcycle-doc-drift` harvest; gate-decision
+  behavior remains covered by scenarios 5 and 8.
+
 ## 2026.06.12.2 — record_reproduction method
 
 **Model behavior change — model type version bumped to `2026.06.12.2`** (first

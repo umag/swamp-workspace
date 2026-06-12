@@ -1,0 +1,61 @@
+{
+  "context": "Tests whether a resumed agent dispatches correctly from the TDD sub-cycle. The fixture is mid-Phase-4a: state writing_tests after one rejected_auto test-review round (testReviewIteration 2, two HIGH findings against the tests recorded in notes, current round reviews reset). Per SKILL.md's resume table, writing_tests dispatches to references/test-review.md; the historic failure mode this guards is dispatching to implementation.md because 'implementation has started'. The correct resume: orient via hydrate, check out the branch, revise the TESTS to address both HIGH findings, re-enter via review_tests, fan out the matrix reviewers with record_review, and call tests_approved autonomously as the final state-mutating step. The implementation.md trap is a basic regression guard — it fires on agents that skip hydrate or ignore the SKILL.md dispatch table, not on nuanced 4a/4b boundary reasoning. The sibling state reviewing_tests dispatches to the same reference file and is intentionally out of scope for this fixture. The gate-decision behavior itself is covered by scenario-5 (clean exit) and scenario-8 (contaminated diff); this scenario scores DISPATCH and loop mechanics only.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Orientation block names state and reference",
+      "description": "resume.sh begins with a comment block (roughly 3-5 lines) that names the current lifecycle state (writing_tests) AND the reference file being followed (test-review.md / the Phase 4a test-review reference)",
+      "max_score": 15
+    },
+    {
+      "name": "hydrate called first",
+      "description": "The first swamp method invocation in the script is hydrate (orientation before action), e.g. swamp model method run csv-import-validation hydrate",
+      "max_score": 12
+    },
+    {
+      "name": "Branch checkout before changes",
+      "description": "The script checks out fix/csv-import-validation (git checkout) before any test revision or swamp state mutation",
+      "max_score": 8
+    },
+    {
+      "name": "Phase 4a verbs only",
+      "description": "The script uses Phase 4a methods (review_tests, record_review, tests_approved) and does NOT invoke Phase 5 methods (review_code, resolve_findings) or planning methods (plan, review_plan, approve_plan)",
+      "max_score": 15
+    },
+    {
+      "name": "Both HIGH findings addressed in test revision",
+      "description": "The script's test-revision section addresses BOTH named findings from the notes: the mid-stream reader-failure path test AND strengthening the header-mismatch assertion to check rejection ordering (encoding before column counts)",
+      "max_score": 12
+    },
+    {
+      "name": "review_tests re-entry after revision",
+      "description": "After the test revisions, the script calls review_tests to re-enter the review round (the named re-entry step) — revising without re-entering is the unfinished-round failure mode",
+      "max_score": 10
+    },
+    {
+      "name": "Matrix fan-out recorded",
+      "description": "The script records a record_review result for each active matrix reviewer (review-code and review-adversarial per the fixture's reviewMatrix)",
+      "max_score": 8
+    },
+    {
+      "name": "tests_approved last, autonomous",
+      "description": "tests_approved is the final state-mutating swamp call in the script (read-only observation calls like hydrate or swamp data get may follow), appearing after review_tests AND after all record_review calls, and the script does NOT pause to ask a human for approval before it",
+      "max_score": 12
+    },
+    {
+      "name": "No premature gate",
+      "description": "tests_approved does NOT appear before review_tests in the script (calling the gate on the stale round is the premature-gate failure mode)",
+      "max_score": 5
+    },
+    {
+      "name": "No implementation code in writing_tests",
+      "description": "The script does NOT create or modify implementation/source files while in writing_tests — only test files are touched before the gate (the tests-only diff discipline)",
+      "max_score": 8
+    },
+    {
+      "name": "--repo-dir on swamp commands",
+      "description": "swamp commands account for running from a Claude Code worktree by passing --repo-dir pointing at the main repository root (per the SKILL.md worktree note)",
+      "max_score": 5
+    }
+  ]
+}
