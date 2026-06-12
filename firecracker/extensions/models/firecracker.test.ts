@@ -8,6 +8,7 @@ import {
   FABRIC_SERVER_PY,
   fabricPaths,
   parsePollOutput,
+  utf8ToBase64,
   workerIndexFromNetns,
 } from "./firecracker.ts";
 
@@ -371,6 +372,34 @@ Deno.test("parsePollOutput decodes the id->result map and the pending count", ()
   assert(
     bad.completed.corrupt === "",
     "a corrupt result line decodes to empty, never throws",
+  );
+});
+
+Deno.test("base64 round-trips non-Latin1 task/result content (emoji, box-drawing, CJK)", () => {
+  // The submit prompt embeds file content and the poll result echoes it back;
+  // both can carry non-ASCII (the exact chars an ascii-fix task edits). Plain
+  // btoa/atob only handle Latin1 — btoa throws "outside of the Latin1 range" and
+  // atob corrupts multibyte chars — so submit must encode via utf8ToBase64 and
+  // parsePollOutput must UTF-8-decode. (Regression: this once blocked a whole run.)
+  const s = "best 🏆 stop 🛑 tree ├── `-- │ CJK 日本語";
+  let plainBtoaThrew = false;
+  try {
+    btoa(s);
+  } catch {
+    plainBtoaThrew = true;
+  }
+  assert(
+    plainBtoaThrew,
+    "plain btoa throws on non-Latin1 — why utf8ToBase64 exists",
+  );
+
+  // submit-side encode -> the daemon's `base64 -w0` of the UTF-8 result bytes is
+  // byte-identical, so feeding it back through parsePollOutput is the real path.
+  const b64 = utf8ToBase64(s);
+  const { completed } = parsePollOutput(`===t1===\n${b64}\nPENDING=0\n`);
+  assert(
+    completed.t1 === s,
+    "non-Latin1 content survives the encode->decode round-trip",
   );
 });
 

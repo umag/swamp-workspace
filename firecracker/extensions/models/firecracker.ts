@@ -274,6 +274,16 @@ export function fabricPaths(queueRoot: string): {
  * OAuth token is deliberately ABSENT here — the daemon injects it at serve time —
  * so this is the credential-hygiene boundary the queue file must never cross.
  * Pure; unit-tested. */
+/** UTF-8-safe base64 encode. `btoa` only handles Latin1, so task prompts that
+ * embed non-ASCII file content (emoji, box-drawing, CJK, …) throw "characters
+ * outside of the Latin1 range". Encode to UTF-8 bytes first. */
+export function utf8ToBase64(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
 export function buildQueuePayload(
   t: { prompt: string; model?: string; effort?: string; gitRepoUrl?: string },
   id: string,
@@ -303,7 +313,9 @@ export function parsePollOutput(
   let m: RegExpExecArray | null;
   while ((m = re.exec(stdout)) !== null) {
     try {
-      completed[m[1]] = atob(m[2]);
+      completed[m[1]] = new TextDecoder().decode(
+        Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0)),
+      );
     } catch {
       completed[m[1]] = "";
     }
@@ -1872,7 +1884,7 @@ export const model = {
           const id = crypto.randomUUID();
           ids.push(id);
           const seq = String(base + k).padStart(16, "0");
-          const b64 = btoa(JSON.stringify(buildQueuePayload(t, id)));
+          const b64 = utf8ToBase64(JSON.stringify(buildQueuePayload(t, id)));
           const tmp = `${paths.queueDir}/.${seq}-${id}.json.tmp`;
           const fin = `${paths.queueDir}/${seq}-${id}.json`;
           // tmp + atomic rename so a worker never claims a half-written task file
