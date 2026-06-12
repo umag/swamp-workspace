@@ -839,7 +839,7 @@ async function readState(
  */
 export const model = {
   type: "@magistr/issue-lifecycle",
-  version: "2026.06.12.1",
+  version: "2026.06.12.2",
 
   globalArguments: z.object({}),
 
@@ -1004,6 +1004,39 @@ export const model = {
             uatScenarios: args.uatScenarios,
             kbEntries: args.kbEntries,
             searchedAt: now(),
+          },
+          updatedAt: now(),
+        });
+
+        return { dataHandles: [handle] };
+      },
+    },
+
+    record_reproduction: {
+      description:
+        "Record or update the bug-reproduction outcome after triage — " +
+        "optional step for bugs/regressions. Merges into " +
+        "triageDetail.reproduced without touching classification; state is " +
+        "unchanged. Callable from triaged or planned; a second call " +
+        "overwrites the first (retry-later supported).",
+      arguments: ReproducedSchema,
+      execute: async (
+        args: { status: ReproducedStatus; notes?: string },
+        context: ReadWriteCtx,
+      ) => {
+        const data = await readState(context);
+        if (!data) throw new Error("No issue state found — run 'start' first");
+        guardState(data.state, ["triaged", "planned"], "record_reproduction");
+
+        context.logger.info("Recording reproduction outcome: {status}", {
+          status: args.status,
+        });
+
+        const handle = await context.writeResource("state", "current", {
+          ...data,
+          triageDetail: {
+            ...(data.triageDetail ?? { clarifyingQuestions: [] }),
+            reproduced: { status: args.status, notes: args.notes },
           },
           updatedAt: now(),
         });

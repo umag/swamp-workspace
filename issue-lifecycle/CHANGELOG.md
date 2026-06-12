@@ -3,6 +3,32 @@
 All notable changes to `@magistr/issue-lifecycle`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.12.2 — record_reproduction method
+
+**Model behavior change — model type version bumped to `2026.06.12.2`** (first
+model change since `2026.04.30.5`; the intervening releases were skills-only).
+
+- New method `record_reproduction` — record or update the bug-reproduction
+  outcome after triage. Optional, for bugs/regressions; guard
+  `[triaged, planned]` (mirrors `record_prior_art`); merges into
+  `triageDetail.reproduced` without touching classification; state is unchanged;
+  a second call overwrites the first (retry-later supported). Fixes the
+  documented-but-impossible flow where `triage.md` Step 5 instructed re-calling
+  `triage` to record the reproduction — the triage guard (single-shot by design)
+  rejects every re-call.
+- `references/triage.md`: Step 5 now presents both legal paths (include
+  `reproduced:` in the single triage call when already in hand, or
+  `record_reproduction` later) with a file-based multiline-notes example; the
+  factually wrong "follow-up note" parenthetical is gone; Step 4 gains an
+  explicit triage-is-single-shot callout.
+- `references/state-machine.md`: guard/method rows for the new method; both
+  sibling recorder annotations now read `(optional, stays in
+  triaged/planned)`
+  matching their actual guards.
+- 5 new model tests (merge-preserves-detail, planned parity, filed rejection,
+  detail creation, overwrite); the docs drift-guard's dynamic sweep enforced the
+  state-machine.md documentation mechanically.
+
 ## 2026.06.12.1 — skills catch up with the TDD test-review sub-cycle
 
 Skills + docs + evals + a drift-guard test only. **No model schema/method

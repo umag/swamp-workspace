@@ -353,6 +353,104 @@ Deno.test("record_prior_art rejected from filed", async () => {
 });
 
 // ============================================================================
+// record_reproduction
+// ============================================================================
+
+Deno.test("record_reproduction in triaged sets reproduced and preserves detail", async () => {
+  const h = createHarness();
+  await run(
+    "start",
+    { title: "Bug", description: "details", labels: [] },
+    h.ctx,
+  );
+  await run(
+    "triage",
+    {
+      priority: "high",
+      category: "bug",
+      affectedAreas: ["extensions"],
+      confidence: "high",
+      reasoning: "stack trace points at the parser",
+      clarifyingQuestions: [],
+    },
+    h.ctx,
+  );
+  await run(
+    "record_reproduction",
+    { status: "reproduced", notes: "Steps: run X. Observed: crash." },
+    h.ctx,
+  );
+  const s = h.getState()!;
+  assertEquals(s.state, "triaged");
+  assertEquals(s.triageDetail!.confidence, "high");
+  assertEquals(s.triageDetail!.reasoning, "stack trace points at the parser");
+  assertEquals(s.triageDetail!.reproduced!.status, "reproduced");
+  assertEquals(
+    s.triageDetail!.reproduced!.notes,
+    "Steps: run X. Observed: crash.",
+  );
+});
+
+Deno.test("record_reproduction works from planned and preserves state", async () => {
+  const h = createHarness();
+  await filedAndTriaged(h);
+  await run("plan", defaultPlanArgs(), h.ctx);
+  await run(
+    "record_reproduction",
+    { status: "could-not-reproduce", notes: "env unavailable" },
+    h.ctx,
+  );
+  const s = h.getState()!;
+  assertEquals(s.state, "planned");
+  assertEquals(s.triageDetail!.reproduced!.status, "could-not-reproduce");
+});
+
+Deno.test("record_reproduction rejected from filed", async () => {
+  const h = createHarness();
+  await run(
+    "start",
+    { title: "Bug", description: "details", labels: [] },
+    h.ctx,
+  );
+  await assertRejects(
+    () => run("record_reproduction", { status: "reproduced" }, h.ctx),
+    Error,
+    "Cannot call 'record_reproduction' in state 'filed'",
+  );
+});
+
+Deno.test("record_reproduction creates triageDetail when none exists", async () => {
+  const h = createHarness();
+  await filedAndTriaged(h); // detail-less triage → triageDetail undefined
+  assertEquals(h.getState()!.triageDetail, undefined);
+  await run("record_reproduction", { status: "not-applicable" }, h.ctx);
+  const s = h.getState()!;
+  assertEquals(s.triageDetail!.reproduced!.status, "not-applicable");
+  // clarifyingQuestions defaults to [] via TriageDetailSchema regardless of
+  // whether the method sets it explicitly — the schema invariant is the
+  // enforcer here; this assertion documents the contract, not the code path.
+  assertEquals(s.triageDetail!.clarifyingQuestions, []);
+});
+
+Deno.test("record_reproduction second call overwrites the first", async () => {
+  const h = createHarness();
+  await filedAndTriaged(h);
+  await run(
+    "record_reproduction",
+    { status: "could-not-reproduce", notes: "flaky env" },
+    h.ctx,
+  );
+  await run(
+    "record_reproduction",
+    { status: "reproduced", notes: "stable repro on retry" },
+    h.ctx,
+  );
+  const s = h.getState()!;
+  assertEquals(s.triageDetail!.reproduced!.status, "reproduced");
+  assertEquals(s.triageDetail!.reproduced!.notes, "stable repro on retry");
+});
+
+// ============================================================================
 // plan
 // ============================================================================
 
