@@ -120,6 +120,7 @@ dispatch to the right phase reference without reading the full state blob:
 | `filed`                            | [references/triage.md](references/triage.md)                         |
 | `triaged`, `planned`               | [references/planning.md](references/planning.md)                     |
 | `reviewing`                        | [references/adversarial-review.md](references/adversarial-review.md) |
+| `approved`                         | [references/test-review.md](references/test-review.md)               |
 | `writing_tests`, `reviewing_tests` | [references/test-review.md](references/test-review.md)               |
 | `implementing`                     | [references/implementation.md](references/implementation.md)         |
 | `code_reviewing`                   | [references/code-review.md](references/code-review.md)               |

@@ -62,6 +62,7 @@ After every full fan-out round (every active reviewer has called
    - `state` — current model state
    - `planVersion` — current plan version
    - `planIterationsThisVersion` — plan-review iterations for this plan version
+   - `testReviewIteration` — test-review iteration counter
    - `codeReviewIteration` — code-review iteration counter
    - `blocking: {critical, high, total}` — open blocking findings in the current
      round
@@ -71,12 +72,13 @@ After every full fan-out round (every active reviewer has called
      loop detection)
 
 2. **Exit clean?** If `blocking.total == 0 AND coverage.complete`, **exit the
-   loop** and go to "Present to human (clean exit)" below.
+   loop**. For Phases 3 and 5 go to "Present to human (clean exit)" below; for
+   Phase 4a go to "Phase 4a clean exit (autonomous)".
 
 3. **Safeguard: iteration cap.** If the relevant iteration counter
-   (`planIterationsThisVersion` for Phase 3, `codeReviewIteration` for Phase 5)
-   is `>= MAX_ITERATIONS`, **exit the loop** and go to "Handover to human
-   (safeguard exit): cap reached".
+   (`planIterationsThisVersion` for Phase 3, `testReviewIteration` for Phase 4a,
+   `codeReviewIteration` for Phase 5) is `>= MAX_ITERATIONS`, **exit the loop**
+   and go to "Handover to human (safeguard exit): cap reached".
 
 4. **Safeguard: loop detection.** If `hydrate.signature == previous_signature`,
    **exit the loop** and go to "Handover: loop detected". Two consecutive rounds
@@ -103,6 +105,18 @@ After every full fan-out round (every active reviewer has called
      --input testStrategy="..." \
      --input-file /tmp/plan-issue-<issue-name>-v<N+1>.yaml
    swamp model method run <issue-name> review_plan
+   ```
+
+   For Phase 4a, rewrite the tests addressing every open CRITICAL and HIGH
+   finding (still RED, failing for the right reasons), then:
+
+   ```bash
+   # Phase 4a
+   swamp model method run <issue-name> iterate_tests \
+     --input reason="Autonomous iteration <N>: <crit>C + <high>H" \
+     --input source=auto
+   # ... rewrite the tests in the branch ...
+   swamp model method run <issue-name> review_tests
    ```
 
    For Phase 5, fix the code addressing every open CRITICAL and HIGH finding,
@@ -208,7 +222,7 @@ reject method with `source=human` and the human's feedback as the reason, then
 return to the previous phase for a fresh revision:
 
 - Phase 3: `reject_plan --input source=human` → back to Phase 2 (planning)
-- Phase 5: `iterate --input source=human` → back to Phase 4 (implementation)
+- Phase 5: `iterate --input source=human` → back to Phase 4b (implementation)
 
 ## Handover to human (safeguard exit)
 
