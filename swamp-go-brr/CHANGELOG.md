@@ -3,6 +3,18 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## Unreleased
+
+### Added
+
+- Bundled the `swamp-go-brr` driving skill (SKILL.md + inline-loop /
+  work-contract / practices / reporting references + trigger evals) into the
+  package under `.claude/skills/swamp-go-brr/`, declared via the manifest
+  `skills:` list. The loop is driver-free — the agent IS the driver — so the
+  cross-model protocol (gobrr → build_workorder → fabric submit/poll → apply →
+  docker-verify → report), the sacred rules, and the concurrency gotchas now
+  ship with the models instead of living only in one repo.
+
 ## 2026.06.12.1 — source-integration + driver-free loop
 
 ### Added
