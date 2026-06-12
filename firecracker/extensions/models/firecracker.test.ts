@@ -4,7 +4,10 @@ import {
   buildDiscoverWorkersCmd,
   buildKillVmmCmd,
   buildQueuePayload,
+  buildSetupTapScript,
   buildStartVmmCmd,
+  buildVerifyNetnsCmd,
+  deriveVethAddrs,
   FABRIC_SERVER_PY,
   fabricPaths,
   parsePollOutput,
@@ -550,4 +553,179 @@ Deno.test("buildDeployFabricCmd runs the daemon in the netns with the shared que
   );
   assert(c.includes("FC_OAUTH_TOKEN="), "token passed to the daemon env");
   assert(c.includes("base64 -d"), "server script written via base64");
+});
+
+// ---------------------------------------------------------------------------
+// netns uplink wiring: the fabric_up "worker counted ready while its netns
+// lacks the veth uplink" race. The fix lives in three pure builders, so the
+// repair/verify/fail-fast properties are asserted on the generated shell.
+// ---------------------------------------------------------------------------
+
+Deno.test("deriveVethAddrs derives host (.1), ns (.2) and prefix from a veth subnet", () => {
+  const a = deriveVethAddrs("10.0.1.0/30");
+  assert(a.vethHostIp === "10.0.1.1", "host/gateway is .1");
+  assert(a.vethNsIp === "10.0.1.2", "namespace side is .2");
+  assert(a.vethPrefix === "30", "prefix preserved");
+});
+
+Deno.test("buildSetupTapScript repairs the veth keyed on the NS-side fcveth0 (not the root-side veth)", () => {
+  const c = buildSetupTapScript({
+    tapName: "tap0",
+    hostIp: "172.16.0.1",
+    prefix: 24,
+    guestSubnet: "172.16.0.0/24",
+    netns: "sip-1",
+    vethSubnet: "10.0.1.0/30",
+  });
+  // The (re)creation gate probes the ns-side peer, the end that actually
+  // determines guest egress, then rebuilds the pair only when it is missing.
+  assert(
+    c.includes("ip netns exec 'sip-1' ip link show fcveth0 2>/dev/null || {"),
+    "gates veth (re)creation on the ns-side fcveth0",
+  );
+  assert(
+    c.includes("type veth peer name fcveth0 netns 'sip-1'"),
+    "recreates the pair with fcveth0 in the namespace",
+  );
+  // A stale root-side half is deleted before re-add, and that delete must be
+  // guarded so first boot (no device yet) does not abort the script.
+  assert(
+    /ip link del 'fcv[0-9a-f]+' 2>\/dev\/null \|\| true/.test(c),
+    "stale root-side veth deleted, guarded by `|| true`",
+  );
+  // Must NOT short-circuit on the root-side veth (the original asymmetric bug:
+  // `ip link show <rootVeth> || ip link add ...`).
+  assert(
+    !/ip link show 'fcv[0-9a-f]+' 2>\/dev\/null \|\| ip link add/.test(c),
+    "does not gate solely on the root-side veth",
+  );
+});
+
+Deno.test("buildSetupTapScript fails fast when the host has no default route", () => {
+  const c = buildSetupTapScript({
+    tapName: "tap0",
+    hostIp: "172.16.0.1",
+    prefix: 24,
+    guestSubnet: "172.16.0.0/24",
+    netns: "sip-1",
+    vethSubnet: "10.0.1.0/30",
+  });
+  assert(
+    c.includes(`[ -n "$UP" ] ||`) && c.includes("no host default route"),
+    "aborts (exit 1) instead of building a host MASQUERADE with an empty -o",
+  );
+  // The fail-fast must precede the host MASQUERADE that consumes $UP.
+  assert(
+    c.indexOf(`[ -n "$UP" ] ||`) <
+      c.indexOf('-o "$UP" -m comment'),
+    "the $UP guard comes before the host egress rule",
+  );
+});
+
+Deno.test("buildSetupTapScript root-namespace path stays byte-identical", () => {
+  const c = buildSetupTapScript({
+    tapName: "tap0",
+    hostIp: "172.16.0.1",
+    prefix: 24,
+    guestSubnet: "172.16.0.0/24",
+  });
+  const expected = [
+    `ip link show 'tap0' 2>/dev/null || ip tuntap add dev 'tap0' mode tap`,
+    `ip addr show 'tap0' | grep -q '172.16.0.1' || ip addr add '172.16.0.1/24' dev 'tap0'`,
+    `ip link set 'tap0' up`,
+    `sysctl -w net.ipv4.ip_forward=1 -q`,
+    `iptables -t nat -C POSTROUTING -s '172.16.0.0/24' -j MASQUERADE 2>/dev/null || ` +
+    `iptables -t nat -A POSTROUTING -s '172.16.0.0/24' -j MASQUERADE`,
+    `echo ok`,
+  ].join("\n");
+  assert(c === expected, "root-namespace recipe unchanged");
+});
+
+Deno.test("buildVerifyNetnsCmd asserts fcveth0 addr + tap up + default route, shellEsc + grep -qwF", () => {
+  const c = buildVerifyNetnsCmd("sip-1", "10.0.1.0/30", "tap0");
+  assert(
+    c.includes("ip netns exec 'sip-1' ip -o -4 addr show dev fcveth0"),
+    "checks fcveth0 inside the namespace",
+  );
+  assert(
+    c.includes("grep -qwF '10.0.1.2'"),
+    "matches the ns veth IP literally + word-bounded",
+  );
+  assert(
+    c.includes("ip netns exec 'sip-1' ip link show 'tap0' up"),
+    "checks the in-ns tap is up",
+  );
+  assert(
+    c.includes("grep -qwF 'default via 10.0.1.1'"),
+    "checks the default route via the veth gateway",
+  );
+  assert(
+    (c.match(/exit 1/g) ?? []).length >= 3,
+    "each missing-wiring check exits non-zero",
+  );
+  // The literal word-bounded flag must be on EVERY IP/route check, so it can't
+  // be quietly dropped from one and re-admit a substring false-positive.
+  assert(
+    (c.match(/grep -qwF /g) ?? []).length >= 3,
+    "fcveth0 addr, tap, and default route all matched with grep -qwF",
+  );
+  assert(c.includes("echo verified"), "emits a success sentinel");
+});
+
+Deno.test("buildVerifyNetnsCmd shellEsc's an injection-bearing netns/tap (safe by construction)", () => {
+  const c = buildVerifyNetnsCmd("a'b", "10.0.1.0/30", "t'p");
+  // shellEsc wraps and escapes embedded quotes — no raw quote reaches the shell.
+  assert(c.includes(`'a'\\''b'`), "netns single-quote escaped");
+  assert(c.includes(`'t'\\''p'`), "tap single-quote escaped");
+});
+
+Deno.test({
+  // grep -qwF is the load-bearing flag: the original "looks ready but isn't"
+  // class is exactly a substring/metachar false match (10.0.1.2 vs 10.0.1.20).
+  name: "verify grep -qwF rejects a near-miss address (10.0.1.2 != 10.0.1.20)",
+  ignore: !BASH_OK,
+  fn: async () => {
+    const hit = await new Deno.Command("bash", {
+      args: ["-c", `printf '%s\\n' 'inet 10.0.1.2/30' | grep -qwF '10.0.1.2'`],
+    }).output();
+    assert(hit.success, "the exact veth IP matches");
+    const miss = await new Deno.Command("bash", {
+      args: ["-c", `printf '%s\\n' 'inet 10.0.1.20/30' | grep -qwF '10.0.1.2'`],
+    }).output();
+    assert(!miss.success, "a longer sibling addr (10.0.1.20) is NOT a match");
+    const route = await new Deno.Command("bash", {
+      args: [
+        "-c",
+        `printf '%s\\n' 'default via 10.0.1.10 dev fcveth0' | grep -qwF 'default via 10.0.1.1'`,
+      ],
+    }).output();
+    assert(!route.success, "a sibling gateway (10.0.1.10) is NOT a match");
+  },
+});
+
+Deno.test({
+  // Regression guard: the new netns veth brace-group and buildVerifyNetnsCmd's
+  // three `|| { ...; exit 1; }` groups are the same brace-across-newlines shape
+  // that previously shipped a bash syntax error — keep them syntax-checked.
+  name: "netns setup_tap + buildVerifyNetnsCmd emit syntactically valid bash",
+  ignore: !BASH_OK,
+  fn: async () => {
+    const setup = buildSetupTapScript({
+      tapName: "tap0",
+      hostIp: "172.16.0.1",
+      prefix: 24,
+      guestSubnet: "172.16.0.0/24",
+      netns: "sip-1",
+      vethSubnet: "10.0.1.0/30",
+    });
+    const verify = buildVerifyNetnsCmd("sip-1", "10.0.1.0/30", "tap0");
+    for (const [label, script] of [["setup_tap", setup], ["verify", verify]]) {
+      const out = await new Deno.Command("bash", { args: ["-n", "-c", script] })
+        .output();
+      assert(
+        out.success,
+        `bash -n rejected ${label}: ${new TextDecoder().decode(out.stderr)}`,
+      );
+    }
+  },
 });
