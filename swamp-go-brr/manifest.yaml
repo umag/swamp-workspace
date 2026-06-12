@@ -21,6 +21,8 @@ description: |
 repository: "https://github.com/umag/swamp-workspace"
 paths:
   base: manifest
+skills:
+  - swamp-go-brr
 models:
   - extensions/models/gobrr.ts
   - extensions/models/docker_verify.ts

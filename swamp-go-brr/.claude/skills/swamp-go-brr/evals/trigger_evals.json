@@ -1,0 +1,18 @@
+[
+  { "query": "Kick off a swamp-go-brr run for the retry refactor.", "should_trigger": true },
+  { "query": "Let gobrr decompose this into a task DAG and build it autonomously.", "should_trigger": true },
+  { "query": "Drive the gobrr loop until all leaves are green.", "should_trigger": true },
+  { "query": "Spawn firecracker coding agents to implement these tasks one per VM.", "should_trigger": true },
+  { "query": "Resume the swamp-go-brr run and show me the hydrate summary.", "should_trigger": true },
+  { "query": "go brr on this backlog — autonomous dev loop over the whole module.", "should_trigger": true },
+  { "query": "A task filed a follow-up; add it to the DAG as a blocking dependency.", "should_trigger": true },
+
+  { "query": "Triage issue #42 and plan the fix.", "should_trigger": false },
+  { "query": "Drive this issue through the lifecycle until zero CRITICAL and HIGH, then wait for approval.", "should_trigger": false },
+  { "query": "Approve the plan and start implementation.", "should_trigger": false },
+  { "query": "Write a failing test first for the timeout bug.", "should_trigger": false },
+  { "query": "Pick the right aggregate and value objects for this domain.", "should_trigger": false },
+  { "query": "Do a security review of the pending changes.", "should_trigger": false },
+  { "query": "Boot a single Firecracker microVM and snapshot it.", "should_trigger": false },
+  { "query": "File a GitHub bug for the broken jitter.", "should_trigger": false }
+]
