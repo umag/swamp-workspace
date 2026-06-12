@@ -8,8 +8,9 @@ description: >
   change behind an allowlist ACL, and gates it with a deterministic
   @magistr/swamp-go-brr/docker-verify run. Tasks can file follow-ups that become
   blocking DAG nodes. Do NOT use to drive a GitHub issue through review/approval
-  (that is `issue-lifecycle`), to file a bug (`swamp-issue`), or to boot a one-off
-  VM (`@magistr/firecracker`). Triggers on "swamp-go-brr", "go brr", "gobrr run",
+  or to iterate on code-review findings (both are `issue-lifecycle`), to file a
+  bug (`swamp-issue`), or to boot a one-off VM (`@magistr/firecracker`). Triggers
+  on "swamp-go-brr", "go brr", "gobrr run",
   "autonomous dev loop", "task DAG run", "decompose into tasks and build",
   "drive the gobrr loop", "spawn firecracker coding agents".
 ---

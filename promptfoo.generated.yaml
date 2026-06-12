@@ -49,8 +49,9 @@ prompts:
         Task DAG and drive a headless loop running each leaf as a coding
         agent in a Firecracker microVM, applying diffs behind an allowlist
         ACL, gated by docker-verify; follow-ups become blocking DAG nodes.
-        NOT for driving a GitHub issue through review/approval (that is
-        issue-lifecycle), filing a bug, or booting a one-off VM
+        NOT for driving a GitHub issue through review/approval or iterating
+        on code-review findings (both are issue-lifecycle), filing a bug, or
+        booting a one-off VM
 
       User query: "{{query}}"
 
