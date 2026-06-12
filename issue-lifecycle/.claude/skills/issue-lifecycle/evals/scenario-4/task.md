@@ -12,6 +12,11 @@ implementation of the existing `RateLimiter` is in `inputs/rate-limiter.ts`. The
 codebase is in active development with no external consumers — it has not yet
 been released.
 
+The issue is past the TDD test-review gate: the failing test suite was authored
+and approved in Phase 4a (`tests_approved` has been called) and the lifecycle
+state is `implementing`. Your guide covers Phase 4b — making the approved tests
+pass — not authoring new failing tests.
+
 A senior engineer has asked you to produce a step-by-step implementation guide
 so the team can use it as a reference during a pairing session tomorrow. The
 guide should show exactly how you would work through each step of the approved

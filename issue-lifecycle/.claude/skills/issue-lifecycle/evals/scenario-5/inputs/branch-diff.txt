@@ -1,0 +1,52 @@
+$ git diff --name-only master..feat/csv-export-streaming
+deno.json
+extensions/exporters/csv_stream.test.ts
+
+$ git diff --stat master..feat/csv-export-streaming
+ deno.json                              |  2 +-
+ extensions/exporters/csv_stream.test.ts | 184 ++++++++++++++++++++++++++
+ 2 files changed, 185 insertions(+), 1 deletion(-)
+
+$ git diff master..feat/csv-export-streaming
+diff --git a/deno.json b/deno.json
+--- a/deno.json
++++ b/deno.json
+@@ -2,7 +2,7 @@
+   "tasks": {
+-    "test": "deno test extensions/",
++    "test": "deno test --allow-read=. extensions/",
+     "fmt": "deno fmt"
+   },
+
+diff --git a/extensions/exporters/csv_stream.test.ts b/extensions/exporters/csv_stream.test.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/exporters/csv_stream.test.ts
+@@ -0,0 +1,184 @@
++// Tests for the streaming CSV exporter (approved plan step 1-3).
++// All tests currently FAIL: csv_stream.ts does not exist yet (Phase 4a RED).
++
++import { assertEquals, assertRejects } from "jsr:@std/assert@1";
++import { streamRows } from "./csv_stream.ts";
++
++Deno.test("streamRows emits header row before any data row", async () => {
++  const sink: string[] = [];
++  await streamRows([{ id: 1 }], (chunk) => sink.push(chunk));
++  assertEquals(sink[0], "id\n");
++});
++
++Deno.test("streamRows applies backpressure when sink is slow", async () => {
++  // ... (fails: module missing)
++});
++
++Deno.test("streamRows rejects when the sink throws mid-stream", async () => {
++  await assertRejects(() =>
++    streamRows([{ id: 1 }], () => {
++      throw new Error("sink full");
++    })
++  );
++});
++
++Deno.test("streamRows produces only a header for an empty export", async () => {
++  // ... (fails: module missing)
++});

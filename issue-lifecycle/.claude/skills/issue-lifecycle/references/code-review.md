@@ -2,8 +2,9 @@
 
 ## Prerequisites
 
-- State: `code_reviewing` (Phase 4 just called `review_code`)
-- The branch contains all plan steps executed and tests passing locally
+- State: `code_reviewing` (Phase 4b just called `review_code`)
+- The branch carries the test suite approved in Phase 4a (`tests_approved`), all
+  plan steps executed, and tests passing locally
 
 Phase 5 mirrors Phase 3 (adversarial review) but applies the matrix fan-out to
 the implemented code rather than the plan.
@@ -16,7 +17,7 @@ result.
 
 ## Entry prerequisite
 
-The `review_code` method was called at the end of Phase 4, transitioning state
+The `review_code` method was called at the end of Phase 4b, transitioning state
 to `code_reviewing` and bumping `codeReviewIteration`. If you're resuming a
 session and state is `code_reviewing`, you may need to re-enter by calling
 `review_code` again (this will snapshot the previous round into `reviewHistory`

@@ -1,0 +1,57 @@
+$ git diff --name-only master..feat/webhook-signature-validation
+extensions/webhooks/signature.test.ts
+extensions/webhooks/signature.ts
+
+$ git diff --stat master..feat/webhook-signature-validation
+ extensions/webhooks/signature.test.ts | 96 +++++++++++++++++++
+ extensions/webhooks/signature.ts      | 58 ++++++++++++
+ 2 files changed, 154 insertions(+)
+
+$ git diff master..feat/webhook-signature-validation
+diff --git a/extensions/webhooks/signature.test.ts b/extensions/webhooks/signature.test.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/webhooks/signature.test.ts
+@@ -0,0 +1,96 @@
++import { assertEquals, assertRejects } from "jsr:@std/assert@1";
++import { verifySignature } from "./signature.ts";
++
++Deno.test("verifySignature accepts a valid HMAC-SHA256 signature", async () => {
++  const ok = await verifySignature(PAYLOAD, validSig, SECRET);
++  assertEquals(ok, true);
++});
++
++Deno.test("verifySignature rejects a tampered payload", async () => {
++  const ok = await verifySignature(PAYLOAD + "x", validSig, SECRET);
++  assertEquals(ok, false);
++});
++
++Deno.test("verifySignature rejects a stale timestamp beyond tolerance", async () => {
++  // ...
++});
+
+diff --git a/extensions/webhooks/signature.ts b/extensions/webhooks/signature.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/webhooks/signature.ts
+@@ -0,0 +1,58 @@
++// Webhook signature verification (HMAC-SHA256, constant-time compare).
++export async function verifySignature(
++  payload: string,
++  signature: string,
++  secret: string,
++): Promise<boolean> {
++  const key = await crypto.subtle.importKey(
++    "raw",
++    new TextEncoder().encode(secret),
++    { name: "HMAC", hash: "SHA-256" },
++    false,
++    ["sign"],
++  );
++  const mac = await crypto.subtle.sign(
++    "HMAC",
++    key,
++    new TextEncoder().encode(payload),
++  );
++  return timingSafeEqual(toHex(mac), signature);
++}
