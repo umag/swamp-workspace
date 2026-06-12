@@ -1,0 +1,43 @@
+{
+  "issueName": "csv-import-validation",
+  "state": "writing_tests",
+  "title": "Reject malformed CSV imports before row processing",
+  "description": "Imports with mismatched column counts or invalid encodings currently crash the row processor mid-file. Validate the header and encoding up front and reject with a structured error.",
+  "priority": "high",
+  "category": "bug",
+  "affectedAreas": [
+    "src/import/csv/",
+    "src/import/validation/"
+  ],
+  "planVersion": 1,
+  "testReviewIteration": 2,
+  "codeReviewIteration": 1,
+  "branch": "fix/csv-import-validation",
+  "plan": {
+    "summary": "## Summary\nValidate CSV header shape and encoding before row processing; reject with a structured ImportRejection error.\n\n## Documentation impact\ndocs/import/csv.md gains a validation section.\n\n## UAT coverage\nNew scenarios needed — see Phase 6.\n\n## PR\n(not yet opened)",
+    "dddAnalysis": "Context: Import (existing, supporting). New CsvHeaderSpec VO with column-count invariant; ImportRejection domain error. No new aggregates.",
+    "testStrategy": "RED first: header mismatch rejection, encoding rejection, structured error shape, happy-path passthrough. All failing tests authored and reviewed before any validator code (Phase 4a).",
+    "reviewMatrix": {
+      "code": true,
+      "adversarial": true,
+      "security": false,
+      "ux": false,
+      "skill": false
+    }
+  },
+  "reviews": [],
+  "reviewHistory": [
+    {
+      "phase": "test_review",
+      "planVersion": 1,
+      "iteration": 1,
+      "outcome": "rejected_auto",
+      "rejectReason": "Autonomous iteration 1: 0C + 2H — failure-path and ordering coverage gaps in the test suite",
+      "critical": 0,
+      "high": 2,
+      "medium": 1,
+      "low": 0
+    }
+  ],
+  "notes": "Round 1 of test review was rejected_auto with two HIGH findings against the tests: (1) HIGH review-adversarial — no failure-path test for a stream that dies mid-validation (reader error must surface as ImportRejection, not crash); (2) HIGH review-code — the header-mismatch assertion only checks that an error is thrown, too weak to catch wrong rejection ordering (encoding must be checked before column counts). One MEDIUM (test naming) was noted as non-blocking. iterate_tests was called (source=auto), bumping testReviewIteration to 2, and the session ended before the tests were revised."
+}
