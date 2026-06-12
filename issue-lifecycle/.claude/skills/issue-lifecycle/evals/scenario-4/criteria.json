@@ -1,15 +1,15 @@
 {
-  "context": "Tests whether the agent follows the skill's TDD red-green-refactor cycle, maps integration points before writing code, avoids unnecessary backward-compatibility scaffolding for unreleased code, and anchors changes in existing abstractions rather than creating parallel implementations.",
+  "context": "Tests whether the agent follows the skill's Phase 4b discipline (the failing test suite was already authored and approved in Phase 4a — tests_approved has been called), maps integration points before writing code, avoids unnecessary backward-compatibility scaffolding for unreleased code, and anchors changes in existing abstractions rather than creating parallel implementations.",
   "type": "weighted_checklist",
   "checklist": [
     {
-      "name": "Test written before implementation",
-      "description": "implementation-guide.md explicitly states that the failing test is written BEFORE any implementation code for at least one plan step (e.g. 'Write the failing test', 'Start with the test', 'Test first')",
+      "name": "Approved tests anchor each step",
+      "description": "implementation-guide.md anchors each plan step in the already-approved failing test(s) from Phase 4a (e.g. 'locate the approved test for this step', 'the failing test from the approved suite drives this step') and does NOT instruct authoring new failing tests during implementation",
       "max_score": 14
     },
     {
       "name": "Confirm test fails",
-      "description": "implementation-guide.md includes a step to run the test and confirm it fails before writing implementation code (e.g. 'run the test to confirm it fails', 'verify the test is red')",
+      "description": "implementation-guide.md includes a step to run the approved test and confirm it (still) fails before writing implementation code (e.g. 'run the test to confirm it fails', 'verify the test is red')",
       "max_score": 10
     },
     {

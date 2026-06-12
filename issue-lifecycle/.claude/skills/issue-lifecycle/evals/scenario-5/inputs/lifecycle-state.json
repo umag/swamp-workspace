@@ -1,0 +1,54 @@
+{
+  "issueName": "csv-export-streaming",
+  "branch": "feat/csv-export-streaming",
+  "hydrate": {
+    "state": "reviewing_tests",
+    "planVersion": 1,
+    "planIterationsThisVersion": 1,
+    "testReviewIteration": 2,
+    "codeReviewIteration": 0,
+    "blocking": {
+      "critical": 0,
+      "high": 0,
+      "total": 0
+    },
+    "coverage": {
+      "complete": true,
+      "missing": []
+    },
+    "historyLength": 2,
+    "signature": "",
+    "snapshotAt": "2026-06-10T14:03:27Z"
+  },
+  "reviewMatrix": {
+    "code": true,
+    "adversarial": true,
+    "security": false,
+    "ux": false,
+    "skill": false
+  },
+  "currentRoundReviews": [
+    {
+      "reviewer": "review-code",
+      "verdict": "PASS",
+      "findings": [
+        {
+          "reviewer": "review-code",
+          "severity": "LOW",
+          "category": "documentation",
+          "description": "Test name 'streams rows' could be more specific about the backpressure case it covers.",
+          "fix": "Rename to 'streamRows applies backpressure when sink is slow'.",
+          "status": "open"
+        }
+      ],
+      "timestamp": "2026-06-10T13:58:41Z"
+    },
+    {
+      "reviewer": "review-adversarial",
+      "verdict": "PASS",
+      "findings": [],
+      "timestamp": "2026-06-10T14:01:09Z"
+    }
+  ],
+  "notes": "Round 1 was rejected_auto (2 HIGH: missing failure-path coverage for sink errors; no test for the empty-export edge case). Tests were rewritten and round 2 fan-out just completed."
+}

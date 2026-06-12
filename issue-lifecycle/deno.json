@@ -1,7 +1,7 @@
 {
   "tasks": {
-    "test": "deno test extensions/models/issue_lifecycle.test.ts",
-    "check": "deno check extensions/models/issue_lifecycle.ts extensions/models/issue_lifecycle.test.ts",
+    "test": "deno test --allow-read=. extensions/models/",
+    "check": "deno check extensions/models/issue_lifecycle.ts extensions/models/issue_lifecycle.test.ts extensions/models/issue_lifecycle_docs.test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

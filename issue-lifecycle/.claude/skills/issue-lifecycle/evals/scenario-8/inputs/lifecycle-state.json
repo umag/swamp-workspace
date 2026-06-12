@@ -1,0 +1,51 @@
+{
+  "issueName": "webhook-signature-validation",
+  "branch": "feat/webhook-signature-validation",
+  "hydrate": {
+    "state": "reviewing_tests",
+    "planVersion": 1,
+    "planIterationsThisVersion": 1,
+    "testReviewIteration": 1,
+    "codeReviewIteration": 0,
+    "blocking": {
+      "critical": 0,
+      "high": 0,
+      "total": 0
+    },
+    "coverage": {
+      "complete": true,
+      "missing": []
+    },
+    "historyLength": 1,
+    "signature": "",
+    "snapshotAt": "2026-06-11T09:17:52Z"
+  },
+  "reviewMatrix": {
+    "code": true,
+    "adversarial": true,
+    "security": true,
+    "ux": false,
+    "skill": false
+  },
+  "currentRoundReviews": [
+    {
+      "reviewer": "review-code",
+      "verdict": "PASS",
+      "findings": [],
+      "timestamp": "2026-06-11T09:09:30Z"
+    },
+    {
+      "reviewer": "review-adversarial",
+      "verdict": "PASS",
+      "findings": [],
+      "timestamp": "2026-06-11T09:12:14Z"
+    },
+    {
+      "reviewer": "review-security",
+      "verdict": "PASS",
+      "findings": [],
+      "timestamp": "2026-06-11T09:15:46Z"
+    }
+  ],
+  "notes": "Reviewers were given the test file only. Nobody was shown the full branch diff this round."
+}

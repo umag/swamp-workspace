@@ -196,3 +196,29 @@ Outside-in approach:
 See [references/test-patterns.md](references/test-patterns.md) for Deno-specific
 patterns and [references/test-organization.md](references/test-organization.md)
 for directory layout guidance.
+
+## TDD inside the issue lifecycle
+
+**This section applies only when the work is driven by the `issue-lifecycle`
+skill** (the `@magistr/issue-lifecycle` model). Outside a lifecycle, the classic
+interleaved cycle above applies unchanged.
+
+The lifecycle splits red-green-refactor across two model states, with a review
+gate between them:
+
+- **RED happens en masse in `writing_tests`** (Phase 4a). All failing tests for
+  the approved plan are authored together, run (failing for the right reasons),
+  and submitted for review via `review_tests`. The diff may contain test files
+  only — implementation code in this phase is an automatic CRITICAL review
+  finding.
+- **The gate**: the test suite iterates through review (`iterate_tests` →
+  rewrite → `review_tests`) until zero CRITICAL/HIGH findings remain, then
+  `tests_approved` fires **autonomously** and the model enters `implementing`.
+- **GREEN and REFACTOR happen in `implementing`** (Phase 4b), against the
+  approved suite: minimum code per test, run, refactor while green — per-test
+  cadence as usual, but no new failing tests are written here. A genuine
+  coverage gap discovered mid-implementation returns to Phase 4a.
+
+Rationale: reviewing the tests before any code exists lets the review shape the
+code. Interleaving (test, code, test, code) inside the lifecycle defeats that
+gate — it is the failure mode this split exists to prevent.

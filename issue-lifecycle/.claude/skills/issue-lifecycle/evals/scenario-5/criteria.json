@@ -1,0 +1,46 @@
+{
+  "context": "Tests whether the agent fires the Phase 4a autonomous gate correctly. The state shows reviewing_tests with full matrix coverage (code + adversarial both recorded) and zero open CRITICAL/HIGH (one LOW only); the branch diff is tests-only. The lifecycle dictates calling tests_approved IMMEDIATELY and AUTONOMOUSLY — waiting for a human trigger phrase here is the failure mode this scenario guards against. The human gates are approve_plan (Phase 3, already passed) and resolve_findings (Phase 5, later).",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "tests_approved is the action",
+      "description": "next-action.md names `swamp model method run csv-export-streaming tests_approved` (or equivalent tests_approved invocation) as the immediate next action",
+      "max_score": 20
+    },
+    {
+      "name": "Autonomous — no human trigger",
+      "description": "next-action.md states the call is made autonomously / without waiting for a human approval phrase. It does NOT pause to ask the human for approval, does NOT wait for 'approve'/'LGTM', and does NOT present an approval gate",
+      "max_score": 20
+    },
+    {
+      "name": "Gate conditions cited",
+      "description": "next-action.md justifies the decision with both gate conditions from the state: full matrix coverage (both matrix reviewers recorded) AND zero open CRITICAL and zero open HIGH findings",
+      "max_score": 15
+    },
+    {
+      "name": "Tests-only diff verified",
+      "description": "next-action.md notes the branch diff contains only test files (plus the test-task config line) — i.e. the Phase 4a tests-only discipline holds, no implementation code is present",
+      "max_score": 12
+    },
+    {
+      "name": "No approve_plan confusion",
+      "description": "next-action.md does NOT call or suggest approve_plan (the plan was already human-approved), and does not conflate the test gate with plan approval",
+      "max_score": 10
+    },
+    {
+      "name": "Resulting state correct",
+      "description": "next-action.md states the transition reviewing_tests → implementing and that Phase 4b (implementation against the approved tests) comes next",
+      "max_score": 10
+    },
+    {
+      "name": "No unnecessary iteration",
+      "description": "next-action.md does NOT suggest another iterate_tests round — the LOW finding does not block, and the message treats it as a non-blocking warning (carried forward), not a reason to loop",
+      "max_score": 8
+    },
+    {
+      "name": "Autonomy not generalized",
+      "description": "next-action.md does not claim other acceptance methods (approve_plan, resolve_findings) are also autonomous — if it mentions them at all, it keeps them human-gated",
+      "max_score": 5
+    }
+  ]
+}

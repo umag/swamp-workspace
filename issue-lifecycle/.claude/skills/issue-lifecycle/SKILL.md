@@ -10,7 +10,8 @@ description: >
   `tessl__review-*` directly). Triggers on "triage issue", "new issue",
   "issue plan", "lifecycle status", "resume issue", "approve plan",
   "review plan", "iterate plan", "issue lifecycle", "start issue",
-  "harvest issue", "knowledge harvest".
+  "harvest issue", "knowledge harvest", "tests approved",
+  "test review loop".
 ---
 
 # Issue Lifecycle
@@ -24,7 +25,13 @@ anytime with `swamp model method run <name> hydrate` for a compact summary or
 
 1. **Never auto-approve.** `approve_plan` is **only** called after the human
    explicitly says one of: `approve`, `approved`, `looks good`, `ship it`, `go`,
-   `LGTM`. Review-finding resolution is autonomous; **approval is not**.
+   `LGTM`. Review-finding resolution is autonomous; **approval is not**. **The
+   one sanctioned exception is `tests_approved`** (Phase 4a): the skill calls it
+   autonomously when the test-review loop exits clean (full matrix coverage AND
+   zero open CRITICAL AND zero open HIGH) — the model enforces that gate itself.
+   `approve_plan` and `resolve_findings` remain human-gated. Do not generalize
+   this exception to any other acceptance method, and do not stall at the test
+   gate waiting for a human.
 2. **Never skip the approval gate.** Even when the autonomous loop exits with
    zero blocking findings, you still present to the human and wait. The autonomy
    is on finding resolution, not on approval.
@@ -53,19 +60,22 @@ corresponding phase; if not, documented defaults in each reference file apply.
 
 ## Phase dispatch (read ONE file per phase)
 
-| Phase                           | Model states                               | Reference file                                                       |
-| ------------------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
-| 1. Triage                       | `filed → triaged`                          | [references/triage.md](references/triage.md)                         |
-| 2. Planning                     | `triaged → planned`                        | [references/planning.md](references/planning.md)                     |
-| 3. Adversarial review           | `planned ↔ reviewing → approved`           | [references/adversarial-review.md](references/adversarial-review.md) |
-| 4. Implementation               | `approved → implementing`                  | [references/implementation.md](references/implementation.md)         |
-| 5. Code review                  | `implementing ↔ code_reviewing → resolved` | [references/code-review.md](references/code-review.md)               |
-| 6. Knowledge harvest (optional) | `resolved → harvested → complete`          | [references/knowledge-harvest.md](references/knowledge-harvest.md)   |
+| Phase                           | Model states                                                | Reference file                                                       |
+| ------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------- |
+| 1. Triage                       | `filed → triaged`                                           | [references/triage.md](references/triage.md)                         |
+| 2. Planning                     | `triaged → planned`                                         | [references/planning.md](references/planning.md)                     |
+| 3. Adversarial review           | `planned ↔ reviewing → approved`                            | [references/adversarial-review.md](references/adversarial-review.md) |
+| 4a. TDD test review             | `approved → writing_tests ↔ reviewing_tests → implementing` | [references/test-review.md](references/test-review.md)               |
+| 4b. Implementation              | `implementing`                                              | [references/implementation.md](references/implementation.md)         |
+| 5. Code review                  | `implementing ↔ code_reviewing → resolved`                  | [references/code-review.md](references/code-review.md)               |
+| 6. Knowledge harvest (optional) | `resolved → harvested → complete`                           | [references/knowledge-harvest.md](references/knowledge-harvest.md)   |
 
-Phase 3 and Phase 5 both drive a generic **autonomous iteration loop** (reject →
+Phases 3, 4a, and 5 all drive a generic **autonomous iteration loop** (reject →
 revise → re-review until zero CRITICAL and zero HIGH, with safeguards). The loop
 logic lives in [references/autonomous-loop.md](references/autonomous-loop.md) —
-read it alongside whichever review phase is active.
+read it alongside whichever review phase is active. (The reference-file count
+deliberately exceeds the usual 2–7 guideline: each lifecycle phase dispatches to
+exactly one file, and that discipline takes precedence.)
 
 State machine diagram + transition guards + method reference live in
 [references/state-machine.md](references/state-machine.md). Review matrix
@@ -103,7 +113,18 @@ swamp data get <issue-name> hydrate --json
 
 The hydrate output reports current state, planVersion, blocking finding counts,
 matrix coverage, iteration cursors, and review history length. Use it to
-dispatch to the right phase reference without reading the full state blob.
+dispatch to the right phase reference without reading the full state blob:
+
+| Hydrate `state`                    | Read                                                                 |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| `filed`                            | [references/triage.md](references/triage.md)                         |
+| `triaged`, `planned`               | [references/planning.md](references/planning.md)                     |
+| `reviewing`                        | [references/adversarial-review.md](references/adversarial-review.md) |
+| `approved`                         | [references/test-review.md](references/test-review.md)               |
+| `writing_tests`, `reviewing_tests` | [references/test-review.md](references/test-review.md)               |
+| `implementing`                     | [references/implementation.md](references/implementation.md)         |
+| `code_reviewing`                   | [references/code-review.md](references/code-review.md)               |
+| `resolved`, `harvested`            | [references/knowledge-harvest.md](references/knowledge-harvest.md)   |
 
 For the full state:
 

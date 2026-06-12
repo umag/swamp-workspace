@@ -1,34 +1,38 @@
 # Autonomous review loop
 
-This file describes the generic autonomous iteration loop used by both **Phase
-3** (plan review, [adversarial-review.md](adversarial-review.md)) and **Phase
-5** (code review, [code-review.md](code-review.md)). Read this file alongside
-whichever phase is active.
+This file describes the generic autonomous iteration loop used by **Phase 3**
+(plan review, [adversarial-review.md](adversarial-review.md)), **Phase 4a**
+(test review, [test-review.md](test-review.md)), and **Phase 5** (code review,
+[code-review.md](code-review.md)). Read this file alongside whichever phase is
+active.
 
 The loop runs autonomously: the skill iterates through reject → revise →
 re-review rounds **without human interaction** until the current round produces
-zero CRITICAL and zero HIGH findings. Only then is the result presented for
-human approval. Safeguards prevent infinite loops and escape to the human when
-the machine gets stuck.
+zero CRITICAL and zero HIGH findings. For Phases 3 and 5 the clean result is
+then presented for human approval; for Phase 4a the clean exit itself is
+autonomous (see "Phase 4a clean exit" below). Safeguards prevent infinite loops
+and escape to the human when the machine gets stuck.
 
 ## Phase-specific mapping
 
 The loop body is identical; only the methods called differ between phases.
 
-| Action                  | Phase 3 (plan review)               | Phase 5 (code review)           |
-| ----------------------- | ----------------------------------- | ------------------------------- |
-| Enter review state      | `review_plan`                       | `review_code`                   |
-| Target state            | `reviewing`                         | `code_reviewing`                |
-| Auto-reject             | `reject_plan --input source=auto`   | `iterate --input source=auto`   |
-| State after auto-reject | `planned`                           | `implementing`                  |
-| Revise                  | Write new plan YAML, call `plan`    | Edit code + re-run tests        |
-| Re-enter review         | `review_plan`                       | `review_code`                   |
-| Final acceptance        | `approve_plan` (human-gated)        | `resolve_findings` + `complete` |
-| Iteration cap env var   | `MAX_PLAN_ITERATIONS`               | `MAX_CODE_ITERATIONS`           |
-| History phase tag       | `plan_review`                       | `code_review`                   |
-| Iteration counter       | `hydrate.planIterationsThisVersion` | `hydrate.codeReviewIteration`   |
+| Action                  | Phase 3 (plan review)               | Phase 4a (test review)                  | Phase 5 (code review)           |
+| ----------------------- | ----------------------------------- | --------------------------------------- | ------------------------------- |
+| Enter review state      | `review_plan`                       | `review_tests`                          | `review_code`                   |
+| Target state            | `reviewing`                         | `reviewing_tests`                       | `code_reviewing`                |
+| Auto-reject             | `reject_plan --input source=auto`   | `iterate_tests --input source=auto`     | `iterate --input source=auto`   |
+| State after auto-reject | `planned`                           | `writing_tests`                         | `implementing`                  |
+| Revise                  | Write new plan YAML, call `plan`    | Rewrite tests (still RED, right reason) | Edit code + re-run tests        |
+| Re-enter review         | `review_plan`                       | `review_tests`                          | `review_code`                   |
+| Final acceptance        | `approve_plan` (human-gated)        | `tests_approved` (**AUTONOMOUS**)       | `resolve_findings` + `complete` |
+| Iteration cap env var   | `MAX_PLAN_ITERATIONS`               | `MAX_TEST_ITERATIONS`                   | `MAX_CODE_ITERATIONS`           |
+| History phase tag       | `plan_review`                       | `test_review`                           | `code_review`                   |
+| Iteration counter       | `hydrate.planIterationsThisVersion` | `hydrate.testReviewIteration`           | `hydrate.codeReviewIteration`   |
 
-Both caps default to `5`. Override via `agent-constraints/iteration-limits.md`.
+All three caps default to `5` and are skill-enforced against the hydrate
+counters (the model reads no env vars). Override via
+`agent-constraints/iteration-limits.md`.
 
 ## Prerequisite
 
@@ -58,6 +62,7 @@ After every full fan-out round (every active reviewer has called
    - `state` — current model state
    - `planVersion` — current plan version
    - `planIterationsThisVersion` — plan-review iterations for this plan version
+   - `testReviewIteration` — test-review iteration counter
    - `codeReviewIteration` — code-review iteration counter
    - `blocking: {critical, high, total}` — open blocking findings in the current
      round
@@ -67,12 +72,13 @@ After every full fan-out round (every active reviewer has called
      loop detection)
 
 2. **Exit clean?** If `blocking.total == 0 AND coverage.complete`, **exit the
-   loop** and go to "Present to human (clean exit)" below.
+   loop**. For Phases 3 and 5 go to "Present to human (clean exit)" below; for
+   Phase 4a go to "Phase 4a clean exit (autonomous)".
 
 3. **Safeguard: iteration cap.** If the relevant iteration counter
-   (`planIterationsThisVersion` for Phase 3, `codeReviewIteration` for Phase 5)
-   is `>= MAX_ITERATIONS`, **exit the loop** and go to "Handover to human
-   (safeguard exit): cap reached".
+   (`planIterationsThisVersion` for Phase 3, `testReviewIteration` for Phase 4a,
+   `codeReviewIteration` for Phase 5) is `>= MAX_ITERATIONS`, **exit the loop**
+   and go to "Handover to human (safeguard exit): cap reached".
 
 4. **Safeguard: loop detection.** If `hydrate.signature == previous_signature`,
    **exit the loop** and go to "Handover: loop detected". Two consecutive rounds
@@ -101,6 +107,18 @@ After every full fan-out round (every active reviewer has called
    swamp model method run <issue-name> review_plan
    ```
 
+   For Phase 4a, rewrite the tests addressing every open CRITICAL and HIGH
+   finding (still RED, failing for the right reasons), then:
+
+   ```bash
+   # Phase 4a
+   swamp model method run <issue-name> iterate_tests \
+     --input reason="Autonomous iteration <N>: <crit>C + <high>H" \
+     --input source=auto
+   # ... rewrite the tests in the branch ...
+   swamp model method run <issue-name> review_tests
+   ```
+
    For Phase 5, fix the code addressing every open CRITICAL and HIGH finding,
    re-run the tests, then:
 
@@ -117,12 +135,36 @@ After every full fan-out round (every active reviewer has called
    out the active matrix reviewers in parallel). Then return to step 1 of this
    loop.
 
-**Safety invariant:** the loop only auto-rejects / auto-iterates. Approval is
-human-gated (steps 2–5 of this control flow include every safeguard), and every
-round is snapshotted to `reviewHistory` before `reviews` resets — full audit
-trail preserved.
+**Safety invariant:** the loop only auto-rejects / auto-iterates. Plan and code
+acceptance are human-gated (steps 2–5 of this control flow include every
+safeguard); test acceptance is the model-enforced autonomous gate described
+below. Every round is snapshotted to `reviewHistory` before `reviews` resets —
+full audit trail preserved.
 
-## Present to human (clean exit)
+## Phase 4a clean exit (autonomous)
+
+**This section applies to test review only.** When the Phase 4a loop exits clean
+(full matrix coverage AND zero open CRITICAL AND zero open HIGH), call the
+acceptance method immediately — **no human trigger phrase is required or
+expected**:
+
+```bash
+swamp model method run <issue-name> tests_approved
+```
+
+The model itself re-enforces the gate (coverage + zero blocking) and rejects the
+call otherwise, so this autonomy is safe by construction. Waiting for a human
+here is a process bug: the human gates of this lifecycle are `approve_plan`
+(Phase 3) and `resolve_findings` (Phase 5), not `tests_approved`. Equally: never
+generalize this exception — it applies to `tests_approved` and nothing else.
+
+The "Present to human" section below does **not** apply to Phase 4a's clean
+exit. (The safeguard exits — cap reached, loop detected, pivot required — DO
+apply to Phase 4a like any other phase; after the `MAX_TEST_ITERATIONS` cap,
+`tests_approved --input override_reason="..."` may be used only with explicit
+human direction.)
+
+## Present to human (clean exit — Phases 3 and 5)
 
 Show the final plan (Phase 3) or the final implementation diff + test output
 (Phase 5), plus a compact iteration history. For Phase 3, render the plan in the
@@ -169,16 +211,18 @@ If the model rejects the call with an error (e.g. matrix coverage incomplete,
 still-open findings), do NOT silence the error. Investigate — the autonomous
 loop has a bug or the model state is corrupted.
 
-**Sacred rule:** Even when the loop exits clean, **do not call the acceptance
-method without the human's trigger phrase**. The autonomy is on finding
-resolution, not on approval.
+**Sacred rule:** Even when the loop exits clean, do not call `approve_plan`
+(Phase 3) or `resolve_findings` (Phase 5) without the human trigger phrase.
+`tests_approved` (Phase 4a) is the single exception: it is called autonomously
+when coverage is complete and zero blocking findings remain — do not generalize
+this exception.
 
 If the human rejects (says "reject", "no", "try a different approach"), call the
 reject method with `source=human` and the human's feedback as the reason, then
 return to the previous phase for a fresh revision:
 
 - Phase 3: `reject_plan --input source=human` → back to Phase 2 (planning)
-- Phase 5: `iterate --input source=human` → back to Phase 4 (implementation)
+- Phase 5: `iterate --input source=human` → back to Phase 4b (implementation)
 
 ## Handover to human (safeguard exit)
 

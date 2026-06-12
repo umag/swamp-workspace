@@ -1,16 +1,19 @@
-# Phase 4: Implementation
+# Phase 4b: Implementation
 
 ## Prerequisites
 
-- State: `approved` (human explicitly called `approve_plan` after a clean review
-  round)
-- A git branch is ready to receive the work
+- State: `implementing`, reached via `tests_approved` — the TDD test suite was
+  authored and passed review in Phase 4a ([test-review.md](test-review.md))
+- The branch in `state.branch` carries the approved failing tests
 
-Phase 4 executes the plan on a branch, then hands off to Phase 5 (code review).
+Phase 4b writes the code that makes the approved tests pass, then hands off to
+Phase 5 (code review).
 
-## Step 1: Signal implementation started
+## Step 1: Confirm where you are
 
-Before touching any code, record the branch and transition the model:
+`implement` was called at the start of Phase 4a — it records the branch and
+transitions the model from `approved` into the test-writing sub-phase (state
+`writing_tests`):
 
 ```bash
 swamp model method run <issue-name> implement \
@@ -18,8 +21,10 @@ swamp model method run <issue-name> implement \
   --input description="..."
 ```
 
-State transitions from `approved` → `implementing`. The `branch` field is
-persisted so resuming sessions know which branch to check out.
+Code is written only after the test-review loop exits clean and `tests_approved`
+lands you in `implementing`. If the model is still in `writing_tests` or
+`reviewing_tests`, you are in Phase 4a — go to [test-review.md](test-review.md);
+do not write implementation code yet.
 
 **Worktree resume rule.** If a session is resumed mid-implementation, run
 `git checkout $(...state.branch)` before reading or writing code. Don't assume
@@ -58,20 +63,23 @@ exact defect the plan reviewer flags as **HIGH** (see
 [adversarial-review.md](adversarial-review.md), "Trace existing execution
 paths"). Catch it here at implementation time — don't wait for review.
 
-Follow **TDD red-green-refactor** — name each phase explicitly as you work a
-step, and don't skip any:
+**Tests are already approved — do not write failing tests here.** That was Phase
+4a. This phase is **GREEN** and **REFACTOR** against the approved suite:
 
-1. **RED** — write the failing test first.
-2. **RED** — run the test and confirm it **fails for the right reason** (the
-   behaviour is genuinely missing, not a typo or import error).
-3. **GREEN** — write the **minimum** code to make the test pass — not the full
-   implementation, just enough to go green.
-4. **GREEN** — run the test again and confirm it **passes**.
-5. **REFACTOR** — always tidy up **now, while the test is green** (improve
+1. **GREEN** — write the **minimum** code to make the next approved test pass —
+   not the full implementation, just enough to go green.
+2. **GREEN** — run the suite and confirm the test **passes** (and nothing else
+   broke).
+3. **REFACTOR** — always tidy up **now, while the tests are green** (improve
    naming, remove duplication, extract helpers). Do it in this same step — do
    **not** defer it to a follow-up issue, a TODO, or "later"; refactoring once
    the change is fresh is the cheapest it will ever be. State this step even
    when little is needed; "no refactor required" is a valid outcome, but say so.
+
+If a step exposes a genuine gap in the approved test suite (a behavior the plan
+requires but no test covers), that is a return to Phase 4a: write the failing
+test, run `review_tests`, and drive the loop again — do not silently grow the
+suite alongside the code.
 
 Read `agent-constraints/implementation-conventions.md` at the repo root for
 repo-specific build commands, binary paths, test commands, and conventions. If
@@ -122,8 +130,9 @@ summary in Phase 5.
 
 ## Step 6: Hand off to code review
 
-Once implementation is complete, all plan steps are executed, tests pass, and
-the reproduction (if any) verifies the fix:
+Once implementation is complete — state is `implementing` (reached via
+`tests_approved`), all plan steps are executed, the approved test suite passes,
+and the reproduction (if any) verifies the fix:
 
 ```bash
 swamp model method run <issue-name> review_code
@@ -136,5 +145,5 @@ track how many rounds of code review have happened.
 ## Next phase
 
 Read [code-review.md](code-review.md) for the post-implementation review phase,
-which uses the same autonomous loop pattern as Phase 3 but applied to the code
-rather than the plan.
+which uses the same autonomous loop pattern as Phases 3 and 4a but applied to
+the code rather than the plan or the tests.

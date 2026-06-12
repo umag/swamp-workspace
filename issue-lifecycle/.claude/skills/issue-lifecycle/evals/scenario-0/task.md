@@ -22,8 +22,8 @@ lifecycle management toolset.
 Produce the following files in your working directory:
 
 1. **`lifecycle.sh`** — A shell script that runs the complete sequence of
-   `swamp` commands to drive this issue from filing through Phase 4
-   implementation start (ending with the call that signals the start of code
+   `swamp` commands to drive this issue from filing through the Phase 4a/4b
+   implementation flow (ending with the call that signals the start of code
    review). The script should be executable and contain all the `swamp` commands
    in the correct sequence, using the correct flags and options. Include
    comments in the script that explain what each section does (e.g.

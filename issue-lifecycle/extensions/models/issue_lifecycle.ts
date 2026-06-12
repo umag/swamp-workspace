@@ -839,7 +839,7 @@ async function readState(
  */
 export const model = {
   type: "@magistr/issue-lifecycle",
-  version: "2026.05.25.3",
+  version: "2026.06.12.1",
 
   globalArguments: z.object({}),
 

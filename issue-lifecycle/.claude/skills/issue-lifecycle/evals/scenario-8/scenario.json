@@ -1,0 +1,4 @@
+{
+  "description": "Phase 4a penalty path — implementation code in the test-review diff blocks the gate",
+  "include": ["./inputs"]
+}

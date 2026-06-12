@@ -1,0 +1,41 @@
+{
+  "context": "Tests whether the agent enforces the Phase 4a tests-only diff discipline at the gate. The recorded reviews are clean (full coverage, zero blocking) BUT the branch diff contains a full implementation file (extensions/webhooks/signature.ts) alongside the tests — the reviewers were only shown the test file. Per the test-review discipline, implementation code in the Phase 4a diff is an automatic CRITICAL finding: the agent must NOT call tests_approved, must surface the violation, and must drive the corrective loop (record the CRITICAL finding / iterate_tests, remove or stash the implementation code, re-run review_tests).",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Implementation code spotted",
+      "description": "next-action.md identifies extensions/webhooks/signature.ts in the branch diff as implementation code present during the test-review phase",
+      "max_score": 20
+    },
+    {
+      "name": "tests_approved NOT called",
+      "description": "next-action.md does NOT call or recommend tests_approved in the current state — despite blocking.total being 0 and coverage complete",
+      "max_score": 20
+    },
+    {
+      "name": "Automatic CRITICAL applied",
+      "description": "next-action.md treats the implementation file as an automatic CRITICAL finding (records it via record_review with severity CRITICAL, or states it must be recorded as CRITICAL), not as a MEDIUM/LOW style nit",
+      "max_score": 15
+    },
+    {
+      "name": "Corrective loop named",
+      "description": "next-action.md drives the loop: iterate_tests (source=auto) back to writing_tests, remove/stash the implementation code from the branch diff, then re-run review_tests for a fresh round",
+      "max_score": 15
+    },
+    {
+      "name": "Clean-state gate explained",
+      "description": "next-action.md explains that recorded-review cleanliness is not sufficient — the reviewers never saw the full diff, and the gate requires the tests-only discipline to hold before tests_approved may fire",
+      "max_score": 12
+    },
+    {
+      "name": "No human-approval detour",
+      "description": "next-action.md does NOT ask the human to approve or override; the override path (override_reason) is reserved for the iteration cap with explicit human direction, which does not apply here",
+      "max_score": 10
+    },
+    {
+      "name": "Code preserved correctly",
+      "description": "next-action.md handles the premature implementation sensibly (stash/move it out of the diff rather than silently keeping it) so the tests still shape the code when Phase 4b starts",
+      "max_score": 8
+    }
+  ]
+}
