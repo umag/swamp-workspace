@@ -11,16 +11,16 @@ All notable changes to `@magistr/firecracker`. Versions are CalVer
   network namespace lacks the veth uplink, which intermittently left guests
   failing every task with `Unable to connect to API (ConnectionRefused)`. Three
   changes in `bringUpWorker`/`setup_tap`:
-  - **Root cause:** `setup_tap` gated veth-pair (re)creation on the *root-side*
-    veth while the failure manifests as a missing *ns-side* `fcveth0`; a
+  - **Root cause:** `setup_tap` gated veth-pair (re)creation on the _root-side_
+    veth while the failure manifests as a missing _ns-side_ `fcveth0`; a
     persisted/half-torn-down netns would short-circuit and never get repaired.
     The guard is now keyed on `fcveth0` inside the namespace (delete any stale
     root-side half, then rebuild the pair), so a half-built netns self-heals.
   - **Readiness gate:** `bringUpWorker` now runs a new `buildVerifyNetnsCmd`
     assertion (fcveth0 address + tap up + default route, inside the netns) after
-    `setup_tap`, with a bounded retry (initial + 2), and throws if it never comes
-    up — so a half-built worker is recorded as a failure, never a healthy pool
-    member. The verify checks host↔netns wiring only, not in-guest routing.
+    `setup_tap`, with a bounded retry (initial + 2), and throws if it never
+    comes up — so a half-built worker is recorded as a failure, never a healthy
+    pool member. The verify checks host↔netns wiring only, not in-guest routing.
   - **No-uplink fail-fast:** `setup_tap` now aborts loudly when the host has no
     default route instead of building an `-o ""` host MASQUERADE that the in-ns
     verify could not catch.

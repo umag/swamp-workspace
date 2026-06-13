@@ -171,9 +171,13 @@ Deno.test("buildSetupTapScript: netns branch builds the namespace + veth + scope
 });
 
 Deno.test("buildSetupTapScript: distinct namespaces get distinct root veth names", () => {
+  // Match the shellEsc'd root-side veth ('fcv<hash>'). The unquoted ns-side peer
+  // `fcveth0` also starts with "fcv" ("fcve" is valid hex), so anchor on the
+  // surrounding quotes to extract the per-namespace root veth, not the constant
+  // peer name.
   const veth = (ns: string) =>
     buildSetupTapScript({ ...tapArgs, netns: ns, vethSubnet: "10.0.0.0/30" })
-      .match(/fcv[0-9a-f]+/)?.[0];
+      .match(/'(fcv[0-9a-f]+)'/)?.[1];
   assertEquals(veth("fc-1") === veth("fc-2"), false);
 });
 
