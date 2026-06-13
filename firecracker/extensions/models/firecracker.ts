@@ -34,6 +34,23 @@ export function shortHash(s: string): string {
   return h.toString(16);
 }
 
+/** Derive the host↔namespace veth addresses + prefix from a veth subnet
+ * (e.g. `10.0.1.0/30`): the root-side host IP (`.1`, the guest namespace's
+ * gateway), the namespace-side IP (`.2`), and the CIDR prefix. Single source of
+ * truth shared by {@link buildSetupTapScript} and {@link buildVerifyNetnsCmd} so
+ * the addressing convention can never drift between wiring and verification. */
+export function deriveVethAddrs(
+  vethSubnet: string,
+): { vethHostIp: string; vethNsIp: string; vethPrefix: string } {
+  const vethNet = vethSubnet.split("/")[0];
+  const vethPrefix = vethSubnet.split("/")[1];
+  return {
+    vethHostIp: addToIp(vethNet, 1), // root-side address (guest ns gateway)
+    vethNsIp: addToIp(vethNet, 2), // namespace-side address
+    vethPrefix,
+  };
+}
+
 /** Inputs to {@link buildSetupTapScript}: the guest-facing tap (tapName/hostIp/
  * prefix/guestSubnet) plus, in netns mode, the namespace name and host↔ns veth
  * subnet. */
@@ -78,10 +95,7 @@ export function buildSetupTapScript(args: TapSetupArgs): string {
   const ns = shellEsc(args.netns);
   const nsx = `ip netns exec ${ns}`;
   const vethSubnet = args.vethSubnet ?? "10.0.0.0/30";
-  const vethNet = vethSubnet.split("/")[0];
-  const vethPrefix = vethSubnet.split("/")[1];
-  const vethHostIp = addToIp(vethNet, 1); // root-side address (guest ns gateway)
-  const vethNsIp = addToIp(vethNet, 2); // namespace-side address
+  const { vethHostIp, vethNsIp, vethPrefix } = deriveVethAddrs(vethSubnet);
   // Root-side veth name must be unique in the root ns and <=15 chars; derive it
   // from a hash of the (unique) namespace so distinct VMs never collide. The
   // ns-side peer is fixed (isolated in the namespace).
@@ -101,8 +115,14 @@ export function buildSetupTapScript(args: TapSetupArgs): string {
     `${nsx} ip link show ${tap} 2>/dev/null || ${nsx} ip tuntap add dev ${tap} mode tap`,
     `${nsx} ip addr add ${cidr} dev ${tap} 2>/dev/null || true`,
     `${nsx} ip link set ${tap} up`,
-    // veth pair: root <-> namespace.
-    `ip link show ${rootVeth} 2>/dev/null || ip link add ${rootVeth} type veth peer name ${nsVeth} netns ${ns}`,
+    // veth pair: root <-> namespace. Gate (re)creation on the NS-side peer
+    // (fcveth0) — the end that determines guest egress — NOT the root-side veth.
+    // Keying on the root-side name short-circuits when it lingers but the ns peer
+    // is gone (e.g. a persisted/half-torn-down netns), leaving a permanently
+    // uplink-less namespace that fabric_up would still count "ready". When the ns
+    // peer is missing, drop any stale root-side half (atomic veth creation fails
+    // if the root name already exists) and rebuild the pair.
+    `${nsx} ip link show ${nsVeth} 2>/dev/null || { ip link del ${rootVeth} 2>/dev/null || true; ip link add ${rootVeth} type veth peer name ${nsVeth} netns ${ns}; }`,
     `ip addr add ${vethHostCidr} dev ${rootVeth} 2>/dev/null || true`,
     `ip link set ${rootVeth} up`,
     `${nsx} ip addr add ${vethNsCidr} dev ${nsVeth} 2>/dev/null || true`,
@@ -120,12 +140,52 @@ export function buildSetupTapScript(args: TapSetupArgs): string {
     // Host egress NAT: veth subnet out via the default-route interface.
     // Comment-tagged so kill_vmm can flush exactly this VM's host-side rules.
     `UP=$(ip route show default | awk '{print $5; exit}')`,
+    // Fail LOUD when the host has no default route: a worker with no host uplink
+    // can never reach the API, and the in-namespace verify gate cannot observe a
+    // missing HOST egress, so silently skipping these rules would mask a dead
+    // worker as "ready". Abort instead of building an `-o ""` MASQUERADE.
+    `[ -n "$UP" ] || { echo "setup_tap: no host default route (no uplink)" >&2; exit 1; }`,
     `iptables -t nat -C POSTROUTING -s ${vethSubnetEsc} -o "$UP" -m comment --comment ${cmt} -j MASQUERADE 2>/dev/null || ` +
     `iptables -t nat -A POSTROUTING -s ${vethSubnetEsc} -o "$UP" -m comment --comment ${cmt} -j MASQUERADE`,
     // Scoped host FORWARD for the root-side veth (never -P FORWARD ACCEPT).
     `iptables -C FORWARD -i ${rootVeth} -m comment --comment ${cmt} -j ACCEPT 2>/dev/null || iptables -A FORWARD -i ${rootVeth} -m comment --comment ${cmt} -j ACCEPT`,
     `iptables -C FORWARD -o ${rootVeth} -m comment --comment ${cmt} -j ACCEPT 2>/dev/null || iptables -A FORWARD -o ${rootVeth} -m comment --comment ${cmt} -j ACCEPT`,
     `echo ok`,
+  ].join("\n");
+}
+
+/** Build the readiness-assertion script for a fabric worker's namespace. After
+ * {@link buildSetupTapScript} runs, confirm — INSIDE the worker's netns — that
+ * the host↔ns veth (`fcveth0`) carries its address, the guest tap is up, and the
+ * default route points at the veth gateway. Exits non-zero with a diagnostic on
+ * the first missing piece, so `bringUpWorker` can refuse to count a half-built
+ * netns as "ready" (the uplink race). Pure builder; every interpolated value is
+ * shellEsc'd, IP/route matches are literal + word-bounded (`grep -qwF`). Checks
+ * host↔netns wiring only — NOT in-guest routing or end-to-end reachability. */
+export function buildVerifyNetnsCmd(
+  netns: string,
+  vethSubnet: string,
+  tapName: string,
+): string {
+  const ns = shellEsc(netns);
+  const nsx = `ip netns exec ${ns}`;
+  const tap = shellEsc(tapName);
+  const nsVeth = "fcveth0";
+  const { vethHostIp, vethNsIp } = deriveVethAddrs(vethSubnet);
+  const nsIp = shellEsc(vethNsIp);
+  const route = "default via " + vethHostIp;
+  const gw = shellEsc(route);
+  // Diagnostics interpolate the shellEsc'd handles (${ns}/${tap}) so the builder
+  // is safe by construction regardless of how a caller sourced netns/tapName; the
+  // IP/route fragments are deriveVethAddrs numerics (no shell metachars).
+  return [
+    `${nsx} ip -o -4 addr show dev ${nsVeth} 2>/dev/null | grep -qwF ${nsIp} || ` +
+    `{ echo "verify_netns ${ns}: ${nsVeth} missing addr ${vethNsIp}" >&2; exit 1; }`,
+    `${nsx} ip link show ${tap} up 2>/dev/null | grep -qwF ${tap} || ` +
+    `{ echo "verify_netns ${ns}: tap ${tap} not up" >&2; exit 1; }`,
+    `${nsx} ip route show default 2>/dev/null | grep -qwF ${gw} || ` +
+    `{ echo "verify_netns ${ns}: no ${route}" >&2; exit 1; }`,
+    `echo verified`,
   ].join("\n");
 }
 
@@ -610,19 +670,53 @@ export async function bringUpWorker(
   const socketPath = `/tmp/${o.netnsPrefix}-${i}.socket`;
   const vethSubnet = `10.0.${i}.0/30`;
   const srvPid = `/tmp/${o.netnsPrefix}-${i}.server.pid`;
-  await sshExec(host, user, buildKillVmmCmd(socketPath, netns));
-  await sshExec(
-    host,
-    user,
-    buildSetupTapScript({
-      tapName: o.tapName,
-      hostIp: o.tapIp,
-      prefix: 24,
-      guestSubnet: o.guestSubnet,
-      netns,
-      vethSubnet,
-    }),
-  );
+  const setupTap = buildSetupTapScript({
+    tapName: o.tapName,
+    hostIp: o.tapIp,
+    prefix: 24,
+    guestSubnet: o.guestSubnet,
+    netns,
+    vethSubnet,
+  });
+  const verifyNetns = buildVerifyNetnsCmd(netns, vethSubnet, o.tapName);
+  // Wire the netns, then VERIFY the veth uplink + default route actually exist
+  // before booting the VM. setup_tap can intermittently leave a half-built netns
+  // (missing fcveth0 / default route); without this gate that worker is counted
+  // "ready" and fails every guest task with ConnectionRefused. A clean kill_vmm
+  // (`ip netns del`) at the top of each attempt resets state between retries.
+  // If it never comes up, throw — fabric_up records the worker as a failure
+  // (Promise.allSettled) and fabric_recycle re-attempts it, instead of a silent
+  // half-built pool member.
+  const MAX_SETUP_ATTEMPTS = 3; // initial + 2 retries
+  let wired = false;
+  for (let attempt = 1; attempt <= MAX_SETUP_ATTEMPTS; attempt++) {
+    await sshExec(host, user, buildKillVmmCmd(socketPath, netns));
+    try {
+      await sshExec(host, user, setupTap);
+      const v = await sshExecRaw(host, user, verifyNetns);
+      if (v.code === 0) {
+        wired = true;
+        break;
+      }
+      console.error(
+        `bringUpWorker ${netns}: netns verify failed (attempt ${attempt}/${MAX_SETUP_ATTEMPTS}): ${
+          (v.stderr || v.stdout).trim()
+        }`,
+      );
+    } catch (e) {
+      // setup_tap itself failed (e.g. the host has no default route).
+      console.error(
+        `bringUpWorker ${netns}: setup_tap failed (attempt ${attempt}/${MAX_SETUP_ATTEMPTS}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+  if (!wired) {
+    throw new Error(
+      `bringUpWorker ${netns}: veth uplink + default route never came up after ${MAX_SETUP_ATTEMPTS} setup_tap attempt(s)`,
+    );
+  }
   await sshExec(host, user, buildStartVmmCmd(socketPath, netns));
   await sshExec(
     host,
@@ -750,7 +844,7 @@ done
  */
 export const model = {
   type: "@magistr/firecracker",
-  version: "2026.06.12.2",
+  version: "2026.06.12.3",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {
