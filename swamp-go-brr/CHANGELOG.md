@@ -3,7 +3,7 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
-## Unreleased
+## 2026.06.15.1 — preflight (+ scaffold), bundled skill, two-leaf TDD
 
 ### Added
 
