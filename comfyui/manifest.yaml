@@ -1,0 +1,36 @@
+manifestVersion: 1
+name: "@magistr/comfyui"
+version: "2026.06.15.1"
+description: |
+  Drive a ComfyUI server over its HTTP API from swamp. Built for the local
+  Ideogram 4.0 text-to-image workflow, whose prompt is a STRUCTURED JSON CAPTION
+  (scene summary + per-object descriptions with bounding boxes [y1,x1,y2,x2]
+  normalized 0-1000).
+
+  One model:
+  - `instance` — connect to a ComfyUI server (default http://127.0.0.1:8188),
+    snapshot it (`lookup`/`sync`), turn a plain idea into a validated bboxed
+    caption with Claude (`generate_caption`), assemble one from explicit boxes
+    (`build_caption`), and `generate`: patch the caption/seed/resolution into an
+    API-format workflow graph, POST /prompt, poll /history, fetch the image.
+
+  `generate_caption` calls the Anthropic Messages API (same request contract as
+  @keeb/anthropic) with the Ideogram-4 magic prompt, and accepts either an
+  Anthropic API key or a Claude Code OAuth token.
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+models:
+  - extensions/models/comfyui.ts
+skills:
+  - comfyui
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - comfyui
+  - ideogram
+  - image
+  - text-to-image
+  - bounding-box
+  - automation

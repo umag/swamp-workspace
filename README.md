@@ -9,6 +9,7 @@ with its own `manifest.yaml`, `.swamp.yaml`, skills, models, and tests.
 | ------------------------------------------------ | -------------------------- | ----------------------------------------------------------------- |
 | [`issue-lifecycle/`](issue-lifecycle/README.md)  | `@magistr/issue-lifecycle` | Issue lifecycle model + 9 development skills                      |
 | [`good-planning/`](good-planning/README.md)      | `@magistr/good-planning`   | Bovolon four-layer planning architecture as queryable swamp state |
+| [`comfyui/`](comfyui/README.md)                  | `@magistr/comfyui`         | Drive a ComfyUI server (local Ideogram 4.0 text-to-image) — idea→bbox'd caption (Claude)→image |
 
 ## Adding a new extension
 

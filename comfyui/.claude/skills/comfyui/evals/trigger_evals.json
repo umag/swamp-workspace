@@ -1,0 +1,14 @@
+[
+  { "query": "Generate an image of a misty pine forest with ComfyUI.", "should_trigger": true },
+  { "query": "Drive my ComfyUI Ideogram 4 workflow from swamp.", "should_trigger": true },
+  { "query": "Turn this idea into a bounding-box caption and render it.", "should_trigger": true },
+  { "query": "Queue a prompt on my ComfyUI server and fetch the output image.", "should_trigger": true },
+  { "query": "Build an Ideogram structured caption with per-object bboxes.", "should_trigger": true },
+  { "query": "Make a text-to-image poster via my local ComfyUI server.", "should_trigger": true },
+
+  { "query": "Triage this bug report and drive it through the lifecycle.", "should_trigger": false },
+  { "query": "Write a failing test first for the retry scheduler.", "should_trigger": false },
+  { "query": "Review this code for security vulnerabilities.", "should_trigger": false },
+  { "query": "Generate a JSCAD model of a mounting bracket and export STL.", "should_trigger": false },
+  { "query": "Draft our Q3 OKRs for the team.", "should_trigger": false }
+]

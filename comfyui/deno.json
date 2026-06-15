@@ -1,0 +1,18 @@
+{
+  "tasks": {
+    "test": "deno test -A",
+    "check": "deno check extensions/models/*.ts extensions/models/lib/*.ts",
+    "fmt": "deno fmt",
+    "lint": "deno lint"
+  },
+  "fmt": {
+    "lineWidth": 80
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": ["require-await"]
+    },
+    "exclude": [".jj"]
+  }
+}
