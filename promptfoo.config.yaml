@@ -57,6 +57,10 @@ prompts:
       - jscad-codegen — generate, validate, and render JSCAD v2 CAD scripts
         from natural language (text → STL/DXF/SVG/OBJ/3MF), fix JSCAD
         scripts, validate STL output
+      - comfyui — drive a ComfyUI server (local Ideogram 4.0 text-to-image)
+        from swamp: turn an idea into a bbox'd structured caption and render
+        an image (queue prompt, poll, fetch). NOT for CAD/3D (that is
+        jscad-codegen)
 
       User query: "{{query}}"
 
