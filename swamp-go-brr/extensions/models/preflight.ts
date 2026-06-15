@@ -194,6 +194,73 @@ export async function pinImage(
   return { image, built };
 }
 
+// ── greenfield scaffold (jj-only — never shells `swamp`) ─────────────────────
+
+export type FileWriter = (path: string, content: string) => Promise<void>;
+
+export const defaultWriter: FileWriter = async (path, content) => {
+  const dir = path.slice(0, path.lastIndexOf("/"));
+  if (dir) await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(path, content);
+};
+
+export interface ScaffoldFile {
+  path: string;
+  content: string;
+}
+
+export interface ScaffoldInput {
+  repoPath: string;
+  files: ScaffoldFile[];
+  describe: string;
+}
+
+/**
+ * Write the caller-provided baseline files into a fresh repo, `jj git init
+ * --colocate` it, describe the bootstrap change, and return the common base
+ * change id that the gobrr `apply` step branches every task off. Toolchain-
+ * agnostic (the caller brings the file set — e.g. the deno/swamp-extension
+ * preset in references/preflight.md). jj-only, so no `__global__` deadlock.
+ */
+export async function scaffoldRepo(
+  run: CommandRunner,
+  write: FileWriter,
+  i: ScaffoldInput,
+): Promise<{ repoScope: string; base: string; changedPaths: string[] }> {
+  const changedPaths: string[] = [];
+  for (const f of i.files) {
+    await write(`${i.repoPath}/${f.path}`, f.content);
+    changedPaths.push(f.path);
+  }
+  const init = await run("jj", ["git", "init", "--colocate", i.repoPath]);
+  if (init.code !== 0) {
+    throw new Error(`jj git init failed: ${init.stderr.slice(-300)}`);
+  }
+  const desc = await run("jj", [
+    "-R",
+    i.repoPath,
+    "describe",
+    "-m",
+    i.describe,
+  ]);
+  if (desc.code !== 0) {
+    throw new Error(`jj describe failed: ${desc.stderr.slice(-300)}`);
+  }
+  const log = await run("jj", [
+    "-R",
+    i.repoPath,
+    "log",
+    "-r",
+    "@",
+    "--no-graph",
+    "-T",
+    "change_id.short()",
+  ]);
+  const base = log.stdout.trim();
+  if (!base) throw new Error("could not read the base change id from jj log");
+  return { repoScope: i.repoPath, base, changedPaths };
+}
+
 // ── model ────────────────────────────────────────────────────────────────────
 
 const GlobalArgs = z.object({
@@ -277,6 +344,17 @@ export const model = {
       lifetime: "infinite" as const,
       garbageCollection: 5,
     },
+    scaffold: {
+      description:
+        "The scaffolded greenfield base: repoScope, the jj common-base change id, and the files written.",
+      schema: z.object({
+        repoScope: z.string(),
+        base: z.string(),
+        changedPaths: z.array(z.string()),
+      }),
+      lifetime: "infinite" as const,
+      garbageCollection: 5,
+    },
   },
   methods: {
     pin_image: {
@@ -348,6 +426,34 @@ export const model = {
         };
         const cfg = buildConfig(args.image, args.verifyCommand, gate, o);
         const handle = await context.writeResource("config", "config", cfg);
+        return { dataHandles: [handle] };
+      },
+    },
+    scaffold: {
+      description:
+        "Scaffold a greenfield repo for a gobrr run: write the baseline files (caller brings the set — see the deno/swamp-extension preset in references/preflight.md), `jj git init --colocate`, describe the bootstrap change, and return the common base change id the loop branches every task off. jj-only.",
+      arguments: z.object({
+        repoPath: z.string().describe(
+          "Absolute path of the new repo to scaffold",
+        ),
+        files: z.array(z.object({ path: z.string(), content: z.string() }))
+          .describe(
+            "Baseline files (repo-relative path + content): scaffold + model stub + the base.test smoke gate",
+          ),
+        describe: z.string().default(
+          "bootstrap: scaffold + stub + base.test smoke gate (gobrr common base)",
+        ),
+      }),
+      execute: async (
+        args: {
+          repoPath: string;
+          files: { path: string; content: string }[];
+          describe: string;
+        },
+        context: Ctx,
+      ) => {
+        const res = await scaffoldRepo(defaultRunner, defaultWriter, args);
+        const handle = await context.writeResource("scaffold", "scaffold", res);
         return { dataHandles: [handle] };
       },
     },

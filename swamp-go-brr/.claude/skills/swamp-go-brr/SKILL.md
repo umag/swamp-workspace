@@ -17,11 +17,14 @@ description: >
 
 # swamp-go-brr — autonomous merkle-DAG development loop
 
-Four models, four responsibilities — the agent drives them inline (no driver
-script):
+The loop is four models the agent drives inline (no driver script), plus a
+**Phase-0 `preflight`** model that sets up the substrate — **run preflight
+first** ([references/preflight.md](references/preflight.md)); skipping it is the
+top cause of a slow, fumbling run:
 
 | Model                         | Owns                                                                                           |
 | ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| `preflight`                   | Phase-0 substrate (docker-only): digest-pin the gate image, emit the run `config`              |
 | `gobrr`                       | PURE DAG state machine: Task DAG, scheduler, follow-up recursion; never touches the filesystem |
 | `source-integration`          | host code-ownership: build WorkOrder, apply the envelope behind the allowlist ACL              |
 | `@magistr/firecracker` fabric | executor: one leaf = one `claude --print` in a microVM                                         |
@@ -57,14 +60,15 @@ script):
 
 ## Phase → reference dispatch
 
-| Phase            | What happens                                                                                        | Reference                                                  |
-| ---------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Intake + scoping | confirm repoScope / verifyCommand / verifyInputs; `start`                                           | inline (sacred rule 2)                                     |
-| Decompose        | break intake into a Task DAG; `seed_tasks`                                                          | [references/work-contract.md](references/work-contract.md) |
-| Drive            | `next → build_workorder → fabric.submit → fabric.poll → apply → docker-verify → report` inline loop | [references/inline-loop.md](references/inline-loop.md)     |
-| Work contract    | WorkOrder→prompt, WorkResult←envelope, the gate                                                     | [references/work-contract.md](references/work-contract.md) |
-| Practices        | what to inject into each leaf's prompt                                                              | [references/practices.md](references/practices.md)         |
-| Report / halt    | hydrate, complete, stall/cap handover                                                               | [references/reporting.md](references/reporting.md)         |
+| Phase            | What happens                                                                                             | Reference                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Preflight (0)    | digest-pin the gate image + emit `config`; create si/dv/fab; warm the fabric; scaffold a greenfield base | [references/preflight.md](references/preflight.md)         |
+| Intake + scoping | confirm repoScope / verifyCommand / verifyInputs; `start`                                                | inline (sacred rule 2)                                     |
+| Decompose        | break intake into a Task DAG; `seed_tasks`                                                               | [references/work-contract.md](references/work-contract.md) |
+| Drive            | `next → build_workorder → fabric.submit → fabric.poll → apply → docker-verify → report` inline loop      | [references/inline-loop.md](references/inline-loop.md)     |
+| Work contract    | WorkOrder→prompt, WorkResult←envelope, the gate                                                          | [references/work-contract.md](references/work-contract.md) |
+| Practices        | what to inject into each leaf's prompt                                                                   | [references/practices.md](references/practices.md)         |
+| Report / halt    | hydrate, complete, stall/cap handover                                                                    | [references/reporting.md](references/reporting.md)         |
 
 ## Minimal flow (abbreviated — full loop in references/inline-loop.md)
 

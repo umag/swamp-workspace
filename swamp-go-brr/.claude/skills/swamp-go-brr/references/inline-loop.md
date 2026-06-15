@@ -9,17 +9,26 @@ side-effectful models, never in a bespoke script.
 
 ## 0. Pre-flight (once per run)
 
+**Substrate first — see [preflight.md](preflight.md):** `preflight pin_image`
+(digest-pin the gate image), `preflight config` (emit the run config: gate
+params, `fabric_up` inputs, the OAuth vault CEL, the si/dv/fab create commands),
+and for a greenfield repo `preflight scaffold` (baseline + `jj git init` →
+`base`). Skipping this is the top cause of a slow, fumbling run. Then:
+
 1. Confirm with the human: `repoScope` (the jj repo), `verifyCommand`,
    `verifyInputs` (sacred rule 2). Refuse to proceed without all three.
 2. Assert the pinned substrate versions and **fail closed** on mismatch.
 3. `start` (intake+config), then `seed_tasks` (the file-scoped DAG — distinct
    files per task, so the per-task changes rebase together cleanly).
-4. `fabric_up` **once** (warm worker pool); record the run's **common base**
-   change id (`jj log -r @ -T change_id`) — every task's apply branches off it.
-   The pool stays up for the WHOLE run — every batch/round reuses the warm
-   workers. `fabric_down` runs ONLY at run completion or abort (§3), NEVER
-   between batches (tearing it down mid-run throws away the warm workers and the
-   queue).
+4. `fabric_up` **once** (warm worker pool; pass the `oauthToken` from
+   `preflight
+   config`). Then **prove readiness** (§4) — do not trust the
+   return. Record the run's **common base** change id (from
+   `preflight scaffold`, or `jj log -r @ -T change_id`) — every task's apply
+   branches off it. The pool stays up for the WHOLE run — every batch/round
+   reuses the warm workers. `fabric_down` runs ONLY at run completion or abort
+   (§3), NEVER between batches (tearing it down mid-run throws away the warm
+   workers and the queue).
 
 ## 1. The loop
 
@@ -73,6 +82,18 @@ are there too.
 
 ## 4. Operational gotchas (each cost real time when missed)
 
+- **Fabric readiness ≠ `fabric_up` returned.** A cold pool restores in ~1–2 min,
+  and `fabric_up` can count a worker "ready" while its netns has no uplink (it
+  drains nothing — looks identical to "still running"). After `fabric_up`,
+  submit ONE trivial probe and poll until it COMPLETES; only then is the pool
+  ready. `fabric_up`/`recycle` need the OAuth token — from `preflight config`'s
+  `fabricUp.oauthToken` CEL.
+- **Two gate commands, by leaf kind (language-agnostic).** A **test leaf** is
+  gated by a STATIC CHECK of its contract (`deno check` / `cargo check` /
+  `mypy`); a **code leaf** by RUNNING the tests (`deno test` / `cargo test` /
+  `pytest`). The driver picks per leaf and feeds the exit code to `report`; the
+  deno commands in this section are the deno preset. See
+  [work-contract.md](work-contract.md) "TDD ordering".
 - **`next` leases ONE task per call.** Call it repeatedly to fill a batch up to
   `maxConcurrentVMs`, collecting each `decision.content.taskId`.
 - **Resources are wrapped in `.content`.** Read state as

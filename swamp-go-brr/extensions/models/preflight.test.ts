@@ -3,10 +3,12 @@ import {
   buildConfig,
   type CommandRunner,
   ensureRegistry,
+  type FileWriter,
   type GateParams,
   instanceCommands,
   parseFirstRepoDigest,
   pinImage,
+  scaffoldRepo,
   type SubstrateOpts,
 } from "./preflight.ts";
 
@@ -188,6 +190,60 @@ Deno.test("pinImage errors when the image is absent and no source/context given"
       (e as Error).message,
       "neither buildContext nor sourceImage",
     );
+  }
+  assert(threw);
+});
+
+Deno.test("scaffoldRepo writes files, inits jj, and returns the base change id", async () => {
+  const log: string[] = [];
+  const writes: { path: string; content: string }[] = [];
+  const run = runnerOf(
+    (k) =>
+      k.includes("log -r @")
+        ? { code: 0, stdout: "qpvuntsmwlqt\n" }
+        : { code: 0 },
+    log,
+  );
+  const write: FileWriter = (path, content) => {
+    writes.push({ path, content });
+    return Promise.resolve();
+  };
+  const res = await scaffoldRepo(run, write, {
+    repoPath: "/tmp/x",
+    files: [
+      { path: "deno.json", content: "{}" },
+      { path: "extensions/models/base.test.ts", content: "// smoke" },
+    ],
+    describe: "bootstrap",
+  });
+  assertEquals(res.base, "qpvuntsmwlqt");
+  assertEquals(res.repoScope, "/tmp/x");
+  assertEquals(res.changedPaths, [
+    "deno.json",
+    "extensions/models/base.test.ts",
+  ]);
+  assertEquals(writes.length, 2);
+  assertEquals(writes[0].path, "/tmp/x/deno.json");
+  assert(log.some((l) => l === "jj git init --colocate /tmp/x"));
+  assert(log.some((l) => l.startsWith("jj -R /tmp/x describe -m")));
+});
+
+Deno.test("scaffoldRepo throws when jj git init fails", async () => {
+  const run = runnerOf(
+    (k) => k.includes("git init") ? { code: 1 } : { code: 0 },
+    [],
+  );
+  const write: FileWriter = () => Promise.resolve();
+  let threw = false;
+  try {
+    await scaffoldRepo(run, write, {
+      repoPath: "/tmp/x",
+      files: [],
+      describe: "b",
+    });
+  } catch (e) {
+    threw = true;
+    assertStringIncludes((e as Error).message, "jj git init failed");
   }
   assert(threw);
 });

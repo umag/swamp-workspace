@@ -30,6 +30,26 @@ test files unless this task's allowlist is test-only.
   security (no secrets in output; no shelling out to untrusted input), error
   handling, idempotency, API contracts, resource cleanup.
 
+## Leaf authoring patterns (learned — they cost retries when ignored)
+
+Two leaf kinds; the rules are language-agnostic (TS / Rust / Python — same
+flow).
+
+- **Create your file(s) with `@@NEWFILE`; do not rely on editing a stub.**
+  Leaves emit a whole new file reliably and `@@EDIT` an existing stub unreliably
+  (they silently drop imports / `use` / declarations). The host removes any stub
+  at your apply base, so emit the COMPLETE file via `@@NEWFILE`, **including
+  every import/use** you reference.
+- **Test leaf:** write the test file AND a **signature-only contract** for the
+  unit — the exported signatures the impl must satisfy, no logic (TS:
+  interface/`.d.ts`; Rust: `trait`/sig stub; Python: `.pyi`/`Protocol`). The
+  contract is the handoff the code leaf implements against; the assertions stay
+  hidden from it. Your gate is a static check of the contract, not a test run.
+- **Code leaf:** you are given the **contract (signatures), NOT the test**.
+  Implement the unit to satisfy the contract exactly (every name, argument, and
+  return type), honouring its implied behaviour — it is then run against a
+  hidden test. You cannot see or change that test; do not try to.
+
 ## Output
 
 Emit ONLY the nonce-fenced WorkResult envelope (see work-contract.md). Put any

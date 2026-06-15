@@ -6,7 +6,11 @@ A leaf is a pure text transform run by `claude --print`: the host sends a
 
 ## WorkOrder (host → guest, in the prompt)
 
-- `spec` — the one change to make + acceptance criteria.
+- `spec` — the one change + acceptance criteria. The leaf cannot see
+  `verifyInputs` (build_workorder only slices the allowlist), so the driver
+  embeds what it needs there: a **code leaf** gets U's `contract` (the exported
+  signatures) and NEVER the test assertions; a **test leaf** gets the acceptance
+  criteria for the test it writes. See "TDD ordering" below.
 - `files[]` — the minimal working-set slice (`path` + `content`). The guest does
   NOT clone; it edits these. Keep the slice small (prompt size is the limit).
 - `practices` — injected TDD/DDD/review guidance (practices.md).
@@ -62,6 +66,38 @@ map to a typed `failureKind`
 - gobrr greens ONLY on `docker-verify` `exitCode==0`. A test task (`advisory`)
   auto-merges after a non-forgeable self-check (the verify command still
   passes).
+
+## TDD ordering — test leaf, then code leaf (signature handoff)
+
+Each unit U is **two leaves**. The flow is the same in any language (TS, Rust,
+Python, …) — only the commands and the contract's syntax change. A leaf produces
+the test, then a second leaf writes the code, and the code leaf sees U's
+**signature, not the assertions** — so it implements to the interface and is
+judged by a test it never read.
+
+1. **Test leaf** (gate `advisory` — allowlist = U's test file + U's CONTRACT,
+   both inside `verifyInputs`). Writes the real tests AND a **signature-only
+   contract** for U: the exported types/signatures the impl must satisfy, with
+   no logic.
+   - TS: a type-only `U.contract.ts` / `.d.ts` (interfaces + function types).
+   - Rust: a `trait` or signature stub (`fn …;` declarations).
+   - Python: a `.pyi` stub or a `typing.Protocol`.
+
+   **Gate = a STATIC CHECK of the contract**, not the test run (no impl exists
+   yet, so the suite would be red): `deno check` / `cargo check` / `mypy` (or
+   `pyright`). On green it auto-merges; test + contract become `verifyInputs`.
+2. **Code leaf** (gate `real` — `dependsOn` the test leaf, allowlist = U's impl
+   file). Its WorkOrder embeds **the contract** (the signature) and **NEVER the
+   test** — it implements to the interface and cannot overfit the assertions.
+   **Gate = RUN THE TESTS** (`deno test` / `cargo test` / `pytest`) → green =
+   the code passed a test it never read. The GATED-TREE INVARIANT bars it from
+   touching the test/contract.
+
+The driver picks the **gate command per leaf kind** — test leaf → the static
+check, code leaf → the test run — and feeds the exit code to `report`; gobrr
+greens on exit 0 either way, so **no gobrr change is needed**. Run config:
+`verifyInputs` must cover the tests + the contracts; seed each code leaf
+`dependsOn` its test leaf so the scheduler runs them in order.
 
 ## Accepted residuals (documented limits, improve later)
 
