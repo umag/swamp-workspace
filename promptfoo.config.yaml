@@ -64,6 +64,10 @@ prompts:
         NOT for driving a GitHub issue through review/approval or iterating
         on code-review findings (both are issue-lifecycle), filing a bug, or
         booting a one-off VM
+      - comfyui — drive a ComfyUI server (local Ideogram 4.0 text-to-image)
+        from swamp: turn an idea into a bbox'd structured caption and render
+        an image (queue prompt, poll, fetch). NOT for CAD/3D (that is
+        jscad-codegen)
 
       User query: "{{query}}"
 
