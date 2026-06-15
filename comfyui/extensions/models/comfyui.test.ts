@@ -10,7 +10,10 @@ type Captured = { spec: string; name: string; data: unknown };
 
 function fakeContext(overrides: Record<string, unknown> = {}) {
   const captured: Captured[] = [];
-  const globalArgs = GlobalArgs.parse({ baseUrl: "http://comfy.test:8081", ...overrides });
+  const globalArgs = GlobalArgs.parse({
+    baseUrl: "http://comfy.test:8081",
+    ...overrides,
+  });
   const context = {
     globalArgs,
     writeResource: (spec: string, name: string, data: unknown) => {
@@ -37,7 +40,11 @@ describe("@magistr/comfyui/instance model", () => {
       style: { medium: "photo", color_palette: ["#1E73BE", "#C82A2A"] },
       background: "a softly lit living room",
       objects: [
-        { bbox: [40, 60, 520, 880], desc: "a ginger cat", color_palette: ["#DCA57D"] },
+        {
+          bbox: [40, 60, 520, 880],
+          desc: "a ginger cat",
+          color_palette: ["#DCA57D"],
+        },
         { bbox: [0, 700, 1000, 1000], desc: "a navy blue sofa" },
       ],
     });
@@ -55,7 +62,9 @@ describe("@magistr/comfyui/instance model", () => {
       summary: "broken",
       objects: [{ bbox: [900, 900, 100, 100], desc: "inverted" }],
     });
-    await assertRejects(() => model.methods.build_caption.execute(args, context));
+    await assertRejects(() =>
+      model.methods.build_caption.execute(args, context)
+    );
   });
 
   it("lookup snapshots the server version", async () => {
@@ -66,7 +75,10 @@ describe("@magistr/comfyui/instance model", () => {
       () =>
         Promise.resolve(
           new Response(
-            JSON.stringify({ system: { comfyui_version: "0.24.0" }, devices: [] }),
+            JSON.stringify({
+              system: { comfyui_version: "0.24.0" },
+              devices: [],
+            }),
             { status: 200 },
           ),
         ),
@@ -78,7 +90,10 @@ describe("@magistr/comfyui/instance model", () => {
     }
     const server = captured.find((c) => c.spec === "server");
     assertExists(server);
-    assertEquals((server.data as { comfyuiVersion: string }).comfyuiVersion, "0.24.0");
+    assertEquals(
+      (server.data as { comfyuiVersion: string }).comfyuiVersion,
+      "0.24.0",
+    );
   });
 
   it("generate patches, queues, fetches the image, and records the generation", async () => {
@@ -109,7 +124,13 @@ describe("@magistr/comfyui/instance model", () => {
                 p1: {
                   status: { completed: true },
                   outputs: {
-                    "9": { images: [{ filename: "out.png", subfolder: "", type: "output" }] },
+                    "9": {
+                      images: [{
+                        filename: "out.png",
+                        subfolder: "",
+                        type: "output",
+                      }],
+                    },
                   },
                 },
               }),
@@ -117,7 +138,9 @@ describe("@magistr/comfyui/instance model", () => {
             ),
           );
         }
-        return Promise.resolve(new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
+        return Promise.resolve(
+          new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }),
+        );
       },
     );
     try {
@@ -131,7 +154,10 @@ describe("@magistr/comfyui/instance model", () => {
         workflow: {
           "24": { class_type: "CLIPTextEncode", inputs: { text: "" } },
           "18": { class_type: "RandomNoise", inputs: { noise_seed: 0 } },
-          "37": { class_type: "ResolutionSelector", inputs: { aspect_ratio: "" } },
+          "37": {
+            class_type: "ResolutionSelector",
+            inputs: { aspect_ratio: "" },
+          },
         },
       });
       await model.methods.generate.execute(args, context);
@@ -155,18 +181,29 @@ describe("@magistr/comfyui/instance model", () => {
       high_level_description: "a neon cat on a rooftop",
       compositional_deconstruction: {
         background: "rainy skyline",
-        elements: [{ type: "obj", bbox: [200, 100, 800, 500], desc: "a neon cat" }],
+        elements: [{
+          type: "obj",
+          bbox: [200, 100, 800, 500],
+          desc: "a neon cat",
+        }],
       },
     });
     let sentToAnthropic = false;
     const f = stub(globalThis, "fetch", (input: string | URL | Request) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.href
+        : input.url;
       if (url.includes("api.anthropic.com")) {
         sentToAnthropic = true;
         return Promise.resolve(
-          new Response(JSON.stringify({ content: [{ type: "text", text: minified }] }), {
-            status: 200,
-          }),
+          new Response(
+            JSON.stringify({ content: [{ type: "text", text: minified }] }),
+            {
+              status: 200,
+            },
+          ),
         );
       }
       return Promise.resolve(new Response("{}", { status: 200 }));
@@ -183,8 +220,14 @@ describe("@magistr/comfyui/instance model", () => {
     assertEquals(sentToAnthropic, true);
     const cap = captured.find((c) => c.spec === "caption");
     assertExists(cap);
-    const data = cap.data as { caption: { aspect_ratio: string }; text: string };
+    const data = cap.data as {
+      caption: { aspect_ratio: string };
+      text: string;
+    };
     assertEquals(data.caption.aspect_ratio, "9:16");
-    assertEquals(JSON.parse(data.text).high_level_description, "a neon cat on a rooftop");
+    assertEquals(
+      JSON.parse(data.text).high_level_description,
+      "a neon cat on a rooftop",
+    );
   });
 });

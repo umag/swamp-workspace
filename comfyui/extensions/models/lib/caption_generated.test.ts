@@ -30,7 +30,9 @@ Deno.test("parseGeneratedCaption accepts elements without a bbox", () => {
     JSON.stringify({
       aspect_ratio: "1:1",
       high_level_description: "x",
-      compositional_deconstruction: { elements: [{ type: "obj", desc: "a dense crowd" }] },
+      compositional_deconstruction: {
+        elements: [{ type: "obj", desc: "a dense crowd" }],
+      },
     }),
   );
   assertEquals(c.compositional_deconstruction?.elements[0].bbox, undefined);
@@ -50,7 +52,8 @@ Deno.test("parseGeneratedCaption rejects a non-integer bbox", () => {
 Deno.test("parseGeneratedCaption rejects bad JSON and missing required keys", () => {
   assertThrows(() => parseGeneratedCaption("not json"), Error);
   assertThrows(
-    () => parseGeneratedCaption(JSON.stringify({ high_level_description: "x" })),
+    () =>
+      parseGeneratedCaption(JSON.stringify({ high_level_description: "x" })),
     Error,
     "aspect_ratio",
   );

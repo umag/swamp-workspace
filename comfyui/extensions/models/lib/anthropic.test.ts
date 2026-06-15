@@ -1,4 +1,8 @@
-import { assertEquals, assertRejects, assertStringIncludes } from "jsr:@std/assert@1";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "jsr:@std/assert@1";
 import { claudeComplete } from "./anthropic.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -11,7 +15,10 @@ Deno.test("claudeComplete posts to the Messages API and concatenates text blocks
     captured = { url: String(url), init: init ?? {} };
     return Promise.resolve(
       jsonResponse({
-        content: [{ type: "text", text: "hello " }, { type: "text", text: "world" }],
+        content: [{ type: "text", text: "hello " }, {
+          type: "text",
+          text: "world",
+        }],
       }),
     );
   };
@@ -33,9 +40,15 @@ Deno.test("claudeComplete posts to the Messages API and concatenates text blocks
 });
 
 Deno.test("claudeComplete throws on a non-2xx response", async () => {
-  const fakeFetch = () => Promise.resolve(new Response("bad key", { status: 401 }));
+  const fakeFetch = () =>
+    Promise.resolve(new Response("bad key", { status: 401 }));
   await assertRejects(
-    () => claudeComplete("hi", { apiKey: "x", model: "m", fetchImpl: fakeFetch as typeof fetch }),
+    () =>
+      claudeComplete("hi", {
+        apiKey: "x",
+        model: "m",
+        fetchImpl: fakeFetch as typeof fetch,
+      }),
     Error,
     "401",
   );
@@ -45,7 +58,9 @@ Deno.test("claudeComplete uses OAuth Bearer auth for a sk-ant-oat token", async 
   let captured: RequestInit = {};
   const fakeFetch = (_url: string | URL | Request, init?: RequestInit) => {
     captured = init ?? {};
-    return Promise.resolve(jsonResponse({ content: [{ type: "text", text: "ok" }] }));
+    return Promise.resolve(
+      jsonResponse({ content: [{ type: "text", text: "ok" }] }),
+    );
   };
   await claudeComplete("hi", {
     apiKey: "sk-ant-oat01-secret",

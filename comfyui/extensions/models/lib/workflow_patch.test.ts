@@ -34,7 +34,10 @@ function sampleGraph(): ApiGraph {
 
 describe("findNodesByClass", () => {
   it("returns matching ids in numeric-then-lexical order", () => {
-    assertEquals(findNodesByClass(sampleGraph(), "CLIPTextEncode"), ["9", "24"]);
+    assertEquals(findNodesByClass(sampleGraph(), "CLIPTextEncode"), [
+      "9",
+      "24",
+    ]);
   });
 
   it("returns a single match", () => {
@@ -60,14 +63,20 @@ describe("findNodesByTitle", () => {
 describe("patchWorkflow", () => {
   it("merges inputs and leaves other inputs intact", () => {
     const graph = sampleGraph();
-    const out = patchWorkflow(graph, [{ nodeId: "24", inputs: { text: "new" } }]);
+    const out = patchWorkflow(graph, [{
+      nodeId: "24",
+      inputs: { text: "new" },
+    }]);
     assertEquals(out["24"].inputs.text, "new");
     assertEquals(out["24"].inputs.clip, ["14", 0]);
   });
 
   it("returns a clone and does not mutate the original", () => {
     const graph = sampleGraph();
-    const out = patchWorkflow(graph, [{ nodeId: "18", inputs: { noise_seed: 999 } }]);
+    const out = patchWorkflow(graph, [{
+      nodeId: "18",
+      inputs: { noise_seed: 999 },
+    }]);
     assertEquals(graph["18"].inputs.noise_seed, 12345);
     assertEquals(out["18"].inputs.noise_seed, 999);
     if (out === graph) throw new Error("expected a new graph object");

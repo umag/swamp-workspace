@@ -1,8 +1,14 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { buildCaptionMessages, IDEOGRAM_CAPTION_PROMPT_TEMPLATE } from "./ideogram_prompt.ts";
+import {
+  buildCaptionMessages,
+  IDEOGRAM_CAPTION_PROMPT_TEMPLATE,
+} from "./ideogram_prompt.ts";
 
 Deno.test("the template constant is the Ideogram magic prompt", () => {
-  assertStringIncludes(IDEOGRAM_CAPTION_PROMPT_TEMPLATE, "compositional_deconstruction");
+  assertStringIncludes(
+    IDEOGRAM_CAPTION_PROMPT_TEMPLATE,
+    "compositional_deconstruction",
+  );
   assertStringIncludes(IDEOGRAM_CAPTION_PROMPT_TEMPLATE, "{{original_prompt}}");
 });
 

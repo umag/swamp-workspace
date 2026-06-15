@@ -41,11 +41,19 @@ describe("validateBBox", () => {
   });
 
   it("throws on reversed x", () => {
-    assertThrows(() => validateBBox([500, 0, 100, 10]), Error, "x1 must be < x2");
+    assertThrows(
+      () => validateBBox([500, 0, 100, 10]),
+      Error,
+      "x1 must be < x2",
+    );
   });
 
   it("throws on reversed y", () => {
-    assertThrows(() => validateBBox([0, 500, 10, 100]), Error, "y1 must be < y2");
+    assertThrows(
+      () => validateBBox([0, 500, 10, 100]),
+      Error,
+      "y1 must be < y2",
+    );
   });
 });
 
@@ -86,8 +94,14 @@ describe("buildCaption", () => {
 
     const caption = buildCaption(input);
 
-    assertEquals(caption.high_level_description, "A surreal streetwear collage poster");
-    assertEquals(caption.style_description?.aesthetics, "Retro magazine cutout style");
+    assertEquals(
+      caption.high_level_description,
+      "A surreal streetwear collage poster",
+    );
+    assertEquals(
+      caption.style_description?.aesthetics,
+      "Retro magazine cutout style",
+    );
     const deco = caption.compositional_deconstruction;
     assertEquals(deco?.background, "A vibrant blue sky");
     assertEquals(deco?.elements.length, 2);
@@ -114,7 +128,11 @@ describe("buildCaption", () => {
       () =>
         buildCaption({
           summary: "x",
-          objects: [{ bbox: [0, 0, 10, 10], desc: "bad", color_palette: ["red"] }],
+          objects: [{
+            bbox: [0, 0, 10, 10],
+            desc: "bad",
+            color_palette: ["red"],
+          }],
         }),
       Error,
       "color_palette",
@@ -139,7 +157,10 @@ describe("buildCaption", () => {
   });
 
   it("omits compositional_deconstruction when no objects and no background", () => {
-    const caption = buildCaption({ summary: "only summary", style: { medium: "ink" } });
+    const caption = buildCaption({
+      summary: "only summary",
+      style: { medium: "ink" },
+    });
     assertEquals(caption.compositional_deconstruction, undefined);
   });
 

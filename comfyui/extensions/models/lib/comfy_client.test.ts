@@ -1,7 +1,11 @@
 import { assertEquals, assertExists, assertRejects } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
 import { assertSpyCalls, spy } from "jsr:@std/testing@1/mock";
-import { ComfyClient, type HistoryEntry, type ImageRef } from "./comfy_client.ts";
+import {
+  ComfyClient,
+  type HistoryEntry,
+  type ImageRef,
+} from "./comfy_client.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -10,16 +14,23 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 describe("ComfyClient construction", () => {
   it("strips a trailing slash from baseUrl", () => {
-    const c = new ComfyClient({ baseUrl: "http://host:8081/", fetchImpl: fetch });
+    const c = new ComfyClient({
+      baseUrl: "http://host:8081/",
+      fetchImpl: fetch,
+    });
     assertEquals(c.baseUrl, "http://host:8081");
   });
 
   it("strips multiple trailing slashes", () => {
-    const c = new ComfyClient({ baseUrl: "http://host:8081///", fetchImpl: fetch });
+    const c = new ComfyClient({
+      baseUrl: "http://host:8081///",
+      fetchImpl: fetch,
+    });
     assertEquals(c.baseUrl, "http://host:8081");
   });
 
@@ -29,7 +40,11 @@ describe("ComfyClient construction", () => {
   });
 
   it("allows overriding clientId", () => {
-    const c = new ComfyClient({ baseUrl: "http://host", clientId: "abc", fetchImpl: fetch });
+    const c = new ComfyClient({
+      baseUrl: "http://host",
+      clientId: "abc",
+      fetchImpl: fetch,
+    });
     assertEquals(c.clientId, "abc");
   });
 });
@@ -37,7 +52,9 @@ describe("ComfyClient construction", () => {
 describe("queuePrompt", () => {
   it("posts to /prompt with {prompt, client_id} and returns prompt_id", async () => {
     const fetchSpy = spy((_url: string | URL | Request, _init?: RequestInit) =>
-      Promise.resolve(jsonResponse({ prompt_id: "pid-1", number: 1, node_errors: {} }))
+      Promise.resolve(
+        jsonResponse({ prompt_id: "pid-1", number: 1, node_errors: {} }),
+      )
     );
     const c = new ComfyClient({
       baseUrl: "http://host:8081",
@@ -58,7 +75,9 @@ describe("queuePrompt", () => {
   it("throws on a 400 carrying node_errors, including the error text", async () => {
     const errBody = {
       error: { type: "prompt_outputs_failed_validation" },
-      node_errors: { "3": { errors: [{ message: "Required input is missing" }] } },
+      node_errors: {
+        "3": { errors: [{ message: "Required input is missing" }] },
+      },
     };
     const fetchImpl = () => Promise.resolve(jsonResponse(errBody, 400));
     const c = new ComfyClient({
@@ -101,7 +120,8 @@ describe("getHistory", () => {
   });
 
   it("returns null when the map lacks the id", async () => {
-    const fetchImpl = () => Promise.resolve(jsonResponse({ other: { outputs: {} } }));
+    const fetchImpl = () =>
+      Promise.resolve(jsonResponse({ other: { outputs: {} } }));
     const c = new ComfyClient({
       baseUrl: "http://host",
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -135,8 +155,15 @@ describe("collectImages", () => {
 
 describe("viewUrl", () => {
   it("encodes query params, including a subfolder with a space", () => {
-    const c = new ComfyClient({ baseUrl: "http://host:8081", fetchImpl: fetch });
-    const url = c.viewUrl({ filename: "img 1.png", subfolder: "my dir", type: "output" });
+    const c = new ComfyClient({
+      baseUrl: "http://host:8081",
+      fetchImpl: fetch,
+    });
+    const url = c.viewUrl({
+      filename: "img 1.png",
+      subfolder: "my dir",
+      type: "output",
+    });
     assertEquals(
       url,
       "http://host:8081/view?filename=img+1.png&subfolder=my+dir&type=output",
@@ -158,12 +185,17 @@ describe("fetchImage", () => {
       baseUrl: "http://host",
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
-    const out = await c.fetchImage({ filename: "a.png", subfolder: "", type: "output" });
+    const out = await c.fetchImage({
+      filename: "a.png",
+      subfolder: "",
+      type: "output",
+    });
     assertEquals(out, bytes);
   });
 
   it("throws on a non-2xx response", async () => {
-    const fetchImpl = () => Promise.resolve(new Response("nope", { status: 404 }));
+    const fetchImpl = () =>
+      Promise.resolve(new Response("nope", { status: 404 }));
     const c = new ComfyClient({
       baseUrl: "http://host",
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -181,7 +213,9 @@ describe("waitForResult", () => {
     const incomplete: HistoryEntry = { outputs: {} };
     const complete: HistoryEntry = {
       status: { completed: true },
-      outputs: { "9": { images: [{ filename: "a.png", subfolder: "", type: "output" }] } },
+      outputs: {
+        "9": { images: [{ filename: "a.png", subfolder: "", type: "output" }] },
+      },
     };
     let call = 0;
     const fetchImpl = () => {
@@ -206,14 +240,18 @@ describe("waitForResult", () => {
 
   it("resolves when images are present even without completed flag", async () => {
     const entry: HistoryEntry = {
-      outputs: { "9": { images: [{ filename: "a.png", subfolder: "", type: "output" }] } },
+      outputs: {
+        "9": { images: [{ filename: "a.png", subfolder: "", type: "output" }] },
+      },
     };
     const fetchImpl = () => Promise.resolve(jsonResponse({ pid: entry }));
     const c = new ComfyClient({
       baseUrl: "http://host",
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
-    const got = await c.waitForResult("pid", { sleep: () => Promise.resolve() });
+    const got = await c.waitForResult("pid", {
+      sleep: () => Promise.resolve(),
+    });
     assertEquals(c.collectImages(got).length, 1);
   });
 
