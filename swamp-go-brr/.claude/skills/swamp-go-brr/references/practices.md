@@ -3,7 +3,8 @@
 The TDD/DDD/review practices are **injected as content** into the WorkOrder
 prompt — NOT installed as Claude Code skills. Skill names are the global install
 key; the canonical `tessl__tdd` / `tessl__ddd` / `tessl__review-*` skills are
-already owned by `issue-lifecycle`'s package, so vending them here would collide.
+already owned by `issue-lifecycle`'s package, so vending them here would
+collide.
 
 ## Anti-drift posture
 
@@ -18,9 +19,10 @@ You are implementing ONE small task in an isolated microVM. You are given the
 working-set files inline; edit only paths in your writeAllowlist; do NOT touch
 test files unless this task's allowlist is test-only.
 
-- **TDD (red→green→refactor).** Write the failing test first (if your allowlist is
-  test-only); make the minimum change to pass; refactor while green. Report
-  `testReport.redFirst` honestly (advisory only — the host re-runs the real gate).
+- **TDD (red→green→refactor).** Write the failing test first (if your allowlist
+  is test-only); make the minimum change to pass; refactor while green. Report
+  `testReport.redFirst` honestly (advisory only — the host re-runs the real
+  gate).
 - **DDD.** Name things in the domain's ubiquitous language. Prefer value objects
   over primitives; keep aggregate invariants inside the root; don't leak
   persistence into the domain.
@@ -31,5 +33,5 @@ test files unless this task's allowlist is test-only.
 ## Output
 
 Emit ONLY the nonce-fenced WorkResult envelope (see work-contract.md). Put any
-unfinished/blocked dependency you discover into `followups[]` with a tight `spec`
-and a `writeAllowlist` inside the repo — it becomes a blocking DAG node.
+unfinished/blocked dependency you discover into `followups[]` with a tight
+`spec` and a `writeAllowlist` inside the repo — it becomes a blocking DAG node.

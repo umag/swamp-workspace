@@ -52,25 +52,26 @@ map to a typed `failureKind`
 
 ## The green gate (unforgeable in the common case)
 
-- `gate` is derived by the host from `writeAllowlist ∩ verifyInputs`:
-  **disjoint → `real`** (a code task), **subset → `advisory`** (a test task),
-  **mixed → rejected** at scoping (split it).
+- `gate` is derived by the host from `writeAllowlist ∩ verifyInputs`: **disjoint
+  → `real`** (a code task), **subset → `advisory`** (a test task), **mixed →
+  rejected** at scoping (split it).
 - GATED-TREE INVARIANT: only `writeAllowlist` hunks reach the gated tree; a code
-  task's hunk touching `verifyInputs` is hard-rejected (`out_of_allowlist`). So a
-  code task's verify surface is always baseline — it cannot weaken the tests that
-  judge it, even via a shared helper.
+  task's hunk touching `verifyInputs` is hard-rejected (`out_of_allowlist`). So
+  a code task's verify surface is always baseline — it cannot weaken the tests
+  that judge it, even via a shared helper.
 - gobrr greens ONLY on `docker-verify` `exitCode==0`. A test task (`advisory`)
-  auto-merges after a non-forgeable self-check (the verify command still passes).
+  auto-merges after a non-forgeable self-check (the verify command still
+  passes).
 
 ## Accepted residuals (documented limits, improve later)
 
-1. A verify-relevant file mis-declared as *production* (so in a code task's
+1. A verify-relevant file mis-declared as _production_ (so in a code task's
    allowlist) could be defanged with tests still green. Mitigation later: a
    coverage-trace classification (advisory when the allowlist intersects the
    files `verifyCommand` actually loads).
 2. A test task can keep the suite passing while weakening an assertion
    ("still-runs ≠ still-asserts" — the undecidable test-completeness limit).
 
-Both are bounded by the threat model (single-user homelab, owner's repos) and the
-final human PR review of the run-produced jj changes. The gate is a **filter, not
-a proof**.
+Both are bounded by the threat model (single-user homelab, owner's repos) and
+the final human PR review of the run-produced jj changes. The gate is a
+**filter, not a proof**.

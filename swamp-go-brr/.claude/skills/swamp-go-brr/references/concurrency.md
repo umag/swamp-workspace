@@ -10,13 +10,13 @@ namespace. Use:
 
 - `@magistr/firecracker` ≥ `2026.06.11.2` — `netns` global arg →
   `start_vmm`/`kill_vmm` via `ip netns exec`;
-  `setup_tap --input netns=<run>-<leaf> --input vethSubnet=10.0.N.0/30`,
-  a UNIQUE /30 per concurrent leaf. (The fabric methods — `fabric_up` etc. —
+  `setup_tap --input netns=<run>-<leaf> --input vethSubnet=10.0.N.0/30`, a
+  UNIQUE /30 per concurrent leaf. (The fabric methods — `fabric_up` etc. —
   handle netns internally; manual netns wrangling is only for the low-level
   per-VM methods.)
 - `@magistr/fc-task-server` ≥ `2026.06.11.3` — keys its
-  `/tmp/fc-{task,result}-<netns>-<port>` files by netns; older versions
-  clobber across VMs.
+  `/tmp/fc-{task,result}-<netns>-<port>` files by netns; older versions clobber
+  across VMs.
 
 Pin BOTH in `config.pinnedVersions` and fail closed on mismatch at pre-flight.
 
@@ -30,5 +30,5 @@ run (held while the VM works) and they serialize — most time out at 60s.
 ## Caps
 
 `maxConcurrentVMs` is a host-resource guard (≈512 MiB RAM per restored VM);
-raise it as headroom allows. Only wallclock + invocation count are *enforced*;
+raise it as headroom allows. Only wallclock + invocation count are _enforced_;
 dollar cost is advisory.

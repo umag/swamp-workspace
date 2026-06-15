@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "check": "deno check extensions/models/gobrr.ts extensions/models/docker_verify.ts extensions/models/source_integration.ts",
+    "check": "deno check extensions/models/gobrr.ts extensions/models/docker_verify.ts extensions/models/source_integration.ts extensions/models/preflight.ts extensions/models/preflight.test.ts",
     "test": "deno test --permit-no-files --allow-all extensions/models/",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",

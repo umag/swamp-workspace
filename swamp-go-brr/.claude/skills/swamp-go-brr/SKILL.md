@@ -20,20 +20,20 @@ description: >
 Four models, four responsibilities — the agent drives them inline (no driver
 script):
 
-| Model | Owns |
-|-------|------|
-| `gobrr` | PURE DAG state machine: Task DAG, scheduler, follow-up recursion; never touches the filesystem |
-| `source-integration` | host code-ownership: build WorkOrder, apply the envelope behind the allowlist ACL |
-| `@magistr/firecracker` fabric | executor: one leaf = one `claude --print` in a microVM |
-| `docker-verify` | the deterministic green gate |
+| Model                         | Owns                                                                                           |
+| ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| `gobrr`                       | PURE DAG state machine: Task DAG, scheduler, follow-up recursion; never touches the filesystem |
+| `source-integration`          | host code-ownership: build WorkOrder, apply the envelope behind the allowlist ACL              |
+| `@magistr/firecracker` fabric | executor: one leaf = one `claude --print` in a microVM                                         |
+| `docker-verify`               | the deterministic green gate                                                                   |
 
 ## Sacred rules (front-loaded — never violate)
 
 1. **ISOLATION INVARIANT.** Every fetched, generated, or untrusted line of work
    executes ONLY inside the `@magistr/firecracker` fabric worker VM or the
-   `docker-verify` container. Never run agent-authored content on the host shell.
-   The host only applies a parsed *diff* (never a mounted workspace) behind the
-   `source-integration` allowlist ACL.
+   `docker-verify` container. Never run agent-authored content on the host
+   shell. The host only applies a parsed _diff_ (never a mounted workspace)
+   behind the `source-integration` allowlist ACL.
 2. **PRE-LAUNCH SCOPING.** Before any leaf runs, the human MUST confirm: the
    target jj repo (`repoScope`), the host-pinned `verifyCommand`, and the
    `verifyInputs` surface (test files + helpers + fixtures). The loop REFUSES to
@@ -42,10 +42,10 @@ script):
 3. **CONCRETE CAPS.** Defaults: `maxConcurrentVMs=5`, `maxAttempts=2`,
    `maxFollowupDepth=3`, `maxInvocations=100`, `wallclockSeconds=7200`,
    `stallN=2`, `stallK=3`. Concurrency IS supported but has two HARD
-   requirements: a network namespace per leaf (pinned substrate versions,
-   fail closed on mismatch) and single-process fan-out (NEVER N parallel
-   `swamp` CLI invocations — they serialize on the global datastore lock).
-   Details + version pins: [references/concurrency.md](references/concurrency.md).
+   requirements: a network namespace per leaf (pinned substrate versions, fail
+   closed on mismatch) and single-process fan-out (NEVER N parallel `swamp` CLI
+   invocations — they serialize on the global datastore lock). Details + version
+   pins: [references/concurrency.md](references/concurrency.md).
 4. **STALL HANDOVER.** On `stalled`/cap halt, present the `haltReason` + the
    enumerated `haltOptions` + the `stallCulprits`, and hand to the human. Do not
    spin.
@@ -57,14 +57,14 @@ script):
 
 ## Phase → reference dispatch
 
-| Phase | What happens | Reference |
-|-------|-------------|-----------|
-| Intake + scoping | confirm repoScope / verifyCommand / verifyInputs; `start` | inline (sacred rule 2) |
-| Decompose | break intake into a Task DAG; `seed_tasks` | [references/work-contract.md](references/work-contract.md) |
-| Drive | `next → build_workorder → fabric.submit → fabric.poll → apply → docker-verify → report` inline loop | [references/inline-loop.md](references/inline-loop.md) |
-| Work contract | WorkOrder→prompt, WorkResult←envelope, the gate | [references/work-contract.md](references/work-contract.md) |
-| Practices | what to inject into each leaf's prompt | [references/practices.md](references/practices.md) |
-| Report / halt | hydrate, complete, stall/cap handover | [references/reporting.md](references/reporting.md) |
+| Phase            | What happens                                                                                        | Reference                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Intake + scoping | confirm repoScope / verifyCommand / verifyInputs; `start`                                           | inline (sacred rule 2)                                     |
+| Decompose        | break intake into a Task DAG; `seed_tasks`                                                          | [references/work-contract.md](references/work-contract.md) |
+| Drive            | `next → build_workorder → fabric.submit → fabric.poll → apply → docker-verify → report` inline loop | [references/inline-loop.md](references/inline-loop.md)     |
+| Work contract    | WorkOrder→prompt, WorkResult←envelope, the gate                                                     | [references/work-contract.md](references/work-contract.md) |
+| Practices        | what to inject into each leaf's prompt                                                              | [references/practices.md](references/practices.md)         |
+| Report / halt    | hydrate, complete, stall/cap handover                                                               | [references/reporting.md](references/reporting.md)         |
 
 ## Minimal flow (abbreviated — full loop in references/inline-loop.md)
 
@@ -108,17 +108,17 @@ files → leaf prompt, no-clone) · `apply` (parse @@EDIT envelope → per-task
 base-isolated jj changes behind the realpath allowlist ACL → host-observed
 changedPaths + scrubbed diff).
 
-**firecracker fabric (executor):** `fabric_up` · `submit` · `poll` · `fabric_down`.
-**docker-verify (gate):** `verify`.
+**firecracker fabric (executor):** `fabric_up` · `submit` · `poll` ·
+`fabric_down`. **docker-verify (gate):** `verify`.
 
 See `swamp model type describe @magistr/swamp-go-brr/gobrr --json` (and
 `…/source-integration`).
 
 ## Related skills
 
-| Need | Skill |
-|------|-------|
-| Drive a GitHub issue through review→approval | `issue-lifecycle` (do NOT use this) |
-| File a bug/feature | `swamp-issue` |
-| Boot/snapshot a single microVM | `@magistr/firecracker` |
-| The practices injected into leaves | `tessl__tdd`, `tessl__ddd` (as content, not installed) |
+| Need                                         | Skill                                                  |
+| -------------------------------------------- | ------------------------------------------------------ |
+| Drive a GitHub issue through review→approval | `issue-lifecycle` (do NOT use this)                    |
+| File a bug/feature                           | `swamp-issue`                                          |
+| Boot/snapshot a single microVM               | `@magistr/firecracker`                                 |
+| The practices injected into leaves           | `tessl__tdd`, `tessl__ddd` (as content, not installed) |
