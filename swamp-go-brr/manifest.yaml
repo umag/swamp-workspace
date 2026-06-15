@@ -1,8 +1,8 @@
 manifestVersion: 1
 name: "@magistr/swamp-go-brr"
-version: "2026.06.12.1"
+version: "2026.06.15.1"
 description: |
-  Autonomous merkle-DAG development loop, driver-free. Three models:
+  Autonomous merkle-DAG development loop, driver-free. Four models:
   - `gobrr` — a PURE DAG state machine: a Run aggregate over a dynamic Task DAG
     (implement | verify) with a scheduler (lease TTL/heartbeat/reap, concurrency
     gate, stall), dynamic follow-up expansion, a state machine, and run caps. It
@@ -15,16 +15,25 @@ description: |
   - `docker-verify` — the deterministic green gate: runs the host-pinned verify
     command to completion in a hardened, network-less, token-less container against
     the read-only applied tree and returns the raw exit code.
+  - `preflight` — codebase-agnostic substrate setup: ensures the local OCI
+    registry, digest-pins the codebase's OWN gate image (`pin_image` builds a
+    build context or pins a prebuilt ref — the toolkit/deps live in that image,
+    not here), and emits the run `config` (gate params, fabric_up inputs, the
+    vault CEL for the OAuth token, and the si/dv/fab create commands). Shells to
+    docker only.
   Each leaf runs `claude --print` in a Firecracker microVM via the @magistr/firecracker
   fabric (no-clone). The agent drives the loop inline (next -> build_workorder ->
   fabric.submit/poll -> apply -> docker-verify -> report); there is no driver script.
 repository: "https://github.com/umag/swamp-workspace"
 paths:
   base: manifest
+skills:
+  - swamp-go-brr
 models:
   - extensions/models/gobrr.ts
   - extensions/models/docker_verify.ts
   - extensions/models/source_integration.ts
+  - extensions/models/preflight.ts
 additionalFiles:
   - README.md
   - LICENSE.md
