@@ -3,6 +3,20 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.16.3 — source-integration: input-validation hardening
+
+### Changed
+
+- `source-integration` now validates inputs through two pure, unit-tested
+  predicates: `isSafeRepoScope` (absolute, no shell metacharacters / whitespace
+  / `..`) is enforced in **both** `apply` and `build_workorder` (the latter
+  previously had no guard before `realPathSync`), and `isSafeRevision`
+  (non-empty, no leading `-`, no whitespace) guards `args.base` before `jj new`,
+  which now also passes a `--` separator (defense vs flag injection). The `.jj`
+  existence check uses `lstatSync` (no-follow) so a symlinked `.jj` fails
+  closed. All defense-in-depth — no live exploit; surfaced by the
+  si-apply-multi-edit review.
+
 ## 2026.06.16.2 — source-integration: reject duplicate @@NEWFILE paths
 
 ### Fixed

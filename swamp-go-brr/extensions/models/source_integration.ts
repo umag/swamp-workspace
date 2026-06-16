@@ -220,6 +220,27 @@ export function planApply(
   return { writes, changedPaths: [...changed].sort() };
 }
 
+// ── input validation for the side-effectful methods (pure, unit-tested) ──────
+
+/**
+ * A host `repoScope` must be an absolute, clean path: no shell metacharacters,
+ * whitespace, or `..` segment. This is a PRE-realpath sanity check — actual
+ * escape-containment is enforced downstream by Deno.realPathSync +
+ * resolveWithinRepo. The regex is shared verbatim by `apply` and `build_workorder`.
+ */
+export function isSafeRepoScope(p: string): boolean {
+  return p.startsWith("/") && !/[\s;|&$`'"]|\.\.(\/|$)/.test(p);
+}
+
+/**
+ * A jj revision passed positionally to `jj new` must be non-empty, must not start
+ * with `-` (else jj reads it as a flag), and must contain no whitespace. The call
+ * site also passes a `--` separator, so this is defense in depth.
+ */
+export function isSafeRevision(base: string): boolean {
+  return base.length > 0 && !base.startsWith("-") && !/\s/.test(base);
+}
+
 // ── scrubSecrets — apply-boundary redaction of the persisted diff/commit ─────
 
 /**
@@ -349,6 +370,9 @@ export const model = {
         },
         context: Ctx,
       ) => {
+        if (!isSafeRepoScope(args.repoScope)) {
+          throw new Error("repoScope must be an absolute, clean host path");
+        }
         const repoRoot = Deno.realPathSync(args.repoScope);
         const parts: string[] = [
           "You are a coding agent in NO-CLONE mode. Apply the requested fixes, then output ONLY a nonce-fenced @@EDIT envelope (no prose outside the fence).",
@@ -433,19 +457,20 @@ export const model = {
       ) => {
         const jjPath = context.globalArgs.jjPath ?? "jj";
         // Assert repoScope is an absolute, clean, real jj repo (docker_verify-style).
-        if (
-          !args.repoScope.startsWith("/") ||
-          /[\s;|&$`'"]|\.\.(\/|$)/.test(args.repoScope)
-        ) {
+        if (!isSafeRepoScope(args.repoScope)) {
           throw new Error("repoScope must be an absolute, clean host path");
         }
         const repoRoot = Deno.realPathSync(args.repoScope);
         try {
-          if (!Deno.statSync(`${repoRoot}/.jj`).isDirectory) {
+          // lstat: refuse to proceed if .jj is itself a symlink (fail-closed).
+          if (!Deno.lstatSync(`${repoRoot}/.jj`).isDirectory) {
             throw new Error("no .jj");
           }
         } catch {
           throw new Error(`repoScope is not a jj repo: ${repoRoot}`);
+        }
+        if (!isSafeRevision(args.base)) {
+          throw new Error(`unsafe base revision: ${args.base}`);
         }
 
         const results: Record<string, unknown> = {};
@@ -490,11 +515,13 @@ export const model = {
           }
 
           // SIBLING off the common base — never stacked on the previous task's change.
+          // `--` separates flags from the positional revision (defense vs flag injection).
           const mk = await jjRun(jjPath, repoRoot, [
             "new",
-            args.base,
             "-m",
             `gobrr ${t.taskId}`,
+            "--",
+            args.base,
           ]);
           if (mk.code !== 0) {
             fail("transport", `jj new: ${mk.stderr.slice(0, 200)}`);
