@@ -700,6 +700,65 @@ export function nextDecision(
 
 // ───────────────────────── reporting projections ─────────────────────────
 
+export interface TrustStats {
+  kept: number;
+  broken: number;
+  passRate: number;
+  greenFirstTryRate: number;
+  meanAttemptsToGreen: number;
+}
+
+/**
+ * Per-task-type promise-keeping projection DERIVED from the task list (no stored
+ * state) — Promise Theory: trust is the measured, gate-exit-code assessment, never
+ * agent self-report. Keyed on task.gate (real=code, advisory=test). A `done` task
+ * kept its promise; `exhausted` broke it. (`merge_conflict` is also counted broken;
+ * it is a reserved status with no scheduler transition yet — the branch is a
+ * forward-compatibility guard.) Excluded: `blocked` (cascaded non-execution from a
+ * dead dependency), `infra_error` (a HOST failure — it never consumes an attempt
+ * and is surfaced via completeReport buckets), and every non-terminal status
+ * (`pending`, `leased`, `waiting_followup`, and the transient `test_failed` which
+ * is re-queued to `pending`). `attemptsToGreen = task.attempts + 1` (attempts
+ * increments on each verify failure AND each reaped/expired lease, never on the
+ * green run) — so it counts every invocation to green, including a timed-out lease,
+ * not only verify-gate failures. A gate with no counted task emits no bucket.
+ * Deriving from the final status captures BOTH the applyReport and the
+ * scheduler-reap `exhausted` paths.
+ */
+export function trustSummary(run: Run): Record<string, TrustStats> {
+  const acc: Record<
+    string,
+    { kept: number; broken: number; greenFirstTry: number; atgTotal: number }
+  > = {};
+  for (const t of run.tasks) {
+    const kept = t.status === "done";
+    const broken = t.status === "exhausted" || t.status === "merge_conflict";
+    if (!kept && !broken) continue; // blocked / infra_error / non-terminal
+    const a = acc[t.gate] ??
+      { kept: 0, broken: 0, greenFirstTry: 0, atgTotal: 0 };
+    if (kept) {
+      a.kept += 1;
+      a.atgTotal += t.attempts + 1; // attempts not incremented on the green run
+      if (t.attempts === 0) a.greenFirstTry += 1;
+    } else {
+      a.broken += 1;
+    }
+    acc[t.gate] = a;
+  }
+  const out: Record<string, TrustStats> = {};
+  for (const [gate, a] of Object.entries(acc)) {
+    const total = a.kept + a.broken;
+    out[gate] = {
+      kept: a.kept,
+      broken: a.broken,
+      passRate: total > 0 ? a.kept / total : 0,
+      greenFirstTryRate: a.kept > 0 ? a.greenFirstTry / a.kept : 0,
+      meanAttemptsToGreen: a.kept > 0 ? a.atgTotal / a.kept : 0,
+    };
+  }
+  return out;
+}
+
 export function completeReport(run: Run): Record<string, unknown> {
   const buckets: Record<string, number> = {
     done: 0,
@@ -734,6 +793,7 @@ export function completeReport(run: Run): Record<string, unknown> {
     costEstimate: run.costEstimate,
     costNote:
       "advisory estimate — only wallclock + invocation count are enforced",
+    trust: trustSummary(run), // per-gate promise-keeping (measured, not self-reported)
   };
 }
 
@@ -755,6 +815,8 @@ export function hydrateSummary(run: Run): Record<string, unknown> {
     stallCulprits: run.stallCulprits,
     stallSignature: run.stallSignature,
     costEstimate: run.costEstimate,
+    // reuse completeReport's already-computed projection; partial mid-run.
+    trustSoFar: (r as { trust: Record<string, TrustStats> }).trust,
     snapshotAt: run.updatedAt,
   };
 }

@@ -19,6 +19,7 @@ import {
   type Run,
   type RunConfig,
   type Task,
+  trustSummary,
   wouldCycle,
 } from "./gobrr.ts";
 
@@ -381,4 +382,49 @@ Deno.test("RunConfig defaults leafEffort to low", () => {
       e,
     );
   }
+});
+
+// ───────────────────────── trust ledger (derived projection) ─────────────────────────
+
+Deno.test("trustSummary: derives per-gate promise-keeping stats from terminal task statuses", () => {
+  const r = run([
+    task({ id: "r1", gate: "real", status: "done", attempts: 0 }),
+    task({ id: "r2", gate: "real", status: "done", attempts: 2 }),
+    task({ id: "r3", gate: "real", status: "exhausted", attempts: 2 }),
+    task({ id: "a1", gate: "advisory", status: "done", attempts: 0 }),
+    // excluded: cascade non-execution, host failure, and non-terminal
+    task({ id: "b1", gate: "real", status: "blocked" }),
+    task({ id: "i1", gate: "real", status: "infra_error" }),
+    task({ id: "p1", gate: "real", status: "pending" }),
+  ]);
+  const ts = trustSummary(r);
+  assertEquals(ts.real.kept, 2);
+  assertEquals(ts.real.broken, 1);
+  assertEquals(ts.real.passRate, 2 / 3);
+  assertEquals(ts.real.greenFirstTryRate, 0.5); // r1 first-try, r2 not
+  assertEquals(ts.real.meanAttemptsToGreen, 2); // (1 + 3) / 2
+  assertEquals(ts.advisory.kept, 1);
+  assertEquals(ts.advisory.broken, 0);
+  assertEquals(ts.advisory.passRate, 1);
+  assertEquals(ts.advisory.greenFirstTryRate, 1);
+  assertEquals(ts.advisory.meanAttemptsToGreen, 1);
+});
+
+Deno.test("trustSummary: merge_conflict counts as broken", () => {
+  const r = run([task({ id: "m", gate: "real", status: "merge_conflict" })]);
+  assertEquals(trustSummary(r).real.broken, 1);
+  assertEquals(trustSummary(r).real.kept, 0);
+  // kept=0 → the green-derived rates must be 0, never NaN.
+  assertEquals(trustSummary(r).real.greenFirstTryRate, 0);
+  assertEquals(trustSummary(r).real.meanAttemptsToGreen, 0);
+  assertEquals(trustSummary(r).real.passRate, 0); // 0 kept / 1 total
+});
+
+Deno.test("trustSummary: a gate with only excluded tasks produces no bucket; empty run → {}", () => {
+  assertEquals(trustSummary(run([])), {});
+  const onlyExcluded = run([
+    task({ id: "b", gate: "real", status: "blocked" }),
+    task({ id: "i", gate: "real", status: "infra_error" }),
+  ]);
+  assertEquals(trustSummary(onlyExcluded), {});
 });
