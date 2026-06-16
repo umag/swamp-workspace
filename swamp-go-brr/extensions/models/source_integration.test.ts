@@ -183,6 +183,275 @@ Deno.test("planApply: oversize content or too many blocks → envelope_oversize"
   );
 });
 
+// ── planApply: cumulative same-file @@EDIT fold ─────────────────────────────
+// Issue si-apply-multi-edit-same-file. RED until planApply applies a file's
+// @@EDIT blocks one after another against a per-path running working-copy and
+// emits one cumulative write per path. Single-block edits and @@NEWFILE remain
+// covered by the green tests above.
+
+Deno.test("planApply: two @@EDIT blocks on one file fold into a single cumulative write", () => {
+  const snap = { "vae.py": "import os\n\nclass VAE:\n    pass\n" };
+  const env = {
+    edits: [
+      {
+        path: "vae.py",
+        old: "import os",
+        new: "import os\nfrom norm import get_latent_norm",
+      },
+      {
+        path: "vae.py",
+        old: "    pass",
+        new: "    def encode(self):\n        return get_latent_norm(self)",
+      },
+    ],
+    newFiles: [],
+  };
+  const r = planApply(env, ["vae.py"], snap);
+  assert("writes" in r, "planned");
+  if (!("writes" in r)) return;
+  const forFile = r.writes.filter((w) => w.path === "vae.py");
+  assert(forFile.length === 1, "exactly one write for the file");
+  assert(r.writes.length === 1, "no spurious extra writes");
+  assert(
+    forFile[0].content ===
+      "import os\nfrom norm import get_latent_norm\n\nclass VAE:\n    def encode(self):\n        return get_latent_norm(self)\n",
+    "exact cumulative content (both blocks, applied in order)",
+  );
+  assert(
+    r.changedPaths.filter((p) => p === "vae.py").length === 1,
+    "one changedPath for the file",
+  );
+});
+
+Deno.test("planApply: three @@EDIT blocks on one file all land (running-copy write-back)", () => {
+  const snap = { "m.txt": "A\nB\nC\n" };
+  const env = {
+    edits: [
+      { path: "m.txt", old: "A", new: "A1" },
+      { path: "m.txt", old: "B", new: "B2" },
+      { path: "m.txt", old: "C", new: "C3" },
+    ],
+    newFiles: [],
+  };
+  const r = planApply(env, ["m.txt"], snap);
+  assert("writes" in r, "planned");
+  if (!("writes" in r)) return;
+  const w = r.writes.filter((x) => x.path === "m.txt");
+  assert(w.length === 1, "one write");
+  assert(
+    w[0].content === "A1\nB2\nC3\n",
+    "all three edits applied cumulatively",
+  );
+});
+
+Deno.test("planApply: a later @@OLD matches text an earlier block inserted", () => {
+  const snap = { "f.ts": "line1\nline2\n" };
+  const env = {
+    edits: [
+      { path: "f.ts", old: "line1", new: "line1\nINSERTED" },
+      { path: "f.ts", old: "INSERTED", new: "INSERTED_DONE" },
+    ],
+    newFiles: [],
+  };
+  const r = planApply(env, ["f.ts"], snap);
+  assert("writes" in r, "applies against running content");
+  if (!("writes" in r)) return;
+  const w = r.writes.find((x) => x.path === "f.ts")!;
+  assert(
+    w.content === "line1\nINSERTED_DONE\nline2\n",
+    "second edit matched inserted text",
+  );
+});
+
+Deno.test("planApply: an @@OLD made ambiguous by an earlier edit → envelope_parse", () => {
+  const snap = { "f.ts": "uniq\n" };
+  const env = {
+    edits: [
+      { path: "f.ts", old: "uniq", new: "uniq\nuniq" },
+      { path: "f.ts", old: "uniq", new: "X" },
+    ],
+    newFiles: [],
+  };
+  const r = planApply(env, ["f.ts"], snap);
+  assert(
+    "failureKind" in r && r.failureKind === "envelope_parse",
+    "ambiguous @@OLD on running content rejected",
+  );
+});
+
+Deno.test("planApply: two under-cap edits whose folded result exceeds MAX_ENVELOPE_BYTES → envelope_oversize", () => {
+  const snap = { "big.ts": "AAA\nBBB\n" };
+  const half = "x".repeat(Math.floor(MAX_ENVELOPE_BYTES * 0.6));
+  const env = {
+    edits: [
+      { path: "big.ts", old: "AAA", new: "AAA" + half },
+      { path: "big.ts", old: "BBB", new: "BBB" + half },
+    ],
+    newFiles: [],
+  };
+  const r = planApply(env, ["big.ts"], snap);
+  assert(
+    "failureKind" in r && r.failureKind === "envelope_oversize",
+    "cumulative folded size over the cap caught",
+  );
+});
+
+Deno.test("planApply: a path in both @@EDIT and @@NEWFILE → envelope_parse", () => {
+  const snap = { "src/a.ts": "const x = 1;\n" };
+  const env = {
+    edits: [{ path: "src/a.ts", old: "const x = 1;", new: "const x = 2;" }],
+    newFiles: [{ path: "src/a.ts", content: "brand new" }],
+  };
+  const r = planApply(env, ["src/a.ts"], snap);
+  assert(
+    "failureKind" in r && r.failureKind === "envelope_parse",
+    "same-path @@EDIT + @@NEWFILE rejected before any write",
+  );
+});
+
+Deno.test("planApply: a no-op edit (@@OLD == @@NEW) produces no write and no changedPath", () => {
+  const snap = { "src/a.ts": "const x = 1;\nconst y = 2;\n" };
+  const env = {
+    edits: [{ path: "src/a.ts", old: "const x = 1;", new: "const x = 1;" }],
+    newFiles: [],
+  };
+  const r = planApply(env, ["src/a.ts"], snap);
+  assert("writes" in r, "planned");
+  if (!("writes" in r)) return;
+  assert(
+    r.writes.filter((w) => w.path === "src/a.ts").length === 0,
+    "no write for unchanged file",
+  );
+  assert(
+    r.changedPaths.filter((p) => p === "src/a.ts").length === 0,
+    "no spurious changedPath",
+  );
+});
+
+Deno.test("planApply: a denied path as the 2nd @@EDIT block → unsafe_change (guard stays per block)", () => {
+  const snap = { "src/a.ts": "const x = 1;\n" };
+  const env = {
+    edits: [
+      { path: "src/a.ts", old: "const x = 1;", new: "const x = 2;" },
+      { path: ".git/config", old: "x", new: "y" },
+    ],
+    newFiles: [],
+  };
+  const r = planApply(env, ["src/a.ts", ".git/config"], snap);
+  assert(
+    "failureKind" in r && r.failureKind === "unsafe_change",
+    "denied 2nd block rejected",
+  );
+});
+
+Deno.test("planApply: edit-A deletes text that edit-B's @@OLD needs → envelope_parse", () => {
+  const snap = { "f.ts": "const x = 1;\nconst y = 2;\n" };
+  const env = {
+    edits: [
+      { path: "f.ts", old: "const x = 1;\n", new: "" },
+      { path: "f.ts", old: "const x = 1;", new: "const x = 9;" },
+    ],
+    newFiles: [],
+  };
+  const r = planApply(env, ["f.ts"], snap);
+  assert(
+    "failureKind" in r && r.failureKind === "envelope_parse",
+    "edit-B @@OLD removed by edit-A on the running content → not found",
+  );
+});
+
+Deno.test("planApply: 201 @@EDIT blocks on one file still hit the block cap → envelope_oversize", () => {
+  const snap = { "f.ts": "seed\n" };
+  // 201 > MAX_BLOCKS (200); same-file folding must not bypass the block-count cap.
+  const edits = Array.from(
+    { length: 201 },
+    () => ({ path: "f.ts", old: "seed", new: "seed" }),
+  );
+  const r = planApply({ edits, newFiles: [] }, ["f.ts"], snap);
+  assert(
+    "failureKind" in r && r.failureKind === "envelope_oversize",
+    "block-count cap enforced regardless of same-file fold",
+  );
+});
+
+Deno.test("planApply: an out-of-allowlist path as a later block alongside a same-file fold → out_of_allowlist", () => {
+  const snap = { "src/a.ts": "const x = 1;\nconst y = 2;\n" };
+  const env = {
+    edits: [
+      { path: "src/a.ts", old: "const x = 1;", new: "const x = 2;" },
+      { path: "src/a.ts", old: "const y = 2;", new: "const y = 3;" },
+      { path: "other/z.ts", old: "a", new: "b" },
+    ],
+    newFiles: [],
+  };
+  const r = planApply(env, ["src"], snap);
+  assert(
+    "failureKind" in r && r.failureKind === "out_of_allowlist",
+    "guard runs per block; later out-of-allowlist path rejected",
+  );
+});
+
+Deno.test("planApply: same-file fold plus a @@NEWFILE for a different path keeps both", () => {
+  const snap = { "vae.py": "import os\nclass V:\n    pass\n" };
+  const env = {
+    edits: [
+      { path: "vae.py", old: "import os", new: "import os\nimport sys" },
+      { path: "vae.py", old: "    pass", new: "    x = 1" },
+    ],
+    newFiles: [{ path: "done/m.txt", content: "ok" }],
+  };
+  const r = planApply(env, ["vae.py", "done/m.txt"], snap);
+  assert("writes" in r, "planned");
+  if (!("writes" in r)) return;
+  assert(
+    r.writes.filter((w) => w.path === "vae.py").length === 1,
+    "one folded write for vae.py",
+  );
+  assert(
+    r.writes.filter((w) => w.path === "done/m.txt").length === 1,
+    "newFile for a different path preserved",
+  );
+  assert(
+    r.changedPaths.slice().sort().join(",") === "done/m.txt,vae.py",
+    "both paths in changedPaths",
+  );
+});
+
+Deno.test("planApply: a no-op edit followed by a real edit on the same file yields one real write", () => {
+  const snap = { "f.ts": "alpha\nbeta\n" };
+  const env = {
+    edits: [
+      { path: "f.ts", old: "alpha", new: "alpha" },
+      { path: "f.ts", old: "beta", new: "BETA" },
+    ],
+    newFiles: [],
+  };
+  const r = planApply(env, ["f.ts"], snap);
+  assert("writes" in r, "planned");
+  if (!("writes" in r)) return;
+  const w = r.writes.filter((x) => x.path === "f.ts");
+  assert(w.length === 1, "one write");
+  assert(
+    w[0].content === "alpha\nBETA\n",
+    "real edit applied over the running copy",
+  );
+});
+
+Deno.test("planApply: a denied path as the 2nd @@NEWFILE block → unsafe_change (guard per newFile)", () => {
+  const env = {
+    edits: [],
+    newFiles: [
+      { path: "src/new.ts", content: "ok" },
+      { path: ".git/hooks/post-update", content: "#!/bin/sh" },
+    ],
+  };
+  const r = planApply(env, ["src/new.ts", ".git/hooks/post-update"], {});
+  assert(
+    "failureKind" in r && r.failureKind === "unsafe_change",
+    "denied 2nd newFile rejected",
+  );
+});
+
 // ── scrubSecrets (apply-boundary, final diff) ───────────────────────────────
 
 Deno.test("scrubSecrets redacts anthropic tokens and bearer values in the persisted diff", () => {

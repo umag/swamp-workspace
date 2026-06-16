@@ -39,9 +39,12 @@ A leaf is a pure text transform run by `claude --print`: the host sends a
 GOBRR:<nonce>>>>
 ```
 
-One `@@EDIT` block per change to an existing file (`@@OLD` must be an exact,
-unique substring of its current content); `@@NEWFILE` for new files. Each marker
-alone on its own line; nothing outside the fence.
+Multiple `@@EDIT` blocks may target the same file; they are applied one after
+another and each block's `@@OLD` must be an exact, unique substring of that
+file's **running** content (the result of the preceding blocks for that file),
+not the original on-disk text. Use `@@NEWFILE` for new files; a path may not
+appear as both `@@EDIT` and `@@NEWFILE` in one envelope. Each marker alone on
+its own line; nothing outside the fence.
 
 ## WorkResult (host-built from the applied tree)
 
