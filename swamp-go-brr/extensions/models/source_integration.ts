@@ -11,6 +11,7 @@
 import { z } from "npm:zod@4";
 import {
   isDeniedPath,
+  normalizePath,
   pathEscapes,
   pathInSet,
   resolveWithinRepo,
@@ -133,16 +134,28 @@ export function planApply(
     return null;
   };
 
-  // A path may not be both edited and newly created in one envelope — the two
-  // loops would race and the @@NEWFILE would silently clobber the @@EDIT result.
-  const editPaths = new Set(env.edits.map((e) => e.path));
+  // A path may not be both edited and newly created in one envelope, nor created
+  // twice — either way one write would silently clobber the other. Keyed on the
+  // NORMALIZED path so `dir//x.ts` and `dir/x.ts` cannot slip past as distinct.
+  // (Multiple @@EDIT blocks per file are fine — they fold below.) This pre-check
+  // runs before any guard/write, so a rejected envelope produces no partial change.
+  const editPaths = new Set(env.edits.map((e) => normalizePath(e.path)));
+  const newFilePaths = new Set<string>();
   for (const f of env.newFiles) {
-    if (editPaths.has(f.path)) {
+    const np = normalizePath(f.path);
+    if (editPaths.has(np)) {
       return {
         failureKind: "envelope_parse",
         note: `path in both @@EDIT and @@NEWFILE: ${f.path}`,
       };
     }
+    if (newFilePaths.has(np)) {
+      return {
+        failureKind: "envelope_parse",
+        note: `duplicate @@NEWFILE: ${f.path}`,
+      };
+    }
+    newFilePaths.add(np);
   }
 
   // Apply blocks ONE AFTER ANOTHER over a per-path running working-copy (a copy of
