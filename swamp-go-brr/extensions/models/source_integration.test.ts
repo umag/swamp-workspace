@@ -8,6 +8,7 @@ import {
   parseEnvelope,
   planApply,
   scrubSecrets,
+  summarizeEnvelope,
 } from "./source_integration.ts";
 
 function assert(cond: boolean, msg: string): void {
@@ -594,4 +595,83 @@ Deno.test("scrubSecrets redacts anthropic tokens and bearer values in the persis
   assert(!/sk-ant-oat01/.test(clean), "anthropic token redacted");
   assert(!/abc\.def\.ghi/.test(clean), "bearer value redacted");
   assert(/const ok = "hello";/.test(clean), "ordinary code preserved");
+});
+
+// ── summarizeEnvelope — the AGENT-DECLARED step-output summary ────────────────
+// Issue gobrr-record-step-outputs. Contract:
+//   export function summarizeEnvelope(env: Envelope):
+//     { blockCount: number; declaredTargetPaths: string[];
+//       declaredEditsPerFile: Record<string, number> }
+// declaredEditsPerFile counts @@EDIT blocks per (sanitized) path; declaredTargetPaths
+// is the sorted-unique union of edit+newFile paths; both name fields are AGENT-DECLARED
+// intent (ADR 0001) — never host truth. Paths are control-char stripped and length-capped.
+
+Deno.test("summarizeEnvelope counts blocks and edits-per-file (multi-edit same file)", () => {
+  const env = {
+    edits: [
+      { path: "src/a.ts", old: "x", new: "y" },
+      { path: "src/a.ts", old: "p", new: "q" },
+    ],
+    newFiles: [{ path: "src/b.ts", content: "new" }],
+  };
+  const s = summarizeEnvelope(env);
+  assert(s.blockCount === 3, "blockCount = 2 edits + 1 newFile");
+  assert(
+    s.declaredEditsPerFile["src/a.ts"] === 2,
+    "two @@EDIT blocks for src/a.ts",
+  );
+  assert(
+    s.declaredEditsPerFile["src/b.ts"] === undefined,
+    "a @@NEWFILE is not an edit",
+  );
+  assert(
+    JSON.stringify(s.declaredTargetPaths) ===
+      JSON.stringify(["src/a.ts", "src/b.ts"]),
+    "declaredTargetPaths is the sorted-unique union",
+  );
+});
+
+Deno.test("summarizeEnvelope on an empty envelope is zero/empty", () => {
+  const s = summarizeEnvelope({ edits: [], newFiles: [] });
+  assert(s.blockCount === 0, "no blocks");
+  assert(s.declaredTargetPaths.length === 0, "no paths");
+  assert(Object.keys(s.declaredEditsPerFile).length === 0, "no edits-per-file");
+});
+
+Deno.test("summarizeEnvelope sanitizes control chars and caps path length", () => {
+  const longPath = "d/" + "x".repeat(600) + ".ts";
+  // a null byte and an ESC embedded in the agent-declared path
+  const dirty = "src/a" + String.fromCharCode(0) + String.fromCharCode(27) +
+    "b.ts";
+  const env = {
+    edits: [{ path: dirty, old: "x", new: "y" }],
+    newFiles: [{ path: longPath, content: "c" }],
+  };
+  const s = summarizeEnvelope(env);
+  assert(
+    s.declaredTargetPaths.includes("src/ab.ts"),
+    "the null byte and ESC are stripped from the path",
+  );
+  assert(
+    s.declaredEditsPerFile["src/ab.ts"] === 1,
+    "the edits-per-file KEY is sanitized too (consistent with declaredTargetPaths)",
+  );
+  const hasControl = (p: string) =>
+    [...p].some((ch) => {
+      const c = ch.charCodeAt(0);
+      return c <= 0x1f || c === 0x7f;
+    });
+  assert(
+    s.declaredTargetPaths.every((p) => !hasControl(p)),
+    "no control characters survive",
+  );
+  assert(
+    s.declaredTargetPaths.every((p) => p.length <= 512),
+    "overlong paths are capped at 512",
+  );
+  const capped = s.declaredTargetPaths.find((p) => p.startsWith("d/"));
+  assert(
+    capped !== undefined && capped.length === 512,
+    "overlong path capped to EXACTLY 512",
+  );
 });
