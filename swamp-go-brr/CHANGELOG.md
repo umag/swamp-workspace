@@ -3,6 +3,22 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.16.1 — source-integration: cumulative same-file edit fold
+
+### Fixed
+
+- `source-integration` `planApply` lost data when a leaf emitted multiple
+  `@@EDIT` blocks for the SAME file: each block was computed against the
+  pristine snapshot and pushed as a separate write, so the apply write-loop kept
+  only the last block (e.g. a sibling that added a method but dropped its
+  import). Blocks for one file are now applied one after another over a per-path
+  running copy and folded into a single cumulative write, with `@@OLD`
+  inclusion/uniqueness and the `MAX_ENVELOPE_BYTES` cap checked against the
+  running content. A path present in both `@@EDIT` and `@@NEWFILE` is rejected
+  (`envelope_parse`), and a no-op fold (content unchanged) emits no write.
+  Guards stay per block; the apply write-loop and the host-observed
+  `changedPaths`/diff are unchanged.
+
 ## 2026.06.15.1 — preflight (+ scaffold), bundled skill, two-leaf TDD
 
 ### Added

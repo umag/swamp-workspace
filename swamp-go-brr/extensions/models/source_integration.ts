@@ -90,11 +90,16 @@ export interface PlannedWrite {
 
 /**
  * Decide what `apply` will write, enforcing the allowlist + DENY set + caps purely
- * over `snapshot` (path -> current content, for edits). Returns the planned writes
- * + the host-observed changedPaths, or a typed FailureKind. Does NO filesystem
- * work and NO secret scrub (the scrub runs at the apply boundary on the final jj
- * diff). A path that is denied / traverses is `unsafe_change` (attack signal); a
- * clean path merely outside the allowlist is `out_of_allowlist`.
+ * over `snapshot` (path -> current content). Multiple @@EDIT blocks targeting the
+ * SAME file are applied one after another over a per-path running copy of the
+ * snapshot, so @@OLD inclusion/uniqueness and the size cap are checked against the
+ * running (folded) content and each file yields exactly one cumulative write; a
+ * path present in both @@EDIT and @@NEWFILE is rejected, and a no-op fold (content
+ * unchanged from the snapshot) emits no write. Returns the planned writes + the
+ * changed paths, or a typed FailureKind. Does NO filesystem work and NO secret
+ * scrub (the scrub runs at the apply boundary on the final jj diff). A path that is
+ * denied / traverses is `unsafe_change` (attack signal); a clean path merely
+ * outside the allowlist is `out_of_allowlist`.
  */
 export function planApply(
   env: Envelope,
@@ -110,9 +115,6 @@ export function planApply(
       note: "too many edit/newfile blocks",
     };
   }
-  const writes: PlannedWrite[] = [];
-  const changed = new Set<string>();
-
   const guard = (
     path: string,
   ): { failureKind: FailureKind; note: string } | null => {
@@ -131,10 +133,30 @@ export function planApply(
     return null;
   };
 
+  // A path may not be both edited and newly created in one envelope — the two
+  // loops would race and the @@NEWFILE would silently clobber the @@EDIT result.
+  const editPaths = new Set(env.edits.map((e) => e.path));
+  for (const f of env.newFiles) {
+    if (editPaths.has(f.path)) {
+      return {
+        failureKind: "envelope_parse",
+        note: `path in both @@EDIT and @@NEWFILE: ${f.path}`,
+      };
+    }
+  }
+
+  // Apply blocks ONE AFTER ANOTHER over a per-path running working-copy (a copy of
+  // the snapshot — never mutate the caller's). Each block sees the result of every
+  // earlier block for its path, so @@OLD inclusion/uniqueness and the size cap are
+  // evaluated against the running (folded) content and a file targeted by N blocks
+  // yields exactly one cumulative write.
+  const running: Record<string, string> = { ...snapshot };
+  const touched = new Set<string>();
+
   for (const e of env.edits) {
     const bad = guard(e.path);
     if (bad) return bad;
-    const cur = snapshot[e.path];
+    const cur = running[e.path];
     if (cur === undefined) {
       return {
         failureKind: "envelope_parse",
@@ -157,8 +179,8 @@ export function planApply(
     if (next.length > MAX_ENVELOPE_BYTES) {
       return { failureKind: "envelope_oversize", note: e.path };
     }
-    writes.push({ path: e.path, content: next });
-    changed.add(e.path);
+    running[e.path] = next;
+    touched.add(e.path);
   }
 
   for (const f of env.newFiles) {
@@ -167,8 +189,19 @@ export function planApply(
     if (f.content.length > MAX_ENVELOPE_BYTES) {
       return { failureKind: "envelope_oversize", note: f.path };
     }
-    writes.push({ path: f.path, content: f.content });
-    changed.add(f.path);
+    running[f.path] = f.content;
+    touched.add(f.path);
+  }
+
+  // Emit one write per touched path (sorted, deterministic), skipping a no-op fold
+  // whose result equals the original snapshot — a no-op write only yields an empty
+  // jj diff and a spurious host-observed changedPath downstream.
+  const writes: PlannedWrite[] = [];
+  const changed = new Set<string>();
+  for (const path of [...touched].sort()) {
+    if (running[path] === snapshot[path]) continue;
+    writes.push({ path, content: running[path] });
+    changed.add(path);
   }
 
   return { writes, changedPaths: [...changed].sort() };
