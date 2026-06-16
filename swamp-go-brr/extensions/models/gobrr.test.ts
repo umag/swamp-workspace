@@ -14,6 +14,7 @@ import {
   haltOptionsFor,
   hasCycle,
   leaseExpired,
+  model,
   normalizePath,
   pathEscapes,
   pathInSet,
@@ -654,4 +655,31 @@ Deno.test("stepOutputProjection: counts ALL records per task (not distinct task 
   );
   assertEquals(p.count, 2);
   assertEquals(p.reaped, []);
+});
+
+// ── retention guard (issue si-applied-resource-lifetime) ─────────────────────
+// stepOutputs is the durable, double-scrubbed audit log read at completion /
+// post-halt — bound it to 7d (longer than the transient inputs' 24h) so a delayed
+// inspection survives. `as string` avoids the `as const` literal-overlap; RED until
+// the lifetime is flipped from "infinite" to "7d".
+Deno.test("gobrr stepOutputs audit resource is bounded to 7d, not infinite", () => {
+  const lt = model.resources.stepOutputs.lifetime as string;
+  assertEquals(lt, "7d");
+  assert(
+    lt !== "infinite",
+    "the audit log must not retain scrubbed tails forever",
+  );
+});
+
+// Scope lock: the non-secret state resources stay infinite. run is the authoritative
+// aggregate (history); summary/decision are derived projections. Bounding any of these
+// would silently drop run history — guard against an accidental future flip.
+Deno.test("gobrr run/summary/decision resources stay infinite (not bounded)", () => {
+  for (const name of ["run", "summary", "decision"] as const) {
+    assertEquals(
+      model.resources[name].lifetime as string,
+      "infinite",
+      `${name} must remain infinite (non-secret authoritative/derived state)`,
+    );
+  }
 });

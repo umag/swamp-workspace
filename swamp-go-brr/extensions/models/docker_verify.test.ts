@@ -6,8 +6,10 @@ import {
   assertThrows,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  boundedStdout,
   buildVerifyArgs,
   buildVerifyCommandLine,
+  model,
   parseExitSentinel,
   type VerifySpec,
 } from "./docker_verify.ts";
@@ -76,4 +78,35 @@ Deno.test("parseExitSentinel recovers the exit code from stdout", () => {
   assertEquals(parseExitSentinel("...test output...\n__GOBRR_EXIT__:0\n"), 0);
   assertEquals(parseExitSentinel("boom\n__GOBRR_EXIT__:1"), 1);
   assertEquals(parseExitSentinel("no sentinel here"), null);
+});
+
+// ── retention guard (issue si-applied-resource-lifetime) ─────────────────────
+// The verify result holds (scrubbed) verify stdout — bound it so a missed secret
+// does not persist forever. Read via `as string` to avoid the `as const`
+// literal-overlap; RED until the lifetime is flipped from "infinite" to "24h".
+Deno.test("docker_verify result resource is bounded to 24h, not infinite", () => {
+  const lt = model.resources.result.lifetime as string;
+  assertEquals(lt, "24h");
+  assert(lt !== "infinite", "result must not retain verify stdout forever");
+});
+
+// boundedStdout is the pure write-boundary transform for result.stdout: scrub secrets
+// UNCONDITIONALLY (raw verify stdout can echo env-var secrets on failure) then tail-bound.
+// RED until the helper exists; scrubSecrets itself is unit-covered in lib/scrub.test.ts.
+Deno.test("boundedStdout scrubs secrets in verify stdout and tail-bounds it", () => {
+  const out = boundedStdout(
+    "FAIL aws=AKIAIOSFODNN7EXAMPLE tok=sk-ant-LEAKEDsecret123456\nstack trace",
+  );
+  assert(!out.includes("AKIAIOSFODNN7EXAMPLE"), "AWS key scrubbed");
+  assert(
+    !out.includes("sk-ant-LEAKEDsecret123456"),
+    "anthropic token scrubbed",
+  );
+  assert(out.includes("stack trace"), "non-secret content preserved");
+  assertEquals(boundedStdout("x".repeat(9000)).length, 8000); // tail-bounded
+  // keeps the TAIL, not the head (a slice(0,N) impl would fail this)
+  assert(
+    boundedStdout("A".repeat(9000) + "TAIL-MARKER").endsWith("TAIL-MARKER"),
+    "boundedStdout keeps the tail",
+  );
 });

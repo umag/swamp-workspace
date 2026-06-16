@@ -3,6 +3,24 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.16.6 — bounded retention for secret-bearing resources
+
+### Changed
+
+- The four secret-bearing resources now have a bounded lifetime instead of
+  `infinite`, so any secret the (best-effort) scrubber misses no longer persists
+  forever: `source-integration` `workorder` (inlined scrubbed file slices) and
+  `applied` (scrubbed diff) → **24h**; `docker-verify` `result` → **24h**;
+  `gobrr` `stepOutputs` (the durable audit log, read on post-halt inspection) →
+  **7d**. The non-secret state resources (`run`/`summary`/`decision`/`config`)
+  stay `infinite` so run history and authoritative state are not dropped.
+- `docker-verify` now scrubs `result.stdout` at the write boundary via a pure
+  `boundedStdout(s) = scrubSecrets(s).slice(-8000)` helper (it was the only
+  secret-bearing field stored RAW); the exit-code gate reads the raw stdout
+  before scrubbing, so the gate is unaffected. The field is marked
+  `.meta({ sensitive: true })` for downstream redaction.
+- Scrubbing stays the PRIMARY control; the bounded TTL is defense-in-depth.
+
 ## 2026.06.16.5 — gobrr: record per-step outputs (audit trail)
 
 ### Added

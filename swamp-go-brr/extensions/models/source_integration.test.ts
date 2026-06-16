@@ -5,6 +5,7 @@ import {
   isSafeRepoScope,
   isSafeRevision,
   MAX_ENVELOPE_BYTES,
+  model,
   parseEnvelope,
   planApply,
   scrubSecrets,
@@ -595,6 +596,12 @@ Deno.test("scrubSecrets redacts anthropic tokens and bearer values in the persis
   assert(!/sk-ant-oat01/.test(clean), "anthropic token redacted");
   assert(!/abc\.def\.ghi/.test(clean), "bearer value redacted");
   assert(/const ok = "hello";/.test(clean), "ordinary code preserved");
+  // the BROAD scrubber (lib/scrub.ts) is in effect at the apply boundary, not the
+  // legacy narrow one — a non-Anthropic key must also be redacted
+  assert(
+    !/AKIAIOSFODNN7EXAMPLE/.test(scrubSecrets("aws=AKIAIOSFODNN7EXAMPLE")),
+    "AWS key redacted at the apply boundary",
+  );
 });
 
 // ── summarizeEnvelope — the AGENT-DECLARED step-output summary ────────────────
@@ -673,5 +680,20 @@ Deno.test("summarizeEnvelope sanitizes control chars and caps path length", () =
   assert(
     capped !== undefined && capped.length === 512,
     "overlong path capped to EXACTLY 512",
+  );
+});
+
+// ── retention guard (issue si-applied-resource-lifetime) ─────────────────────
+// workorder (inlined scrubbed file slices) and applied (scrubbed diff) are
+// transient per-task inputs — bound them to 24h. `as string` avoids the `as const`
+// literal-overlap; RED until the lifetimes are flipped from "infinite" to "24h".
+Deno.test("source_integration workorder + applied resources are bounded to 24h, not infinite", () => {
+  const wo = model.resources.workorder.lifetime as string;
+  const ap = model.resources.applied.lifetime as string;
+  assert(wo === "24h", "workorder must be bounded to 24h");
+  assert(ap === "24h", "applied must be bounded to 24h");
+  assert(
+    wo !== "infinite" && ap !== "infinite",
+    "transient inputs must not retain scrubbed file slices / diffs forever",
   );
 });
