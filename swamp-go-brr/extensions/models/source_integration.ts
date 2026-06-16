@@ -16,7 +16,14 @@ import {
   pathInSet,
   resolveWithinRepo,
 } from "./lib/acl.ts";
-import type { FailureKind } from "./gobrr.ts";
+import { scrubSecrets } from "./lib/scrub.ts";
+import type { EnvelopeSummary, FailureKind } from "./gobrr.ts";
+
+// Re-export so existing importers (and tests) keep resolving scrubSecrets from this
+// module; the implementation now lives in the cycle-free lib/scrub.ts. NOTE: this also
+// (intentionally) broadens the apply-boundary diff scrub from the original two patterns
+// (sk-ant + Authorization/Bearer) to the full lib/scrub.ts set — strictly more redaction.
+export { scrubSecrets };
 
 export const MAX_ENVELOPE_BYTES = 200_000;
 const MAX_BLOCKS = 200;
@@ -241,20 +248,50 @@ export function isSafeRevision(base: string): boolean {
   return base.length > 0 && !base.startsWith("-") && !/\s/.test(base);
 }
 
-// ── scrubSecrets — apply-boundary redaction of the persisted diff/commit ─────
+// scrubSecrets now lives in lib/scrub.ts (imported + re-exported at the top of this
+// file) so both the apply boundary here and the gobrr step-output boundary share one
+// pure implementation without an import cycle.
+
+// ── summarizeEnvelope — the AGENT-DECLARED step-output summary ────────────────
+
+const MAX_DECLARED_PATH_LEN = 512;
+
+/** Sanitize an agent-declared path before it is recorded/surfaced: strip control
+ * characters (C0 0x00-0x1f and DEL 0x7f — they could corrupt log/hydrate rendering)
+ * and cap the length. Char-code scan avoids a control-char regex literal. */
+function sanitizeDeclaredPath(p: string): string {
+  let out = "";
+  for (const ch of p) {
+    const c = ch.charCodeAt(0);
+    if (c > 0x1f && c !== 0x7f) out += ch;
+  }
+  return out.slice(0, MAX_DECLARED_PATH_LEN);
+}
 
 /**
- * Redact credential VALUES from text persisted to a 24h resource (the final jj
- * diff + commit message). Targets Anthropic token values and bearer/authorization
- * values — not the bare words TOKEN/OAUTH (which legitimately appear in code).
+ * Summarize a parsed envelope into the AGENT-DECLARED step-output fields: how many
+ * blocks the leaf emitted, the @@EDIT count per target file, and the sorted-unique set
+ * of declared target paths. This is the leaf's stated INTENT — the audit's value is
+ * contrasting it against the HOST-OBSERVED changedPaths (a declared edit that produced
+ * no observed change is the dropped-block signature). Never a gate, never host truth
+ * (ADR 0001). Paths are control-char stripped and length-capped before recording.
  */
-export function scrubSecrets(text: string): string {
-  return text
-    .replace(/sk-ant-[A-Za-z0-9_-]{6,}/g, "[REDACTED-TOKEN]")
-    .replace(
-      /((?:Authorization|Bearer)\s*:?\s+)[A-Za-z0-9._~+/=\-]{8,}/gi,
-      "$1[REDACTED]",
-    );
+export function summarizeEnvelope(env: Envelope): EnvelopeSummary {
+  const declaredEditsPerFile: Record<string, number> = {};
+  const paths = new Set<string>();
+  for (const e of env.edits) {
+    const p = sanitizeDeclaredPath(e.path);
+    declaredEditsPerFile[p] = (declaredEditsPerFile[p] ?? 0) + 1;
+    paths.add(p);
+  }
+  for (const f of env.newFiles) {
+    paths.add(sanitizeDeclaredPath(f.path));
+  }
+  return {
+    blockCount: env.edits.length + env.newFiles.length,
+    declaredTargetPaths: [...paths].sort(),
+    declaredEditsPerFile,
+  };
 }
 
 // ── side-effectful model methods ─────────────────────────────────────────────
@@ -322,7 +359,7 @@ export function parseGitDiffPaths(
 
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.06.15.1",
+  version: "2026.06.16.1",
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(
@@ -340,7 +377,7 @@ export const model = {
     },
     applied: {
       description:
-        "Per-task apply results: { taskId -> {changeId, changedPaths, diff, failureKind?} }. changedPaths are HOST-OBSERVED (jj diff), never agent-declared.",
+        "Per-task apply results: { taskId -> {changeId, changedPaths, diff, declaredEnvelopeSummary, failureKind?} }. changedPaths/diff are HOST-OBSERVED (jj diff), never agent-declared; declaredEnvelopeSummary is AGENT-DECLARED intent (block count, edits-per-file, target paths) recorded for the audit contrast, advisory only.",
       schema: z.object({ results: z.record(z.string(), z.unknown()) }),
       lifetime: "infinite" as const,
       garbageCollection: 20,
@@ -593,6 +630,10 @@ export const model = {
             changeId: idr.stdout.trim(),
             changedPaths: observed.map((o) => o.path).sort(), // HOST-OBSERVED, not agent-declared
             diff: scrubSecrets(dr.stdout).slice(0, 20000),
+            // AGENT-DECLARED intent (advisory) — the driver forwards this to gobrr.report
+            // so the audit trail can contrast declared edits against the host-observed
+            // changedPaths above. Never used as a gate or as host truth.
+            declaredEnvelopeSummary: summarizeEnvelope(pe.env),
           };
           context.logger.info("apply {tid} → {n} path(s)", {
             tid: t.taskId,

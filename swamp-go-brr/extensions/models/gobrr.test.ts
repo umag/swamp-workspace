@@ -8,7 +8,9 @@ import {
 import {
   addFollowup,
   applyReport,
+  buildStepOutput,
   deriveGate,
+  DIFF_TAIL_BYTES,
   haltOptionsFor,
   hasCycle,
   leaseExpired,
@@ -18,8 +20,10 @@ import {
   readyTaskIds,
   type Run,
   type RunConfig,
+  stepOutputProjection,
   type Task,
   trustSummary,
+  VERIFY_TAIL_BYTES,
   wouldCycle,
 } from "./gobrr.ts";
 
@@ -427,4 +431,227 @@ Deno.test("trustSummary: a gate with only excluded tasks produces no bucket; emp
     task({ id: "i", gate: "real", status: "infra_error" }),
   ]);
   assertEquals(trustSummary(onlyExcluded), {});
+});
+
+// ───────────────────────── step-output audit record ─────────────────────────
+// Issue gobrr-record-step-outputs. Pure helpers (no subprocess), same lane as the
+// trustSummary/applyReport tests above. Contract:
+//   buildStepOutput(input): StepOutput — pure. diffTail = input.diff.slice(-DIFF_TAIL_BYTES)
+//     (diff is ALREADY scrubbed by apply(), re-bound only); verifyTail =
+//     scrubSecrets(input.verifyTail).slice(-VERIFY_TAIL_BYTES) (scrubbed UNCONDITIONALLY
+//     at this storage boundary); outcome/failureKind/envelope carried verbatim.
+//   stepOutputProjection(records, tasks): { count, mismatches[], reaped[] } — pure,
+//     NEVER persisted. mismatch = a declared target path absent from host-observed
+//     changedPaths; reaped = task.attempts exceeding the count of that task's records.
+
+Deno.test("buildStepOutput keeps the diff TAIL (not head) and does not re-scrub it", () => {
+  // non-homogeneous so slice(-N) (tail) differs from slice(0,N) (head); the tail
+  // carries a secret-SHAPED marker that must survive verbatim — the diff arrives
+  // already scrubbed from apply(), so buildStepOutput re-bounds only, never re-scrubs.
+  const marker = "AKIAIOSFODNN7EXAMPLE";
+  const tail = "B".repeat(DIFF_TAIL_BYTES - marker.length) + marker;
+  const big = "A".repeat(500) + tail;
+  const rec = buildStepOutput({
+    taskId: "a",
+    invocation: 1,
+    recordedAt: T0,
+    outcome: "done",
+    failureKind: null,
+    envelope: null,
+    changedPaths: ["src/a.ts"],
+    diff: big,
+    verifyExitCode: 0,
+    verifyTail: "ok",
+  });
+  assertEquals(rec.diffTail.length, DIFF_TAIL_BYTES);
+  assertEquals(rec.diffTail, tail); // tail kept (catches head-keeping AND a re-scrub of the marker)
+});
+
+Deno.test("buildStepOutput UNCONDITIONALLY scrubs verifyTail with the BROAD scrubber, keeping non-secret text", () => {
+  const skant = "sk-ant-SECRETvalue1234567";
+  const akia = "AKIAIOSFODNN7EXAMPLE"; // non-Anthropic — only the broadened scrubber catches it
+  const rec = buildStepOutput({
+    taskId: "a",
+    invocation: 1,
+    recordedAt: T0,
+    outcome: "test_failed",
+    failureKind: null,
+    envelope: null,
+    changedPaths: [],
+    diff: "",
+    verifyExitCode: 1,
+    verifyTail: `FAIL leaked=${skant} aws=${akia}\nstack trace here`,
+  });
+  assert(!rec.verifyTail.includes(skant), "Anthropic token scrubbed");
+  assert(
+    !rec.verifyTail.includes(akia),
+    "non-Anthropic secret scrubbed → the broad scrubber is applied, not the legacy narrow one",
+  );
+  assert(
+    rec.verifyTail.includes("stack trace here"),
+    "non-secret content must survive (an impl returning '' must fail)",
+  );
+});
+
+Deno.test("buildStepOutput bounds verifyTail and carries outcome/failureKind/nullable envelope", () => {
+  const rec = buildStepOutput({
+    taskId: "a",
+    invocation: 2,
+    recordedAt: T0,
+    outcome: "infra_error",
+    failureKind: "envelope_parse",
+    envelope: null,
+    changedPaths: [],
+    diff: "",
+    verifyExitCode: 1,
+    verifyTail: "v".repeat(VERIFY_TAIL_BYTES + 100),
+  });
+  // no secrets in the input → scrub is a no-op → tail slice is EXACTLY the cap
+  assertEquals(rec.verifyTail.length, VERIFY_TAIL_BYTES);
+  assertEquals(rec.outcome, "infra_error");
+  assertEquals(rec.failureKind, "envelope_parse");
+  assertEquals(rec.envelope, null);
+});
+
+Deno.test("stepOutputProjection: empty input → zero count, no mismatches, no reaped", () => {
+  const p = stepOutputProjection([], []);
+  assertEquals(p.count, 0);
+  assertEquals(p.mismatches, []);
+  assertEquals(p.reaped, []);
+});
+
+Deno.test("stepOutputProjection flags a declared path absent from host-observed changedPaths", () => {
+  const rec = buildStepOutput({
+    taskId: "t1",
+    invocation: 1,
+    recordedAt: T0,
+    outcome: "done",
+    failureKind: null,
+    envelope: {
+      blockCount: 2,
+      declaredTargetPaths: ["src/a.ts"],
+      declaredEditsPerFile: { "src/a.ts": 2 },
+    },
+    // host changed a DIFFERENT file — declared src/a.ts is still absent. Non-empty
+    // changedPaths defeats a lazy `changedPaths.length === 0` mismatch heuristic.
+    changedPaths: ["src/other.ts"],
+    diff: "",
+    verifyExitCode: 0,
+    verifyTail: "",
+  });
+  const p = stepOutputProjection([rec], [task({ id: "t1", status: "done" })]);
+  assert(
+    p.mismatches.some((m) => m.taskId === "t1" && m.path === "src/a.ts"),
+    "declared-but-unobserved path is flagged even when other paths changed",
+  );
+});
+
+Deno.test("stepOutputProjection flags ALL declared paths absent from changedPaths", () => {
+  const rec = buildStepOutput({
+    taskId: "t1",
+    invocation: 1,
+    recordedAt: T0,
+    outcome: "done",
+    failureKind: null,
+    envelope: {
+      blockCount: 2,
+      declaredTargetPaths: ["src/a.ts", "src/b.ts"],
+      declaredEditsPerFile: { "src/a.ts": 1, "src/b.ts": 1 },
+    },
+    changedPaths: [], // neither observed → both must be flagged, not just the first
+    diff: "",
+    verifyExitCode: 0,
+    verifyTail: "",
+  });
+  const p = stepOutputProjection([rec], [task({ id: "t1", status: "done" })]);
+  assertEquals(p.mismatches.length, 2);
+  assert(p.mismatches.some((m) => m.path === "src/a.ts"), "a flagged");
+  assert(p.mismatches.some((m) => m.path === "src/b.ts"), "b flagged");
+});
+
+Deno.test("stepOutputProjection: no mismatch when a declared path is observed", () => {
+  const rec = buildStepOutput({
+    taskId: "t1",
+    invocation: 1,
+    recordedAt: T0,
+    outcome: "done",
+    failureKind: null,
+    envelope: {
+      blockCount: 1,
+      declaredTargetPaths: ["src/a.ts"],
+      declaredEditsPerFile: { "src/a.ts": 1 },
+    },
+    changedPaths: ["src/a.ts"],
+    diff: "",
+    verifyExitCode: 0,
+    verifyTail: "",
+  });
+  const p = stepOutputProjection([rec], [task({ id: "t1", status: "done" })]);
+  assertEquals(p.mismatches, []);
+});
+
+function failedRec(taskId: string, invocation: number) {
+  return buildStepOutput({
+    taskId,
+    invocation,
+    recordedAt: T0,
+    outcome: "test_failed",
+    failureKind: null,
+    envelope: null,
+    changedPaths: [],
+    diff: "",
+    verifyExitCode: 1,
+    verifyTail: "",
+  });
+}
+
+Deno.test("stepOutputProjection: reaped gap = task.attempts minus recorded outputs (two data points)", () => {
+  // t1: 2 attempts, 1 record → gap 1; t2: 3 attempts, 1 record → gap 2.
+  // Two points pin gap = attempts - recorded (a constant-1 impl fails on t2).
+  const p = stepOutputProjection(
+    [failedRec("t1", 1), failedRec("t2", 1)],
+    [
+      task({ id: "t1", status: "exhausted", attempts: 2 }),
+      task({ id: "t2", status: "exhausted", attempts: 3 }),
+    ],
+  );
+  const g1 = p.reaped.find((x) => x.taskId === "t1");
+  assert(g1 !== undefined, "t1 gap reported");
+  assertEquals(g1!.gap, 1);
+  const g2 = p.reaped.find((x) => x.taskId === "t2");
+  assert(g2 !== undefined, "t2 gap reported");
+  assertEquals(g2!.attempts, 3);
+  assertEquals(g2!.recorded, 1);
+  assertEquals(g2!.gap, 2);
+});
+
+Deno.test("stepOutputProjection: a null-envelope record yields no mismatch (null-safe)", () => {
+  const rec = buildStepOutput({
+    taskId: "t1",
+    invocation: 1,
+    recordedAt: T0,
+    outcome: "done",
+    failureKind: null,
+    envelope: null, // no declared summary → contributes no mismatch, must not throw
+    changedPaths: ["src/a.ts"],
+    diff: "",
+    verifyExitCode: 0,
+    verifyTail: "",
+  });
+  const p = stepOutputProjection([rec], [
+    task({ id: "t1", status: "done", attempts: 0 }),
+  ]);
+  assertEquals(p.count, 1);
+  assertEquals(p.mismatches, []);
+  assertEquals(p.reaped, []); // attempts 0 vs 1 record → no positive gap
+});
+
+Deno.test("stepOutputProjection: counts ALL records per task (not distinct task ids)", () => {
+  // two invocations of t1, both recorded; attempts==records → no reaped gap.
+  const p = stepOutputProjection(
+    [failedRec("t1", 1), failedRec("t1", 2)],
+    [task({ id: "t1", status: "exhausted", attempts: 2 })],
+  );
+  assertEquals(p.count, 2);
+  assertEquals(p.reaped, []);
 });
