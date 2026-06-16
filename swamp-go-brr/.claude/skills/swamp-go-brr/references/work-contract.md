@@ -42,9 +42,9 @@ GOBRR:<nonce>>>>
 Multiple `@@EDIT` blocks may target the same file; they are applied one after
 another and each block's `@@OLD` must be an exact, unique substring of that
 file's **running** content (the result of the preceding blocks for that file),
-not the original on-disk text. Use `@@NEWFILE` for new files; a path may not
-appear as both `@@EDIT` and `@@NEWFILE` in one envelope. Each marker alone on
-its own line; nothing outside the fence.
+not the original on-disk text. Use `@@NEWFILE` for new files; a `@@NEWFILE` path
+must be unique and may not also appear as an `@@EDIT` target in the same
+envelope. Each marker alone on its own line; nothing outside the fence.
 
 ## WorkResult (host-built from the applied tree)
 

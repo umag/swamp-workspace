@@ -30,5 +30,6 @@ clobbers silently.
   the `MAX_ENVELOPE_BYTES` cap are all evaluated on the folded result.
 - Emit exactly one write per path (sorted), skipping a no-op fold whose result
   equals the original snapshot.
-- Reject a path that appears in both `@@EDIT` and `@@NEWFILE` (and, per
-  follow-up `si-apply-duplicate-newfile-clobber`, duplicate `@@NEWFILE` paths).
+- Reject (on the normalized path) a path that appears in both `@@EDIT` and
+  `@@NEWFILE`, or as `@@NEWFILE` more than once — both are silent-clobber
+  routes.

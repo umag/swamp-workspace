@@ -3,6 +3,17 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.16.2 — source-integration: reject duplicate @@NEWFILE paths
+
+### Fixed
+
+- `source-integration` `planApply` rejected a path present in both `@@EDIT` and
+  `@@NEWFILE` but not two `@@NEWFILE` blocks for the same path — the second
+  silently clobbered the first. The pre-check now also rejects duplicate
+  `@@NEWFILE` paths, keyed on the normalized path (so `dir//x.ts` and `dir/x.ts`
+  cannot slip past as distinct), returning `envelope_parse` before any write.
+  Multiple `@@EDIT` blocks per file remain valid (they fold).
+
 ## 2026.06.16.1 — source-integration: cumulative same-file edit fold
 
 ### Fixed

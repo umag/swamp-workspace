@@ -452,6 +452,92 @@ Deno.test("planApply: a denied path as the 2nd @@NEWFILE block → unsafe_change
   );
 });
 
+// ── planApply: duplicate @@NEWFILE rejection ────────────────────────────────
+// Issue si-apply-duplicate-newfile-clobber. RED until planApply rejects two
+// @@NEWFILE blocks resolving to the same path (the second silently clobbered the
+// first). Multiple @@EDIT blocks per file stay valid (the fold, above).
+
+Deno.test("planApply: two @@NEWFILE for the same path → envelope_parse", () => {
+  const env = {
+    edits: [],
+    newFiles: [
+      { path: "new.ts", content: "FIRST" },
+      { path: "new.ts", content: "SECOND" },
+    ],
+  };
+  const r = planApply(env, ["new.ts"], {});
+  assert(
+    "failureKind" in r && r.failureKind === "envelope_parse",
+    "duplicate @@NEWFILE rejected",
+  );
+});
+
+Deno.test("planApply: three @@NEWFILE for the same path → envelope_parse", () => {
+  const env = {
+    edits: [],
+    newFiles: [
+      { path: "a.ts", content: "1" },
+      { path: "a.ts", content: "2" },
+      { path: "a.ts", content: "3" },
+    ],
+  };
+  const r = planApply(env, ["a.ts"], {});
+  assert(
+    "failureKind" in r && r.failureKind === "envelope_parse",
+    "triple @@NEWFILE rejected",
+  );
+});
+
+Deno.test("planApply: two @@NEWFILE whose paths normalize to the same file → envelope_parse", () => {
+  const env = {
+    edits: [],
+    newFiles: [
+      { path: "dir/x.ts", content: "A" },
+      { path: "dir//x.ts", content: "B" },
+    ],
+  };
+  const r = planApply(env, ["dir"], {});
+  assert(
+    "failureKind" in r && r.failureKind === "envelope_parse",
+    "normalized-duplicate @@NEWFILE rejected",
+  );
+});
+
+Deno.test("planApply: a duplicate @@NEWFILE is rejected even with a valid @@EDIT present, with no writes", () => {
+  const snap = { "src/a.ts": "const x = 1;\n" };
+  const env = {
+    edits: [{ path: "src/a.ts", old: "const x = 1;", new: "const x = 2;" }],
+    newFiles: [
+      { path: "n.ts", content: "FIRST" },
+      { path: "n.ts", content: "SECOND" },
+    ],
+  };
+  const r = planApply(env, ["src/a.ts", "n.ts"], snap);
+  assert(
+    "failureKind" in r && r.failureKind === "envelope_parse",
+    "duplicate @@NEWFILE rejected even with a valid edit present",
+  );
+  assert(!("writes" in r), "no writes when the envelope is rejected");
+});
+
+Deno.test("planApply: distinct @@NEWFILE paths still apply", () => {
+  const env = {
+    edits: [],
+    newFiles: [
+      { path: "a.ts", content: "AA" },
+      { path: "b.ts", content: "BB" },
+    ],
+  };
+  const r = planApply(env, ["a.ts", "b.ts"], {});
+  assert("writes" in r, "planned");
+  if (!("writes" in r)) return;
+  assert(r.writes.length === 2, "both new files planned");
+  assert(
+    r.changedPaths.slice().sort().join(",") === "a.ts,b.ts",
+    "both paths changed",
+  );
+});
+
 // ── scrubSecrets (apply-boundary, final diff) ───────────────────────────────
 
 Deno.test("scrubSecrets redacts anthropic tokens and bearer values in the persisted diff", () => {

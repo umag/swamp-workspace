@@ -31,4 +31,9 @@ out-of-allowlist / denied / non-regular path.
 ## Applied here
 
 The same-file fold added running-content checks but kept all of them in
-`planApply`; `apply` and the tripwire were untouched.
+`planApply`; `apply` and the tripwire were untouched. The duplicate-`@@NEWFILE`
+rejection (issue `si-apply-duplicate-newfile-clobber`) likewise lives in the
+pure pre-check and keys its collision/dedup Set on `normalizePath(path)`, so two
+syntactically different paths that resolve to the same file (`dir//x.ts` vs
+`dir/x.ts`) are caught before any write — a guard/dedup keyed on the raw string
+would miss them.
