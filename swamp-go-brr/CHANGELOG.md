@@ -3,6 +3,40 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.16.5 — gobrr: record per-step outputs (audit trail)
+
+### Added
+
+- `gobrr` records the OUTPUT of every leaf invocation in a new append-only
+  `stepOutputs` resource: the agent-DECLARED envelope summary (block count,
+  edits-per-file, target paths), the host-OBSERVED `changedPaths` + scrubbed
+  `diffTail`, the docker-verify exit code + scrubbed `verifyTail`, and the
+  resolved outcome/failureKind. Only these raw PRUNED measurements are stored;
+  rollups (record count, declared-vs-observed mismatches, reaped-invocation
+  gaps) are DERIVED by `stepOutputProjection`, never persisted (ADR 0002 — the
+  "pruned source rows" exception). `report` persists the run FIRST (the green
+  gate is sacred) then best-effort appends the record (never blocking the gate);
+  `hydrate` surfaces the projection. Motivated by
+  `si-apply-multi-edit-same-file` shipping a dropped edit silently — a declared
+  edit that produced no host-observed change is now an inspectable mismatch.
+- `source-integration` `apply` returns a `declaredEnvelopeSummary` per task
+  (agent-declared, advisory) alongside the host-observed `changedPaths`/`diff`.
+
+### Changed
+
+- `scrubSecrets` extracted to a pure, cycle-free `lib/scrub.ts` (re-exported
+  from `source-integration`) and broadened with AWS / GitHub / GitLab / GCP and
+  a generic high-entropy `key=value` pattern on top of the legacy
+  `sk-ant`/`Authorization` ones, so the new persisted `verifyTail`
+  (docker-verify stdout) is scrubbed UNCONDITIONALLY at the gobrr storage
+  boundary. This also broadens the existing apply-boundary diff scrub.
+
+### Notes
+
+- `RunSchema` is unchanged — the audit log is a separate read-model resource, so
+  the scheduler hot path stays lean and there is no schema/interface bridge
+  drift.
+
 ## 2026.06.16.4 — gobrr: per-task-type trust projection
 
 ### Added

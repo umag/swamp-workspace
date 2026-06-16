@@ -112,7 +112,7 @@ type Ctx = {
 /** @internal — call via the CLI / driver loop. */
 export const model = {
   type: "@magistr/swamp-go-brr/docker-verify",
-  version: "2026.06.15.1",
+  version: "2026.06.16.5",
 
   globalArguments: z.object({
     sshHost: z.string().describe("Docker host running the applied tree (SSH)"),
