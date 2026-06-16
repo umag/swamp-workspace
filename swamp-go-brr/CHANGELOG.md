@@ -3,6 +3,21 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.16.4 — gobrr: per-task-type trust projection
+
+### Added
+
+- `gobrr` `trustSummary(run)` — a pure, DERIVED per-task-type promise-keeping
+  projection (no stored state) keyed on `task.gate` (real=code, advisory=test):
+  `{ kept, broken, passRate, greenFirstTryRate, meanAttemptsToGreen }`. A `done`
+  task kept its promise (`attemptsToGreen = attempts + 1`); `exhausted` /
+  `merge_conflict` broke it; `blocked` / `infra_error` / non-terminal are
+  excluded. Deriving from the final task status captures both the `report` and
+  the scheduler lease-reap `exhausted` paths. Surfaced read-only as `trust` in
+  `completeReport` and `trustSoFar` in `hydrate`. Promise Theory: trust is the
+  measured (gate-exit-code) assessment, never the agent's self-report — the data
+  foundation for later adaptive verification.
+
 ## 2026.06.16.3 — source-integration: input-validation hardening
 
 ### Changed
