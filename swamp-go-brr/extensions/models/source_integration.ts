@@ -359,7 +359,7 @@ export function parseGitDiffPaths(
 
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.06.16.5",
+  version: "2026.06.16.6",
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(
@@ -371,15 +371,23 @@ export const model = {
     workorder: {
       description:
         "A built leaf WorkOrder prompt (the inline file slice + practices + @@EDIT instructions).",
-      schema: z.object({ prompt: z.string(), taskId: z.string() }),
-      lifetime: "infinite" as const,
+      schema: z.object({
+        // inlines scrubbed file slices — flagged sensitive for downstream redaction
+        prompt: z.string().meta({ sensitive: true }),
+        taskId: z.string(),
+      }),
+      // Bounded retention (issue si-applied-resource-lifetime): the prompt inlines
+      // scrubbed file slices — a transient per-task input, not kept forever.
+      lifetime: "24h" as const,
       garbageCollection: 20,
     },
     applied: {
       description:
         "Per-task apply results: { taskId -> {changeId, changedPaths, diff, declaredEnvelopeSummary, failureKind?} }. changedPaths/diff are HOST-OBSERVED (jj diff), never agent-declared; declaredEnvelopeSummary is AGENT-DECLARED intent (block count, edits-per-file, target paths) recorded for the audit contrast, advisory only.",
       schema: z.object({ results: z.record(z.string(), z.unknown()) }),
-      lifetime: "infinite" as const,
+      // Bounded retention (issue si-applied-resource-lifetime): holds the scrubbed jj
+      // diff — a transient per-task result, not kept forever.
+      lifetime: "24h" as const,
       garbageCollection: 20,
     },
   },

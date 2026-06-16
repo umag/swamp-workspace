@@ -853,9 +853,9 @@ export const StepOutputSchema = z.object({
   failureKind: FailureKindEnum.nullable(),
   envelope: EnvelopeSummarySchema.nullable(), // declared; null on parse-fail / no envelope
   changedPaths: z.array(z.string()), // HOST-OBSERVED
-  diffTail: z.string(), // already scrubbed upstream; re-bound to the tail
+  diffTail: z.string().meta({ sensitive: true }), // scrubbed upstream; re-bound to the tail
   verifyExitCode: z.number(),
-  verifyTail: z.string(), // scrubbed + tail-bounded at this boundary
+  verifyTail: z.string().meta({ sensitive: true }), // scrubbed + tail-bounded here
 });
 
 export const StepOutputsResourceSchema = z.object({
@@ -1028,7 +1028,7 @@ function persist(context: Ctx, run: Run): Promise<unknown> {
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/gobrr",
-  version: "2026.06.16.5",
+  version: "2026.06.16.6",
   globalArguments: z.object({}),
 
   resources: {
@@ -1055,9 +1055,9 @@ export const model = {
     },
     stepOutputs: {
       description:
-        "Append-only per-leaf-invocation audit log {records: StepOutput[]}: the raw PRUNED measurements report() was given (declared envelope summary, host-observed changedPaths + scrubbed diffTail, verify exit + scrubbed verifyTail, outcome/failureKind). One resource per run; rollups are DERIVED via stepOutputProjection, never stored. Lifetime infinite; garbageCollection matches `run` (50).",
+        "Append-only per-leaf-invocation audit log {records: StepOutput[]}: the raw PRUNED measurements report() was given (declared envelope summary, host-observed changedPaths + scrubbed diffTail, verify exit + scrubbed verifyTail, outcome/failureKind). One resource per run; rollups are DERIVED via stepOutputProjection, never stored. Lifetime 7d (bounded retention, issue si-applied-resource-lifetime) — longer than the transient per-task inputs (24h) so a post-halt inspection survives, while not retaining the scrubbed tails forever; garbageCollection 50.",
       schema: StepOutputsResourceSchema,
-      lifetime: "infinite" as const,
+      lifetime: "7d" as const,
       garbageCollection: 50,
     },
   },

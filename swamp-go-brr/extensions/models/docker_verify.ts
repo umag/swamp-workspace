@@ -9,6 +9,7 @@
 // the gate; the agent controls neither this command nor the tree's test surface.
 import { z } from "npm:zod@4";
 import { sshExecRaw } from "./lib/ssh.ts";
+import { scrubSecrets } from "./lib/scrub.ts";
 
 // Flags an attacker-influenced input must never introduce.
 const FORBIDDEN = ["--privileged", "--pid=host", "--ipc=host", "--userns=host"];
@@ -99,6 +100,16 @@ export function parseExitSentinel(stdout: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+/**
+ * The pure write-boundary transform for the persisted verify stdout: scrub secrets
+ * UNCONDITIONALLY (raw verify output can echo env-var secrets on a test failure) and
+ * tail-bound. The exitCode gate is computed from the RAW stdout via parseExitSentinel
+ * before this runs, so scrubbing the stored copy never affects the gate.
+ */
+export function boundedStdout(stdout: string): string {
+  return scrubSecrets(stdout).slice(-8000);
+}
+
 type Ctx = {
   logger: { info: (msg: string, data?: Record<string, unknown>) => void };
   globalArgs: { sshHost: string; sshUser?: string };
@@ -112,7 +123,7 @@ type Ctx = {
 /** @internal — call via the CLI / driver loop. */
 export const model = {
   type: "@magistr/swamp-go-brr/docker-verify",
-  version: "2026.06.16.5",
+  version: "2026.06.16.6",
 
   globalArguments: z.object({
     sshHost: z.string().describe("Docker host running the applied tree (SSH)"),
@@ -125,10 +136,13 @@ export const model = {
         "The verify run result: { exitCode, stdout }. exitCode is the gate.",
       schema: z.object({
         exitCode: z.number(),
-        stdout: z.string(),
+        // scrubbed at write (boundedStdout); flagged sensitive for downstream redaction
+        stdout: z.string().meta({ sensitive: true }),
         command: z.string(),
       }),
-      lifetime: "infinite" as const,
+      // Bounded retention (issue si-applied-resource-lifetime): even scrubbed, the
+      // verify stdout is the likeliest residual-secret field — do not keep it forever.
+      lifetime: "24h" as const,
       garbageCollection: 20,
     },
   },
@@ -172,7 +186,7 @@ export const model = {
         context.logger.info("docker-verify exit={code}", { code: exitCode });
         const handle = await context.writeResource("result", "current", {
           exitCode,
-          stdout: res.stdout.slice(-8000),
+          stdout: boundedStdout(res.stdout), // scrub + tail-bound; gate uses raw above
           command: cmd,
         });
         return { dataHandles: [handle] };
