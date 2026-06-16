@@ -2,6 +2,8 @@
 // nonce-fence forgery defense), planApply (allowlist/DENY/cap enforcement over an
 // injectable file snapshot — no filesystem), and the apply-boundary secret scrub.
 import {
+  isSafeRepoScope,
+  isSafeRevision,
   MAX_ENVELOPE_BYTES,
   parseEnvelope,
   planApply,
@@ -536,6 +538,51 @@ Deno.test("planApply: distinct @@NEWFILE paths still apply", () => {
     r.changedPaths.slice().sort().join(",") === "a.ts,b.ts",
     "both paths changed",
   );
+});
+
+// ── isSafeRepoScope / isSafeRevision (input validation) ─────────────────────
+// Issue si-input-validation-hardening. Pure predicates extracted so the
+// repoScope guard (mirrored verbatim from apply) and the jj-revision guard are
+// unit-tested and reusable across build_workorder + apply.
+
+Deno.test("isSafeRepoScope: accepts an absolute, clean host path", () => {
+  assert(isSafeRepoScope("/home/u/repo"), "absolute clean");
+  assert(
+    isSafeRepoScope("/home/u/my-repo.v2/work_dir"),
+    "dashes, dots, underscores ok",
+  );
+});
+
+Deno.test("isSafeRepoScope: rejects relative / metachar / traversal paths", () => {
+  assert(!isSafeRepoScope(""), "empty");
+  assert(!isSafeRepoScope("relative/path"), "not absolute");
+  assert(!isSafeRepoScope("/has space"), "whitespace");
+  assert(!isSafeRepoScope("/has\nnewline"), "newline");
+  assert(!isSafeRepoScope("/has\ttab"), "tab");
+  assert(!isSafeRepoScope("/has;semi"), "semicolon");
+  assert(!isSafeRepoScope("/has|pipe"), "pipe");
+  assert(!isSafeRepoScope("/has&amp"), "ampersand");
+  assert(!isSafeRepoScope("/has$var"), "dollar");
+  assert(!isSafeRepoScope("/has`tick"), "backtick");
+  assert(!isSafeRepoScope("/has'quote"), "single quote");
+  assert(!isSafeRepoScope('/has"quote'), "double quote");
+  assert(!isSafeRepoScope("/up/../x"), ".. mid-path");
+  assert(!isSafeRepoScope("/ends/with/.."), ".. at end");
+});
+
+Deno.test("isSafeRevision: accepts a change/commit id, @, and mid-string dashes", () => {
+  assert(isSafeRevision("kxryznotzaby"), "change id");
+  assert(isSafeRevision("a1b2c3d4"), "commit id");
+  assert(isSafeRevision("@"), "working-copy revision");
+  assert(isSafeRevision("my-bookmark"), "mid-string dash");
+});
+
+Deno.test("isSafeRevision: rejects empty, leading-dash (flag injection), and whitespace", () => {
+  assert(!isSafeRevision(""), "empty");
+  assert(!isSafeRevision("-r"), "leading dash");
+  assert(!isSafeRevision("--ignore-immutable"), "long flag");
+  assert(!isSafeRevision("two words"), "embedded whitespace");
+  assert(!isSafeRevision("rev\nflag"), "embedded newline");
 });
 
 // ── scrubSecrets (apply-boundary, final diff) ───────────────────────────────
