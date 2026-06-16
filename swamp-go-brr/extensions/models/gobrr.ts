@@ -9,6 +9,9 @@ import { z } from "npm:zod@4";
 // ONLY these pure string helpers (no filesystem I/O) — its purity is unaffected.
 import { pathEscapes, pathInSet } from "./lib/acl.ts";
 export { normalizePath, pathEscapes, pathInSet } from "./lib/acl.ts";
+// Pure secret-scrub, shared with source-integration via lib/ (no cycle — lib/scrub.ts
+// imports nothing). gobrr is the authoritative scrub site for the verifyTail it stores.
+import { scrubSecrets } from "./lib/scrub.ts";
 
 // ───────────────────────────── value objects ─────────────────────────────
 
@@ -821,6 +824,167 @@ export function hydrateSummary(run: Run): Record<string, unknown> {
   };
 }
 
+// ───────────────────────── step-output audit record ──────────────────────────
+// The per-leaf-invocation ASSESSMENT record. gobrr stores ONLY the raw PRUNED
+// measurements report() is given (the diff/envelope/verify inputs exist nowhere after
+// the call); every rollup is DERIVED by stepOutputProjection, never stored (ADR 0002).
+// Complementary to the derived trustSummary (aggregate promise-keeping).
+
+// Re-bound caps for the persisted tails. The diff arrives ALREADY scrubbed from
+// source-integration apply() (re-bound only); verifyTail is scrubbed here.
+export const DIFF_TAIL_BYTES = 8000;
+export const VERIFY_TAIL_BYTES = 4000;
+
+// AGENT-DECLARED envelope summary — the leaf's stated intent (block count, edits per
+// file, target paths). NEVER host truth (ADR 0001); produced by source-integration's
+// summarizeEnvelope and forwarded through report(). Defined here (the consumer) so
+// source-integration imports the TYPE without forming an import cycle.
+export const EnvelopeSummarySchema = z.object({
+  blockCount: z.number(),
+  declaredTargetPaths: z.array(z.string()),
+  declaredEditsPerFile: z.record(z.string(), z.number()),
+});
+
+export const StepOutputSchema = z.object({
+  taskId: z.string(),
+  invocation: z.number(), // 1-based index of the invocation that produced this result
+  recordedAt: z.string(),
+  outcome: OutcomeEnum,
+  failureKind: FailureKindEnum.nullable(),
+  envelope: EnvelopeSummarySchema.nullable(), // declared; null on parse-fail / no envelope
+  changedPaths: z.array(z.string()), // HOST-OBSERVED
+  diffTail: z.string(), // already scrubbed upstream; re-bound to the tail
+  verifyExitCode: z.number(),
+  verifyTail: z.string(), // scrubbed + tail-bounded at this boundary
+});
+
+export const StepOutputsResourceSchema = z.object({
+  records: z.array(StepOutputSchema),
+});
+
+export interface EnvelopeSummary {
+  blockCount: number;
+  declaredTargetPaths: string[];
+  declaredEditsPerFile: Record<string, number>;
+}
+export interface StepOutput {
+  taskId: string;
+  invocation: number;
+  recordedAt: string;
+  outcome: Outcome;
+  failureKind: FailureKind | null;
+  envelope: EnvelopeSummary | null;
+  changedPaths: string[];
+  diffTail: string;
+  verifyExitCode: number;
+  verifyTail: string;
+}
+
+export interface BuildStepOutputInput {
+  taskId: string;
+  invocation: number;
+  recordedAt: string;
+  outcome: Outcome;
+  failureKind: FailureKind | null;
+  envelope: EnvelopeSummary | null;
+  changedPaths: string[];
+  diff: string; // already scrubbed by apply()
+  verifyExitCode: number;
+  verifyTail: string; // RAW docker-verify stdout — scrubbed here
+}
+
+/**
+ * Build one immutable step-output record from what report() was given. The diff is
+ * already scrubbed at the apply boundary, so it is re-bound to its tail only. The
+ * verifyTail is NEW untrusted docker-verify stdout, so it is scrubbed UNCONDITIONALLY
+ * here (gobrr is the authoritative last-line scrub site) before being tail-bounded.
+ */
+export function buildStepOutput(input: BuildStepOutputInput): StepOutput {
+  return {
+    taskId: input.taskId,
+    invocation: input.invocation,
+    recordedAt: input.recordedAt,
+    outcome: input.outcome,
+    failureKind: input.failureKind,
+    envelope: input.envelope,
+    changedPaths: input.changedPaths,
+    diffTail: input.diff.slice(-DIFF_TAIL_BYTES),
+    verifyExitCode: input.verifyExitCode,
+    verifyTail: scrubSecrets(input.verifyTail).slice(-VERIFY_TAIL_BYTES),
+  };
+}
+
+export interface StepOutputMismatch {
+  taskId: string;
+  invocation: number;
+  path: string;
+}
+export interface ReapedGap {
+  taskId: string;
+  attempts: number;
+  recorded: number;
+  gap: number;
+}
+export interface StepOutputProjection {
+  count: number;
+  mismatches: StepOutputMismatch[];
+  reaped: ReapedGap[];
+}
+
+/**
+ * DERIVED rollup over the stored records + the task list (never stored — ADR 0002).
+ *  - mismatches: a DECLARED target path (from declaredTargetPaths or a positive
+ *    declaredEditsPerFile entry) ABSENT from the HOST-OBSERVED changedPaths of the same
+ *    record — the dropped-block signature. ALL such paths per record are reported.
+ *    Informational, never a gate.
+ *  - reaped: task.attempts exceeding the number of that task's records. A reaped /
+ *    expired-lease invocation produces NO report (hence no record) yet bumps attempts,
+ *    so the gap is a LOWER-BOUND count of invocations that left no audit record (a reap
+ *    OR a best-effort append failure). Never use it as a hard gate. (Conversely an
+ *    infra_error IS recorded but does NOT bump attempts, so records can exceed attempts;
+ *    the `attempts > recorded` guard keeps the gap non-negative.)
+ */
+export function stepOutputProjection(
+  records: StepOutput[],
+  tasks: Task[],
+): StepOutputProjection {
+  const mismatches: StepOutputMismatch[] = [];
+  for (const r of records) {
+    if (!r.envelope) continue; // null-safe: a record with no declared summary
+    const observed = new Set(r.changedPaths);
+    const declared = new Set<string>(r.envelope.declaredTargetPaths);
+    for (const [p, n] of Object.entries(r.envelope.declaredEditsPerFile)) {
+      if (n > 0) declared.add(p);
+    }
+    for (const p of [...declared].sort()) {
+      if (!observed.has(p)) {
+        mismatches.push({
+          taskId: r.taskId,
+          invocation: r.invocation,
+          path: p,
+        });
+      }
+    }
+  }
+  const recordedByTask = new Map<string, number>();
+  for (const r of records) {
+    recordedByTask.set(r.taskId, (recordedByTask.get(r.taskId) ?? 0) + 1);
+  }
+  const reaped: ReapedGap[] = [];
+  for (const t of tasks) {
+    const recorded = recordedByTask.get(t.id) ?? 0;
+    if (t.attempts > recorded) {
+      reaped.push({
+        taskId: t.id,
+        attempts: t.attempts,
+        recorded,
+        gap: t.attempts - recorded,
+      });
+    }
+  }
+  return { count: records.length, mismatches, reaped };
+}
+
 // ───────────────────────────── the model ─────────────────────────────────
 
 type Ctx = {
@@ -842,6 +1006,17 @@ async function readRun(context: Ctx): Promise<Run | null> {
   return RunSchema.parse(raw) as Run;
 }
 
+/** Read the append-only step-output log. Returns [] when readResource is absent (some
+ * contexts inject none) or the resource has not been written yet (before the first
+ * report). The audit log is best-effort — a malformed blob degrades to [], never throws. */
+async function readStepOutputs(context: Ctx): Promise<StepOutput[]> {
+  if (!context.readResource) return [];
+  const raw = await context.readResource("stepOutputs");
+  if (!raw) return [];
+  const parsed = StepOutputsResourceSchema.safeParse(raw);
+  return parsed.success ? (parsed.data.records as StepOutput[]) : [];
+}
+
 function persist(context: Ctx, run: Run): Promise<unknown> {
   return context.writeResource(
     "run",
@@ -853,7 +1028,7 @@ function persist(context: Ctx, run: Run): Promise<unknown> {
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/gobrr",
-  version: "2026.06.15.1",
+  version: "2026.06.16.1",
   globalArguments: z.object({}),
 
   resources: {
@@ -877,6 +1052,13 @@ export const model = {
       schema: z.record(z.string(), z.unknown()),
       lifetime: "infinite" as const,
       garbageCollection: 10,
+    },
+    stepOutputs: {
+      description:
+        "Append-only per-leaf-invocation audit log {records: StepOutput[]}: the raw PRUNED measurements report() was given (declared envelope summary, host-observed changedPaths + scrubbed diffTail, verify exit + scrubbed verifyTail, outcome/failureKind). One resource per run; rollups are DERIVED via stepOutputProjection, never stored. Lifetime infinite; garbageCollection matches `run` (50).",
+      schema: StepOutputsResourceSchema,
+      lifetime: "infinite" as const,
+      garbageCollection: 50,
     },
   },
 
@@ -997,12 +1179,16 @@ export const model = {
 
     report: {
       description:
-        "Report a leased task's WorkResult + the deterministic verify exit code. Greens ONLY on verifyExitCode===0; rejects out-of-allowlist / verifyInputs hunks; parse-fail → infra_error.",
+        "Report a leased task's WorkResult + the deterministic verify exit code (and optional audit: the declared envelopeSummary + raw docker-verify verifyTail). Greens ONLY on verifyExitCode===0; rejects out-of-allowlist / verifyInputs hunks; parse-fail → infra_error. Persists the gate decision FIRST, then best-effort-appends one step-output audit record.",
       arguments: z.object({
         taskId: z.string(),
         owner: z.string(),
         workResult: WorkResultSchema,
         verifyExitCode: z.number(),
+        audit: z.object({
+          envelopeSummary: EnvelopeSummarySchema.nullable().default(null),
+          verifyTail: z.string().default(""),
+        }).optional(),
       }),
       execute: async (
         args: {
@@ -1010,11 +1196,18 @@ export const model = {
           owner: string;
           workResult: z.infer<typeof WorkResultSchema>;
           verifyExitCode: number;
+          audit?: {
+            envelopeSummary: EnvelopeSummary | null;
+            verifyTail: string;
+          };
         },
         context: Ctx,
       ) => {
         const run = await readRun(context);
         if (!run) throw new Error("no run — call start first");
+        // invocation index = the task's prior attempts + 1 (read BEFORE applyReport,
+        // which may bump attempts on a verify failure / reap).
+        const before = run.tasks.find((t) => t.id === args.taskId);
         const res = applyReport(
           run,
           args.taskId,
@@ -1023,13 +1216,45 @@ export const model = {
           args.verifyExitCode,
           now(),
         );
-        if ("error" in res) throw new Error(res.error);
+        if ("error" in res) throw new Error(res.error); // throw BEFORE any write
+        const after = res.run.tasks.find((t) => t.id === args.taskId)!;
         context.logger.info("report {taskId} → {outcome}", {
           taskId: args.taskId,
-          outcome: res.run.tasks.find((t) => t.id === args.taskId)?.outcome ??
-            "",
+          outcome: after.outcome ?? "",
         });
-        return { dataHandles: [await persist(context, res.run)] };
+        // The gate decision is sacred: persist the run FIRST and let it propagate.
+        const handles: unknown[] = [await persist(context, res.run)];
+        // The audit append is BEST-EFFORT — a step-output write failure must never
+        // block or obscure the already-persisted gate decision. Log and swallow.
+        try {
+          const record = buildStepOutput({
+            taskId: args.taskId,
+            invocation: (before?.attempts ?? 0) + 1,
+            recordedAt: now(),
+            outcome: after.outcome!, // always set by a successful applyReport
+            failureKind: after.failureKind,
+            envelope: args.audit?.envelopeSummary ?? null,
+            changedPaths: args.workResult.changedPaths,
+            diff: args.workResult.diff,
+            verifyExitCode: args.verifyExitCode,
+            verifyTail: args.audit?.verifyTail ?? "",
+          });
+          const existing = await readStepOutputs(context);
+          handles.push(
+            await context.writeResource("stepOutputs", "stepOutputs", {
+              records: [...existing, record],
+            }),
+          );
+          context.logger.info("stepOutputs append {taskId} (n={n})", {
+            taskId: args.taskId,
+            n: existing.length + 1,
+          });
+        } catch (e) {
+          context.logger.info("stepOutputs append failed (non-fatal): {err}", {
+            err: String(e),
+          });
+        }
+        return { dataHandles: handles };
       },
     },
 
@@ -1111,12 +1336,17 @@ export const model = {
 
     hydrate: {
       description:
-        "Write a compact summary of the run (counts, halt reason + options, leased VMs, stall culprits, cost estimate).",
+        "Write a compact summary of the run (counts, halt reason + options, leased VMs, stall culprits, cost estimate) plus the derived step-output projection (record count, declared-vs-observed mismatches, reaped-invocation gaps).",
       arguments: z.object({}),
       execute: async (_args: Record<string, never>, context: Ctx) => {
         const run = await readRun(context);
         if (!run) throw new Error("no run — call start first");
-        const summary = hydrateSummary(run);
+        const records = await readStepOutputs(context);
+        const summary = {
+          ...hydrateSummary(run),
+          // derived on read from the stored records + tasks — never persisted (ADR 0002)
+          stepOutputs: stepOutputProjection(records, run.tasks),
+        };
         context.logger.info("Hydrate: status={status} inv={inv}", {
           status: run.status,
           inv: run.invocations,
