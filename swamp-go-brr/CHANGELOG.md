@@ -3,6 +3,26 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.17.2 — leaf envelope-format hardening
+
+### Changed
+
+- `source-integration` `build_workorder`: the shared `@@EDIT` envelope
+  instructions (in the extracted pure `buildWorkorderPrompt`) now carry an
+  explicit close-marker requirement — every `@@EDIT` block must end with
+  `@@ENDEDIT` and every `@@NEWFILE` with `@@ENDFILE` before the closing fence —
+  plus a pre-fence self-check. The desired-state framing pilots
+  (`docs/decisions/0006`) found a dropped `@@ENDEDIT` was the dominant non-gate
+  failure (`envelope_parse`), hitting both prompt framings with correct code
+  underneath. PROSE only — the `@@EDIT` wire format and `parseEnvelope` are
+  unchanged. A same-session old-vs-new spot-check (60 leaves on the hard
+  fixture, `claude-sonnet-4-6`) measured `envelope_parse` failures falling from
+  **6/30 (80% parse-success)** on the old prompt to **0/30 (100%)** on the
+  hardened prompt — the eliminated failures were exactly the slug/account tasks
+  where the drops had appeared. N is modest, but it is a clear same-session win
+  (no baseline confound). The imperative byte-identity golden is re-anchored to
+  the new prompt (prior anchor recoverable via git / ADR 0006).
+
 ## 2026.06.17.1 — assessment-boundary audit + lease-expiry hardening
 
 ### Fixed
