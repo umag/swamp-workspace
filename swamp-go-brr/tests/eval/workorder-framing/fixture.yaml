@@ -1,0 +1,46 @@
+# issue: gobrr-desired-state-workorders
+# date: 2026-06-17
+#
+# Canonical A/B fixture for the desired-state-vs-imperative WorkOrder-framing
+# pilot. SYNTHETIC ONLY: temp/placeholder repo paths and NO secrets (the repo
+# convention is vault CEL references, never literal credentials). The pilot
+# builds both framings' prompts for each task and (manually) runs them through
+# the gobrr fabric to compare docker-verify pass-rates. See README.md.
+# leafModel: pin to a FULLY-VERSIONED id (e.g. ...-YYYYMMDD) before running the
+# pilot so the A/B comparison is reproducible; the bare alias may re-resolve.
+leafModel: claude-sonnet-4-6
+leafEffort: low
+# Pinned host gate the driver applies AFTER apply (NOT visible to the leaf).
+verifyCommand: "deno test --allow-all"
+tasks:
+  - id: pure-helper
+    spec: >
+      Add an exported pure function `clamp(n: number, lo: number, hi: number):
+      number` to util.ts that returns n bounded to [lo, hi].
+    writeAllowlist:
+      - util.ts
+    slices:
+      - rel: util.ts
+        body: |
+          export function identity<T>(x: T): T {
+            return x;
+          }
+  - id: bugfix-off-by-one
+    spec: >
+      lastIndex() returns one past the end on a non-empty array. It must return
+      the index of the final element (length - 1), and -1 for an empty array.
+    writeAllowlist:
+      - list.ts
+    slices:
+      - rel: list.ts
+        body: |
+          export function lastIndex<T>(xs: T[]): number {
+            return xs.length;
+          }
+  - id: newfile-value-object
+    spec: >
+      Create money.ts exporting an immutable `Money` value object with a positive
+      integer `cents` field and an `add(other: Money): Money` method.
+    writeAllowlist:
+      - money.ts
+    slices: []
