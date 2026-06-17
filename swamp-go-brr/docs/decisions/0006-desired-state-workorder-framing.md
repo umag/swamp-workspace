@@ -90,9 +90,22 @@ Two facts bound the design:
   `envelope_parse` — task-dependent and roughly balanced (desired-state worse on
   slug, imperative worse on account), N=5, not significant, and non-terminal in
   the real loop (`envelope_parse → infra_error → retry`, no attempt consumed).
-  **Conclusion: two pilots show no measured quality gain from desired-state
-  framing; it is at-best equal.** Adoption is therefore a judgement call on the
-  qualitative Promise-Theory rationale, not a data-driven win.
+  **Conclusion (interim): two pilots show no measured quality gain from
+  desired-state framing; it is at-best equal.**
+
+  **HumanEval-benchmark follow-up (2026-06-17): full tie.** Re-ran with six
+  HumanEval problems ported to TS (has_close_elements, separate_paren_groups,
+  below_zero, rolling_max, string_xor, sort_even), each gated by its canonical
+  test cases, 3 reps × 2 framings = 36 leaves. **Both framings 18/18 green**
+  (every task 3/3), zero envelope-format failures, zero gate failures. **Final
+  conclusion across THREE pilots (easy synthetic, hard synthetic, HumanEval): no
+  measured quality difference between imperative and desired-state framing with
+  `claude-sonnet-4-6` — it saturates both.** The framing is **no worse**, never
+  measurably better, on these task distributions. Adoption would be a judgement
+  call on the qualitative Promise-Theory rationale alone; the recommendation is
+  to keep `imperative` (the proven default) and retain the desired-state branch
+  behind the constant for a future evaluation with a weaker leaf model or
+  genuinely failure-prone tasks.
 
 ## Consequences
 
