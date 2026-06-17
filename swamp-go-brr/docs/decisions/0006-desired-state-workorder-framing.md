@@ -102,10 +102,19 @@ Two facts bound the design:
   measured quality difference between imperative and desired-state framing with
   `claude-sonnet-4-6` — it saturates both.** The framing is **no worse**, never
   measurably better, on these task distributions. Adoption would be a judgement
-  call on the qualitative Promise-Theory rationale alone; the recommendation is
-  to keep `imperative` (the proven default) and retain the desired-state branch
-  behind the constant for a future evaluation with a weaker leaf model or
-  genuinely failure-prone tasks.
+  call on the qualitative Promise-Theory rationale alone.
+
+  **Weaker-model follow-up (2026-06-17): hypothesis not supported.** Re-ran the
+  same HumanEval benchmark with `claude-haiku-4-5` (the Promise-Theory claim is
+  that a weaker agent — one that "deviates from a recipe" — should benefit most
+  from desired-state framing). Result: **imperative 18/18, desired-state 17/18**
+  — the single difference was desired-state doing _worse_ (one gate failure on
+  `separate_paren_groups`), not better; envelope format was clean for both
+  (18/18 applied). **Final conclusion across FOUR pilots and TWO models: no
+  evidence desired-state framing improves outcomes, and a slight (noise-level)
+  edge to imperative.** Recommendation: **keep `imperative`** as the default;
+  the desired-state branch is retained behind `WORKORDER_FRAMING` for the record
+  but is not adopted.
 
 ## Consequences
 
