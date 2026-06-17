@@ -79,6 +79,21 @@ Two facts bound the design:
   would be needed to show an advantage. `WORKORDER_FRAMING` stays `imperative`
   pending the human's adoption decision.
 
+  **Harder-fixture follow-up (2026-06-17): still no quality difference.** Re-ran
+  the 5×3×2 matrix on terse, discriminating tasks (idempotent `ensureImport`;
+  underspecified `slugify` edge cases; an overdraft/negative invariant on
+  `Account.withdraw`). Gate pass-rate **among applied leaves was 100% for both
+  framings** (imperative 12/12, desired-state 10/10) — every parsed envelope
+  produced correct code; on the slug task the two framings emitted the _same_
+  implementation. The only spread (imperative 12/15 vs desired-state 10/15
+  total) was **envelope-format noise** — dropped `@@ENDEDIT`/markers →
+  `envelope_parse` — task-dependent and roughly balanced (desired-state worse on
+  slug, imperative worse on account), N=5, not significant, and non-terminal in
+  the real loop (`envelope_parse → infra_error → retry`, no attempt consumed).
+  **Conclusion: two pilots show no measured quality gain from desired-state
+  framing; it is at-best equal.** Adoption is therefore a judgement call on the
+  qualitative Promise-Theory rationale, not a data-driven win.
+
 ## Consequences
 
 - **Gate independence preserved.** The desired-state prose names no test /
