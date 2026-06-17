@@ -4,6 +4,7 @@
 import {
   assert,
   assertEquals,
+  assertRejects,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   addFollowup,
@@ -682,4 +683,110 @@ Deno.test("gobrr run/summary/decision resources stay infinite (not bounded)", ()
       `${name} must remain infinite (non-secret authoritative/derived state)`,
     );
   }
+});
+
+// ───────────────────── lease-expiry guard (assessment-boundary audit) ─────────────────────
+// Issue gobrr-assessment-boundary-audit. applyReport already rejects an EXPIRED lease
+// (it MEASURES validity, never trusting the owner's continued claim); heartbeat and
+// add_followup checked only OWNER. These method-level tests pin that both now reject an
+// expired lease. RED until the leaseExpired guards are added to the two methods.
+// A far-future expiry → the lease is VALID against the live now() clock the methods use
+// (T0/LATER are concrete past dates, so they read as EXPIRED at run time).
+const FAR_FUTURE = "2999-12-31T23:59:59.000Z";
+
+// deno-lint-ignore no-explicit-any
+function mockCtx(run: Run): any {
+  return {
+    logger: { info: () => {} },
+    readResource: (name: string) =>
+      Promise.resolve(
+        name === "current" ? (run as unknown as Record<string, unknown>) : null,
+      ),
+    writeResource: (
+      _spec: string,
+      _name: string,
+      _data: Record<string, unknown>,
+    ) => Promise.resolve({}),
+    definition: { name: "test" },
+  };
+}
+
+Deno.test("heartbeat REJECTS an expired lease (measures validity, not just owner)", async () => {
+  // owner matches but the lease already lapsed (expiresAt T0 < now LATER)
+  const r = run([
+    leased("a", "drv", {
+      lease: { owner: "drv", expiresAt: T0, heartbeatAt: T0 },
+    }),
+  ]);
+  await assertRejects(() =>
+    model.methods.heartbeat.execute(
+      { taskId: "a", owner: "drv" },
+      mockCtx(r),
+    ) as Promise<unknown>
+  );
+});
+
+Deno.test("add_followup REJECTS an expired parent lease", async () => {
+  const r = run([
+    leased("p", "drv", {
+      lease: { owner: "drv", expiresAt: T0, heartbeatAt: T0 },
+    }),
+  ]);
+  await assertRejects(() =>
+    model.methods.add_followup.execute(
+      { parentId: "p", owner: "drv", spec: "x", writeAllowlist: ["src/b.ts"] },
+      mockCtx(r),
+    ) as Promise<unknown>
+  );
+});
+
+// Companion GREEN cases — a VALID (owner + non-expired) lease still SUCCEEDS. Without
+// these, an "always throw" fix would pass the two RED tests above; these falsify it.
+Deno.test("heartbeat SUCCEEDS for a valid (owner + non-expired) lease", async () => {
+  const r = run([
+    leased("a", "drv", {
+      lease: { owner: "drv", expiresAt: FAR_FUTURE, heartbeatAt: T0 },
+    }),
+  ]);
+  const out = await model.methods.heartbeat.execute(
+    { taskId: "a", owner: "drv" },
+    mockCtx(r),
+  ) as { dataHandles: unknown[] };
+  assert(
+    out.dataHandles.length > 0,
+    "a valid heartbeat must succeed and persist",
+  );
+});
+
+Deno.test("add_followup SUCCEEDS for a valid parent lease", async () => {
+  const r = run([
+    leased("p", "drv", {
+      lease: { owner: "drv", expiresAt: FAR_FUTURE, heartbeatAt: T0 },
+    }),
+  ]);
+  const out = await model.methods.add_followup.execute(
+    { parentId: "p", owner: "drv", spec: "x", writeAllowlist: ["src/b.ts"] },
+    mockCtx(r),
+  ) as { dataHandles: unknown[] };
+  assert(out.dataHandles.length > 0, "a valid add_followup must succeed");
+});
+
+// Characterization (GREEN): testReport is a self-reported, advisory field — applyReport
+// MUST NOT let it influence the gate. The exit code is the sole arbiter.
+Deno.test("applyReport: testReport is advisory, never the gate", () => {
+  const r = run([
+    leased("a", "drv", { gate: "real", writeAllowlist: ["src/a.ts"] }),
+  ]);
+  const wr = {
+    diff: "d",
+    changedPaths: ["src/a.ts"],
+    followups: [],
+    testReport: { redFirst: true, testsRun: 999 }, // fabricated self-report
+  };
+  // exit 1 must stay test_failed despite the rosy testReport
+  const bad = applyReport(r, "a", "drv", wr, 1, LATER);
+  assert("run" in bad && bad.run.tasks[0].outcome === "test_failed");
+  // exit 0 greens regardless of testReport content
+  const ok = applyReport(r, "a", "drv", wr, 0, LATER);
+  assert("run" in ok && ok.run.tasks[0].outcome === "done");
 });

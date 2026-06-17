@@ -359,7 +359,7 @@ export function parseGitDiffPaths(
 
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.06.16.6",
+  version: "2026.06.17.1",
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(
