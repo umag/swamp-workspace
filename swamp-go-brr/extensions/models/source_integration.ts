@@ -477,7 +477,7 @@ export function buildWorkorderPrompt(args: {
 
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.06.17.2",
+  version: "2026.06.17.3",
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(

@@ -52,7 +52,7 @@ Always:
 # probe: one trivial leaf
 swamp model method run fab submit --input 'tasks=[{"prompt":"reply OK","model":"opus","effort":"low","gitRepoUrl":""}]'
 # poll the returned id for ~90s. If it does NOT complete, the pool is cold → bring it up:
-swamp model method run fab fabric_up --input concurrency=5 \
+swamp model method run fab fabric_up --input concurrency=8 \
   --input 'oauthToken=${{ vault.get(hashi, CLAUDE_CODE_OAUTH_TOKEN) }}'   # token from config.fabricUp
 # a cold pool restores in ~1–2 min before it starts draining — poll until the probe completes.
 ```
