@@ -57,3 +57,21 @@ If desired-state clears the bar and the human signs off:
 3. Collapse `buildWorkorderPrompt` to the single chosen path (remove the losing
    branch and the `framing` parameter).
 4. Refresh the stale docs listed in ADR 0006.
+
+## Envelope-format parse-rate spot-check (issue gobrr-envelope-format-hardening)
+
+The close-marker hardening (`@@ENDEDIT`/`@@ENDFILE` requirement + pre-fence
+self-check) is gated in CI by the unit tests, NOT by a live run. A live check is
+**recommended but optional** and, if run, must be **same-session** (no baseline
+reuse — fabric/model variance across sessions is a confound):
+
+1. Build the leaf prompts twice — once from the pre-hardening
+   `buildWorkorderPrompt` (e.g. a git stash / prior commit) and once from the
+   hardened one — for the same hard-fixture tasks (`slug`/`account`, where the
+   `@@ENDEDIT` drops were observed).
+2. Run BOTH prompt versions through the fabric in the **same** session (same
+   `leafModel`/`leafEffort`/fixture), N ≥ 15 per framing.
+3. Tally the `envelope_parse` failure rate per version. "Not worse" means the
+   hardened prompt's parse-failure rate ≤ the pre-hardening rate **from that
+   same session**. Expected effect is small (the drops were balanced +
+   non-terminal).

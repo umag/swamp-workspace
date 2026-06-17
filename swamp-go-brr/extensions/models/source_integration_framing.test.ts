@@ -46,13 +46,15 @@ function build(
   });
 }
 
-// The desired POST-EXTRACTION imperative assembly of the pure fn, frozen here as
-// the byte-identity golden. It mirrors today's build_workorder prompt FORMAT but is
-// expressed as the pure-fn contract: the fn iterates already-scrubbed `scrubbedSlices`
-// and inlines `body` verbatim — it must NOT read files from disk or call scrubSecrets
-// (the caller `execute` is the sole scrub/I-O site; the no-re-scrub test below pins
-// that). If the extraction drifts the imperative prompt by even one byte, the test
-// fails — that is the point.
+// The imperative assembly of the pure fn, frozen here as the byte-identity golden.
+// RE-ANCHORED (issue gobrr-envelope-format-hardening) to include the close-marker
+// requirement + pre-fence self-check added to the SHARED fence-tail; the prior
+// anchor (the prompt that ran the four desired-state pilots) is recoverable via git
+// history / ADR 0006. It mirrors the prompt FORMAT as the pure-fn contract: the fn
+// iterates already-scrubbed `scrubbedSlices` and inlines `body` verbatim — it must
+// NOT read files from disk or call scrubSecrets (the caller `execute` is the sole
+// scrub/I-O site; the no-re-scrub test below pins that). If the imperative prompt
+// drifts from this golden by even one byte, the test fails — that is the point.
 function goldenImperative(
   spec: string,
   practices: string,
@@ -96,6 +98,8 @@ function goldenImperative(
     `GOBRR:${nonce}>>>`,
     "",
     "Rules: @@OLD must be an exact, unique substring of the file's current content. @@NEWFILE for files that do not exist yet. Each marker alone on its own line. No JSON, no prose outside the fence.",
+    "Every @@EDIT block MUST end with a line containing exactly @@ENDEDIT, and every @@NEWFILE block MUST end with a line containing exactly @@ENDFILE, before the closing fence.",
+    "Before emitting the closing fence marker, verify each @@EDIT block ends with @@ENDEDIT on its own line and each @@NEWFILE block ends with @@ENDFILE on its own line.",
   );
   return parts.join("\n");
 }
@@ -331,6 +335,30 @@ Deno.test("buildWorkorderPrompt: zero slices still emits one fence and no BEGIN 
     assert(
       !p.includes("----- BEGIN "),
       `${f}: zero-slice prompt must not emit a BEGIN marker`,
+    );
+  }
+});
+
+// ── close-marker requirement: every @@EDIT/@@NEWFILE must be closed (both framings)
+
+Deno.test("buildWorkorderPrompt: both framings require @@ENDEDIT/@@ENDFILE close markers (normative, not just the example)", () => {
+  // Targets the NORMATIVE requirement prose ("... block MUST end with ... @@ENDEDIT")
+  // and the pre-fence self-check — NOT the bare @@ENDEDIT/@@ENDFILE tokens that already
+  // appear in the example block (those are present without the fix). Both framings share
+  // the fence-tail, so both must carry it.
+  for (const f of ["imperative", "desired-state"] as PromptFraming[]) {
+    const p = build(f);
+    assert(
+      /@@EDIT block MUST end with[\s\S]*?@@ENDEDIT/i.test(p),
+      `${f}: missing the normative @@EDIT -> @@ENDEDIT close-marker requirement`,
+    );
+    assert(
+      /@@NEWFILE block MUST end with[\s\S]*?@@ENDFILE/i.test(p),
+      `${f}: missing the normative @@NEWFILE -> @@ENDFILE close-marker requirement`,
+    );
+    assert(
+      /verify each @@EDIT block ends with @@ENDEDIT/i.test(p),
+      `${f}: missing the pre-fence self-check instruction`,
     );
   }
 });

@@ -465,13 +465,19 @@ export function buildWorkorderPrompt(args: {
     `GOBRR:${args.nonce}>>>`,
     "",
     "Rules: @@OLD must be an exact, unique substring of the file's current content. @@NEWFILE for files that do not exist yet. Each marker alone on its own line. No JSON, no prose outside the fence.",
+    // Close-marker requirement + pre-fence self-check (issue gobrr-envelope-format-hardening):
+    // the desired-state pilots' dominant non-gate failure was a dropped @@ENDEDIT →
+    // envelope_parse. Pinned prose (verified clear of the gate-leak forbidden terms; no
+    // wire-format change — the markers are unchanged). Applies to BOTH framings (shared tail).
+    "Every @@EDIT block MUST end with a line containing exactly @@ENDEDIT, and every @@NEWFILE block MUST end with a line containing exactly @@ENDFILE, before the closing fence.",
+    "Before emitting the closing fence marker, verify each @@EDIT block ends with @@ENDEDIT on its own line and each @@NEWFILE block ends with @@ENDFILE on its own line.",
   );
   return parts.join("\n");
 }
 
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.06.17.1",
+  version: "2026.06.17.2",
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(
