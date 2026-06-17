@@ -7,6 +7,7 @@ import {
   MAX_ENVELOPE_BYTES,
   model,
   parseEnvelope,
+  parseGitDiffPaths,
   planApply,
   scrubSecrets,
   summarizeEnvelope,
@@ -696,4 +697,40 @@ Deno.test("source_integration workorder + applied resources are bounded to 24h, 
     wo !== "infinite" && ap !== "infinite",
     "transient inputs must not retain scrubbed file slices / diffs forever",
   );
+});
+
+// ── parseGitDiffPaths — the post-apply re-walk tripwire's unsafe-file signal ──
+// Issue gobrr-assessment-boundary-audit. apply() classifies every HOST-OBSERVED changed
+// path (from jj diff --git) and fails closed on a non-regular file (symlink 120000 /
+// gitlink 160000 / mode change to either). Characterization test pinning that detection.
+Deno.test("parseGitDiffPaths flags symlinks/gitlinks/mode-changes as non-regular", () => {
+  const diff = [
+    "diff --git a/regular.ts b/regular.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/regular.ts",
+    "diff --git a/link b/link",
+    "new file mode 120000",
+    "+target",
+    "diff --git a/sub b/sub",
+    "new file mode 160000",
+    "diff --git a/changed b/changed",
+    "old mode 100644",
+    "new mode 120000",
+    "diff --git a/exec.sh b/exec.sh",
+    "old mode 100644",
+    "new mode 100755",
+    "diff --git a/gone b/gone",
+    "deleted file mode 120000",
+  ].join("\n");
+  const m = new Map(parseGitDiffPaths(diff).map((o) => [o.path, o.regular]));
+  assert(m.get("regular.ts") === true, "a normal new file is regular");
+  assert(m.get("link") === false, "a new symlink (120000) is NOT regular");
+  assert(m.get("sub") === false, "a gitlink/submodule (160000) is NOT regular");
+  assert(
+    m.get("changed") === false,
+    "a mode change to a symlink is NOT regular",
+  );
+  assert(m.get("exec.sh") === true, "an exec-bit change stays regular");
+  assert(m.get("gone") === false, "a deleted symlink (120000) is NOT regular");
 });

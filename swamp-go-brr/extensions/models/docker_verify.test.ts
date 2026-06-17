@@ -80,6 +80,24 @@ Deno.test("parseExitSentinel recovers the exit code from stdout", () => {
   assertEquals(parseExitSentinel("no sentinel here"), null);
 });
 
+// Characterization (assessment-boundary audit): the sentinel is appended by the HOST
+// shell (echo "__GOBRR_EXIT__:$?") AFTER `docker run` returns, so a container that emits
+// its own __GOBRR_EXIT__:0 cannot forge a green — the host's trailing sentinel wins
+// (the $-anchored regex takes the LAST match). A future m-flag regex change would break
+// this; the test pins it.
+Deno.test("parseExitSentinel: a container-forged sentinel loses to the host's trailing one", () => {
+  assertEquals(
+    parseExitSentinel("test ok\n__GOBRR_EXIT__:0\nmore\n__GOBRR_EXIT__:1\n"),
+    1,
+  );
+  assertEquals(parseExitSentinel("__GOBRR_EXIT__:0\n__GOBRR_EXIT__:1"), 1);
+  // last-wins, NOT max-picking: the trailing host sentinel is 0 here
+  assertEquals(
+    parseExitSentinel("__GOBRR_EXIT__:0\n__GOBRR_EXIT__:1\n__GOBRR_EXIT__:0\n"),
+    0,
+  );
+});
+
 // ── retention guard (issue si-applied-resource-lifetime) ─────────────────────
 // The verify result holds (scrubbed) verify stdout — bound it so a missed secret
 // does not persist forever. Read via `as string` to avoid the `as const`

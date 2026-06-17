@@ -1028,7 +1028,7 @@ function persist(context: Ctx, run: Run): Promise<unknown> {
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/gobrr",
-  version: "2026.06.16.6",
+  version: "2026.06.17.1",
   globalArguments: z.object({}),
 
   resources: {
@@ -1278,16 +1278,21 @@ export const model = {
       ) => {
         const run = await readRun(context);
         if (!run) throw new Error("no run — call start first");
+        const ts = now();
         const parent = run.tasks.find((t) => t.id === args.parentId);
         if (!parent || parent.lease?.owner !== args.owner) {
           throw new Error("parent not leased by owner");
+        }
+        // An expired owner must not mutate the DAG (mirror applyReport's expiry check).
+        if (leaseExpired(parent.lease, ts)) {
+          throw new Error("parent lease expired");
         }
         const res = addFollowup(
           run,
           args.parentId,
           args.spec,
           args.writeAllowlist,
-          now(),
+          ts,
         );
         if ("error" in res) throw new Error(res.error);
         return { dataHandles: [await persist(context, res.run)] };
@@ -1312,6 +1317,11 @@ export const model = {
         const task = run.tasks.find((t) => t.id === args.taskId);
         if (!task || task.lease?.owner !== args.owner) {
           throw new Error("task not leased by owner");
+        }
+        // Measure lease VALIDITY, not just ownership: a lapsed lease must not be renewed
+        // (resurrected past its TTL, dodging the scheduler reap). Mirrors applyReport.
+        if (leaseExpired(task.lease, ts)) {
+          throw new Error("lease expired — cannot heartbeat a lapsed lease");
         }
         const tasks = run.tasks.map((t) =>
           t.id === args.taskId

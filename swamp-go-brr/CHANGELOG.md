@@ -3,6 +3,28 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.17.1 — assessment-boundary audit + lease-expiry hardening
+
+### Fixed
+
+- `gobrr` `heartbeat` and `add_followup` validated lease OWNERSHIP but not lease
+  EXPIRY, while `applyReport` checks both. An expired-but-unreaped lease could
+  be renewed (resurrected past its TTL, dodging the scheduler reap) or could
+  still inject a follow-up — trusting the owner's continued claim without
+  re-measuring the lease's validity. Both methods now reject a lapsed lease via
+  the existing pure `leaseExpired`, so lease validity = (owner AND not-expired)
+  is enforced consistently at every state-transition method.
+
+### Added
+
+- A Promise-Theory assessment-boundary audit (`docs/decisions/0005`) confirming
+  every gobrr handoff measures rather than trusting a self-report, plus
+  regression tests pinning the measured-not-asserted invariants: `testReport` is
+  never the gate; `parseExitSentinel` takes the host's last sentinel (a
+  container cannot forge a green); `parseGitDiffPaths` flags
+  symlinks/gitlinks/mode-changes as non-regular (the host-side ACL tripwire). No
+  behavior change for these — the boundaries were already sound.
+
 ## 2026.06.16.6 — bounded retention for secret-bearing resources
 
 ### Changed

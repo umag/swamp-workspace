@@ -306,7 +306,7 @@ function substrateFrom(g: z.infer<typeof GlobalArgs>): SubstrateOpts {
 
 export const model = {
   type: "@magistr/swamp-go-brr/preflight",
-  version: "2026.06.16.6",
+  version: "2026.06.17.1",
   globalArguments: GlobalArgs,
   resources: {
     pinned: {
