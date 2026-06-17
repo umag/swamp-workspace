@@ -67,8 +67,17 @@ Two facts bound the design:
   a human spot-check of two diffs. Non-deterministic, so it is a
   human-signed-off pilot, never auto-adoption.
 
-  **Pilot result: PENDING** — not yet run. Until it is run and clears the bar,
-  `WORKORDER_FRAMING` remains `imperative`.
+  **Pilot result (2026-06-17): desired-state ≥ imperative — bar cleared, no
+  regression.** Ran the full 5×3×2 matrix (30 leaves, `claude-sonnet-4-6`/effort
+  low) on a scratch jj repo (add `clamp`; fix `lastIndex`; create a `Money` VO),
+  each gated by the per-task `deno test` in the hardened container. **Both
+  framings: 15/15 green** (every task 5/5 under each framing); all 30 envelopes
+  applied cleanly. Spot-checked desired-state diffs were correct (e.g. `Money`
+  came back as an immutable VO with positive-integer validation). Caveat: the
+  fixture saturated (both framings at 100%), so the pilot proves desired-state
+  is **no worse**, not strictly better — a harder, more discriminating fixture
+  would be needed to show an advantage. `WORKORDER_FRAMING` stays `imperative`
+  pending the human's adoption decision.
 
 ## Consequences
 
