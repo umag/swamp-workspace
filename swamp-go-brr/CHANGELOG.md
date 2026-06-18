@@ -3,6 +3,32 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.17.4 — typed `applied` result contract
+
+### Changed
+
+- `source-integration`: the `applied` resource schema is no longer the opaque
+  `z.record(string, z.unknown())`. The per-task result is now a typed
+  `AppliedTaskResultSchema` — a `z.union` of two strict members: Success
+  (`changeId`, host-observed `changedPaths`, scrubbed `diff`,
+  `declaredEnvelopeSummary`) and Failure (`failureKind`, `note`). Strict members
+  make the union genuinely discriminate (a hybrid success+failure result is
+  rejected, never silently routed as a success). Issue
+  `si-applied-result-typing`, surfaced by the assessment-boundary audit (ADR
+  0005).
+- The secret-bearing `diff` field is now marked `.meta({ sensitive: true })` —
+  impossible while it was hidden inside `z.unknown()`. The scrub-at-write
+  boundary is unchanged.
+- The host-observed-vs-agent-declared `changedPaths` provenance invariant stays
+  guarded at runtime by `gobrr`'s `stepOutputProjection` mismatch audit (ADR
+  0002/0005); it is not a type-system property (both are `string[]`), so no
+  nominal brand is introduced. Existing 24h-retained `applied` records already
+  conform (the data shape never changed, only the schema strictness) — no
+  migration.
+
+(`.3` is the concurrent, separately-tracked default-concurrency change; this
+entry is independent.)
+
 ## 2026.06.17.2 — leaf envelope-format hardening
 
 ### Changed
