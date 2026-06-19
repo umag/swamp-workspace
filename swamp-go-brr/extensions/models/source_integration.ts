@@ -17,6 +17,10 @@ import {
   resolveWithinRepo,
 } from "./lib/acl.ts";
 import { scrubSecrets } from "./lib/scrub.ts";
+// Value imports: EnvelopeSummarySchema composes the typed applied-result schema;
+// FailureKindEnum constrains the failure member. One-directional — gobrr never
+// imports source-integration, so importing these values forms no cycle.
+import { EnvelopeSummarySchema, FailureKindEnum } from "./gobrr.ts";
 import type { EnvelopeSummary, FailureKind } from "./gobrr.ts";
 
 // Re-export so existing importers (and tests) keep resolving scrubSecrets from this
@@ -475,9 +479,42 @@ export function buildWorkorderPrompt(args: {
   return parts.join("\n");
 }
 
+// ── applied-result contract (issue si-applied-result-typing) ─────────────────
+// The typed per-task shape apply() writes into the `applied` resource, replacing
+// the former opaque z.record(string, z.unknown()). A z.union of two STRICT members
+// (the two shapes share no literal tag): Success carries the host-observed jj
+// outcome; Failure carries a FailureKind + note. Strict members make the union
+// genuinely discriminate — a hybrid carrying both success and failure markers is
+// rejected, never silently routed as a success.
+//
+// The host-observed-vs-agent-declared `changedPaths` provenance INVARIANT is NOT a
+// type-system property (both are string[]) and cannot be compile-checked across the
+// agent driver (no in-repo TS call site); it is guarded at runtime by gobrr's
+// stepOutputProjection mismatch audit (ADR 0002/0005). Typing the result is also
+// what lets the secret-bearing `diff` field be marked sensitive — impossible while
+// it was hidden inside z.unknown().
+export const AppliedTaskSuccessSchema = z.object({
+  changeId: z.string(),
+  changedPaths: z.array(z.string()), // HOST-OBSERVED (jj diff), never agent-declared
+  diff: z.string().meta({ sensitive: true }), // scrubbed jj diff — secret-bearing
+  declaredEnvelopeSummary: EnvelopeSummarySchema, // AGENT-DECLARED intent, advisory
+}).strict();
+
+export const AppliedTaskFailureSchema = z.object({
+  failureKind: FailureKindEnum,
+  note: z.string(),
+}).strict();
+
+export const AppliedTaskResultSchema = z.union([
+  AppliedTaskSuccessSchema,
+  AppliedTaskFailureSchema,
+]);
+
+export type AppliedTaskResult = z.infer<typeof AppliedTaskResultSchema>;
+
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.06.17.3",
+  version: "2026.06.17.4",
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(
@@ -501,10 +538,14 @@ export const model = {
     },
     applied: {
       description:
-        "Per-task apply results: { taskId -> {changeId, changedPaths, diff, declaredEnvelopeSummary, failureKind?} }. changedPaths/diff are HOST-OBSERVED (jj diff), never agent-declared; declaredEnvelopeSummary is AGENT-DECLARED intent (block count, edits-per-file, target paths) recorded for the audit contrast, advisory only.",
-      schema: z.object({ results: z.record(z.string(), z.unknown()) }),
+        "Per-task apply results: { taskId -> Success {changeId, changedPaths, diff, declaredEnvelopeSummary} | Failure {failureKind, note} } (typed AppliedTaskResult union). changedPaths/diff are HOST-OBSERVED (jj diff), never agent-declared; declaredEnvelopeSummary is AGENT-DECLARED intent (block count, edits-per-file, target paths) recorded for the audit contrast, advisory only.",
+      schema: z.object({
+        results: z.record(z.string(), AppliedTaskResultSchema),
+      }),
       // Bounded retention (issue si-applied-resource-lifetime): holds the scrubbed jj
-      // diff — a transient per-task result, not kept forever.
+      // diff — a transient per-task result, not kept forever. Existing 24h-retained
+      // records already conform to the typed shape (the DATA never changed, only the
+      // schema strictness), so tightening needs no migration.
       lifetime: "24h" as const,
       garbageCollection: 20,
     },
@@ -573,7 +614,7 @@ export const model = {
 
     apply: {
       description:
-        "Fan-out apply of N completed leaves, each as a PER-TASK ISOLATED jj change off the COMMON BASE (siblings, never stacked) so each task's tree gates in isolation. Parses the @@EDIT envelope, enforces the allowlist/DENY/caps + realpath ACL, writes regular files only, runs the mode-aware re-walk tripwire, and returns per-task {changeId, host-observed changedPaths, scrubbed diff, failureKind?}.",
+        "Fan-out apply of N completed leaves, each as a PER-TASK ISOLATED jj change off the COMMON BASE (siblings, never stacked) so each task's tree gates in isolation. Parses the @@EDIT envelope, enforces the allowlist/DENY/caps + realpath ACL, writes regular files only, runs the mode-aware re-walk tripwire, and returns per-task Success {changeId, host-observed changedPaths, scrubbed diff, declaredEnvelopeSummary} or Failure {failureKind, note}.",
       arguments: z.object({
         repoScope: z.string(),
         base: z.string().describe(
@@ -617,7 +658,7 @@ export const model = {
           throw new Error(`unsafe base revision: ${args.base}`);
         }
 
-        const results: Record<string, unknown> = {};
+        const results: Record<string, AppliedTaskResult> = {};
         for (const t of args.tasks) {
           const fail = (failureKind: FailureKind, note: string) => {
             results[t.taskId] = { failureKind, note };
