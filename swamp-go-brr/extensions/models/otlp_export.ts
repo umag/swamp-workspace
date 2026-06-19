@@ -84,7 +84,7 @@ const StatusSchema = z.object({
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/otlp-export",
-  version: "2026.06.19.1",
+  version: "2026.06.19.2",
   // endpoint + token come from a vault CEL wired by the workflow; never resolved here.
   globalArguments: z.object({
     endpoint: z.string().default(""),

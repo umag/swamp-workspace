@@ -3,6 +3,13 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.19.2 — maintenance: CI republish
+
+No code change. `2026.06.19.1` was published manually (to work around a
+temporary registry yank), which collided with the CI publish-on-push for the
+same version ("version already exists"). This release is cut by CI, with
+per-version release notes now sourced from this CHANGELOG.
+
 ## 2026.06.19.1 — docs: task-oriented README + full symbol docs
 
 ### Changed
