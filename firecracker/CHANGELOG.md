@@ -3,6 +3,15 @@
 All notable changes to `@magistr/firecracker`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.19.1 — docs: task-oriented README
+
+### Changed
+
+- README rewritten in a task-oriented shape (Tutorial → How-to → Reference →
+  Explanation), folding in the `submit … outputFormat=json` opt-in and keeping
+  the netns-isolation, fabric-semantics, and security detail. Docs-only — no
+  behaviour/schema change.
+
 ## 2026.06.18.1 — opt-in JSON leaf output (fabric)
 
 ### Added
