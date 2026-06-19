@@ -28,6 +28,7 @@ All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 
 (`.3` is the concurrent, separately-tracked default-concurrency change; this
 entry is independent.)
+
 ## 2026.06.17.3 — default concurrency raised to 8
 
 ### Changed
