@@ -1898,7 +1898,7 @@ export const model = {
       description:
         "Factory: spawn a warm worker-VM pool. Fans out `concurrency` netns microVMs (each restored from the snapshot and running the looping agent) that pull tasks from a shared host queue served by a per-VM fabric daemon. One call brings up the whole pool concurrently; submit/poll/fabric_down drive it afterwards.",
       arguments: z.object({
-        concurrency: z.number().int().min(1).max(64).default(4).describe(
+        concurrency: z.number().int().min(1).max(64).default(8).describe(
           "Pool size = max concurrent worker VMs (configurable; ~512MiB RAM each)",
         ),
         snapshotPath: z.string().regex(PATH_RE).default(
@@ -2068,7 +2068,7 @@ export const model = {
       description:
         "Tear down the whole fabric: reap every worker VM (PID + socket + netns + NAT, exactly as kill_vmm), stop the daemons, and remove the queue root. Discovers the live workers by enumerating the host (netns list + socket/pid files for the prefix) so it reaps the ACTUAL pool regardless of the size it was brought up with — no worker leaks on a concurrency mismatch. `concurrency` is only a lower-bound fallback. Idempotent.",
       arguments: z.object({
-        concurrency: z.number().int().min(1).max(64).default(4).describe(
+        concurrency: z.number().int().min(1).max(64).default(8).describe(
           "Lower-bound fallback only; the real pool is discovered from host state",
         ),
         netnsPrefix: z.string().regex(NETNS_RE).default("fcw"),
@@ -2127,7 +2127,7 @@ export const model = {
       description:
         "Liveness watchdog: re-queue tasks claimed longer than `timeoutSeconds` ago (a wedged/hung worker) and restart the workers that were stuck on them, so a hung agent never permanently loses a pool slot. Idempotent; call periodically while a fabric is up.",
       arguments: z.object({
-        concurrency: z.number().int().min(1).max(64).default(4),
+        concurrency: z.number().int().min(1).max(64).default(8),
         timeoutSeconds: z.number().int().min(1).default(600),
         queueRoot: z.string().regex(PATH_RE).default("/tmp/fc-fabric"),
         netnsPrefix: z.string().regex(NETNS_RE).default("fcw"),

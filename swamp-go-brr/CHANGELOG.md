@@ -35,6 +35,19 @@ All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
   an older fabric returns text and usage is simply absent. In-guest sub-spans +
   traceparent-into-the-leaf remain non-goals (separate follow-ups).
 
+## 2026.06.17.3 — default concurrency raised to 8
+
+### Changed
+
+- `gobrr` `maxConcurrentVMs` default `5 → 8`. The Firecracker fabric host runs
+  only the leaf microVMs (the `docker-verify` gate runs elsewhere), each leaf is
+  I/O-bound on the model API (vCPU oversubscribes fine), and RAM is the binding
+  constraint at ≈512 MiB/VM — so 8 VMs ≈ 4 GiB fits an 8 GiB host comfortably.
+  Paired with `@magistr/firecracker` `fabric_up`/`recycle`/`down` concurrency
+  default `4 → 8`. Docs (sacred rule 3, `concurrency.md`, the `fabric_up`
+  examples) updated. Above ~6–8, validate the pool with a probe leaf after
+  `fabric_up` (the netns-uplink readiness gate).
+
 ## 2026.06.17.2 — leaf envelope-format hardening
 
 ### Changed

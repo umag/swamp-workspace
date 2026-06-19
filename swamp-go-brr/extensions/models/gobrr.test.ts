@@ -374,7 +374,7 @@ Deno.test("RunConfig defaults leafEffort to low", () => {
     toolchainImage: "img@sha256:abc",
   });
   assertEquals(c.leafEffort, "low");
-  assertEquals(c.maxConcurrentVMs, 5);
+  assertEquals(c.maxConcurrentVMs, 8);
   // full effort enum matches the fc-task-server substrate
   for (const e of ["low", "medium", "high", "xhigh", "max"]) {
     assertEquals(

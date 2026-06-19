@@ -37,5 +37,9 @@ run (held while the VM works) and they serialize — most time out at 60s.
 ## Caps
 
 `maxConcurrentVMs` is a host-resource guard (≈512 MiB RAM per restored VM);
-raise it as headroom allows. Only wallclock + invocation count are _enforced_;
+raise it as headroom allows. The **default is 8** (≈4 GiB — comfortable on an 8
+GiB FC host); leaf VMs are I/O-bound on the model API, so vCPU oversubscribes
+fine and RAM is the binding constraint. Above ~6–8 also validate the pool with a
+probe leaf after `fabric_up` (a worker can report "ready" while its netns has no
+uplink — the readiness gate). Only wallclock + invocation count are _enforced_;
 dollar cost is advisory.

@@ -43,7 +43,7 @@ top cause of a slow, fumbling run:
    `verifyInputs` surface (test files + helpers + fixtures). The loop REFUSES to
    start without them; never infer them from cwd. Follow-ups are bounded to
    `repoScope`.
-3. **CONCRETE CAPS.** Defaults: `maxConcurrentVMs=5`, `maxAttempts=2`,
+3. **CONCRETE CAPS.** Defaults: `maxConcurrentVMs=8`, `maxAttempts=2`,
    `maxFollowupDepth=3`, `maxInvocations=100`, `wallclockSeconds=7200`,
    `stallN=2`, `stallK=3`. Concurrency IS supported but has two HARD
    requirements: a network namespace per leaf (pinned substrate versions, fail
@@ -77,7 +77,7 @@ top cause of a slow, fumbling run:
 # 0. Pre-flight: human confirms repoScope, verifyCommand, verifyInputs (rule 2)
 swamp model method run <run> start --input intake=... --input config=...
 swamp model method run <run> seed_tasks --input tasks=...   # file-scoped DAG
-swamp model method run fab fabric_up --input concurrency=5 ...  # once per run
+swamp model method run fab fabric_up --input concurrency=8 ...  # once per run
 
 # 1. Loop until all-green / stalled:
 swamp model method run <run> next --input owner=<driverId>

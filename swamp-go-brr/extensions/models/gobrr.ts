@@ -92,7 +92,7 @@ export const RunConfigSchema = z.object({
   toolchainImage: z.string(), // digest-pinned image for docker-verify
   leafModel: z.string().default(""), // model id for the leaf `claude --print` ("" = substrate default)
   leafEffort: z.enum(["low", "medium", "high", "xhigh", "max"]).default("low"), // claude --print --effort (matches fc-task-server inject_task)
-  maxConcurrentVMs: z.number().default(5), // each FC instance has its own socket; resource guard, not a substrate limit
+  maxConcurrentVMs: z.number().default(8), // each FC instance has its own socket; resource guard, not a substrate limit
   maxAttempts: z.number().default(2),
   maxFollowupDepth: z.number().default(3),
   maxInvocations: z.number().default(100),
