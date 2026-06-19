@@ -335,8 +335,15 @@ Deno.test("buildQueuePayload excludes the OAuth token (credential-hygiene bounda
   );
   assert(
     JSON.stringify(Object.keys(p).sort()) ===
-      JSON.stringify(["effort", "gitRepoUrl", "id", "model", "prompt"]),
-    "exactly the 5 non-secret fields are serialized",
+      JSON.stringify([
+        "effort",
+        "gitRepoUrl",
+        "id",
+        "model",
+        "outputFormat",
+        "prompt",
+      ]),
+    "exactly the 6 non-secret fields are serialized (incl. outputFormat)",
   );
   assert(
     !JSON.stringify(p).toLowerCase().includes("token"),
@@ -355,6 +362,10 @@ Deno.test("buildQueuePayload excludes the OAuth token (credential-hygiene bounda
   assert(
     min.model === "" && min.effort === "" && min.gitRepoUrl === "",
     "optional fields default to empty strings",
+  );
+  assert(
+    min.outputFormat === "text",
+    "outputFormat defaults to text (unchanged runner path)",
   );
 });
 

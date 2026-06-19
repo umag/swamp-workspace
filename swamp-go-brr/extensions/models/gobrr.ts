@@ -12,6 +12,19 @@ export { normalizePath, pathEscapes, pathInSet } from "./lib/acl.ts";
 // Pure secret-scrub, shared with source-integration via lib/ (no cycle — lib/scrub.ts
 // imports nothing). gobrr is the authoritative scrub site for the verifyTail it stores.
 import { scrubSecrets } from "./lib/scrub.ts";
+// Pure OTLP serializer + W3C id generators (cycle-free: lib/otlp imports only stdlib +
+// lib/scrub). gobrr generates ids at the impure method boundary (like now()) and maps
+// its structs into otlp's canonical inputs; the pure builders take ids as data.
+import {
+  newSpanId,
+  newTraceId,
+  type OtlpMetricInput,
+  type OtlpMetricPoint,
+  type OtlpSpanInput,
+  type OtlpTraceInput,
+  serializeMetrics,
+  serializeTrace,
+} from "./lib/otlp.ts";
 
 // ───────────────────────────── value objects ─────────────────────────────
 
@@ -105,7 +118,7 @@ export const TaskStatusEnum = z.enum([
 
 export const TaskSchema = z.object({
   id: z.string(),
-  spec: z.string(),
+  spec: z.string().meta({ sensitive: true }), // task instruction (may carry secrets)
   writeAllowlist: z.array(z.string()),
   dependsOn: z.array(z.string()).default([]),
   gate: GateEnum, // derived from writeAllowlist ∩ verifyInputs at creation
@@ -118,13 +131,17 @@ export const TaskSchema = z.object({
   failureSignature: z.string().nullable().default(null),
   mergeDisposition: MergeDispositionEnum.nullable().default(null),
   createdAt: z.string(),
+  // W3C span id (root fact — generated once in seed_tasks/add_followup execute, NOT
+  // derivable). .optional() with NO default: absence is meaningful (a pre-feature task
+  // has none, and buildTrace suppresses its spans rather than inventing one).
+  spanId: z.string().optional(),
 });
 
 export const RunStatusEnum = z.enum(["running", "halted", "complete"]);
 
 export const RunSchema = z.object({
   status: RunStatusEnum.default("running"),
-  intake: z.string(), // the human input that seeded the run
+  intake: z.string().meta({ sensitive: true }), // human input that seeded the run
   config: RunConfigSchema,
   tasks: z.array(TaskSchema).default([]),
   invocations: z.number().default(0),
@@ -136,6 +153,9 @@ export const RunSchema = z.object({
   stallSignature: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // W3C trace id (root fact — generated once in start execute). .optional() with NO
+  // default: a pre-feature run has none and buildTrace returns status="unavailable".
+  traceId: z.string().optional(),
 });
 
 // ───────────────────────── mirror interfaces (bridge) ─────────────────────
@@ -199,6 +219,7 @@ export interface Task {
   failureSignature: string | null;
   mergeDisposition: MergeDisposition | null;
   createdAt: string;
+  spanId?: string;
 }
 export interface Run {
   status: "running" | "halted" | "complete";
@@ -214,6 +235,7 @@ export interface Run {
   stallSignature: string | null;
   createdAt: string;
   updatedAt: string;
+  traceId?: string;
 }
 
 // ───────────────────────────── pure helpers ──────────────────────────────
@@ -845,6 +867,16 @@ export const EnvelopeSummarySchema = z.object({
   declaredEditsPerFile: z.record(z.string(), z.number()),
 });
 
+// AGENT-DECLARED per-leaf usage (ADR 0001/0005 — self-reported, NEVER a gate input).
+// Validated + range-bounded at the source-integration parse boundary before it lands here.
+export const LeafDeclaredSchema = z.object({
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  cacheReadTokens: z.number().optional(),
+  costUsd: z.number().optional(),
+  durationMs: z.number().optional(),
+});
+
 export const StepOutputSchema = z.object({
   taskId: z.string(),
   invocation: z.number(), // 1-based index of the invocation that produced this result
@@ -856,6 +888,12 @@ export const StepOutputSchema = z.object({
   diffTail: z.string().meta({ sensitive: true }), // scrubbed upstream; re-bound to the tail
   verifyExitCode: z.number(),
   verifyTail: z.string().meta({ sensitive: true }), // scrubbed + tail-bounded here
+  // observability (issue gobrr-observability): per-invocation W3C span id (loop-generated,
+  // durable on the 7d record since the lease is nulled at report), the HOST-measured leaf
+  // wall-clock, and the AGENT-DECLARED usage (provenance kept separate from host facts).
+  invocationSpanId: z.string().optional(),
+  hostDurationMs: z.number().optional(),
+  leafDeclared: LeafDeclaredSchema.optional(),
 });
 
 export const StepOutputsResourceSchema = z.object({
@@ -866,6 +904,13 @@ export interface EnvelopeSummary {
   blockCount: number;
   declaredTargetPaths: string[];
   declaredEditsPerFile: Record<string, number>;
+}
+export interface LeafDeclared {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  costUsd?: number;
+  durationMs?: number;
 }
 export interface StepOutput {
   taskId: string;
@@ -878,6 +923,9 @@ export interface StepOutput {
   diffTail: string;
   verifyExitCode: number;
   verifyTail: string;
+  invocationSpanId?: string;
+  hostDurationMs?: number;
+  leafDeclared?: LeafDeclared;
 }
 
 export interface BuildStepOutputInput {
@@ -891,6 +939,9 @@ export interface BuildStepOutputInput {
   diff: string; // already scrubbed by apply()
   verifyExitCode: number;
   verifyTail: string; // RAW docker-verify stdout — scrubbed here
+  invocationSpanId?: string;
+  hostDurationMs?: number;
+  leafDeclared?: LeafDeclared;
 }
 
 /**
@@ -911,6 +962,9 @@ export function buildStepOutput(input: BuildStepOutputInput): StepOutput {
     diffTail: input.diff.slice(-DIFF_TAIL_BYTES),
     verifyExitCode: input.verifyExitCode,
     verifyTail: scrubSecrets(input.verifyTail).slice(-VERIFY_TAIL_BYTES),
+    invocationSpanId: input.invocationSpanId,
+    hostDurationMs: input.hostDurationMs,
+    leafDeclared: input.leafDeclared,
   };
 }
 
@@ -985,6 +1039,228 @@ export function stepOutputProjection(
   return { count: records.length, mismatches, reaped };
 }
 
+// ─────────────────────── OTLP derivation (issue gobrr-observability) ──────────
+// PURE projections (ADR 0002): buildTrace/buildMetrics DERIVE an OTLP tree/metrics
+// from the Run + the 7d step-output records. They consume the raw records (the only
+// home of per-invocation span ids + leaf usage) — that IS the source of truth, not a
+// second run.tasks scan that could drift from trustSummary. Serialization + the
+// authoritative attribute scrub live in lib/otlp.ts. Ids are generated in the execute
+// methods (never here). gobrr stays pure: it never exports — @magistr/swamp-go-brr/
+// otlp-export ships the resources these produce.
+
+const SERVICE_NAME = "swamp-go-brr";
+
+function isoToNanos(iso: string): string {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? String(ms * 1_000_000) : "0";
+}
+
+function runStatus(run: Run): "ok" | "error" | "unset" {
+  return run.status === "complete"
+    ? "ok"
+    : run.status === "halted"
+    ? "error"
+    : "unset";
+}
+function taskSpanStatus(t: Task): "ok" | "error" | "unset" {
+  if (t.status === "done") return "ok";
+  if (BAD_STATUSES.includes(t.status)) return "error";
+  return "unset";
+}
+
+export interface TraceResult {
+  status: "unavailable" | "empty" | "partial" | "ok";
+  suppressedTasks: number; // pre-feature tasks (no spanId) whose spans were suppressed
+  trace?: OtlpTraceInput;
+}
+
+/**
+ * Derive an OTLP span tree: run (root) → task → invocation → (host stage timings as
+ * attributes). The root span id is a deterministic 16-hex slice of the traceId. A task
+ * with NO spanId (pre-feature) is suppressed ENTIRELY — its task span AND all its
+ * invocation spans — so a settled invocation span is never orphaned/promoted to a root.
+ * Status: unavailable (no traceId) | empty (traceId, zero attempts, no records) | partial
+ * (traceId, attempts>0 but records GC'd at 7d) | ok.
+ */
+export function buildTrace(run: Run, records: StepOutput[]): TraceResult {
+  if (!run.traceId) return { status: "unavailable", suppressedTasks: 0 };
+  const rootSpanId = run.traceId.slice(0, 16);
+  const spans: OtlpSpanInput[] = [{
+    spanId: rootSpanId,
+    name: "gobrr.run",
+    startUnixNano: isoToNanos(run.createdAt),
+    endUnixNano: isoToNanos(run.updatedAt),
+    status: runStatus(run),
+    attributes: {
+      "gobrr.invocations": run.invocations,
+      "gobrr.status": run.status,
+      "gobrr.cost_estimate": run.costEstimate,
+    },
+  }];
+
+  const recsByTask = new Map<string, StepOutput[]>();
+  for (const r of records) {
+    const arr = recsByTask.get(r.taskId) ?? [];
+    arr.push(r);
+    recsByTask.set(r.taskId, arr);
+  }
+
+  let suppressedTasks = 0;
+  for (const t of run.tasks) {
+    const taskRecs = recsByTask.get(t.id) ?? [];
+    if (!t.spanId) {
+      // pre-feature task: suppress its task span AND every invocation span (never orphan)
+      if (taskRecs.length > 0 || t.attempts > 0) suppressedTasks += 1;
+      continue;
+    }
+    spans.push({
+      spanId: t.spanId,
+      parentSpanId: rootSpanId,
+      name: `task ${t.id}`,
+      startUnixNano: isoToNanos(t.createdAt),
+      endUnixNano: isoToNanos(run.updatedAt),
+      status: taskSpanStatus(t),
+      attributes: {
+        "task.id": t.id,
+        "task.gate": t.gate,
+        "task.status": t.status,
+        "task.attempts": t.attempts,
+        ...(t.failureKind ? { "task.failure_kind": t.failureKind } : {}),
+      },
+    });
+    for (const r of taskRecs) {
+      if (!r.invocationSpanId) continue; // no span id for this invocation → skip
+      const attrs: Record<string, string | number | boolean> = {
+        "invocation.index": r.invocation,
+        "invocation.outcome": r.outcome,
+        "verify.exit_code": r.verifyExitCode,
+      };
+      if (r.hostDurationMs !== undefined) {
+        attrs["leaf.host.duration_ms"] = r.hostDurationMs;
+      }
+      const d = r.leafDeclared;
+      if (d) {
+        if (d.inputTokens !== undefined) {
+          attrs["leaf.declared.input_tokens"] = d.inputTokens;
+        }
+        if (d.outputTokens !== undefined) {
+          attrs["leaf.declared.output_tokens"] = d.outputTokens;
+        }
+        if (d.cacheReadTokens !== undefined) {
+          attrs["leaf.declared.cache_read_tokens"] = d.cacheReadTokens;
+        }
+        if (d.costUsd !== undefined) {
+          attrs["leaf.declared.cost_usd"] = d.costUsd;
+        }
+        if (d.durationMs !== undefined) {
+          attrs["leaf.declared.duration_ms"] = d.durationMs;
+        }
+      }
+      const endMs = Date.parse(r.recordedAt);
+      const startNanos =
+        (Number.isFinite(endMs) && r.hostDurationMs !== undefined)
+          ? String(endMs * 1_000_000 - r.hostDurationMs * 1_000_000)
+          : isoToNanos(r.recordedAt);
+      spans.push({
+        spanId: r.invocationSpanId,
+        parentSpanId: t.spanId,
+        name: `invocation ${t.id}#${r.invocation}`,
+        startUnixNano: startNanos,
+        endUnixNano: isoToNanos(r.recordedAt),
+        status: r.outcome === "done" ? "ok" : "error",
+        attributes: attrs,
+      });
+    }
+  }
+
+  const trace: OtlpTraceInput = {
+    traceId: run.traceId,
+    serviceName: SERVICE_NAME,
+    spans,
+  };
+  if (records.length === 0) {
+    const anyAttempts = run.tasks.some((t) => t.attempts > 0);
+    return {
+      status: anyAttempts ? "partial" : "empty",
+      suppressedTasks,
+      trace,
+    };
+  }
+  return { status: "ok", suppressedTasks, trace };
+}
+
+/**
+ * Derive OTLP metrics — per-gate leaf token / cost / time sums from the DECLARED usage
+ * on the records (gate is the only label; the lib/otlp METRIC_LABELS allowlist forbids
+ * free-text labels). Numeric only; carries no secret-bearing text.
+ */
+export function buildMetrics(run: Run, records: StepOutput[]): OtlpMetricInput {
+  const gateOf = new Map(run.tasks.map((t) => [t.id, t.gate]));
+  const acc = new Map<
+    string,
+    { tokens: number; cost: number; dur: number; count: number }
+  >();
+  for (const r of records) {
+    const gate = gateOf.get(r.taskId) ?? "real";
+    const a = acc.get(gate) ?? { tokens: 0, cost: 0, dur: 0, count: 0 };
+    const d = r.leafDeclared;
+    if (d) {
+      a.tokens += (d.inputTokens ?? 0) + (d.outputTokens ?? 0);
+      a.cost += d.costUsd ?? 0;
+    }
+    a.dur += r.hostDurationMs ?? d?.durationMs ?? 0;
+    a.count += 1;
+    acc.set(gate, a);
+  }
+  const tokenPts: OtlpMetricPoint[] = [],
+    costPts: OtlpMetricPoint[] = [],
+    durPts: OtlpMetricPoint[] = [],
+    countPts: OtlpMetricPoint[] = [];
+  const tsNanos = isoToNanos(run.updatedAt); // measurement time for every point
+  for (const [gate, a] of acc) {
+    tokenPts.push({
+      attributes: { gate },
+      value: a.tokens,
+      timeUnixNano: tsNanos,
+    });
+    costPts.push({
+      attributes: { gate },
+      value: a.cost,
+      timeUnixNano: tsNanos,
+    });
+    durPts.push({ attributes: { gate }, value: a.dur, timeUnixNano: tsNanos });
+    countPts.push({
+      attributes: { gate },
+      value: a.count,
+      timeUnixNano: tsNanos,
+    });
+  }
+  return {
+    serviceName: SERVICE_NAME,
+    metrics: [
+      { name: "gobrr.leaf.tokens", unit: "1", kind: "sum", points: tokenPts },
+      {
+        name: "gobrr.leaf.cost_usd",
+        unit: "USD",
+        kind: "sum",
+        points: costPts,
+      },
+      {
+        name: "gobrr.leaf.duration_ms",
+        unit: "ms",
+        kind: "sum",
+        points: durPts,
+      },
+      {
+        name: "gobrr.leaf.invocations",
+        unit: "1",
+        kind: "sum",
+        points: countPts,
+      },
+    ],
+  };
+}
+
 // ───────────────────────────── the model ─────────────────────────────────
 
 type Ctx = {
@@ -1028,7 +1304,7 @@ function persist(context: Ctx, run: Run): Promise<unknown> {
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/gobrr",
-  version: "2026.06.17.4",
+  version: "2026.06.18.1",
   globalArguments: z.object({}),
 
   resources: {
@@ -1060,6 +1336,20 @@ export const model = {
       lifetime: "7d" as const,
       garbageCollection: 50,
     },
+    traceOtlp: {
+      description:
+        "DERIVED OTLP/JSON span tree (run -> task -> invocation), produced by emit_otlp. content.status is one of ok|unavailable|empty|partial (unavailable = pre-feature run with no traceId; partial = >7d run whose step records were GC'd). Read via `swamp data get <name> traceOtlp --json | jq -r .content.status` (the OTLP body is .content.resourceSpans). Lifetime 7d (ADR 0004 — carries scrubbed attribute text). Hand-off artifact for @magistr/swamp-go-brr/otlp-export; gobrr never pushes it.",
+      schema: z.record(z.string(), z.unknown()),
+      lifetime: "7d" as const,
+      garbageCollection: 20,
+    },
+    metricsOtlp: {
+      description:
+        "DERIVED OTLP/JSON metrics (per-gate leaf tokens/cost/duration/invocations), produced by emit_otlp. Numeric only (no status, always fully populated; labels restricted to the METRIC_LABELS allowlist — no free-text). Read via `swamp data get <name> metricsOtlp --json | jq .content.resourceMetrics`.",
+      schema: z.record(z.string(), z.unknown()),
+      lifetime: "infinite" as const,
+      garbageCollection: 10,
+    },
   },
 
   methods: {
@@ -1086,6 +1376,7 @@ export const model = {
           stallSignature: null,
           createdAt: ts,
           updatedAt: ts,
+          traceId: newTraceId(), // root fact — generated once, here at the impure boundary
         };
         context.logger.info("Run started for {name}", {
           name: context.definition.name,
@@ -1140,6 +1431,7 @@ export const model = {
             failureSignature: null,
             mergeDisposition: null,
             createdAt: ts,
+            spanId: newSpanId(), // root fact — one span id per task, at the impure boundary
           });
         }
         const tasks = [...run.tasks, ...added];
@@ -1188,6 +1480,11 @@ export const model = {
         audit: z.object({
           envelopeSummary: EnvelopeSummarySchema.nullable().default(null),
           verifyTail: z.string().default(""),
+          // observability: the loop generates the invocation span id + measures the leaf
+          // wall-clock (host) and passes the source-integration-validated declared usage.
+          invocationSpanId: z.string().optional(),
+          hostDurationMs: z.number().optional(),
+          leafDeclared: LeafDeclaredSchema.optional(),
         }).optional(),
       }),
       execute: async (
@@ -1199,6 +1496,9 @@ export const model = {
           audit?: {
             envelopeSummary: EnvelopeSummary | null;
             verifyTail: string;
+            invocationSpanId?: string;
+            hostDurationMs?: number;
+            leafDeclared?: LeafDeclared;
           };
         },
         context: Ctx,
@@ -1238,6 +1538,9 @@ export const model = {
             diff: args.workResult.diff,
             verifyExitCode: args.verifyExitCode,
             verifyTail: args.audit?.verifyTail ?? "",
+            invocationSpanId: args.audit?.invocationSpanId,
+            hostDurationMs: args.audit?.hostDurationMs,
+            leafDeclared: args.audit?.leafDeclared,
           });
           const existing = await readStepOutputs(context);
           handles.push(
@@ -1295,7 +1598,15 @@ export const model = {
           ts,
         );
         if ("error" in res) throw new Error(res.error);
-        return { dataHandles: [await persist(context, res.run)] };
+        // give the new followup task a span id (root fact, impure boundary); idempotent —
+        // only fills a missing id, so existing tasks' span ids are untouched.
+        const withSpan: Run = {
+          ...res.run,
+          tasks: res.run.tasks.map((t) =>
+            t.spanId ? t : { ...t, spanId: newSpanId() }
+          ),
+        };
+        return { dataHandles: [await persist(context, withSpan)] };
       },
     },
 
@@ -1364,6 +1675,38 @@ export const model = {
         return {
           dataHandles: [
             await context.writeResource("summary", "summary", summary),
+          ],
+        };
+      },
+    },
+
+    emit_otlp: {
+      description:
+        "Derive + write the OTLP observability resources: `traceOtlp` (the run->task->invocation span tree, with content.status = ok|unavailable|empty|partial) and `metricsOtlp` (per-gate leaf tokens/cost/duration/invocations). PURE derivation from the run + 7d step records (ADR 0002); gobrr never exports — @magistr/swamp-go-brr/otlp-export ships these.",
+      arguments: z.object({}),
+      execute: async (_args: Record<string, never>, context: Ctx) => {
+        const run = await readRun(context);
+        if (!run) throw new Error("no run — call start first");
+        const records = await readStepOutputs(context);
+        const t = buildTrace(run, records);
+        const traceContent: Record<string, unknown> = {
+          status: t.status,
+          suppressedTasks: t.suppressedTasks,
+          ...(t.trace ? serializeTrace(t.trace) : { resourceSpans: [] }),
+        };
+        const metricsContent = serializeMetrics(buildMetrics(run, records));
+        context.logger.info("emit_otlp: trace status={status} spans={n}", {
+          status: t.status,
+          n: t.trace ? t.trace.spans.length : 0,
+        });
+        return {
+          dataHandles: [
+            await context.writeResource("traceOtlp", "traceOtlp", traceContent),
+            await context.writeResource(
+              "metricsOtlp",
+              "metricsOtlp",
+              metricsContent,
+            ),
           ],
         };
       },

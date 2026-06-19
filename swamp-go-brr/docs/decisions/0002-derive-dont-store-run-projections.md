@@ -38,3 +38,8 @@ all. No stored field, no dual-write, no schema/init/factory change.
   scan is total and cheap.)
 - Promise Theory tie-in: trust is the **measured** assessment (gate exit code
   via task status), never asserted/stored ahead of the measurement.
+- **Exception — generated correlation ids (ADR 0008).** W3C `traceId`/`spanId`/
+  `invocationSpanId` are NOT projections: they are stable external references
+  that cannot be re-derived, so they are stored as root facts (`.optional()`, no
+  default). The derive-don't-store rule still governs the OTLP trace/metrics
+  built from them (`buildTrace`/`buildMetrics`).

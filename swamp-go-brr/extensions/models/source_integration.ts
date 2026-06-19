@@ -93,6 +93,73 @@ export function parseEnvelope(
   return { env: { edits, newFiles } };
 }
 
+// ── leaf JSON unwrap (outputFormat=json) — issue gobrr-observability ───────────
+// When a leaf runs `claude --print --output-format json`, the fabric returns claude's
+// JSON object. source-integration OWNS this untrusted parse (it already size-caps +
+// scrubs leaf stdout): cap BEFORE parse, map is_error -> claude_error BEFORE the
+// envelope parse (the SINGLE claude_error site for text + json), extract `.result`
+// for the unchanged @@EDIT parse, and return DECLARED usage (validated + bounded so a
+// malicious/buggy leaf cannot poison metrics). All declared numbers are agent
+// self-reported (ADR 0001/0005) — never a gate input.
+
+/** Agent-DECLARED per-leaf usage (validated + range-bounded). All fields optional;
+ * an out-of-range / non-finite value is DROPPED, never clamped. */
+export interface LeafUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  costUsd?: number;
+  durationMs?: number;
+}
+
+const MAX_TOKENS = 100_000_000; // sane ceiling; reject absurd self-reported counts
+const MAX_COST_USD = 1_000_000;
+const MAX_DURATION_MS = 86_400_000; // 24h
+
+function boundedInt(n: unknown, max: number): number | undefined {
+  return (typeof n === "number" && Number.isFinite(n) && Number.isInteger(n) &&
+      n >= 0 && n <= max)
+    ? n
+    : undefined;
+}
+function boundedNum(n: unknown, max: number): number | undefined {
+  return (typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= max)
+    ? n
+    : undefined;
+}
+
+export function extractLeafJson(
+  raw: string,
+  maxBytes: number = MAX_ENVELOPE_BYTES,
+):
+  | { result: string; usage: LeafUsage | null }
+  | { failureKind: FailureKind } {
+  if (raw.length > maxBytes) return { failureKind: "envelope_oversize" };
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    // not parseable JSON (e.g. an old fabric's plain text, or a malformed number) —
+    // a typed failure, never a throw.
+    return { failureKind: "envelope_parse" };
+  }
+  if (parsed && parsed.is_error === true) {
+    return { failureKind: "claude_error" };
+  }
+  const result = typeof parsed?.result === "string" ? parsed.result : "";
+  const u = (parsed && typeof parsed.usage === "object" && parsed.usage)
+    ? parsed.usage as Record<string, unknown>
+    : {};
+  const usage: LeafUsage = {
+    inputTokens: boundedInt(u.input_tokens, MAX_TOKENS),
+    outputTokens: boundedInt(u.output_tokens, MAX_TOKENS),
+    cacheReadTokens: boundedInt(u.cache_read_input_tokens, MAX_TOKENS),
+    costUsd: boundedNum(parsed.total_cost_usd, MAX_COST_USD),
+    durationMs: boundedNum(parsed.duration_ms, MAX_DURATION_MS),
+  };
+  return { result, usage };
+}
+
 // ── planApply — pure ACL/cap enforcement over a file snapshot (no I/O) ────────
 
 export interface PlannedWrite {
@@ -514,7 +581,7 @@ export type AppliedTaskResult = z.infer<typeof AppliedTaskResultSchema>;
 
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.06.17.4",
+  version: "2026.06.18.1",
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(

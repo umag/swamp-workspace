@@ -22,13 +22,14 @@ The loop is four models the agent drives inline (no driver script), plus a
 first** ([references/preflight.md](references/preflight.md)); skipping it is the
 top cause of a slow, fumbling run:
 
-| Model                         | Owns                                                                                           |
-| ----------------------------- | ---------------------------------------------------------------------------------------------- |
-| `preflight`                   | Phase-0 substrate (docker-only): digest-pin the gate image, emit the run `config`              |
-| `gobrr`                       | PURE DAG state machine: Task DAG, scheduler, follow-up recursion; never touches the filesystem |
-| `source-integration`          | host code-ownership: build WorkOrder, apply the envelope behind the allowlist ACL              |
-| `@magistr/firecracker` fabric | executor: one leaf = one `claude --print` in a microVM                                         |
-| `docker-verify`               | the deterministic green gate                                                                   |
+| Model                         | Owns                                                                                                                                                             |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preflight`                   | Phase-0 substrate (docker-only): digest-pin the gate image, emit the run `config`                                                                                |
+| `gobrr`                       | PURE DAG state machine: Task DAG, scheduler, follow-up recursion; never touches the filesystem                                                                   |
+| `source-integration`          | host code-ownership: build WorkOrder, apply the envelope behind the allowlist ACL                                                                                |
+| `@magistr/firecracker` fabric | executor: one leaf = one `claude --print` in a microVM                                                                                                           |
+| `docker-verify`               | the deterministic green gate                                                                                                                                     |
+| `otlp-export`                 | post-run OTLP egress (loop's only network push): ships gobrr's derived trace/metrics to a collector ([references/observability.md](references/observability.md)) |
 
 ## Sacred rules (front-loaded — never violate)
 

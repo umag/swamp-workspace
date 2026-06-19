@@ -17,8 +17,15 @@ namespace. Use:
 - `@magistr/fc-task-server` ≥ `2026.06.11.3` — keys its
   `/tmp/fc-{task,result}-<netns>-<port>` files by netns; older versions clobber
   across VMs.
+- `@magistr/firecracker` ≥ `2026.06.18.1` — REQUIRED ONLY for per-leaf usage
+  capture (`submit --input outputFormat=json`, issue `gobrr-observability`); an
+  older fabric ignores it and returns plain text, so leaf token/cost telemetry
+  is simply absent (the run is otherwise unaffected). See
+  [observability.md](observability.md).
 
-Pin BOTH in `config.pinnedVersions` and fail closed on mismatch at pre-flight.
+Pin the first two in `config.pinnedVersions` and fail closed on mismatch at
+pre-flight. If opting into observability (per-leaf usage), also pin the third
+(`@magistr/firecracker` ≥ `2026.06.18.1`).
 
 ## (b) single-process fan-out
 
