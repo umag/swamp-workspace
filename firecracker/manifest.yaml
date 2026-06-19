@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/firecracker"
-version: "2026.06.12.3"
+version: "2026.06.17.1"
 description: |
   Firecracker microVM lifecycle management via SSH + the Unix-socket REST API.
   One model instance = one microVM socket.

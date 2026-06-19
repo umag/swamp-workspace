@@ -3,6 +3,16 @@
 All notable changes to `@magistr/firecracker`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.17.1 — fabric default concurrency raised to 8
+
+### Changed
+
+- `fabric_up`, `fabric_recycle`, and `fabric_down` `concurrency` default `4 → 8`
+  (still `min(1).max(64)`). Leaf worker VMs are I/O-bound on the model API and
+  cost ≈512 MiB RAM each, so 8 ≈ 4 GiB fits an 8 GiB FC host. Above ~6–8,
+  validate the warm pool with a probe task after `fabric_up` (the netns-uplink
+  readiness gate) before trusting it.
+
 ## 2026.06.12.3 — fabric netns uplink readiness gate
 
 ### Fixed
