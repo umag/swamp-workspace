@@ -332,25 +332,39 @@ jobs:
         if: steps.manifest-changed.outputs.changed == 'true'
         run: |
           set -eo pipefail
-          # Per-version release notes are immutable on the swamp registry —
-          # if we don't pass --release-notes, the swamp.club changelog
-          # entry is empty for that version forever. Default to the commit
-          # message of HEAD (the commit that bumped the version), capped
-          # to the CLI's 5000-char limit.
-          notes="$(git log -1 --format=%B HEAD | head -c 4900)"
-          if [ -z "$notes" ]; then
-            notes="Release of $(git rev-parse --short HEAD)"
-          fi
+          # Per-version release notes are immutable on the swamp registry — if we
+          # don't pass --release-notes, the swamp.club entry for that version is
+          # empty forever. Prefer the extension's OWN CHANGELOG.md section for the
+          # version being published (so the registry notes match the repo
+          # changelog); fall back to the version-bump commit message. (The README
+          # ships automatically via each manifest's additionalFiles.)
+          commit_notes="$(git log -1 --format=%B HEAD | head -c 4900)"
+          [ -z "$commit_notes" ] && commit_notes="Release of $(git rev-parse --short HEAD)"
           while IFS= read -r manifest; do
             [ -z "$manifest" ] && continue
-            echo "Publishing $manifest"
+            dir="$(dirname "$manifest")"
+            ver="$(grep -m1 '^version:' "$manifest" \
+              | sed -E 's/^version:[[:space:]]*"?([^"]+)"?.*/\1/')"
+            # Extract the `## <ver> …` section from the extension's CHANGELOG
+            # (everything up to the next `## ` heading). The char-after-version
+            # guard stops `…19.1` from also matching a `…19.10` heading.
+            notes=""
+            if [ -n "$ver" ] && [ -f "$dir/CHANGELOG.md" ]; then
+              notes="$(awk -v v="$ver" '
+                index($0, "## " v) == 1 && substr($0, length("## " v) + 1, 1) !~ /[0-9.]/ { f=1; print; next }
+                f && /^## / { exit }
+                f { print }
+              ' "$dir/CHANGELOG.md" | head -c 4900)"
+            fi
+            [ -z "$notes" ] && notes="$commit_notes"
+            echo "Publishing $manifest @ ${ver:-?}"
             # -y is REQUIRED in CI: without it `extension push` prompts
             # "Push … to registry? [y/N]" and, with no TTY, defaults to No and
             # silently cancels (exit 0 → false-green). -y also accepts the
             # Deno.Command safety warning prompt.
-            # Single-root-repo layout: run push from the repo root with the
-            # full manifest path. Each manifest sets `paths.base: manifest`,
-            # so its `models:`/`reports:`/`additionalFiles:` resolve relative
-            # to the manifest's own subdirectory.
+            # Single-root-repo layout: run push from the repo root with the full
+            # manifest path. Each manifest sets `paths.base: manifest`, so its
+            # `models:`/`reports:`/`additionalFiles:` resolve relative to the
+            # manifest's own subdirectory.
             swamp extension push "$manifest" -y --release-notes "$notes"
           done <<< "${{ steps.manifest-changed.outputs.manifests }}"
