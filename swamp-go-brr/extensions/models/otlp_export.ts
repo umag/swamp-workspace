@@ -10,6 +10,7 @@ import { z } from "npm:zod@4";
 
 // ── pure helpers (unit-tested; no network) ────────────────────────────────────
 
+/** Validate the collector endpoint — must be `https://` (rejects http/empty/no-scheme). */
 export function validateEndpoint(
   url: string,
 ): { ok: true } | { ok: false; reason: string } {
@@ -24,6 +25,7 @@ export function validateEndpoint(
   }
 }
 
+/** Build the OTLP/HTTP request: token rides in the Authorization header only, never the URL or body. */
 export function buildExportRequest(
   endpoint: string,
   token: string,
@@ -51,6 +53,7 @@ export function redactEndpoint(url: string): string {
   }
 }
 
+/** Map an HTTP status to a typed result: 2xx -> ok, otherwise -> error. */
 export function classifyResult(httpStatus: number): "ok" | "error" {
   return httpStatus >= 200 && httpStatus < 300 ? "ok" : "error";
 }
@@ -81,7 +84,7 @@ const StatusSchema = z.object({
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/otlp-export",
-  version: "2026.06.18.1",
+  version: "2026.06.19.1",
   // endpoint + token come from a vault CEL wired by the workflow; never resolved here.
   globalArguments: z.object({
     endpoint: z.string().default(""),

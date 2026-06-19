@@ -3,6 +3,18 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.19.1 — docs: task-oriented README + full symbol docs
+
+### Changed
+
+- README rewritten in a task-oriented shape (Tutorial → How-to → Reference →
+  Explanation), brought current with all five models (incl. `preflight` +
+  `otlp-export`) and the observability how-tos.
+- JSDoc added to every exported symbol across the model entrypoints, so
+  `swamp extension quality` scores 14/14 (`rich-readme` + `symbols-docs`).
+
+Docs-only — no behaviour change, no schema change.
+
 ## 2026.06.18.1 — OTLP observability + per-leaf cost/tokens/time
 
 ### Added

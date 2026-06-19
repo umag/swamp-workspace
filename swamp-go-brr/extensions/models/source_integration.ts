@@ -29,18 +29,22 @@ import type { EnvelopeSummary, FailureKind } from "./gobrr.ts";
 // (sk-ant + Authorization/Bearer) to the full lib/scrub.ts set — strictly more redaction.
 export { scrubSecrets };
 
+/** Hard size cap on leaf output parsed/stored (defends against oversize payloads). */
 export const MAX_ENVELOPE_BYTES = 200_000;
 const MAX_BLOCKS = 200;
 
+/** One `@@EDIT` block: target path plus old/new content. */
 export interface Edit {
   path: string;
   old: string;
   new: string;
 }
+/** One `@@NEWFILE` block: target path plus content. */
 export interface NewFile {
   path: string;
   content: string;
 }
+/** A parsed leaf envelope: its edits and new files. */
 export interface Envelope {
   edits: Edit[];
   newFiles: NewFile[];
@@ -128,6 +132,7 @@ function boundedNum(n: unknown, max: number): number | undefined {
     : undefined;
 }
 
+/** Parse a leaf's `--output-format json` result: size-cap, map is_error -> claude_error, extract `.result` + validated declared usage. */
 export function extractLeafJson(
   raw: string,
   maxBytes: number = MAX_ENVELOPE_BYTES,
@@ -162,6 +167,7 @@ export function extractLeafJson(
 
 // ── planApply — pure ACL/cap enforcement over a file snapshot (no I/O) ────────
 
+/** A planned file write (path + content) computed by `planApply`. */
 export interface PlannedWrite {
   path: string;
   content: string;
@@ -443,6 +449,7 @@ export function parseGitDiffPaths(
  * discriminated-string vocabulary (gobrr.ts Gate/Outcome/FailureKind enums).
  */
 export const PromptFramingEnum = z.enum(["imperative", "desired-state"]);
+/** Workorder prompt framing: `imperative` vs `desired-state`. */
 export type PromptFraming = z.infer<typeof PromptFramingEnum>;
 
 /**
@@ -455,6 +462,7 @@ export type PromptFraming = z.infer<typeof PromptFramingEnum>;
  */
 export const WORKORDER_FRAMING: PromptFraming = "imperative";
 
+/** One allowlisted file slice inlined into the leaf prompt (path + scrubbed content). */
 export interface WorkorderSlice {
   rel: string;
   /**
@@ -560,6 +568,7 @@ export function buildWorkorderPrompt(args: {
 // stepOutputProjection mismatch audit (ADR 0002/0005). Typing the result is also
 // what lets the secret-bearing `diff` field be marked sensitive — impossible while
 // it was hidden inside z.unknown().
+/** Success member of apply()'s result union: changeId, host-observed changedPaths, scrubbed diff, declared summary. */
 export const AppliedTaskSuccessSchema = z.object({
   changeId: z.string(),
   changedPaths: z.array(z.string()), // HOST-OBSERVED (jj diff), never agent-declared
@@ -567,21 +576,25 @@ export const AppliedTaskSuccessSchema = z.object({
   declaredEnvelopeSummary: EnvelopeSummarySchema, // AGENT-DECLARED intent, advisory
 }).strict();
 
+/** Failure member of apply()'s result union: failureKind + note. */
 export const AppliedTaskFailureSchema = z.object({
   failureKind: FailureKindEnum,
   note: z.string(),
 }).strict();
 
+/** The strict discriminated union of apply()'s per-task result (ADR 0007). */
 export const AppliedTaskResultSchema = z.union([
   AppliedTaskSuccessSchema,
   AppliedTaskFailureSchema,
 ]);
 
+/** Mirror type of AppliedTaskResultSchema. */
 export type AppliedTaskResult = z.infer<typeof AppliedTaskResultSchema>;
 
+/** @internal — the source-integration model definition; invoke its methods via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.06.18.1",
+  version: "2026.06.19.1",
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(
