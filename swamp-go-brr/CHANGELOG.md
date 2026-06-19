@@ -3,6 +3,15 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.19.3 — docs: expanded manifest description
+
+### Changed
+
+- Expanded the manifest `description` with a human-oriented overview (what the
+  loop does + the host-isolation/green-gate guarantee) and a "getting started"
+  pointer. The swamp-club extension page renders the `description` (not the
+  bundled README), so this is what shows there. Docs-only — no behaviour change.
+
 ## 2026.06.19.2 — maintenance: CI republish
 
 No code change. `2026.06.19.1` was published manually (to work around a
