@@ -345,7 +345,13 @@ export function utf8ToBase64(s: string): string {
 }
 
 export function buildQueuePayload(
-  t: { prompt: string; model?: string; effort?: string; gitRepoUrl?: string },
+  t: {
+    prompt: string;
+    model?: string;
+    effort?: string;
+    gitRepoUrl?: string;
+    outputFormat?: string;
+  },
   id: string,
 ): {
   id: string;
@@ -353,6 +359,7 @@ export function buildQueuePayload(
   model: string;
   effort: string;
   gitRepoUrl: string;
+  outputFormat: string;
 } {
   return {
     id,
@@ -360,6 +367,9 @@ export function buildQueuePayload(
     model: t.model ?? "",
     effort: t.effort ?? "",
     gitRepoUrl: t.gitRepoUrl ?? "",
+    // opt-in (issue gobrr-observability); default "text" keeps the runner on the
+    // unchanged text path so existing consumers are byte-identical.
+    outputFormat: t.outputFormat ?? "text",
   };
 }
 
@@ -803,6 +813,7 @@ while true; do
   GIT_URL=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('gitRepoUrl',''))" 2>/dev/null)
   MODEL=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('model',''))" 2>/dev/null)
   EFFORT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('effort',''))" 2>/dev/null)
+  OUTPUT_FORMAT=\$(python3 -c "import json; print(json.load(open('/tmp/task.json')).get('outputFormat',''))" 2>/dev/null)
   SAY "got task \${ID:-?}"
 
   export CLAUDE_CODE_OAUTH_TOKEN="\$TOKEN"
@@ -818,10 +829,19 @@ while true; do
   cd "\$WORKDIR"
   # --dangerously-skip-permissions: the microVM itself is the sandbox, so the
   # agent runs unattended without permission prompts (which would hang --print).
-  RESULT=\$(claude --print --dangerously-skip-permissions \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>&1)
-  CLAUDE_EXIT=\$?
+  # DEFAULT (text) path is unchanged. The opt-in json path (outputFormat=json,
+  # issue gobrr-observability) captures stdout ONLY — NO 2>&1 (a stderr line would
+  # corrupt the JSON) and NO ERROR-prefix (is_error in the JSON is the failure
+  # signal, mapped to claude_error by source-integration); stderr is kept aside.
+  if [ "\$OUTPUT_FORMAT" != "json" ]; then
+    RESULT=\$(claude --print --dangerously-skip-permissions \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>&1)
+    CLAUDE_EXIT=\$?
+    [ \$CLAUDE_EXIT -ne 0 ] && RESULT="ERROR: claude exit=\$CLAUDE_EXIT: \$RESULT"
+  else
+    RESULT=\$(claude --print --output-format json --dangerously-skip-permissions \${MODEL:+--model "\$MODEL"} \${EFFORT:+--effort "\$EFFORT"} "\$PROMPT" 2>/tmp/claude-stderr.txt)
+    CLAUDE_EXIT=\$?
+  fi
   SAY "claude task=\${ID:-?} exit=\$CLAUDE_EXIT len=\$(printf "%s" "\$RESULT" | wc -c)"
-  [ \$CLAUDE_EXIT -ne 0 ] && RESULT="ERROR: claude exit=\$CLAUDE_EXIT: \$RESULT"
 
   printf "%s" "\$RESULT" > /tmp/result.txt
   # Tag the result with the task id (query param + header) so a queue server can
@@ -844,7 +864,7 @@ done
  */
 export const model = {
   type: "@magistr/firecracker",
-  version: "2026.06.12.3",
+  version: "2026.06.18.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {
@@ -1964,6 +1984,11 @@ export const model = {
             model: z.string().optional(),
             effort: z.string().optional(),
             gitRepoUrl: z.string().optional(),
+            // opt-in (issue gobrr-observability): "json" runs the leaf with
+            // `claude --print --output-format json` so usage/cost ride back; default text.
+            outputFormat: z.enum(["text", "json"]).optional().describe(
+              "leaf result format: 'text' (default) or 'json' (claude --output-format json, so token usage + cost ride back in the result)",
+            ),
           }),
         ).min(1),
       }),

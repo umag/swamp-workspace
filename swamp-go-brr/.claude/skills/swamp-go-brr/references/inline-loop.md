@@ -115,3 +115,7 @@ are there too.
   consumed). Re-`next`, then rebuild the workorder with an AUGMENTED spec naming
   the exact fix. If only the gate config was wrong (the code is fine), reuse the
   existing change and report it green instead of re-running the VM.
+- **Observability (optional):** to capture per-leaf cost/tokens/time + emit an
+  OTLP trace, submit leaves with `outputFormat=json`, pass the usage to `report`
+  audit, then `emit_otlp` + `otlp-export export_run`. Full recipe:
+  [observability.md](observability.md).

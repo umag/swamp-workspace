@@ -3,6 +3,38 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.18.1 — OTLP observability + per-leaf cost/tokens/time
+
+### Added
+
+- `gobrr.emit_otlp` derives two resources from the Run + 7d step records (pure,
+  ADR 0002/0008): `traceOtlp` (run→task→invocation OTLP/JSON span tree, with a
+  4-state `content.status` of ok|unavailable|empty|partial) and `metricsOtlp`
+  (per-gate leaf token/cost/duration/invocation sums). A pre-feature task (no
+  spanId) is suppressed whole — never orphaned to a trace root.
+- W3C `traceId` (Run) + `spanId` (Task) + `invocationSpanId` (StepOutput) are
+  ROOT FACTS: `.optional()` with NO default (absence is meaningful), generated
+  in the execute methods. `intake` + `spec` are now marked `sensitive`.
+- Per-leaf usage: the firecracker fabric gains opt-in
+  `submit … outputFormat=json`; `source-integration.extractLeafJson` validates
+  claude's `usage`/`total_cost_usd`/ `duration_ms` and maps `is_error` →
+  `claude_error` (single site, text + json). Stored as `leaf.declared.*`
+  (agent-declared, never a gate input) vs the host-measured
+  `leaf.host.duration_ms` (ADR 0001/0005/0009).
+- NEW model `@magistr/swamp-go-brr/otlp-export` (`export_run`): the loop's ONLY
+  network egress — POSTs the OTLP over https to an endpoint+token from a vault
+  CEL, best-effort (`exportStatus` ok|skipped|error), never persists/logs the
+  URL or key.
+- New `lib/otlp.ts` (cycle-free serializer + the authoritative attribute scrub +
+  the `METRIC_LABELS` allowlist), ADRs 0008/0009, and
+  `references/observability.md`.
+
+### Notes
+
+- Requires `@magistr/firecracker` ≥ `2026.06.18.1` ONLY for leaf-usage capture;
+  an older fabric returns text and usage is simply absent. In-guest sub-spans +
+  traceparent-into-the-leaf remain non-goals (separate follow-ups).
+
 ## 2026.06.17.2 — leaf envelope-format hardening
 
 ### Changed

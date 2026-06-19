@@ -3,6 +3,18 @@
 All notable changes to `@magistr/firecracker`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.06.18.1 — opt-in JSON leaf output (fabric)
+
+### Added
+
+- `submit` accepts an optional `outputFormat` (`text` default | `json`). In
+  `json` mode the warm-worker runner runs `claude --print --output-format json`
+  capturing stdout ONLY (no `2>&1`) and WITHOUT the `ERROR:` prefix, so the JSON
+  stays valid; `is_error` is the failure signal. The default (text) path is
+  byte-identical, so existing consumers are unaffected. Enables per-leaf
+  usage/cost/time capture for `@magistr/swamp-go-brr` observability (issue
+  `gobrr-observability`).
+
 ## 2026.06.12.3 — fabric netns uplink readiness gate
 
 ### Fixed
