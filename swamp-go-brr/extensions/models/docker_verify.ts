@@ -14,6 +14,7 @@ import { scrubSecrets } from "./lib/scrub.ts";
 // Flags an attacker-influenced input must never introduce.
 const FORBIDDEN = ["--privileged", "--pid=host", "--ipc=host", "--userns=host"];
 
+/** The pinned verify spec: image digest, command, and mounted input globs. */
 export interface VerifySpec {
   image: string; // MUST be digest-pinned (contains @sha256:)
   treePath: string; // absolute host path to the applied tree (mounted ro)
@@ -89,6 +90,7 @@ export function shellQuote(arg: string): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
+/** Build the hardened `docker run` command line (network-less, read-only rootfs, token-less). */
 export function buildVerifyCommandLine(spec: VerifySpec): string {
   return buildVerifyArgs(spec).map(shellQuote).join(" ") +
     '; echo "__GOBRR_EXIT__:$?"';
@@ -123,7 +125,7 @@ type Ctx = {
 /** @internal — call via the CLI / driver loop. */
 export const model = {
   type: "@magistr/swamp-go-brr/docker-verify",
-  version: "2026.06.18.1",
+  version: "2026.06.19.1",
 
   globalArguments: z.object({
     sshHost: z.string().describe("Docker host running the applied tree (SSH)"),

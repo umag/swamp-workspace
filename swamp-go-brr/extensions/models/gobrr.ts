@@ -28,9 +28,11 @@ import {
 
 // ───────────────────────────── value objects ─────────────────────────────
 
+/** Gate kind: `real` (code task, gated by running tests) vs `advisory` (test task). */
 export const GateEnum = z.enum(["real", "advisory"]);
 
 // One shared outcome vocabulary across next()/report()/complete.
+/** The shared per-task / per-step outcome vocabulary. */
 export const OutcomeEnum = z.enum([
   "done",
   "test_failed",
@@ -41,6 +43,7 @@ export const OutcomeEnum = z.enum([
   "blocked",
 ]);
 
+/** Typed leaf/transport failure kinds (envelope, nonce, claude_error, allowlist, transport). */
 export const FailureKindEnum = z.enum([
   "envelope_parse", // stdout was not a well-formed nonce-fenced envelope
   "envelope_oversize", // stdout exceeded the size contract
@@ -51,12 +54,14 @@ export const FailureKindEnum = z.enum([
   "transport", // collect_result / boot / ssh failure
 ]);
 
+/** How a task's change merged: clean | conflict-resolved | conflict-unresolved. */
 export const MergeDispositionEnum = z.enum([
   "clean",
   "conflict-resolved",
   "conflict-unresolved",
 ]);
 
+/** A task lease: owner, expiry, last heartbeat, and the assigned vmId. */
 export const LeaseSchema = z.object({
   owner: z.string(),
   expiresAt: z.string(), // ISO-8601
@@ -64,6 +69,7 @@ export const LeaseSchema = z.object({
   vmId: z.string().optional(),
 });
 
+/** Advisory test info self-reported by the leaf — NEVER the gate. */
 export const TestReportSchema = z.object({
   // advisory — self-reported by the agent, NEVER the gate.
   redFirst: z.boolean().optional(),
@@ -71,11 +77,13 @@ export const TestReportSchema = z.object({
   note: z.string().optional(),
 });
 
+/** An untrusted follow-up request: a spec plus its write allowlist. */
 export const FollowupSchema = z.object({
   spec: z.string(),
   writeAllowlist: z.array(z.string()),
 });
 
+/** The structured result `report()` consumes: diff, host-observed changedPaths, optional testReport/followups/failureKind. */
 export const WorkResultSchema = z.object({
   diff: z.string().default(""),
   changedPaths: z.array(z.string()).default([]),
@@ -85,6 +93,7 @@ export const WorkResultSchema = z.object({
   failureKind: FailureKindEnum.optional(),
 });
 
+/** The host-pinned run config: verify command/inputs, repoScope, toolchain image, and all run caps. */
 export const RunConfigSchema = z.object({
   verifyCommand: z.string(), // host-pinned test command (the gate)
   verifyInputs: z.array(z.string()), // complete verify surface (tree globs)
@@ -104,6 +113,7 @@ export const RunConfigSchema = z.object({
   pinnedVersions: z.record(z.string(), z.string()).default({}),
 });
 
+/** Task lifecycle states (pending -> leased -> done/exhausted/blocked/...). */
 export const TaskStatusEnum = z.enum([
   "pending",
   "leased",
@@ -116,6 +126,7 @@ export const TaskStatusEnum = z.enum([
   "blocked",
 ]);
 
+/** A single Task node in the DAG (spec, write allowlist, deps, gate, status, lease, span id). */
 export const TaskSchema = z.object({
   id: z.string(),
   spec: z.string().meta({ sensitive: true }), // task instruction (may carry secrets)
@@ -137,8 +148,10 @@ export const TaskSchema = z.object({
   spanId: z.string().optional(),
 });
 
+/** Run status: running | halted | complete. */
 export const RunStatusEnum = z.enum(["running", "halted", "complete"]);
 
+/** The authoritative Run aggregate — the Task DAG plus scheduler state. */
 export const RunSchema = z.object({
   status: RunStatusEnum.default("running"),
   intake: z.string().meta({ sensitive: true }), // human input that seeded the run
@@ -162,22 +175,30 @@ export const RunSchema = z.object({
 // Kept structurally identical to the schemas; drift surfaces as a `deno check`
 // failure at the `as` casts in readRun / the bridge test.
 
+/** Mirror type of GateEnum. */
 export type Gate = "real" | "advisory";
+/** Mirror type of OutcomeEnum. */
 export type Outcome = z.infer<typeof OutcomeEnum>;
+/** Mirror type of FailureKindEnum. */
 export type FailureKind = z.infer<typeof FailureKindEnum>;
+/** Mirror type of MergeDispositionEnum. */
 export type MergeDisposition = z.infer<typeof MergeDispositionEnum>;
+/** Mirror type of TaskStatusEnum. */
 export type TaskStatus = z.infer<typeof TaskStatusEnum>;
 
+/** Mirror interface of LeaseSchema (kept structurally identical; drift fails `deno check`). */
 export interface Lease {
   owner: string;
   expiresAt: string;
   heartbeatAt: string;
   vmId?: string;
 }
+/** Mirror interface of FollowupSchema. */
 export interface Followup {
   spec: string;
   writeAllowlist: string[];
 }
+/** Mirror interface of WorkResultSchema. */
 export interface WorkResult {
   diff: string;
   changedPaths: string[];
@@ -186,6 +207,7 @@ export interface WorkResult {
   note?: string;
   failureKind?: FailureKind;
 }
+/** Mirror interface of RunConfigSchema. */
 export interface RunConfig {
   verifyCommand: string;
   verifyInputs: string[];
@@ -204,6 +226,7 @@ export interface RunConfig {
   perInvocationCostEstimate: number;
   pinnedVersions: Record<string, string>;
 }
+/** Mirror interface of TaskSchema. */
 export interface Task {
   id: string;
   spec: string;
@@ -221,6 +244,7 @@ export interface Task {
   createdAt: string;
   spanId?: string;
 }
+/** Mirror interface of RunSchema. */
 export interface Run {
   status: "running" | "halted" | "complete";
   intake: string;
@@ -240,6 +264,7 @@ export interface Run {
 
 // ───────────────────────────── pure helpers ──────────────────────────────
 
+/** Current time as an ISO-8601 string (the one impure clock seam). */
 export function now(): string {
   return new Date().toISOString();
 }
@@ -322,11 +347,13 @@ export function readyTaskIds(run: Run): string[] {
     .sort(); // total order by id for reproducible resume
 }
 
+/** True when `lease` is null or its expiry is at/before `nowTs`. */
 export function leaseExpired(lease: Lease | null, nowTs: string): boolean {
   if (!lease) return true;
   return nowTs > lease.expiresAt;
 }
 
+/** How many tasks are currently in the `leased` state. */
 export function leasedCount(run: Run): number {
   return run.tasks.filter((t) => t.status === "leased").length;
 }
@@ -481,6 +508,7 @@ export function applyReport(
   });
 }
 
+/** The result of `nextDecision`: the chosen action + reason (leased/all-green/halt/...). */
 export interface NextDecision {
   outcome:
     | "leased"
@@ -538,6 +566,7 @@ const BAD_STATUSES: TaskStatus[] = [
   "blocked",
 ];
 
+/** Seconds elapsed between two ISO-8601 timestamps. */
 export function elapsedSeconds(fromIso: string, nowIso: string): number {
   return (Date.parse(nowIso) - Date.parse(fromIso)) / 1000;
 }
@@ -575,6 +604,7 @@ export function markBlocked(tasks: Task[]): Task[] {
   return cur;
 }
 
+/** Detect a stall (no `done` in the last K offers); returns the culprits + a failure signature. */
 export function detectStall(
   run: Run,
 ): { stalled: boolean; culprits: string[]; signature: string | null } {
@@ -725,6 +755,7 @@ export function nextDecision(
 
 // ───────────────────────── reporting projections ─────────────────────────
 
+/** Per-gate promise-keeping stats: kept/broken, pass rate, green-first-try rate, mean attempts-to-green. */
 export interface TrustStats {
   kept: number;
   broken: number;
@@ -784,6 +815,7 @@ export function trustSummary(run: Run): Record<string, TrustStats> {
   return out;
 }
 
+/** The final run report: status, per-status buckets, per-task summary, trust stats, cost estimate. */
 export function completeReport(run: Run): Record<string, unknown> {
   const buckets: Record<string, number> = {
     done: 0,
@@ -822,6 +854,7 @@ export function completeReport(run: Run): Record<string, unknown> {
   };
 }
 
+/** A compact, partial run summary for cheap mid-run inspection. */
 export function hydrateSummary(run: Run): Record<string, unknown> {
   const r = completeReport(run);
   return {
@@ -854,13 +887,16 @@ export function hydrateSummary(run: Run): Record<string, unknown> {
 
 // Re-bound caps for the persisted tails. The diff arrives ALREADY scrubbed from
 // source-integration apply() (re-bound only); verifyTail is scrubbed here.
+/** Byte cap retained for the stored (already-scrubbed) diff tail. */
 export const DIFF_TAIL_BYTES = 8000;
+/** Byte cap retained for the scrubbed docker-verify stdout tail. */
 export const VERIFY_TAIL_BYTES = 4000;
 
 // AGENT-DECLARED envelope summary — the leaf's stated intent (block count, edits per
 // file, target paths). NEVER host truth (ADR 0001); produced by source-integration's
 // summarizeEnvelope and forwarded through report(). Defined here (the consumer) so
 // source-integration imports the TYPE without forming an import cycle.
+/** The AGENT-DECLARED envelope summary (block count, declared paths/edits) — never host truth (ADR 0001). */
 export const EnvelopeSummarySchema = z.object({
   blockCount: z.number(),
   declaredTargetPaths: z.array(z.string()),
@@ -869,6 +905,7 @@ export const EnvelopeSummarySchema = z.object({
 
 // AGENT-DECLARED per-leaf usage (ADR 0001/0005 — self-reported, NEVER a gate input).
 // Validated + range-bounded at the source-integration parse boundary before it lands here.
+/** Agent-declared per-leaf usage (tokens/cost/duration); advisory, never a gate (ADR 0009). */
 export const LeafDeclaredSchema = z.object({
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
@@ -877,6 +914,7 @@ export const LeafDeclaredSchema = z.object({
   durationMs: z.number().optional(),
 });
 
+/** One immutable per-leaf-invocation audit record. */
 export const StepOutputSchema = z.object({
   taskId: z.string(),
   invocation: z.number(), // 1-based index of the invocation that produced this result
@@ -896,15 +934,18 @@ export const StepOutputSchema = z.object({
   leafDeclared: LeafDeclaredSchema.optional(),
 });
 
+/** The append-only step-output log resource `{records: StepOutput[]}`. */
 export const StepOutputsResourceSchema = z.object({
   records: z.array(StepOutputSchema),
 });
 
+/** Mirror interface of EnvelopeSummarySchema. */
 export interface EnvelopeSummary {
   blockCount: number;
   declaredTargetPaths: string[];
   declaredEditsPerFile: Record<string, number>;
 }
+/** Mirror interface of LeafDeclaredSchema. */
 export interface LeafDeclared {
   inputTokens?: number;
   outputTokens?: number;
@@ -912,6 +953,7 @@ export interface LeafDeclared {
   costUsd?: number;
   durationMs?: number;
 }
+/** Mirror interface of StepOutputSchema. */
 export interface StepOutput {
   taskId: string;
   invocation: number;
@@ -928,6 +970,7 @@ export interface StepOutput {
   leafDeclared?: LeafDeclared;
 }
 
+/** Input to `buildStepOutput` (raw measurements before tail-bounding + scrub). */
 export interface BuildStepOutputInput {
   taskId: string;
   invocation: number;
@@ -968,17 +1011,20 @@ export function buildStepOutput(input: BuildStepOutputInput): StepOutput {
   };
 }
 
+/** A declared target path absent from the host-observed changedPaths (the dropped-block signature). */
 export interface StepOutputMismatch {
   taskId: string;
   invocation: number;
   path: string;
 }
+/** A task whose attempts exceed its recorded step-outputs (a reaped/unrecorded invocation). */
 export interface ReapedGap {
   taskId: string;
   attempts: number;
   recorded: number;
   gap: number;
 }
+/** Derived rollup over the records + tasks: record count, declared-vs-observed mismatches, reaped gaps. */
 export interface StepOutputProjection {
   count: number;
   mismatches: StepOutputMismatch[];
@@ -1068,6 +1114,7 @@ function taskSpanStatus(t: Task): "ok" | "error" | "unset" {
   return "unset";
 }
 
+/** The result of `buildTrace`: a 4-state status, the suppressed-task count, and the OTLP trace input. */
 export interface TraceResult {
   status: "unavailable" | "empty" | "partial" | "ok";
   suppressedTasks: number; // pre-feature tasks (no spanId) whose spans were suppressed
@@ -1304,7 +1351,7 @@ function persist(context: Ctx, run: Run): Promise<unknown> {
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/gobrr",
-  version: "2026.06.18.1",
+  version: "2026.06.19.1",
   globalArguments: z.object({}),
 
   resources: {

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/swamp-go-brr"
-version: "2026.06.18.1"
+version: "2026.06.19.1"
 description: |
   Autonomous merkle-DAG development loop, driver-free. Five models:
   - `gobrr` — a PURE DAG state machine: a Run aggregate over a dynamic Task DAG

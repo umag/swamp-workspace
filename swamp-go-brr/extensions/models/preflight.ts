@@ -11,12 +11,14 @@ import { z } from "npm:zod@4";
 
 // ── injectable command runner (so the docker orchestration is testable) ──────
 
+/** Injectable shell runner so preflight is unit-testable without real Docker. */
 export type CommandRunner = (
   cmd: string,
   args: string[],
   stdin?: string,
 ) => Promise<{ code: number; stdout: string; stderr: string }>;
 
+/** The default CommandRunner backed by `Deno.Command`. */
 export const defaultRunner: CommandRunner = async (cmd, args, stdin) => {
   const p = new Deno.Command(cmd, {
     args,
@@ -59,6 +61,7 @@ export interface SubstrateOpts {
   oauthSecretKey: string;
 }
 
+/** Resolved gate parameters emitted into the run config. */
 export interface GateParams {
   user: string;
   cpus: string;
@@ -111,6 +114,7 @@ async function dockerReachable(run: CommandRunner): Promise<void> {
   }
 }
 
+/** Ensure the local OCI registry is running (idempotent). */
 export async function ensureRegistry(run: CommandRunner): Promise<boolean> {
   await dockerReachable(run);
   if ((await run("docker", ["inspect", "gobrr-registry"])).code === 0) {
@@ -130,6 +134,7 @@ export async function ensureRegistry(run: CommandRunner): Promise<boolean> {
   return true;
 }
 
+/** Input to `pin_image`: a build context or a prebuilt ref to digest-pin. */
 export interface PinImageInput {
   registryAddr: string;
   name: string;
@@ -196,19 +201,23 @@ export async function pinImage(
 
 // ── greenfield scaffold (jj-only — never shells `swamp`) ─────────────────────
 
+/** Injectable file writer so scaffolding is unit-testable without real I/O. */
 export type FileWriter = (path: string, content: string) => Promise<void>;
 
+/** The default FileWriter backed by `Deno.writeTextFile`. */
 export const defaultWriter: FileWriter = async (path, content) => {
   const dir = path.slice(0, path.lastIndexOf("/"));
   if (dir) await Deno.mkdir(dir, { recursive: true });
   await Deno.writeTextFile(path, content);
 };
 
+/** One scaffolded baseline file (path + content). */
 export interface ScaffoldFile {
   path: string;
   content: string;
 }
 
+/** Input to `scaffold`: the baseline files to write for a greenfield repo. */
 export interface ScaffoldInput {
   repoPath: string;
   files: ScaffoldFile[];
@@ -304,9 +313,10 @@ function substrateFrom(g: z.infer<typeof GlobalArgs>): SubstrateOpts {
   };
 }
 
+/** @internal — the preflight model definition; invoke its methods via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/preflight",
-  version: "2026.06.18.1",
+  version: "2026.06.19.1",
   globalArguments: GlobalArgs,
   resources: {
     pinned: {
