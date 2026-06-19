@@ -594,7 +594,7 @@ export type AppliedTaskResult = z.infer<typeof AppliedTaskResultSchema>;
 /** @internal — the source-integration model definition; invoke its methods via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.06.19.1",
+  version: "2026.06.19.2",
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(
