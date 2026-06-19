@@ -316,7 +316,7 @@ function substrateFrom(g: z.infer<typeof GlobalArgs>): SubstrateOpts {
 /** @internal — the preflight model definition; invoke its methods via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/preflight",
-  version: "2026.06.19.2",
+  version: "2026.06.19.3",
   globalArguments: GlobalArgs,
   resources: {
     pinned: {
