@@ -1,0 +1,7 @@
+.swamp/
+.swamp-sources.yaml
+.DS_Store
+node_modules/
+
+# Locally-created model instances (smoke tests), not the extensions/models/ source.
+/models/

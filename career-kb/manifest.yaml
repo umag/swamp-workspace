@@ -1,0 +1,71 @@
+manifestVersion: 1
+name: "@magistr/career-kb"
+version: "2026.06.29.1"
+description: |
+  Retrieval, routing, and triage over a career-research knowledge base — 22
+  career-psychology extractions (1 practitioner AMA + 21 academic papers) across
+  the `ama`, `inaction`, and `success-outcomes` clusters, each with YAML
+  frontmatter (title, topics, key_constructs, summary) and a standardized
+  section layout. The corpus ships as bundled reference files (read at runtime
+  via context.extensionFile), so the model is self-contained and needs no
+  configuration.
+
+  Methods:
+  - `index`  — scan the cluster folders and build a queryable catalog from frontmatter
+  - `search` — route a question or keywords to the most relevant sources (optional cluster filter)
+  - `read`   — return a source's frontmatter plus its full body or one named section
+  - `assess` — triage a described situation into its problem family (inaction /
+    indecision / indecisiveness / success-derailer / shock-transition), name the
+    validated instrument (CARINAS, SCCI, EPCD), point to the sources to read, and
+    give coping guidance; optionally score self-rated CARINAS items against
+    published benchmarks
+
+  Ships the `career` skill for routing career questions to grounded sources.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+skills:
+  - career
+
+models:
+  - extensions/models/career_kb.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - references/index.json
+  - references/ama/ama-career-transitions.md
+  - references/inaction/career-inaction-psychodynamic.md
+  - references/inaction/career-inaction-scale.md
+  - references/inaction/career-inaction.md
+  - references/inaction/career-indecision-anxiety.md
+  - references/inaction/career-indecision-decision-theories.md
+  - references/inaction/career-indecision-integrated.md
+  - references/inaction/career-indecision-strategies.md
+  - references/inaction/career-indecision-structure-measurement-xu-2019.md
+  - references/inaction/chronic-career-indecision.md
+  - references/success-outcomes/career-adaptability.md
+  - references/success-outcomes/career-difficulties.md
+  - references/success-outcomes/career-shocks.md
+  - references/success-outcomes/career-success.md
+  - references/success-outcomes/career-transition-outcomes.md
+  - references/success-outcomes/career-transition-theory.md
+  - references/success-outcomes/impostor-one.md
+  - references/success-outcomes/impostor-three.md
+  - references/success-outcomes/impostor-two.md
+  - references/success-outcomes/subjective-objective-outcomes.md
+  - references/success-outcomes/subjective-success.md
+  - references/success-outcomes/subjective-vs-objective.md
+
+labels:
+  - career
+  - knowledge-base
+  - retrieval
+  - routing
+  - psychology
+  - career-inaction
+  - career-indecision
+  - impostor
+  - assessment

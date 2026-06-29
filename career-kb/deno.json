@@ -1,0 +1,27 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/career_kb.ts extensions/models/career_kb_test.ts",
+    "test": "deno test --allow-read extensions/models/",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "zod": "npm:zod@4"
+  },
+  "compilerOptions": {
+    "noImplicitAny": false
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "exclude": ["references"]
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}
