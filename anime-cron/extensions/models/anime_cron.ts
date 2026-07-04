@@ -9,7 +9,7 @@
 import { z } from "npm:zod@4";
 
 /** Extract episode number from a fansub torrent title. */
-function parseEpisode(title: string): number | null {
+export function parseEpisode(title: string): number | null {
   const m1 = title.match(/\s-\s(\d{1,3})(?:v\d+)?\s/);
   if (m1) return parseInt(m1[1], 10);
   const m2 = title.match(/\bE(?:P)?(\d{2,3})\b/i);
@@ -155,19 +155,19 @@ const PREFERRED_GROUPS: Record<string, number> = {
   "judas": 6,
 };
 
-function parseResolution(title: string): number {
+export function parseResolution(title: string): number {
   if (/4k|2160p/i.test(title)) return 2160;
   if (/1080p/i.test(title)) return 1080;
   if (/720p/i.test(title)) return 720;
   return 0;
 }
 
-function groupScore(title: string): number {
+export function groupScore(title: string): number {
   const m = title.toLowerCase().match(/^\[([^\]]+)\]/);
   return PREFERRED_GROUPS[m?.[1] ?? ""] ?? 1;
 }
 
-function buildMagnet(infoHash: string, title: string): string {
+export function buildMagnet(infoHash: string, title: string): string {
   return (
     `magnet:?xt=urn:btih:${infoHash}` +
     `&dn=${encodeURIComponent(title)}` +
@@ -175,7 +175,7 @@ function buildMagnet(infoHash: string, title: string): string {
   );
 }
 
-interface NyaaHit {
+export interface NyaaHit {
   title: string;
   viewUrl: string;
   magnet: string;
@@ -234,7 +234,7 @@ async function nyaaSearch(
  *  "Shokugeki no Souma: San no Sara" → "Shokugeki no Souma"
  *  "Kaguya-sama 2nd Season" → "Kaguya-sama"
  */
-function baseTitle(title: string): string | null {
+export function baseTitle(title: string): string | null {
   let t = title;
   // Strip subtitle after colon
   const colonIdx = t.indexOf(":");
@@ -249,7 +249,7 @@ function baseTitle(title: string): string | null {
   return t !== title && t.length > 0 ? t : null;
 }
 
-function pickBest(
+export function pickBest(
   hits: NyaaHit[],
   episode: number,
   targetRes = 1080,
@@ -405,7 +405,7 @@ async function seadexLookup(
 // ─── folder name helpers ──────────────────────────────────────────────────────
 
 /** Sanitize a show title to a safe folder name. */
-function toFolderName(title: string): string {
+export function toFolderName(title: string): string {
   return title
     .replace(/[\/\\:*?"<>|]/g, "")
     .replace(/\s+/g, " ")
@@ -414,7 +414,7 @@ function toFolderName(title: string): string {
 }
 
 /** Extract probable show title from a torrent name. */
-function extractShowTitle(torrentName: string): string {
+export function extractShowTitle(torrentName: string): string {
   let t = torrentName.replace(/^\[[^\]]+\]\s*/, ""); // strip [Group]
   t = t.replace(/\s-\s\d{1,3}(?:v\d+)?\s.*$/, ""); // strip " - NN ..."
   t = t.replace(/\s*[\[(][^\]]*[\])]\s*$/, ""); // strip trailing [tag]

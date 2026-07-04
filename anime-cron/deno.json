@@ -1,9 +1,10 @@
 {
   "tasks": {
-    "check": "deno check extensions/models/anime_cron.ts",
+    "check": "deno check extensions/models/anime_cron.ts extensions/models/anime_cron_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
-    "lint": "deno lint"
+    "lint": "deno lint",
+    "test": "deno test extensions/models/anime_cron_test.ts"
   },
   "imports": {
     "zod": "npm:zod@4"
