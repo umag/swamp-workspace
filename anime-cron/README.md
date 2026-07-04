@@ -1,24 +1,24 @@
 # @magistr/anime-cron
 
-Anime automation pipeline for swamp: fetch new airing episodes from Nyaa,
-sync watch progress back to AniList, and queue Blu-ray upgrades via SeaDex —
-all without touching Seanime or any other media server GUI.
+Anime automation pipeline for swamp: fetch new airing episodes from Nyaa, sync
+watch progress back to AniList, and queue Blu-ray upgrades via SeaDex — all
+without touching Seanime or any other media server GUI.
 
 ## Methods
 
-| Method | What it does |
-|---|---|
-| `fetch-airing` | AniList CURRENT → Nyaa → Transmission |
+| Method         | What it does                                     |
+| -------------- | ------------------------------------------------ |
+| `fetch-airing` | AniList CURRENT → Nyaa → Transmission            |
 | `mark-watched` | Transmission completed → AniList progress update |
-| `upgrade-bd` | AniList COMPLETED → SeaDex → Transmission |
-| `disk-stats` | Transmission torrent usage by status |
+| `upgrade-bd`   | AniList COMPLETED → SeaDex → Transmission        |
+| `disk-stats`   | Transmission torrent usage by status             |
 
 ## Setup
 
 ### 1. Create an AniList personal access token
 
-Go to <https://anilist.co/settings/developer> → create a token.
-Required for `mark-watched` and Telegram alerts from `fetch-airing`.
+Go to <https://anilist.co/settings/developer> → create a token. Required for
+`mark-watched` and Telegram alerts from `fetch-airing`.
 
 ### 2. Add secrets to a vault
 
@@ -48,8 +48,8 @@ globalArguments:
   telegramModel: ""
 ```
 
-Set `telegramModel` to a `@magistr/telegram-send` model instance name to
-enable Telegram notifications when episodes are queued or overdue.
+Set `telegramModel` to a `@magistr/telegram-send` model instance name to enable
+Telegram notifications when episodes are queued or overdue.
 
 ## Usage
 
@@ -105,15 +105,19 @@ jobs:
 
 ## How `fetch-airing` picks torrents
 
-1. Queries AniList for your CURRENT list and finds `progress + 1` as the next episode.
-2. Searches Nyaa by romaji title → English title → synonyms → stripped base title (handles sequels like "Show S2" → "Show").
-3. Scores results by preferred fansub group (SubsPlease > Erai-Raws > Ember > ASW > Judas), seeder count, and resolution match.
-4. Deduplicates against existing Transmission torrents by `(show, episode)` key to avoid re-queuing.
+1. Queries AniList for your CURRENT list and finds `progress + 1` as the next
+   episode.
+2. Searches Nyaa by romaji title → English title → synonyms → stripped base
+   title (handles sequels like "Show S2" → "Show").
+3. Scores results by preferred fansub group (SubsPlease > Erai-Raws > Ember >
+   ASW > Judas), seeder count, and resolution match.
+4. Deduplicates against existing Transmission torrents by `(show, episode)` key
+   to avoid re-queuing.
 5. Queues all aired-but-undownloaded episodes in one run (catchup support).
 
 ## SeaDex integration
 
 `upgrade-bd` checks <https://releases.moe> for the recommended Blu-ray release
 of each completed show on your AniList. It prefers `isBest=true` nyaa entries.
-Pass `libraryEntries` from a `@magistr/anime-library` scan to skip shows
-already on disk with the correct release group.
+Pass `libraryEntries` from a `@magistr/anime-library` scan to skip shows already
+on disk with the correct release group.
