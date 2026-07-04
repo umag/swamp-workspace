@@ -1,0 +1,44 @@
+manifestVersion: 1
+name: "@magistr/anime-cron"
+version: "2026.06.07.1"
+description: |
+  Anime automation pipeline: fetch airing episodes from Nyaa, sync watch
+  progress back to AniList, and queue Blu-ray upgrades via SeaDex.
+
+  Methods:
+  - `fetch-airing` — check AniList CURRENT list → search Nyaa for the next
+    episode of each show → add to Transmission. Skips shows not yet aired.
+    Supports multi-episode catchup and name-based dedup. Optional Telegram
+    notifications when an episode is queued or overdue.
+  - `mark-watched` — scan recently completed Transmission torrents → update
+    AniList progress. Matches by show title via AniList search.
+  - `upgrade-bd` — check AniList COMPLETED list against SeaDex → queue BD
+    release downloads for shows that have a recommended release not yet on
+    disk. Idempotent (Transmission deduplicates).
+  - `disk-stats` — query Transmission for all anime torrents and return
+    total/downloaded/remaining disk usage grouped by status.
+
+  Requires a running Transmission RPC endpoint and an AniList account.
+  `mark-watched` and `fetch-airing` Telegram alerts require `anilistToken`.
+  Set `telegramModel` to a `@magistr/telegram-send` model instance name to
+  enable notifications.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/anime_cron.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - anime
+  - anilist
+  - nyaa
+  - transmission
+  - seadex
+  - torrent
+  - media
