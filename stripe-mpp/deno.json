@@ -1,0 +1,19 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/stripe_mpp.ts",
+    "test": "deno test --allow-net --allow-env extensions/models/ --permit-no-files",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-net --allow-env extensions/models/stripe_mpp_property_test.ts extensions/models/stripe_mpp_invariant_property_test.ts extensions/models/stripe_mpp_flow_property_test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": { "zod": "npm:zod@4" },
+  "compilerOptions": { "noImplicitAny": false },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": { "rules": { "tags": ["recommended"] } }
+}

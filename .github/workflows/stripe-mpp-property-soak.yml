@@ -1,0 +1,48 @@
+# Nightly property-test soak for @magistr/stripe-mpp.
+#
+# The committed suite runs each fast-check property at a tuned CI count
+# (40–300 cases) so `deno task test` stays ~5s. This job re-runs the three
+# property files at FC_NUM_RUNS=10000 — ~28 properties × 10000 = ~280k
+# generated cases, including ~60k full buyer↔seller flows — to shake out
+# rare edge cases (the class of bug that only appears 1-in-thousands, like
+# the credential-tamper no-op that a low count hid).
+#
+# On failure fast-check prints the seed + shrunk counterexample; reproduce
+# locally with `FC_NUM_RUNS=10000 deno task test:soak` (or pin the seed).
+name: stripe-mpp property soak
+
+on:
+  schedule:
+    - cron: "37 3 * * *" # nightly, 03:37 UTC
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "fast-check numRuns override"
+        required: false
+        default: "10000"
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: stripe-mpp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check
+        run: deno task check
+      - name: Property soak (FC_NUM_RUNS)
+        env:
+          FC_NUM_RUNS: ${{ github.event.inputs.runs || '10000' }}
+        run: |
+          deno test --allow-net --allow-env \
+            extensions/models/stripe_mpp_property_test.ts \
+            extensions/models/stripe_mpp_invariant_property_test.ts \
+            extensions/models/stripe_mpp_flow_property_test.ts
