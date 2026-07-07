@@ -357,7 +357,19 @@ jobs:
               ' "$dir/CHANGELOG.md" | head -c 4900)"
             fi
             [ -z "$notes" ] && notes="$commit_notes"
-            echo "Publishing $manifest @ ${ver:-?}"
+            # Per-extension release channel selector: an optional
+            # `<ext>/.release-channel` file (contents: beta | rc | stable)
+            # chooses the swamp registry channel. Absent → stable, so existing
+            # extensions publish exactly as before.
+            channel="stable"
+            if [ -f "$dir/.release-channel" ]; then
+              channel="$(tr -d '[:space:]' < "$dir/.release-channel")"
+              case "$channel" in
+                beta|rc|stable) ;;
+                *) echo "::error::$dir/.release-channel must be beta|rc|stable (got '$channel')" >&2; exit 1 ;;
+              esac
+            fi
+            echo "Publishing $manifest @ ${ver:-?} to '$channel' channel"
             # -y is REQUIRED in CI: without it `extension push` prompts
             # "Push … to registry? [y/N]" and, with no TTY, defaults to No and
             # silently cancels (exit 0 → false-green). -y also accepts the
@@ -366,5 +378,5 @@ jobs:
             # manifest path. Each manifest sets `paths.base: manifest`, so its
             # `models:`/`reports:`/`additionalFiles:` resolve relative to the
             # manifest's own subdirectory.
-            swamp extension push "$manifest" -y --release-notes "$notes"
+            swamp extension push "$manifest" -y --channel "$channel" --release-notes "$notes"
           done <<< "${{ steps.manifest-changed.outputs.manifests }}"

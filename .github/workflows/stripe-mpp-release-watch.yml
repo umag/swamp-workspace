@@ -1,0 +1,112 @@
+# Release-watch for @magistr/stripe-mpp's pinned preview-channel deps.
+#
+# The model pins exact versions of two fast-moving packages:
+#   - mppx (MPP reference library, 0.x velocity)
+#   - stripe public-preview SDK (SPT endpoints live on the preview channel)
+#
+# This cron compares npm dist-tags against the pins parsed from the model
+# source and raises ONE idempotent issue when they go stale. Bumping a pin
+# must pass the spec-fixture contract tests in stripe_mpp_test.ts first —
+# they arbitrate whether the wire format changed.
+#
+# NOTE: the pin parse reads stripe-mpp/extensions/models/stripe_mpp.ts —
+# if the import specifiers move to another file, update PINS_FILE here in
+# the same change (documented in stripe-mpp/README.md).
+name: stripe-mpp release watch
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # weekly, Monday 06:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
+
+env:
+  PINS_FILE: stripe-mpp/extensions/models/stripe_mpp.ts
+  ISSUE_TITLE: "stripe-mpp: pinned mppx / stripe preview releases are stale"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare pins against npm dist-tags
+        id: compare
+        run: |
+          set -euo pipefail
+          mppx_pin=$(grep -oE 'npm:mppx@[0-9][^/"]*' "$PINS_FILE" | head -1 | sed 's/npm:mppx@//')
+          stripe_pin=$(grep -oE 'npm:stripe@[0-9][^/"]*' "$PINS_FILE" | head -1 | sed 's/npm:stripe@//')
+          test -n "$mppx_pin" || { echo "::error::mppx pin not found in $PINS_FILE"; exit 1; }
+          test -n "$stripe_pin" || { echo "::error::stripe pin not found in $PINS_FILE"; exit 1; }
+
+          mppx_latest=$(curl -fsSL https://registry.npmjs.org/mppx | jq -r '.["dist-tags"].latest')
+          stripe_preview=$(curl -fsSL https://registry.npmjs.org/stripe | jq -r '.["dist-tags"]["public-preview"] // .["dist-tags"].beta')
+
+          echo "mppx: pinned=$mppx_pin latest=$mppx_latest"
+          echo "stripe: pinned=$stripe_pin public-preview=$stripe_preview"
+
+          stale=""
+          [ "$mppx_pin" != "$mppx_latest" ] && stale="${stale}- \`mppx\`: pinned \`$mppx_pin\`, latest \`$mppx_latest\`\n"
+          [ "$stripe_pin" != "$stripe_preview" ] && stale="${stale}- \`stripe\`: pinned \`$stripe_pin\`, public-preview \`$stripe_preview\`\n"
+
+          {
+            echo "stale<<EOF"
+            printf '%b' "$stale"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Raise or update the (single) stale-pins issue
+        if: steps.compare.outputs.stale != ''
+        uses: actions/github-script@v7
+        env:
+          STALE: ${{ steps.compare.outputs.stale }}
+        with:
+          script: |
+            const title = process.env.ISSUE_TITLE;
+            const body = [
+              "The pinned preview-channel dependencies of `@magistr/stripe-mpp` are behind upstream:",
+              "",
+              process.env.STALE.trim(),
+              "",
+              "**Before bumping:** run the spec-fixture contract tests",
+              "(`stripe-mpp/extensions/models/stripe_mpp_test.ts`) against the new",
+              "pins — they pin the MPP wire format (challenge/credential/receipt)",
+              "and decide whether method code needs changes. Then rebuild/refresh",
+              "the extension bundle (`swamp doctor extensions --repair` or",
+              "`extension pull --force` in consuming repos).",
+              "",
+              `_Last checked: ${new Date().toISOString()} (weekly cron)._`,
+            ].join("\n");
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "stripe-mpp-release-watch",
+            });
+            const found = existing.find((i) => i.title === title);
+            if (found) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: found.number,
+                body,
+              });
+              core.info(`Updated existing issue #${found.number}`);
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["stripe-mpp-release-watch"],
+              });
+              core.info("Opened new stale-pins issue");
+            }
+
+      - name: All pins fresh
+        if: steps.compare.outputs.stale == ''
+        run: echo "Pins match upstream dist-tags — nothing to do."
