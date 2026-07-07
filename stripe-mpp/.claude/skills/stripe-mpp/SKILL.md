@@ -6,26 +6,26 @@ description: Pay for or charge for HTTP/MCP/API resources with Stripe's Machine 
 # Stripe MPP (Machine Payments Protocol)
 
 Drive the `@magistr/stripe-mpp` model (instance: `stripe-mpp`) to pay for or
-charge for resources over the HTTP-402 "Payment" auth scheme with fiat
-Shared Payment Tokens (SPTs).
+charge for resources over the HTTP-402 "Payment" auth scheme with fiat Shared
+Payment Tokens (SPTs).
 
 ## Read these caveats FIRST (they gate every flow)
 
-1. **Spending is guarded.** `pay` requires `maxAmount` (minor units string)
-   AND `currency`; the challenge is cross-checked BEFORE the credential is
-   presented. Never work around a blocked payment by raising the ceiling
-   without the human confirming the price.
+1. **Spending is guarded.** `pay` requires `maxAmount` (minor units string) AND
+   `currency`; the challenge is cross-checked BEFORE the credential is
+   presented. Never work around a blocked payment by raising the ceiling without
+   the human confirming the price.
 2. **Headless minting is conditional.** `mintToken` needs an existing `pm_`
    payment method and only succeeds when the token returns `status=active`.
-   `requires_action` (SCA) cannot be completed headlessly — surface the error
-   to the human; do not retry in a loop.
-3. **Every pay/refund outcome is persisted** (`payment` / `refund`
-   resources) — check them with `swamp data get stripe-mpp <name>` before
-   retrying anything; a failed attempt may still have consumed the SPT.
+   `requires_action` (SCA) cannot be completed headlessly — surface the error to
+   the human; do not retry in a loop.
+3. **Every pay/refund outcome is persisted** (`payment` / `refund` resources) —
+   check them with `swamp data get stripe-mpp <name>` before retrying anything;
+   a failed attempt may still have consumed the SPT.
 4. **Test helpers refuse live mode.** `createTestGrantedToken` needs
    `testMode=true` and an `sk_test_` key.
-5. **Business Network Profile** (`profile_test_...`) is created in the
-   Stripe Dashboard — no API exists; it's the `networkId` global argument.
+5. **Business Network Profile** (`profile_test_...`) is created in the Stripe
+   Dashboard — no API exists; it's the `networkId` global argument.
 
 ## Buyer flows
 
@@ -57,8 +57,8 @@ swamp model method run stripe-mpp pay \
 **Pin the counterparty.** The 402 challenge is unsigned, so a MITM/hostile
 server can advertise a challenge that pays the ATTACKER. Always pass
 `expectedNetworkId` (the seller's `profile_...`) when you know who you're
-paying; add `expectedScope` (matching the seller's `createChallenge scope`)
-to stop a credential being replayed to a different route.
+paying; add `expectedScope` (matching the seller's `createChallenge scope`) to
+stop a credential being replayed to a different route.
 
 `getIssuedToken` / `revokeToken` manage the token lifecycle.
 
@@ -98,6 +98,6 @@ methods; ≥32 chars). Globals: `networkId` (profile_...), `realm`, `testMode`,
 
 ## Upstream pins
 
-The model pins `mppx@0.8.5` + `stripe@22.4.0-beta.1` (preview channels).
-A GitHub Actions cron raises an issue in the workspace repo when the pins go
+The model pins `mppx@0.8.5` + `stripe@22.4.0-beta.1` (preview channels). A
+GitHub Actions cron raises an issue in the workspace repo when the pins go
 stale; bumps must pass the contract tests in `stripe_mpp_test.ts` first.
