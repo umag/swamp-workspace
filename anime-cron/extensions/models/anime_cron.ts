@@ -629,13 +629,25 @@ export const model = {
           transmissionUser,
           transmissionPass,
         ).catch(() => []);
+        // Normalize a show title for dedup: strip season markers so that
+        // "Youjo Senki S2" and "Youjo Senki II" both collapse to "Youjo Senki".
+        const normalizeTitle = (t: string): string => {
+          let s = t.toLowerCase().replace(/\s+/g, " ").trim();
+          s = s.replace(/\s+(?:ii|iii|iv|v|vi|vii|viii|ix|x)$/i, "");
+          s = s.replace(
+            /\s+(?:s\d+|\d+(?:st|nd|rd|th)?\s+season|season\s+\d+)$/i,
+            "",
+          );
+          s = s.replace(/\s+\d+$/, "");
+          return s.trim();
+        };
         const existingKey = (title: string, ep: number) =>
-          `${title.toLowerCase().replace(/\s+/g, " ").trim()}::${ep}`;
+          `${normalizeTitle(title)}::${ep}`;
         const existingSet = new Set(
           existingTorrents.map((t) => {
             const ep = parseEpisode(t.name);
-            const show = extractShowTitle(t.name).toLowerCase().trim();
-            return ep != null ? `${show}::${ep}` : null;
+            const show = extractShowTitle(t.name);
+            return ep != null ? `${normalizeTitle(show)}::${ep}` : null;
           }).filter((k): k is string => k != null),
         );
 
