@@ -1,0 +1,26 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/anime_cron.ts extensions/models/anime_cron_test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint",
+    "test": "deno test extensions/models/anime_cron_test.ts"
+  },
+  "imports": {
+    "zod": "npm:zod@4"
+  },
+  "compilerOptions": {
+    "noImplicitAny": false
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}
