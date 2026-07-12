@@ -1,25 +1,25 @@
 /**
  * Property-based MUTATION tests over WHOLE flows.
  *
- * Each run generates a full buyerâseller interaction (seller emits a real
+ * Each run generates a full buyer↔seller interaction (seller emits a real
  * challenge via the model's createChallenge; the buyer pays via the model's
- * pay; the seller verifies and settles via verifyCredential/chargeToken â
+ * pay; the seller verifies and settles via verifyCredential/chargeToken —
  * all through the actual model methods) and injects ONE mutation drawn from
  * an adversarial catalog. The property: the flow terminates at the
- * documented rejection point for that mutation, and â the load-bearing
- * invariant â **a successful charge resource exists IFF the flow was
+ * documented rejection point for that mutation, and — the load-bearing
+ * invariant — **a successful charge resource exists IFF the flow was
  * honest**. A guard rejection must also mean the credential never left the
  * buyer.
  *
  * Mutation catalog:
- *  - honest             â everything succeeds end-to-end, receipt decodes
- *  - amount-exceeds     â challenge demands more than maxAmount: buyer
+ *  - honest             → everything succeeds end-to-end, receipt decodes
+ *  - amount-exceeds     → challenge demands more than maxAmount: buyer
  *                         blocks BEFORE sending the credential
- *  - currency-mismatch  â challenge in another currency: buyer blocks
- *  - credential-tamper  â MITM rewrites the price inside the credential:
+ *  - currency-mismatch  → challenge in another currency: buyer blocks
+ *  - credential-tamper  → MITM rewrites the price inside the credential:
  *                         seller HMAC verification rejects; settle refuses
- *  - expired-challenge  â HMAC-valid but expired challenge: verify rejects
- *  - settle-fails       â Stripe settles to a non-succeeded PaymentIntent:
+ *  - expired-challenge  → HMAC-valid but expired challenge: verify rejects
+ *  - settle-fails       → Stripe settles to a non-succeeded PaymentIntent:
  *                         chargeToken persists a failed charge and throws
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
@@ -40,7 +40,7 @@ const GLOBAL_ARGS = {
   networkId: "profile_test_fixture",
   realm: "flow.example.test",
   testMode: true,
-  allowInsecure: true, // stubbed fetch + reserved .test host â skip DNS guard
+  allowInsecure: true, // stubbed fetch + reserved .test host → skip DNS guard
 };
 
 type Written = { spec: string; name: string; payload: Record<string, unknown> };
@@ -132,13 +132,13 @@ const arbFlowFields = fc.record({
 });
 
 // ---------------------------------------------------------------------------
-// The whole-flow property â driven as one test PER mutation so every mutation
+// The whole-flow property — driven as one test PER mutation so every mutation
 // is exercised deterministically every run (not sampled probabilistically),
 // while field values remain randomized within each.
 // ---------------------------------------------------------------------------
 
 for (const mutation of MUTATIONS) {
-  Deno.test(`property: whole buyerâseller flow [${mutation}] â success IFF honest, rejected at its documented gate`, async () => {
+  Deno.test(`property: whole buyer↔seller flow [${mutation}] — success IFF honest, rejected at its documented gate`, async () => {
     await fc.assert(
       fc.asyncProperty(arbFlowFields, async (fields) => {
         const { amount, currency, sptId, externalId } = fields;
@@ -158,7 +158,7 @@ for (const mutation of MUTATIONS) {
 
         // Challenge-level mutations happen before the buyer ever sees it.
         if (mutation === "amount-exceeds") {
-          // Seller (or MITM) demands 10Ã more than the buyer authorized.
+          // Seller (or MITM) demands 10× more than the buyer authorized.
           const inflated = seller.written.length && makeCtx();
           await runMethod("createChallenge", {
             amount: (BigInt(amount) * 10n + 1n).toString(),
@@ -257,7 +257,7 @@ for (const mutation of MUTATIONS) {
               ...cred.challenge,
               request: {
                 ...req,
-                // MITM lowers the price â must ALWAYS differ from the honest
+                // MITM lowers the price — must ALWAYS differ from the honest
                 // amount (appending a digit guarantees a change even when the
                 // generated amount is "1"), so the HMAC genuinely breaks.
                 amount: "1" + String(req.amount),
@@ -334,7 +334,7 @@ for (const mutation of MUTATIONS) {
             return;
           }
           if (mutation === "expired-challenge") {
-            // chargeToken has its own settle-side expiry gate â exercise it
+            // chargeToken has its own settle-side expiry gate — exercise it
             // (not just verifyCredential above).
             await assertRejects(settleCall, Error, "expired");
             return;
