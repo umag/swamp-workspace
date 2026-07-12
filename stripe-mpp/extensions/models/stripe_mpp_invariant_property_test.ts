@@ -6,7 +6,7 @@
  * combinations, the credential is sent IFF every guard passes".
  *
  * All Stripe/mppx traffic is stubbed; the model methods are driven exactly as
- * the swamp runtime drives them (arguments.parse â execute).
+ * the swamp runtime drives them (arguments.parse → execute).
  */
 import fc from "npm:fast-check@4.8.0";
 import { Challenge, Credential, Receipt } from "npm:mppx@0.8.5";
@@ -35,7 +35,7 @@ const BASE_ARGS = {
   networkId: PROFILE,
   realm: REALM,
   testMode: true,
-  allowInsecure: true, // stubbed fetch + .test host â skip DNS guard
+  allowInsecure: true, // stubbed fetch + .test host → skip DNS guard
 };
 
 type Written = { spec: string; name: string; payload: Record<string, unknown> };
@@ -103,7 +103,7 @@ const arbNonCanon = fc.constantFrom(
   " 5 ",
   "0x1f",
   "5,0",
-  "Ù¥Ù Ù ",
+  "٥٠٠",
   "+7",
   "007",
   "",
@@ -113,7 +113,7 @@ const arbNonCanon = fc.constantFrom(
 // Amount discipline
 // ===========================================================================
 
-Deno.test("prop: isCanonicalMinorUnits â /^(0|[1-9][0-9]*)$/ over arbitrary strings", () => {
+Deno.test("prop: isCanonicalMinorUnits ⇔ /^(0|[1-9][0-9]*)$/ over arbitrary strings", () => {
   fc.assert(
     fc.property(
       fc.oneof(
@@ -170,7 +170,7 @@ Deno.test("prop: every money-input method rejects EVERY non-canonical amount", a
 });
 
 // ===========================================================================
-// Buyer spend guard â the combinatorial centerpiece
+// Buyer spend guard — the combinatorial centerpiece
 // ===========================================================================
 
 Deno.test("prop: pay sends the credential IFF every guard passes, and always persists exactly one payment", async () => {
@@ -240,7 +240,7 @@ Deno.test("prop: pay sends the credential IFF every guard passes, and always per
               ...(t.expNetwork ? { expectedNetworkId: t.expNetwork } : {}),
               ...(t.expRealm ? { expectedRealm: t.expRealm } : {}),
             }, ctx);
-          } catch { /* blocked/failed â expected when !shouldSend */ }
+          } catch { /* blocked/failed — expected when !shouldSend */ }
           return calls.some((c) => c.headers.has("Authorization"));
         });
 
@@ -259,7 +259,7 @@ Deno.test("prop: pay sends the credential IFF every guard passes, and always per
 });
 
 // ===========================================================================
-// Seller: createChallenge â verifyCredential round-trip + single-field tamper
+// Seller: createChallenge ↔ verifyCredential round-trip + single-field tamper
 // ===========================================================================
 
 Deno.test("prop: a genuine credential verifies; any single-field tamper fails; verifyCredential never throws", async () => {
@@ -350,7 +350,7 @@ Deno.test("prop: a genuine credential verifies; any single-field tamper fails; v
 // Seller: chargeToken succeeded-gate
 // ===========================================================================
 
-Deno.test("prop: chargeToken success â PaymentIntent status==succeeded; always persists a charge", async () => {
+Deno.test("prop: chargeToken success ⇔ PaymentIntent status==succeeded; always persists a charge", async () => {
   await fc.assert(
     fc.asyncProperty(
       fc.constantFrom(
@@ -400,7 +400,7 @@ Deno.test("prop: chargeToken success â PaymentIntent status==succeeded; alw
 // Seller: refundCharge ceiling (read-before-destructive)
 // ===========================================================================
 
-Deno.test("prop: refundCharge issues a POST IFF succeeded â§ canonical â§ amount â¤ remaining", async () => {
+Deno.test("prop: refundCharge issues a POST IFF succeeded ∧ canonical ∧ amount ≤ remaining", async () => {
   await fc.assert(
     fc.asyncProperty(
       fc.record({

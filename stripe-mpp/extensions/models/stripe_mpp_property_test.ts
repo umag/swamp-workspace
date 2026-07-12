@@ -2,11 +2,11 @@
  * Property-based tests (fast-check) for @magistr/stripe-mpp.
  *
  * Two layers:
- *  1. Our pure helpers â redaction, slug, idempotency keys, spt truncation,
+ *  1. Our pure helpers — redaction, slug, idempotency keys, spt truncation,
  *     the minor-units spend-guard comparison, and the URL policy. These are
  *     the security-relevant invariants: they must hold for ALL inputs, not
  *     just the examples in the unit suite.
- *  2. mppx codec invariants â challenge/credential/receipt round-trips and
+ *  2. mppx codec invariants — challenge/credential/receipt round-trips and
  *     HMAC tamper detection over generated (spec-plausible) inputs. These
  *     extend the fixed spec fixtures in stripe_mpp_test.ts: a pin bump that
  *     only breaks on unusual-but-valid values surfaces here.
@@ -51,7 +51,7 @@ const arbChallengeParams = fc.record({
   realm: fc.stringMatching(/^[a-z0-9.-]{1,40}$/),
   // mppx's deserialize enforces /^[a-z][a-z0-9:_-]*$/ on method (letter-first,
   // lowercase per spec). Note the asymmetry: Challenge.from() does NOT
-  // validate this â a method like "-" serializes fine but can never be
+  // validate this — a method like "-" serializes fine but can never be
   // parsed back. Generate only wire-valid methods.
   method: fc.stringMatching(/^[a-z][a-z0-9_-]{0,19}$/),
   intent: fc.constantFrom("charge", "session"),
@@ -115,7 +115,7 @@ Deno.test("property: slug is always instance-name safe", () => {
   );
 });
 
-Deno.test("property: idemKey is deterministic â same op+parts â same key", async () => {
+Deno.test("property: idemKey is deterministic — same op+parts → same key", async () => {
   await fc.assert(
     fc.asyncProperty(
       fc.string({ minLength: 1 }),
@@ -130,11 +130,11 @@ Deno.test("property: idemKey is deterministic â same op+parts â same k
   );
 });
 
-Deno.test("property: idemKey is INJECTIVE â distinct inputs â distinct keys (no charge suppression)", async () => {
+Deno.test("property: idemKey is INJECTIVE — distinct inputs → distinct keys (no charge suppression)", async () => {
   // The money bug this guards: two genuinely-different charges/refunds must
   // never collide onto one Idempotency-Key (which would make Stripe suppress
   // the second). Covers order-sensitivity, positional boundaries, and
-  // undefined-vs-"" â a 32-bit hash could not carry this.
+  // undefined-vs-"" — a 32-bit hash could not carry this.
   const seen = new Map<string, string>();
   await fc.assert(
     fc.asyncProperty(
@@ -202,7 +202,7 @@ Deno.test("property: amountExceeds agrees with BigInt comparison and fails close
   );
 });
 
-Deno.test("property: URL policy â https always passes, http only for localhost+allowInsecure", () => {
+Deno.test("property: URL policy — https always passes, http only for localhost+allowInsecure", () => {
   const g = (allowInsecure: boolean) =>
     ({
       secretKey: "sk_test_x",
@@ -210,7 +210,19 @@ Deno.test("property: URL policy â https always passes, http only for localh
     }) as unknown as Parameters<typeof assertUrlPolicy>[0];
   fc.assert(
     fc.property(
-      fc.stringMatching(/^[a-z0-9.-]{1,30}\.[a-z]{2,6}$/),
+      // The regex can emit hosts new URL rejects (invalid IDN like
+      // `xn--0.aa`, leading/trailing-hyphen labels, empty labels). Those are
+      // out of scope for the POLICY test — filter to hosts that form a valid
+      // URL so a parse error can't masquerade as a policy failure (surfaced
+      // only at ~1k+ generated cases, i.e. the nightly soak).
+      fc.stringMatching(/^[a-z0-9.-]{1,30}\.[a-z]{2,6}$/).filter((h) => {
+        try {
+          new URL(`https://${h}/x`);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
       fc.boolean(),
       (host, allowInsecure) => {
         // https: always accepted
@@ -253,7 +265,7 @@ Deno.test("property: challenge serialize/deserialize round-trips for generated p
   );
 });
 
-Deno.test("property: HMAC binding â genuine verifies, any amount/realm/method mutation fails", () => {
+Deno.test("property: HMAC binding — genuine verifies, any amount/realm/method mutation fails", () => {
   fc.assert(
     fc.property(
       arbChallengeParams,
@@ -332,7 +344,7 @@ Deno.test("property: receipt round-trips arbitrary references and timestamps", (
   );
 });
 
-Deno.test("property: full loop â challenge emitted by one side parses and verifies on the other", () => {
+Deno.test("property: full loop — challenge emitted by one side parses and verifies on the other", () => {
   fc.assert(
     fc.property(arbChallengeParams, (params) => {
       const ch = Challenge.from({ ...params, secretKey: SERVER_SECRET });
