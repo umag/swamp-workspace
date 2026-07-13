@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026.07.13.1
+
+Dependency bump: `mppx@0.8.5 → 0.8.6` (patch). No breaking changes to the
+Challenge / Credential / Receipt codecs or the Mppx / Stripe server APIs.
+
+- Upstream 0.8.6 relevant to this model: _preserved method-specific extension
+  fields on receipts_ per the Payment-Receipt spec. The remaining 0.8.6 fixes
+  are Tempo/crypto-path only (not exercised — this model is fiat/SPT).
+- Re-bundle republishes with 0.8.6 inlined (extension deps are bundled at build
+  time). Spec-fixture contract tests (`stripe_mpp_test.ts`) re-run green against
+  0.8.6; full 97-test suite + property soak unchanged.
+
 ## 2026.07.03.1
 
 Initial beta release of `@magistr/stripe-mpp` — buyer and full seller sides of

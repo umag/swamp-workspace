@@ -4,7 +4,7 @@
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "npm:fast-check@4.8.0": "4.8.0",
-    "npm:mppx@0.8.5": "0.8.5_viem@2.54.2__zod@4.4.3",
+    "npm:mppx@0.8.6": "0.8.6_viem@2.54.2__zod@4.4.3",
     "npm:stripe@22.4.0-beta.1": "22.4.0-beta.1",
     "npm:zod@4": "4.4.3"
   },
@@ -80,6 +80,15 @@
         "zod"
       ]
     },
+    "abitype@1.2.4_zod@4.4.3": {
+      "integrity": "sha512-dpKH+N27vRjarMVTFFkeY445VTKftzGWpL0FiT7xmVmzQRKazZexzC5uHG0f6XKsVLAuUlndnbGau6lRejClxg==",
+      "dependencies": [
+        "zod"
+      ],
+      "optionalPeers": [
+        "zod"
+      ]
+    },
     "eventemitter3@5.0.1": {
       "integrity": "sha512-GWkBvjiSZK87ELrYOSESUYeVIc9mvLLf/nXalMOS5dYrgZq9o5OVkbZAVM06CVxYsCwH9BDZFPlQTlPA1j4ahA=="
     },
@@ -111,8 +120,8 @@
         "ws"
       ]
     },
-    "mppx@0.8.5_viem@2.54.2__zod@4.4.3": {
-      "integrity": "sha512-36trgc3CCIWzPnrYKNdYGl9jszAes+wNJsRR9XPvcu3oxTBeNWe0Xol7nyETleY3YBg5FpZXSuGs1bdCq0zuXA==",
+    "mppx@0.8.6_viem@2.54.2__zod@4.4.3": {
+      "integrity": "sha512-JND+libFbDer9V9oLwqohBF5TU+QNByPf7uKF6nlVniEJzmBTLpfnENO99K7PNBUZZzEOPIVjeNC1sF9FnJjUA==",
       "dependencies": [
         "@stripe/stripe-js",
         "eventsource-parser",
@@ -132,7 +141,7 @@
         "@noble/hashes",
         "@scure/bip32",
         "@scure/bip39",
-        "abitype",
+        "abitype@1.2.4_zod@4.4.3",
         "eventemitter3"
       ]
     },
@@ -152,7 +161,7 @@
         "@noble/hashes",
         "@scure/bip32",
         "@scure/bip39",
-        "abitype",
+        "abitype@1.2.3_zod@4.4.3",
         "isows",
         "ox",
         "ws"

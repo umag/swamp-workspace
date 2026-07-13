@@ -31,8 +31,8 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.5";
-import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.5/server";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.8.6";
+import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.6/server";
 import Stripe from "npm:stripe@22.4.0-beta.1";
 
 // ============================================================================

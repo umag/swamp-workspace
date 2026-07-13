@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/stripe-mpp"
-version: "2026.07.03.1"
+version: "2026.07.13.1"
 description: "Stripe Machine Payments Protocol (MPP) — buyer (probe/mint/pay over HTTP-402 Payment auth) and full seller API (challenge/verify/charge/receipt/reconcile/refund) for fiat Shared Payment Tokens, built on mppx and the Stripe preview SDK"
 repository: "https://github.com/umag/swamp-workspace"
 paths:
