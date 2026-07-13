@@ -19,23 +19,111 @@ jobs:
       skills: ${{ steps.scan.outputs.skills }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Need history back to the diff base so we can scope the matrix to
+          # just the extensions this change touches.
+          fetch-depth: 0
       - id: scan
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -eo pipefail
           # Auto-discovery: no hand-maintained matrix lists. Every top-level
           # directory containing a manifest.yaml is treated as an extension.
-          exts=$(for m in */manifest.yaml; do [ -f "$m" ] && dirname "$m"; done \
-            | sort -u | jq -R . | jq -cs .)
+          all_exts=$(for m in */manifest.yaml; do [ -f "$m" ] && dirname "$m"; done | sort -u)
+
+          # --- Diff base: only test/review what this change actually touched. ---
+          # PR   → net changes vs the base branch (base.sha → merge HEAD).
+          # push → prior tip → HEAD (HEAD~1 fallback when `before` is absent).
+          # Any failure to compute a diff degrades to the FULL matrix (safe).
+          zero="0000000000000000000000000000000000000000"
+          if [ "$EVENT" = "pull_request" ]; then
+            changed=$(git diff --name-only "$PR_BASE_SHA" HEAD 2>/dev/null || true)
+            reason="PR vs base ${PR_BASE_SHA:0:12}"
+          elif [ "$EVENT" = "push" ] && [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$zero" ] \
+               && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+            changed=$(git diff --name-only "$PUSH_BEFORE" HEAD 2>/dev/null || true)
+            reason="push ${PUSH_BEFORE:0:12}..HEAD"
+          elif git rev-parse HEAD~1 >/dev/null 2>&1; then
+            changed=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+            reason="push HEAD~1..HEAD"
+          else
+            changed=""
+            reason="no diff base"
+          fi
+
+          # --- Classify each changed file (path-precise, two INDEPENDENT axes). ---
+          #   <ext>/.claude/skills/<skill>/…  → review ONLY that skill
+          #   <ext>/<anything-else>           → build/test ONLY that extension
+          #                                     (model code, *_test.ts, manifest,
+          #                                      deno.*, README/CHANGELOG — i.e.
+          #                                      everything but its skill dirs)
+          #   file OUTSIDE every extension dir (.github/, scripts/, root config)
+          #                                   → FULL matrix (shared infra)
+          # An empty/failed diff also forces FULL (fail safe). A skill-only change
+          # runs no extension build; an extension-code change runs no skill review.
+          global=false
+          touched_exts=""    # extension dirs whose code/tests/config changed
+          touched_skills=""  # "ext/skill" pairs whose skill dir changed
+          if [ -z "$changed" ]; then
+            global=true
+          else
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              top=${f%%/*}
+              if ! printf '%s\n' "$all_exts" | grep -qxF "$top"; then
+                global=true
+                continue
+              fi
+              case "$f" in
+                "$top"/.claude/skills/*/*)
+                  rest=${f#"$top"/.claude/skills/}
+                  skill=${rest%%/*}
+                  touched_skills="${touched_skills}${top}/${skill}"$'\n'
+                  ;;
+                *)
+                  touched_exts="${touched_exts}${top}"$'\n'
+                  ;;
+              esac
+            done <<< "$changed"
+          fi
+
+          if [ "$global" = "true" ]; then
+            echo "Scope: FULL — $reason (shared/global file changed or no diff)"
+            sel_exts=$all_exts
+            sel_skills="__ALL__"
+          else
+            echo "Scope: SCOPED — $reason"
+            sel_exts=$(printf '%s\n' "$touched_exts" | sed '/^$/d' | sort -u)
+            sel_skills=$(printf '%s\n' "$touched_skills" | sed '/^$/d' | sort -u)
+          fi
+          echo "Extension builds:"; printf '  %s\n' $sel_exts
+          echo "Skill reviews:"; printf '  %s\n' $sel_skills
+
+          # --- Extension (deno-check) matrix: JSON array of dir names. ---
+          exts=$(printf '%s\n' "$sel_exts" | sed '/^$/d' | jq -R . | jq -cs .)
           echo "extensions=$exts" >> "$GITHUB_OUTPUT"
           echo "Extensions: $exts"
-          # Every <ext>/.claude/skills/<skill>/SKILL.md is a tessl-reviewable
-          # skill (emitted as {extension, skill} pairs for the matrix).
-          skills=$(for s in */.claude/skills/*/SKILL.md; do
-              [ -f "$s" ] || continue
-              ext=${s%%/*}
-              skill=$(basename "$(dirname "$s")")
-              jq -nc --arg e "$ext" --arg k "$skill" '{extension:$e,skill:$k}'
-            done | jq -cs .)
+
+          # --- Skill (tessl) matrix: {extension, skill} pairs. Only pairs that
+          # still have a SKILL.md are emitted (drops deleted / non-skill paths). ---
+          emit_skill() { # $1=ext $2=skill
+            [ -f "$1/.claude/skills/$2/SKILL.md" ] || return 0
+            jq -nc --arg e "$1" --arg k "$2" '{extension:$e,skill:$k}'
+          }
+          if [ "$sel_skills" = "__ALL__" ]; then
+            skills=$(for s in */.claude/skills/*/SKILL.md; do
+                [ -f "$s" ] || continue
+                ext=${s%%/*}; skill=$(basename "$(dirname "$s")")
+                emit_skill "$ext" "$skill"
+              done | jq -cs .)
+          else
+            skills=$(printf '%s\n' "$sel_skills" | sed '/^$/d' \
+              | while IFS=/ read -r ext skill; do emit_skill "$ext" "$skill"; done \
+              | jq -cs .)
+          fi
           echo "skills=$skills" >> "$GITHUB_OUTPUT"
           echo "Skills: $skills"
 
@@ -120,6 +208,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.3
+
+      # Skill markdown used to be format-checked incidentally by the parent
+      # extension's `deno task fmt:check`. Now that a skill-only change no longer
+      # triggers that extension build, the skill owns its own fmt gate here —
+      # run from the extension dir so it uses that extension's deno.json fmt
+      # config (line width, etc.), matching the previous behavior exactly.
+      - name: Format check skill markdown
+        working-directory: ${{ matrix.pair.extension }}
+        run: deno fmt --check ".claude/skills/${{ matrix.pair.skill }}"
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -151,7 +253,10 @@ jobs:
   skill-trigger-eval:
     name: skill-trigger-eval (promptfoo, sonnet)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    needs: discover
+    # Skip when no in-scope skill changed. Trigger-collision eval is inherently
+    # cross-skill, so when it DOES run it still evaluates every skill's triggers.
+    if: github.event_name == 'pull_request' && needs.discover.outputs.skills != '[]'
     steps:
       - uses: actions/checkout@v6
 
@@ -215,9 +320,10 @@ jobs:
   pr-report:
     name: pr-report (sticky comment)
     runs-on: ubuntu-latest
-    needs: [skill-review, skill-trigger-eval]
-    # Always run on PRs so the reports post even when a gate fails.
-    if: always() && github.event_name == 'pull_request'
+    needs: [discover, skill-review, skill-trigger-eval]
+    # Always run on PRs so the reports post even when a gate fails — but only
+    # when an in-scope skill was reviewed (else there are no reports to post).
+    if: always() && github.event_name == 'pull_request' && needs.discover.outputs.skills != '[]'
     permissions:
       contents: read
       pull-requests: write
