@@ -98,6 +98,6 @@ methods; ≥32 chars). Globals: `networkId` (profile_...), `realm`, `testMode`,
 
 ## Upstream pins
 
-The model pins `mppx@0.8.5` + `stripe@22.4.0-beta.1` (preview channels). A
+The model pins `mppx@0.8.6` + `stripe@22.4.0-beta.1` (preview channels). A
 GitHub Actions cron raises an issue in the workspace repo when the pins go
 stale; bumps must pass the contract tests in `stripe_mpp_test.ts` first.

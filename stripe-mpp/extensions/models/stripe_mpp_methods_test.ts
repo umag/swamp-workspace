@@ -19,7 +19,7 @@ import {
   assertMatch,
   assertRejects,
 } from "jsr:@std/assert@1";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.5";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.8.6";
 import { model } from "./stripe_mpp.ts";
 
 // ---------------------------------------------------------------------------
