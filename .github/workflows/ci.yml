@@ -54,50 +54,76 @@ jobs:
             reason="no diff base"
           fi
 
-          # --- Map changed files → touched extension dirs; flag global changes. ---
-          # A changed file OUTSIDE every extension dir (.github/, scripts/, root
-          # config, …) forces the FULL matrix — shared infra can affect any
-          # extension. An empty/failed diff also forces full (fail safe).
+          # --- Classify each changed file (path-precise, two INDEPENDENT axes). ---
+          #   <ext>/.claude/skills/<skill>/…  → review ONLY that skill
+          #   <ext>/<anything-else>           → build/test ONLY that extension
+          #                                     (model code, *_test.ts, manifest,
+          #                                      deno.*, README/CHANGELOG — i.e.
+          #                                      everything but its skill dirs)
+          #   file OUTSIDE every extension dir (.github/, scripts/, root config)
+          #                                   → FULL matrix (shared infra)
+          # An empty/failed diff also forces FULL (fail safe). A skill-only change
+          # runs no extension build; an extension-code change runs no skill review.
           global=false
-          touched=""
+          touched_exts=""    # extension dirs whose code/tests/config changed
+          touched_skills=""  # "ext/skill" pairs whose skill dir changed
           if [ -z "$changed" ]; then
             global=true
           else
             while IFS= read -r f; do
               [ -z "$f" ] && continue
               top=${f%%/*}
-              if printf '%s\n' "$all_exts" | grep -qxF "$top"; then
-                touched="${touched}${top}"$'\n'
-              else
+              if ! printf '%s\n' "$all_exts" | grep -qxF "$top"; then
                 global=true
+                continue
               fi
+              case "$f" in
+                "$top"/.claude/skills/*/*)
+                  rest=${f#"$top"/.claude/skills/}
+                  skill=${rest%%/*}
+                  touched_skills="${touched_skills}${top}/${skill}"$'\n'
+                  ;;
+                *)
+                  touched_exts="${touched_exts}${top}"$'\n'
+                  ;;
+              esac
             done <<< "$changed"
           fi
 
           if [ "$global" = "true" ]; then
-            selected=$all_exts
             echo "Scope: FULL — $reason (shared/global file changed or no diff)"
+            sel_exts=$all_exts
+            sel_skills="__ALL__"
           else
-            selected=$(printf '%s\n' "$touched" | sed '/^$/d' | sort -u)
             echo "Scope: SCOPED — $reason"
+            sel_exts=$(printf '%s\n' "$touched_exts" | sed '/^$/d' | sort -u)
+            sel_skills=$(printf '%s\n' "$touched_skills" | sed '/^$/d' | sort -u)
           fi
-          echo "Selected extensions:"; printf '  %s\n' $selected
+          echo "Extension builds:"; printf '  %s\n' $sel_exts
+          echo "Skill reviews:"; printf '  %s\n' $sel_skills
 
-          # --- Extension matrix (JSON array of dir names). ---
-          exts=$(printf '%s\n' "$selected" | sed '/^$/d' | jq -R . | jq -cs .)
+          # --- Extension (deno-check) matrix: JSON array of dir names. ---
+          exts=$(printf '%s\n' "$sel_exts" | sed '/^$/d' | jq -R . | jq -cs .)
           echo "extensions=$exts" >> "$GITHUB_OUTPUT"
           echo "Extensions: $exts"
 
-          # --- Skill matrix, filtered to the selected extensions. Every
-          # <ext>/.claude/skills/<skill>/SKILL.md is a tessl-reviewable skill
-          # (emitted as {extension, skill} pairs). ---
-          skills=$(for s in */.claude/skills/*/SKILL.md; do
-              [ -f "$s" ] || continue
-              ext=${s%%/*}
-              printf '%s\n' "$selected" | grep -qxF "$ext" || continue
-              skill=$(basename "$(dirname "$s")")
-              jq -nc --arg e "$ext" --arg k "$skill" '{extension:$e,skill:$k}'
-            done | jq -cs .)
+          # --- Skill (tessl) matrix: {extension, skill} pairs. Only pairs that
+          # still have a SKILL.md are emitted (drops deleted / non-skill paths). ---
+          emit_skill() { # $1=ext $2=skill
+            [ -f "$1/.claude/skills/$2/SKILL.md" ] || return 0
+            jq -nc --arg e "$1" --arg k "$2" '{extension:$e,skill:$k}'
+          }
+          if [ "$sel_skills" = "__ALL__" ]; then
+            skills=$(for s in */.claude/skills/*/SKILL.md; do
+                [ -f "$s" ] || continue
+                ext=${s%%/*}; skill=$(basename "$(dirname "$s")")
+                emit_skill "$ext" "$skill"
+              done | jq -cs .)
+          else
+            skills=$(printf '%s\n' "$sel_skills" | sed '/^$/d' \
+              | while IFS=/ read -r ext skill; do emit_skill "$ext" "$skill"; done \
+              | jq -cs .)
+          fi
           echo "skills=$skills" >> "$GITHUB_OUTPUT"
           echo "Skills: $skills"
 
@@ -181,6 +207,20 @@ jobs:
         pair: ${{ fromJson(needs.discover.outputs.skills) }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.3
+
+      # Skill markdown used to be format-checked incidentally by the parent
+      # extension's `deno task fmt:check`. Now that a skill-only change no longer
+      # triggers that extension build, the skill owns its own fmt gate here —
+      # run from the extension dir so it uses that extension's deno.json fmt
+      # config (line width, etc.), matching the previous behavior exactly.
+      - name: Format check skill markdown
+        working-directory: ${{ matrix.pair.extension }}
+        run: deno fmt --check ".claude/skills/${{ matrix.pair.skill }}"
 
       - name: Setup Node
         uses: actions/setup-node@v6
