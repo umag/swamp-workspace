@@ -37,8 +37,12 @@ jobs:
         id: compare
         run: |
           set -euo pipefail
-          mppx_pin=$(grep -oE 'npm:mppx@[0-9][^/"]*' "$PINS_FILE" | head -1 | sed 's/npm:mppx@//')
-          stripe_pin=$(grep -oE 'npm:stripe@[0-9][^/"]*' "$PINS_FILE" | head -1 | sed 's/npm:stripe@//')
+          # -a (--text): the model source is valid UTF-8 but contains multibyte
+          # chars (em-dashes in comments); GNU grep in CI's C locale otherwise
+          # flags it "binary file matches", suppresses the -o match, and the
+          # pin comes back empty. See stripe-mpp release-watch failure 2026-07-13.
+          mppx_pin=$(grep -aoE 'npm:mppx@[0-9][^/"]*' "$PINS_FILE" | head -1 | sed 's/npm:mppx@//')
+          stripe_pin=$(grep -aoE 'npm:stripe@[0-9][^/"]*' "$PINS_FILE" | head -1 | sed 's/npm:stripe@//')
           test -n "$mppx_pin" || { echo "::error::mppx pin not found in $PINS_FILE"; exit 1; }
           test -n "$stripe_pin" || { echo "::error::stripe pin not found in $PINS_FILE"; exit 1; }
 
