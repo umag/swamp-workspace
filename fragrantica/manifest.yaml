@@ -1,0 +1,38 @@
+manifestVersion: 1
+name: "@magistr/fragrantica"
+version: "2026.07.15.1"
+description: |
+  Fragrantica for swamp — search perfumes, list them by designer/house or by
+  note, fetch full perfume details, and read the "People who like this also
+  like" similar-perfumes list, all from the public Fragrantica pages (no
+  credentials).
+
+  Model:
+  - `@magistr/fragrantica` — `search` resolves a free-text query (name/brand)
+    to Fragrantica perfume pages via a web search engine (Fragrantica's own
+    search is Cloudflare/Algolia-gated). `get-perfume` parses a perfume page
+    into brand, gender, year, rating, perfumers, main accords (with strength
+    %), the top/middle/base notes pyramid, and similar perfumes. `similar`
+    returns just the "also like" list. `list-by-designer` and `list-by-note`
+    enumerate the perfumes on a designer/house or note page, and `find-by-notes`
+    intersects several note pages to hunt a note combination (e.g. licorice +
+    oud).
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/fragrantica.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - perfume
+  - fragrance
+  - fragrantica
+  - scraper
