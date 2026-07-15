@@ -200,7 +200,10 @@ jobs:
     name: skill-review (tessl)
     needs: discover
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # Skip when no in-scope skill changed: an empty `skills` array expands to an
+    # empty matrix, which GitHub marks as a failed run. Mirrors the same guard on
+    # skill-trigger-eval / pr-report below.
+    if: github.event_name == 'pull_request' && needs.discover.outputs.skills != '[]'
     strategy:
       fail-fast: false
       matrix:
