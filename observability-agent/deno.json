@@ -1,6 +1,7 @@
 {
   "tasks": {
     "check": "deno check extensions/models/observability_agent.ts",
+    "test": "deno test extensions/models/ --permit-no-files",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

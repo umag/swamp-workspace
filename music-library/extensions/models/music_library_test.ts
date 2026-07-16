@@ -77,8 +77,29 @@ Deno.test("fixEncoding: plain ASCII is untouched", () => {
 Deno.test("fixEncoding: koi8-r mojibake is recovered", () => {
   // "Аквариум - Русский альбом" in koi8-r bytes, latin1-decoded
   const koi8Bytes = [
-    0xc1, 0xcb, 0xd7, 0xc1, 0xd2, 0xc9, 0xd5, 0xcd, 0x20, 0xd2, 0xd5, 0xd3,
-    0xd3, 0xcb, 0xc9, 0xca, 0x20, 0xc1, 0xcc, 0xd8, 0xc2, 0xcf, 0xcd,
+    0xc1,
+    0xcb,
+    0xd7,
+    0xc1,
+    0xd2,
+    0xc9,
+    0xd5,
+    0xcd,
+    0x20,
+    0xd2,
+    0xd5,
+    0xd3,
+    0xd3,
+    0xcb,
+    0xc9,
+    0xca,
+    0x20,
+    0xc1,
+    0xcc,
+    0xd8,
+    0xc2,
+    0xcf,
+    0xcd,
   ];
   const mojibake = String.fromCharCode(...koi8Bytes);
   const r = fixEncoding(mojibake);
@@ -535,7 +556,10 @@ Deno.test("classifyVerify: verdicts", () => {
   // non-zero exit → failed
   assertEquals(classifyVerify(1, [], 200, 10, "full"), "failed");
   // decode errors reported
-  assertEquals(classifyVerify(0, ["Header missing"], 200, 200, "full"), "errors");
+  assertEquals(
+    classifyVerify(0, ["Header missing"], 200, 200, "full"),
+    "errors",
+  );
   // full decode ends 60 s short → truncated
   assertEquals(classifyVerify(0, [], 200, 140, "full"), "truncated");
   // quick mode: healthy tail decode

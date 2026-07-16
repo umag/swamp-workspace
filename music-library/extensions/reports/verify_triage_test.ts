@@ -39,7 +39,10 @@ function problem(over: Record<string, unknown>) {
 Deno.test("triageVerify: junk paths flagged on unreadable files", () => {
   const t = triageVerify(
     verifyContent([
-      problem({ path: "Ambient/Player/Plugins/avs/fyrewurx.ape", status: "failed" }),
+      problem({
+        path: "Ambient/Player/Plugins/avs/fyrewurx.ape",
+        status: "failed",
+      }),
       problem({ path: "Wagner/01 - Ride.mp3", status: "failed" }),
     ]),
     null,
