@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/comfyui"
-version: "2026.06.15.1"
+version: "2026.07.16.2"
 description: |
   Drive a ComfyUI server over its HTTP API from swamp. Built for the local
   Ideogram 4.0 text-to-image workflow, whose prompt is a STRUCTURED JSON CAPTION

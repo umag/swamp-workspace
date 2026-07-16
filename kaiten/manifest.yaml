@@ -1,0 +1,18 @@
+manifestVersion: 1
+name: "@magistr/kaiten"
+version: "2026.06.21.1"
+description: "Kaiten work-management REST API (read-only) — list/get spaces, boards, columns, and cards with token auth, offset/limit pagination, and 429 back-off"
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+models:
+  - extensions/models/kaiten.ts
+additionalFiles:
+  - README.md
+  - LICENSE.md
+platforms: []
+labels:
+  - kaiten
+  - kanban
+  - project-management
+  - task-tracking

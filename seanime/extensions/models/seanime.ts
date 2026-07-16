@@ -141,7 +141,7 @@ async function seanimeRequest(
  */
 export const model = {
   type: "@magistr/seanime",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   upgrades: [
     {
       fromVersion: "2026.04.05.1",

@@ -110,7 +110,7 @@ async function haFetch(host, token, path, protocol, options: RequestInit = {}) {
  */
 export const model = {
   type: "@magistr/homeassistant",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: InputSchema,
   resources: {
     "states": {

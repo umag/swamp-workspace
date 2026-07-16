@@ -91,7 +91,7 @@ function tsToIso(ts: string | number): string {
 /** Swamp model that reads a Skype SQLite `main.db` to list profiles, conversations and contacts, search messages, and export chat logs to Obsidian notes. */
 export const model = {
   type: "@magistr/skype",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
 
   resources: {

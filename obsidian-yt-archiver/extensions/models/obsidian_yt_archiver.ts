@@ -133,7 +133,7 @@ const ResolvedSchema = z.object({
 /** Obsidian YouTube archiver model: scans a vault for YouTube links, queues them in TubeArchivist, and resolves video metadata. */
 export const model = {
   type: "@magistr/obsidian-yt-archiver",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     scan: {

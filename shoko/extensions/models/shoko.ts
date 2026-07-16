@@ -121,7 +121,7 @@ const AuthResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/shoko",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {

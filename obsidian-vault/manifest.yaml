@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/obsidian-vault"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: "Manage Obsidian vaults via the official CLI (v1.12+) — notes, search, tags, links, daily notes, properties"
 repository: "https://github.com/umag/swamp-workspace"
 paths:

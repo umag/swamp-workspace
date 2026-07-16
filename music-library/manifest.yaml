@@ -1,0 +1,58 @@
+manifestVersion: 1
+name: "@magistr/music-library"
+version: "2026.07.07.1"
+description: |
+  Multidimensional music library catalog built WITHOUT touching the
+  filesystem: the inventory and raw tags come from an existing gonic scan
+  index (gonic.db, read over SSH with `sqlite3 -json -readonly`), so no
+  array disk is ever woken by a directory traversal.
+
+  On top of the raw rows the `scan` method builds a star-schema cube:
+
+  - facts — one `album` resource per album directory (album → disc → track
+    nesting, disc subdirs like `CD1/` collapsed into their parent album)
+  - dimensions — one `artist` resource per artist (name variants, album
+    refs, genre/format/year span) plus rollup `dimension` resources for
+    genres, years/decades, formats, and quality buckets
+    (lossless / lossy-high / lossy-mid / lossy-low)
+  - cross-cuts — an `issues` resource (untagged tracks, dirname-only
+    albums, encoding fixes with before/after, DOS-mangled 8.3 names) and a
+    `library` summary with totals and source breakdown
+
+  Every tag string passes through encoding recovery: legacy single-byte
+  tags decoded as latin1 (cp1251 / koi8-r / cp866 / windows-125x / CJK
+  mojibake such as "Êëàóäèî Ìîíòåâåðäè") are detected with jschardet and
+  re-decoded; double-encoded UTF-8 is unwrapped. Tracks with missing tags
+  fall back to directory/filename naming patterns ("1983. Artist - Album",
+  "Artist - Album (Year) [FLAC]", "NN - Title", disc subdirs, bracketed
+  artists, catalog-number prefixes).
+
+  The `probe` method deep-probes one file with ffprobe inside a docker
+  container that has the music share mounted (all formats ffmpeg knows:
+  mp3, flac, opus, m4a, ogg, ape, wma, wav, …), merging format-level and
+  stream-level tags and reporting the encoding-fix trace — for debugging
+  individual files.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/music_library.ts
+
+reports:
+  - extensions/reports/verify_triage.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - music
+  - library
+  - metadata
+  - tags
+  - encoding
+  - id3
+  - catalog
+  - unraid

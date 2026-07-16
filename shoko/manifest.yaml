@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/shoko"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: |
   Shoko anime metadata server API — series, episodes, files, and metadata.
 

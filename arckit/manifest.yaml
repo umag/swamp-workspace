@@ -1,0 +1,132 @@
+manifestVersion: 1
+name: "@magistr/arckit"
+version: "2026.07.16.2"
+description: |
+  Standalone swamp port of ArcKit (https://github.com/tractorjuice/arc-kit —
+  the Enterprise Architecture Governance Harness): a skill-driven governance
+  state machine with the full arc-kit template corpus bundled. No ArcKit
+  Claude plugin and no Python CLI required.
+
+  Model type `@magistr/arckit/workspace`:
+
+  ## State machine (one governance project per state artifact)
+
+  ```
+  startProject -> foundation -> context -> risk -> business-case ->
+  requirements -> design -> procurement -> design-review -> delivery ->
+  operations -> assurance -> story -> complete   (abandon from any state)
+  ```
+
+  `advance` re-scans the disk and refuses unless every gate group of the
+  current phase has an ARC-* artifact present; `skipPhase` records an
+  explicit bypass of skippable phases. Profiles (standard | uk-gov | mod |
+  ai) add gate groups (uk-gov: tcop + secure; mod: mod-secure; ai:
+  data-model + ai-playbook + atrs). 000-global artifacts (e.g. principles)
+  satisfy gates workspace-wide.
+
+  ## Methods
+
+  - startProject / status / advance / skipPhase / abandon — the lifecycle
+  - template / templates / provisionTemplates — 65 bundled arc-kit v6.2.0
+    templates, served with doc code, target ARC filename, and mandatory
+    input artifacts
+  - init / scan / gaps — workspace scaffold, full artifact inventory,
+    mandatory-dependency violation report
+  - migrateClassification — port of `arckit migrate-classification`
+    (UK ladder → UAE Smart Data ladder, report-only by default)
+
+  Ships the `arckit` skill that drives Claude through the loop: status →
+  fetch template → read mandatory inputs → produce artifact → human
+  approval → advance.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+skills:
+  - arckit
+
+models:
+  - extensions/models/arckit_workspace.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - templates/adr-template.md
+  - templates/analysis-report-template.md
+  - templates/architecture-diagram-template.md
+  - templates/architecture-principles-template.md
+  - templates/architecture-strategy-template.md
+  - templates/aws-research-template.md
+  - templates/azure-research-template.md
+  - templates/backlog-template.md
+  - templates/competitors-template.md
+  - templates/conformance-assessment-template.md
+  - templates/data-mesh-contract-template.md
+  - templates/data-model-template.md
+  - templates/data-source-profile-template.md
+  - templates/datascout-template.md
+  - templates/devops-template.md
+  - templates/dfd-template.md
+  - templates/dld-review-template.md
+  - templates/dos-requirements-template.md
+  - templates/dpia-template.md
+  - templates/evaluation-criteria-template.md
+  - templates/finops-template.md
+  - templates/framework-overview-template.md
+  - templates/gcloud-clarify-template.md
+  - templates/gcloud-requirements-template.md
+  - templates/gcp-research-template.md
+  - templates/glossary-template.md
+  - templates/gov-code-search-template.md
+  - templates/gov-landscape-template.md
+  - templates/gov-reuse-template.md
+  - templates/grants-template.md
+  - templates/hld-review-template.md
+  - templates/jsp-936-template.md
+  - templates/maturity-model-template.md
+  - templates/mlops-template.md
+  - templates/mod-secure-by-design-template.md
+  - templates/operationalize-template.md
+  - templates/platform-design-template.md
+  - templates/presentation-template.md
+  - templates/principles-compliance-assessment-template.md
+  - templates/project-plan-template.md
+  - templates/requirements-template.md
+  - templates/research-findings-template.md
+  - templates/risk-register-template.md
+  - templates/roadmap-template.md
+  - templates/service-assessment-prep-template.md
+  - templates/servicenow-design-template.md
+  - templates/sobc-template.md
+  - templates/sow-template.md
+  - templates/stakeholder-drivers-template.md
+  - templates/story-template.md
+  - templates/tcop-review-template.md
+  - templates/tech-note-template.md
+  - templates/tenders-template.md
+  - templates/traceability-matrix-template.md
+  - templates/uk-gov-ai-playbook-template.md
+  - templates/uk-gov-atrs-template.md
+  - templates/ukgov-secure-by-design-template.md
+  - templates/vendor-profile-template.md
+  - templates/vendor-scoring-template.md
+  - templates/wardley-climate-template.md
+  - templates/wardley-doctrine-template.md
+  - templates/wardley-gameplay-template.md
+  - templates/wardley-map-template.md
+  - templates/wardley-value-chain-template.md
+  - templates/pages-template.html.txt
+  - templates/_partials/document-control-uae.md
+  - templates/_partials/document-control-uk.md
+
+labels:
+  - arckit
+  - architecture
+  - governance
+  - enterprise-architecture
+  - state-machine
+  - lifecycle
+  - compliance
+  - templates
+  - wardley

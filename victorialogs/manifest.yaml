@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/victorialogs"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: |
   VictoriaLogs query API — run LogsQL queries, field/stream stats, and hits
   over time.

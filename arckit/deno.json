@@ -1,0 +1,26 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/arckit_workspace.ts extensions/models/arckit_workspace_test.ts",
+    "test": "deno test --allow-read --allow-write extensions/models/",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "zod": "npm:zod@4"
+  },
+  "compilerOptions": {
+    "noImplicitAny": false
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

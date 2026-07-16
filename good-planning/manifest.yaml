@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/good-planning"
-version: "2026.05.01.1"
+version: "2026.07.16.2"
 description: |
   Good-planning model that operationalizes Felipe Bovolon's "Good Planning
   Bad Planning" four-layer architecture as queryable swamp state. Strategy

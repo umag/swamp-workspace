@@ -103,7 +103,7 @@ async function getRunningContainers(host) {
 /** VictoriaLogs query model: runs LogsQL queries, stats, and container/error analytics against a VictoriaLogs HTTP endpoint. */
 export const model = {
   type: "@magistr/victorialogs",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     "queryResult": {

@@ -136,7 +136,7 @@ async function runSync(
 /** The @magistr/pihole model — Pi-hole custom DNS record CRUD + declarative sync. */
 export const model = {
   type: "@magistr/pihole",
-  version: "2026.05.21.1",
+  version: "2026.07.16.2",
   globalArguments: InputSchema,
   resources: {
     "dns-records": {

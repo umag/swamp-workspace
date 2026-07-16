@@ -65,7 +65,7 @@ const NodeConfigSchema = z.object({
 /** Talos cluster lifecycle model: init, configure, template nodes, apply configs, bootstrap, and run health checks against a talm-managed cluster. */
 export const model = {
   type: "@magistr/talm-cluster",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgs,
   checks: {
     "cluster-dir-exists": {

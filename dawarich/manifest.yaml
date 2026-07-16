@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/dawarich"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: |
   Dawarich self-hosted location-tracking API for swamp — read points, visits,
   tracks, statistics, digests, geotagged photos, and service health, and update

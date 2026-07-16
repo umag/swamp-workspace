@@ -1351,7 +1351,7 @@ function persist(context: Ctx, run: Run): Promise<unknown> {
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/gobrr",
-  version: "2026.06.19.3",
+  version: "2026.07.16.2",
   globalArguments: z.object({}),
 
   resources: {

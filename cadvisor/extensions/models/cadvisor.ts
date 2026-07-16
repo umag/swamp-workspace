@@ -127,7 +127,7 @@ async function vmQuery(host, port, path) {
 /** Swamp model that deploys cAdvisor and queries container resource metrics from cAdvisor and VictoriaMetrics. */
 export const model = {
   type: "@magistr/cadvisor",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     "status": {

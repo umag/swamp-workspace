@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/career-kb"
-version: "2026.06.29.1"
+version: "2026.07.16.2"
 description: |
   Retrieval, routing, and triage over a career-research knowledge base — 22
   career-psychology extractions (1 practitioner AMA + 21 academic papers) across

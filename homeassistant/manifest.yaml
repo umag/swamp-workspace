@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/homeassistant"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: |
   Home Assistant integration for swamp — query entity states, call services,
   list and update automations, and fetch history and long-term sensor
