@@ -1,0 +1,48 @@
+manifestVersion: 1
+name: "@magistr/observability-agent"
+version: "2026.07.02.3"
+description: |
+  Install and configure a host-native metrics + logs agent on a remote
+  Debian/Ubuntu host over SSH, for a VictoriaMetrics (pull) + VictoriaLogs
+  (push via Vector) backend.
+
+  Model:
+  - `@magistr/observability/agent` — drives one target host over SSH.
+    Methods:
+    - `install` — apt-installs prometheus-node-exporter +
+      prometheus-blackbox-exporter and installs vector from the pinned
+      .deb (idempotent).
+    - `configure` — writes exporter defaults (bound to `bindAddress` — set
+      it to a WireGuard tunnel IP to keep exporters off the public
+      interface), a blackbox module set (http_2xx / http_public / icmp),
+      grants blackbox CAP_NET_RAW for ICMP probes, and configures Vector to
+      tail nginx + syslog and ship to VictoriaLogs' Elasticsearch-bulk
+      endpoint. Adds the `vector` user to `adm` so it can read the logs.
+    - `status` — systemd state of all three services + whether each
+      exporter is answering on its bound address.
+
+  The home VictoriaMetrics scrapes `bindAddress:9100` (node) and
+  `bindAddress:9115` (blackbox) over the tunnel; Vector pushes logs to
+  VictoriaLogs. Pairs with `@magistr/victoriametrics` for querying.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/observability_agent.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - monitoring
+  - observability
+  - metrics
+  - logs
+  - node-exporter
+  - blackbox
+  - vector
+  - victoriametrics
+  - victorialogs
