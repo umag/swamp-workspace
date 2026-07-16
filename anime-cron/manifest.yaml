@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/anime-cron"
-version: "2026.06.07.1"
+version: "2026.07.16.2"
 description: |
   Anime automation pipeline: fetch airing episodes from Nyaa, sync watch
   progress back to AniList, and queue Blu-ray upgrades via SeaDex.

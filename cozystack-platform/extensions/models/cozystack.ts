@@ -187,7 +187,7 @@ function getConditionMessage(conditions, type) {
  */
 export const model = {
   type: "@magistr/cozystack-platform",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgs,
   checks: {
     "cluster-reachable": {

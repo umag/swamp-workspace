@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/bandcamp"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: |
   Bandcamp for swamp — search artists, albums, and tracks on the public
   catalog, and fetch full artist/album/track metadata (discography, track

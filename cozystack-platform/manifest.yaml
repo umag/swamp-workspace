@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/cozystack-platform"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: "Cozystack platform management — install operator, deploy packages, manage apps/tenants, bootstrap CNI, and verify platform health"
 repository: "https://github.com/umag/swamp-workspace"
 paths:

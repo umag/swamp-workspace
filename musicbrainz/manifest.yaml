@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/musicbrainz"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: |
   MusicBrainz metadata — search, look up, and browse artists, release groups,
   releases, recordings, and labels via the MusicBrainz Web Service v2.

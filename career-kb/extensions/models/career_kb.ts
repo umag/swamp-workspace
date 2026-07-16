@@ -527,7 +527,7 @@ export function tokenize(q) {
  */
 export const model = {
   type: "@magistr/career-kb",
-  version: "2026.06.29.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     catalog: {

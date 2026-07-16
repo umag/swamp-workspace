@@ -217,7 +217,7 @@ async function fetchAllPages(query, variables, maxPages) {
 /** AniList GraphQL model: search and fetch anime/manga, media details, user lists, and trending. */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     search: {

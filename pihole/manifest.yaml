@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/pihole"
-version: "2026.05.21.1"
+version: "2026.07.16.2"
 description: |
   Pi-hole custom DNS record management for swamp — list, add, delete, and
   declaratively sync local DNS A-records on a Pi-hole v6 (FTL) appliance.

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/victoriametrics"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: |
   VictoriaMetrics query API for swamp — instant/range PromQL, scrape-target
   health, a node-exporter system overview, and container memory rankings.

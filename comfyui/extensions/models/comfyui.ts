@@ -96,7 +96,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.06.15.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgs,
   methods: {
     lookup: {

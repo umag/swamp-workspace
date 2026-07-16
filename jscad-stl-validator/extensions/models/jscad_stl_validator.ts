@@ -24,7 +24,7 @@ const reportSchema = z.object({
 /** Swamp model that validates STL geometry from a @magistr/jscad-cad model output or a file on disk. */
 export const model = {
   type: "@magistr/jscad-stl-validator",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
 
   resources: {
     report: {

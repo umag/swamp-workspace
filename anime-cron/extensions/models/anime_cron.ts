@@ -554,7 +554,7 @@ async function sendTg(modelName: string, text: string): Promise<void> {
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.06.07.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     fetchResult: {
@@ -633,6 +633,10 @@ export const model = {
         // "Youjo Senki S2" and "Youjo Senki II" both collapse to "Youjo Senki".
         const normalizeTitle = (t: string): string => {
           let s = t.toLowerCase().replace(/\s+/g, " ").trim();
+          // Strip ": subtitle" (e.g. "Koukaku Kidoutai: THE GHOST IN THE SHELL")
+          s = s.replace(/\s*:.*$/, "");
+          // Strip trailing parenthesized year (e.g. "Koukaku Kidoutai (2026)")
+          s = s.replace(/\s*\(\d{4}\)\s*$/, "");
           s = s.replace(/\s+(?:ii|iii|iv|v|vi|vii|viii|ix|x)$/i, "");
           s = s.replace(
             /\s+(?:s\d+|\d+(?:st|nd|rd|th)?\s+season|season\s+\d+)$/i,

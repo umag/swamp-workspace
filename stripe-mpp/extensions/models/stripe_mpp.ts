@@ -706,7 +706,7 @@ async function retrievePaymentIntent(
 /** Stripe MPP model: buyer (probe/mint/pay) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.07.03.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     challenge: {

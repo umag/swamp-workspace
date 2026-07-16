@@ -214,7 +214,7 @@ async function sshExecSql(
  */
 export const model = {
   type: "@magistr/gonic",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     podcasts: {

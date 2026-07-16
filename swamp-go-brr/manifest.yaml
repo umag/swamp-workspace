@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/swamp-go-brr"
-version: "2026.06.19.3"
+version: "2026.07.16.2"
 description: |
   An autonomous, driver-free development loop for coding agents. You hand it an
   intake and a host-pinned test command; it decomposes the work into a dynamic

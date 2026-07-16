@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/cozystack-linstor"
-version: "2026.05.25.1"
+version: "2026.07.16.2"
 description: "Linstor distributed storage management for Cozystack — ZFS pool creation, storage classes, node and pool status"
 repository: "https://github.com/umag/swamp-workspace"
 paths:

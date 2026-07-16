@@ -41,7 +41,7 @@ const axisComparisonSchema = z.object({
 /** STL analysis model: Z-plane slicing, orthographic projection, symmetry analysis, feature detection, and mesh comparison. */
 export const model = {
   type: "@magistr/jscad-stl-slicer",
-  version: "2026.05.25.1",
+  version: "2026.07.16.2",
 
   resources: {
     slice: {

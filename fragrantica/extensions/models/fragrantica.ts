@@ -502,7 +502,7 @@ function normalizePerfumeUrl(input: string, base: string): string {
  */
 export const model = {
   type: "@magistr/fragrantica",
-  version: "2026.07.15.1",
+  version: "2026.07.16.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     search: {
