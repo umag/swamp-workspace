@@ -24,7 +24,7 @@
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.6";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.8.12";
 import { model } from "./stripe_mpp.ts";
 
 // Property iteration count — overridable for the nightly soak via

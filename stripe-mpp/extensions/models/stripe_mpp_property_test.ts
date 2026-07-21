@@ -13,7 +13,7 @@
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.6";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.8.12";
 import {
   amountExceeds,
   assertUrlPolicy,

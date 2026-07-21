@@ -163,6 +163,6 @@ credentials and its Link session as separate stores.
 
 ## Upstream pins
 
-The model pins `mppx@0.8.6` + `stripe@22.4.0-beta.1` (preview channels). A
+The model pins `mppx@0.8.12` + `stripe@22.4.0-beta.1` (preview channels). A
 GitHub Actions cron raises an issue in the workspace repo when the pins go
 stale; bumps must pass the contract tests in `stripe_mpp_test.ts` first.

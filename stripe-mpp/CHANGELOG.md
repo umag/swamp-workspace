@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026.07.21.2
+
+Dependency bump: `mppx@0.8.6 → 0.8.12` (patch, preview channel). No breaking
+changes to the Challenge / Credential / Receipt codecs or the Mppx / Stripe
+server APIs.
+
+- Wire format unchanged, on durable evidence: the crypto primitives are
+  byte-identical in the regenerated lock (`@noble/hashes@1.8.0` backs the
+  HMAC-SHA256 id-binding, `@noble/curves@1.9.1`, `@scure/*` all unmoved), and
+  the upstream review of the `0.8.6..0.8.12` releases (0.8.7, 0.8.8, 0.8.9,
+  0.8.11, 0.8.12 — 0.8.10 was never published) found **no** change to the HMAC
+  challenge-id binding, key derivation, domain separators, or the
+  challenge/credential/receipt serialization. The 0.8.7..0.8.12 deltas are
+  Celo/Tempo/session-voucher and `mppx validate`-command code this fiat/SPT
+  model does not import.
+- Transitive drift from the lockfile regeneration: `viem 2.54.2 → 2.55.4`,
+  `ox 0.14.29 → 0.14.30`, `@stripe/stripe-js 9.8.0 → 9.9.0`, and a prerelease
+  inversion `@modelcontextprotocol/server 2.0.0-beta.2 → 2.0.0-alpha.4` (pulled
+  via `incur`, off the crypto/wire path), plus test-only dedupes. `stripe` stays
+  `22.4.0-beta.1` (unchanged — still the current public-preview dist-tag); every
+  dep keeps its sha512 integrity hash.
+- Re-bundle republishes with `0.8.12` inlined (extension deps are bundled at
+  build time). Regression coverage: the full suite (120 offline tests) + the
+  10000-run property soak re-run green against `0.8.12`, and the spec-fixture
+  contract (`stripe_mpp_test.ts`) and adversarial/tamper
+  (`stripe_mpp_adversarial_test.ts`) suites pass UNMODIFIED.
+
 ## 2026.07.21.1
 
 Consumer buyer (Link grant): a human WITHOUT a Stripe account can now fund agent

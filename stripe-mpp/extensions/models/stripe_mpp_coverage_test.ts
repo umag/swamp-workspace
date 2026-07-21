@@ -6,7 +6,7 @@
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { z } from "npm:zod@4";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.6";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.8.12";
 import { idemKey, model } from "./stripe_mpp.ts";
 
 const SERVER_SECRET = "0123456789abcdef0123456789abcdef";
