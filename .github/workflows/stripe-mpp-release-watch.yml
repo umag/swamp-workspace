@@ -49,7 +49,11 @@ jobs:
           # link-cli is a BINARY, not an npm: import, so it has no import
           # specifier — its pin is the `linkCliVersion` global default. Missing
           # is non-fatal (the consumer flow is optional).
-          linkcli_pin=$(grep -aoE 'linkCliVersion.*default\("[0-9][^"]*"' "$PINS_FILE" | head -1 | sed -E 's/.*default\("([^"]+)".*/\1/')
+          # `|| true`: an absent pin must yield "" so the `if [ -n ... ]` guard
+          # below skips this optional branch — NOT abort the whole step under
+          # `set -euo pipefail` (which would also take down the required
+          # mppx/stripe check as collateral).
+          linkcli_pin=$(grep -aoE 'linkCliVersion.*default\("[0-9][^"]*"' "$PINS_FILE" | head -1 | sed -E 's/.*default\("([^"]+)".*/\1/' || true)
 
           mppx_latest=$(curl -fsSL https://registry.npmjs.org/mppx | jq -r '.["dist-tags"].latest')
           stripe_preview=$(curl -fsSL https://registry.npmjs.org/stripe | jq -r '.["dist-tags"]["public-preview"] // .["dist-tags"].beta')

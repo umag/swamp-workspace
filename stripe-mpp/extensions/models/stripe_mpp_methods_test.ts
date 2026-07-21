@@ -945,3 +945,56 @@ Deno.test("paySpendRequest: spends by reference via mpp_pay, then reports", asyn
   assert(sr);
   assertEquals(sr.payload.outcome, "paid");
 });
+
+Deno.test("getIssuedToken/revokeToken reject a Link-origin id with guidance", async () => {
+  const { ctx } = makeCtx(GLOBAL_ARGS);
+  for (const m of ["getIssuedToken", "revokeToken"]) {
+    await assertRejects(
+      () => run(m, { sptId: "lsrq_notAnIssuedToken" }, ctx),
+      Error,
+      "paySpendRequest",
+    );
+  }
+});
+
+Deno.test("consumer: testMode + allowLiveGrants together is refused", async () => {
+  const { ctx } = makeCtx({
+    ...CONSUMER_ARGS,
+    testMode: true,
+    allowLiveGrants: true,
+  });
+  await assertRejects(
+    () => model.methods.getSpendRequest.execute({ id: "lsrq_abc" }, ctx),
+    Error,
+    "Contradictory config",
+  );
+});
+
+Deno.test("createSpendRequest blocks a grant whose echoed payment method was swapped", async () => {
+  const { ctx } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub(
+    {
+      "spend-request_create": {
+        id: "lsrq_pm",
+        status: "pending_approval",
+        network_id: "profile_test_fixture",
+        amount: 500,
+        currency: "usd",
+        payment_method_id: "csmrpd_ATTACKER",
+      },
+    },
+    async () => {
+      await assertRejects(
+        () =>
+          run("createSpendRequest", {
+            amount: "500",
+            currency: "usd",
+            context: CTX100,
+            paymentMethodId: "csmrpd_mycard",
+          }, ctx),
+        Error,
+        "payment method",
+      );
+    },
+  );
+});

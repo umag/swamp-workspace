@@ -241,7 +241,7 @@ const SpendRequestSchema = z.strictObject({
   currency: z.string().optional(),
   networkId: z.string().optional(), // resolved payee, for the audit trail
   paymentMethodId: z.string().optional(),
-  intentKey: z.string().optional(), // idemKey anchor for read-before-create
+  intentKey: z.string().optional(), // deterministic correlation anchor (idemKey)
   error: z.string().optional(),
   fetchedAt: z.string(),
 });
@@ -249,7 +249,8 @@ const SpendRequestSchema = z.strictObject({
 const ConsumerPaymentMethodSchema = z.strictObject({
   id: z.string(), // csmrpd_
   kind: z.string().optional(),
-  display: z.string().optional(), // PAN fragment / holder are redacted upstream
+  display: z.string().optional(), // as link-cli returns it (assumed masked
+  // upstream); redact() scrubs sk_/spt_ but does NOT mask PAN/holder text.
   fetchedAt: z.string(),
 });
 
@@ -645,6 +646,17 @@ function linkCliConfig(g: GlobalArgs): LinkCliConfig {
         "US Link account) on this host; they are inert otherwise.",
     );
   }
+  // Defense-in-depth cross-check: link-cli exposes no session live/test signal,
+  // so allowLiveGrants is config-only. Refuse the contradictory combination
+  // where the instance is nominally test (testMode) yet opts into live grants —
+  // it would move real money on what reads as a test instance.
+  if (g.testMode && g.allowLiveGrants) {
+    throw new Error(
+      "Contradictory config: testMode=true with allowLiveGrants=true would " +
+        "create LIVE consumer grants on a test-labelled instance. Set " +
+        "allowLiveGrants=false (test grants) or testMode=false (live instance).",
+    );
+  }
   return {
     binPath: p,
     version: g.linkCliVersion,
@@ -665,6 +677,24 @@ function toAmountStr(v: unknown): string | undefined {
   if (typeof v === "string") return v;
   if (typeof v === "number" && Number.isInteger(v)) return String(v);
   return undefined;
+}
+
+/** Reject a Link-origin id (lsrq_/csmrpd_) on the agent-token methods with an
+ * actionable message: these are not platform-issued tokens, so
+ * issuedTokens.retrieve/revoke (which use the platform secretKey) would 404/403.
+ * A Link grant is spent by reference via paySpendRequest. */
+function assertNotLinkOriginId(g: GlobalArgs, id: string): void {
+  if (LSRQ.test(id) || CSMRPD.test(id)) {
+    throw new Error(
+      redact(
+        g,
+        `"${id}" is a Link-origin id (spend request / consumer payment ` +
+          "method), not a platform-issued Shared Payment Token. Link grants " +
+          "are spent by reference via paySpendRequest and cannot be retrieved " +
+          "or revoked through the platform secret key.",
+      ),
+    );
+  }
 }
 
 // ============================================================================
@@ -753,7 +783,10 @@ const CreateSpendRequestArgs = z.object({
       "in the Link app.",
   ),
   externalId: z.string().optional().describe(
-    "Correlation id; also anchors the read-before-create intent key.",
+    "Correlation id; also anchors the deterministic intent key persisted on " +
+      "the audit record. NOTE: link-cli has no idempotency key and this model " +
+      "does no coalescing, so a duplicate identical createSpendRequest call " +
+      "produces a duplicate consumer approval prompt.",
   ),
 });
 
@@ -941,7 +974,8 @@ async function retrievePaymentIntent(
 // Model
 // ============================================================================
 
-/** Stripe MPP model: buyer (probe/mint/pay) + full seller API. */
+/** Stripe MPP model: agent buyer (probe/mint/pay) + consumer buyer (Link
+ * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
   version: "2026.07.21.1",
@@ -1014,14 +1048,18 @@ export const model = {
     spendRequest: {
       description:
         "Consumer Link spend-request lifecycle — written on EVERY outcome " +
-        "(created/retrieved/approved/denied/expired/cancelled/blocked/paid). " +
+        "(outcome ∈ created/retrieved/cancelled/blocked/paid/pay-failed; the " +
+        "approval status approved|denied|expired is carried in the `status` " +
+        "field of a retrieved record). " +
         "Holds the lsrq_ reference only; NEVER a raw spt_ credential.",
       schema: SpendRequestSchema,
       lifetime: "infinite",
       garbageCollection: 20,
     },
     consumerPaymentMethod: {
-      description: "Consumer Link payment method (csmrpd_; display redacted).",
+      description:
+        "Consumer Link payment method (csmrpd_; display as link-cli returns " +
+        "it, assumed masked upstream — not additionally masked here).",
       schema: ConsumerPaymentMethodSchema,
       lifetime: "infinite",
       garbageCollection: 10,
@@ -1285,6 +1323,7 @@ export const model = {
       sensitiveOutput: true,
       execute: async (args: z.infer<typeof SptIdArgs>, context: ExecCtx) => {
         const g = parseGlobals(context);
+        assertNotLinkOriginId(g, args.sptId);
         const client = sdk(g);
         const token = await redacting(
           g,
@@ -1311,6 +1350,7 @@ export const model = {
       arguments: SptIdArgs,
       execute: async (args: z.infer<typeof SptIdArgs>, context: ExecCtx) => {
         const g = parseGlobals(context);
+        assertNotLinkOriginId(g, args.sptId);
         const client = sdk(g);
         const token = await redacting(
           g,
@@ -2347,6 +2387,17 @@ export const model = {
         if (echoCur !== undefined && echoCur.toLowerCase() !== currency) {
           await blocked(
             `Grant echo mismatch: currency ${echoCur} != requested ${currency}.`,
+          );
+        }
+        const echoPm = strOrUndef(sr.payment_method_id) ??
+          strOrUndef(sr.paymentMethodId);
+        if (
+          args.paymentMethodId !== undefined && echoPm !== undefined &&
+          echoPm !== args.paymentMethodId
+        ) {
+          await blocked(
+            `Grant echo mismatch: payment method ${echoPm} != requested ` +
+              `${args.paymentMethodId}.`,
           );
         }
 

@@ -142,27 +142,77 @@ function encode(obj: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(obj) + "\n");
 }
 
+/** Hard ceiling on link-cli stdout, so a runaway payload cannot exhaust memory
+ * before the wall-clock timeout fires. */
+export const MAX_STDOUT_BYTES = 8 * 1024 * 1024; // 8 MB
+
+/** Build the clearEnv allowlist for the link-cli subprocess. Exported + pure so
+ * the secret-exclusion invariant is unit-testable: the child gets ONLY HOME and
+ * PATH — never STRIPE_SECRET_KEY / SERVER_SECRET or any other parent var.
+ *
+ * HOME is required (link-cli reads its device-flow session from the config dir
+ * under HOME). PATH is passed through so a node CLI can resolve its runtime;
+ * this is a DELIBERATE, accepted deviation from the plan's "PATH out" note —
+ * the top-level binary is spawned by absolute path so PATH cannot hijack WHICH
+ * executable runs, and the residual (a poisoned entry reaching link-cli's own
+ * sub-processes) is covered by the documented single-user-host deployment
+ * boundary. */
+export function buildChildEnv(
+  get: (k: string) => string | undefined = (k) => Deno.env.get(k),
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  const home = get("HOME");
+  const path = get("PATH");
+  if (home) env.HOME = home;
+  if (path) env.PATH = path;
+  return env;
+}
+
+/** Read a stream up to `max` bytes; report overflow rather than truncating. */
+async function readCapped(
+  stream: ReadableStream<Uint8Array>,
+  max: number,
+): Promise<{ data: Uint8Array; overflow: boolean }> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let overflow = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (total + value.byteLength > max) {
+        overflow = true;
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const data = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    data.set(c, off);
+    off += c.byteLength;
+  }
+  return { data, overflow };
+}
+
 async function defaultStdioTransport(
   req: McpRequest,
   cfg: LinkCliConfig,
 ): Promise<McpResponse> {
-  // clearEnv: the child must never inherit STRIPE_SECRET_KEY / SERVER_SECRET.
-  // Allowlist HOME (link-cli reads its device-flow session from the config dir
-  // under HOME) and PATH (a node CLI resolves its runtime); the binary itself is
-  // the absolute cfg.binPath, so PATH cannot change WHICH executable runs.
-  const env: Record<string, string> = {};
-  const home = Deno.env.get("HOME");
-  const path = Deno.env.get("PATH");
-  if (home) env.HOME = home;
-  if (path) env.PATH = path;
-
   const command = new Deno.Command(cfg.binPath, {
     args: ["--mcp"],
     clearEnv: true,
-    env,
+    env: buildChildEnv(),
     stdin: "piped",
     stdout: "piped",
-    stderr: "piped",
+    // Dropped, not piped: an unread pipe could block the child, and raw stderr
+    // is the most likely place a token would surface — never read it.
+    stderr: "null",
   });
 
   const child = command.spawn();
@@ -203,8 +253,20 @@ async function defaultStdioTransport(
     }));
     await writer.close();
 
-    const { stdout } = await child.output();
-    const lines = new TextDecoder().decode(stdout)
+    // Bounded read: cap stdout so a malfunctioning/hostile link-cli streaming a
+    // runaway payload cannot exhaust the model process (the timeout bounds
+    // wall-clock, not peak memory). Overflow is a hard failure, never a
+    // truncate-and-parse.
+    const { data, overflow } = await readCapped(child.stdout, MAX_STDOUT_BYTES);
+    if (overflow) {
+      child.kill("SIGKILL");
+      throw new Error(
+        `link-cli produced more than ${MAX_STDOUT_BYTES} bytes on stdout — ` +
+          "refusing to parse a runaway/truncated response.",
+      );
+    }
+    await child.status;
+    const lines = new TextDecoder().decode(data)
       .split("\n")
       .filter((l) => l.trim().length > 0);
 

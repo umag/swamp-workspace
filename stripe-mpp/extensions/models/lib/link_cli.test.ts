@@ -11,6 +11,7 @@ import { assertEquals, assertRejects } from "jsr:@std/assert@1";
 import {
   _resetMcpTransport,
   _setMcpTransport,
+  buildChildEnv,
   callTool,
   type LinkCliConfig,
   type McpResponse,
@@ -122,6 +123,28 @@ Deno.test("callTool redacts secrets in an isError message", async () => {
   } finally {
     _resetMcpTransport();
   }
+});
+
+Deno.test("buildChildEnv hands the subprocess ONLY HOME and PATH — no secrets", () => {
+  // The env-inheritance regression guard: a third-party binary must never
+  // receive STRIPE_SECRET_KEY / SERVER_SECRET (or any other parent var).
+  const source: Record<string, string> = {
+    HOME: "/home/consumer",
+    PATH: "/usr/bin",
+    STRIPE_SECRET_KEY: "sk_live_MUST_NOT_LEAK",
+    SERVER_SECRET: "hmac_MUST_NOT_LEAK",
+    AWS_SECRET_ACCESS_KEY: "also_not_this",
+  };
+  const env = buildChildEnv((k) => source[k]);
+  assertEquals(Object.keys(env).sort(), ["HOME", "PATH"]);
+  assertEquals(env.HOME, "/home/consumer");
+  assertEquals("STRIPE_SECRET_KEY" in env, false);
+  assertEquals("SERVER_SECRET" in env, false);
+});
+
+Deno.test("buildChildEnv omits HOME/PATH when the parent lacks them", () => {
+  const env = buildChildEnv(() => undefined);
+  assertEquals(Object.keys(env).length, 0);
 });
 
 Deno.test("callTool rejects a value-derived arg that begins with '-'", async () => {
