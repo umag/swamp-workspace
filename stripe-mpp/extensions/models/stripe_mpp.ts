@@ -39,8 +39,8 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.6";
-import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.6/server";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.8.12";
+import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.12/server";
 import Stripe from "npm:stripe@22.4.0-beta.1";
 import { callTool, type LinkCliConfig } from "./lib/link_cli.ts";
 
@@ -978,7 +978,7 @@ async function retrievePaymentIntent(
  * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.07.21.1",
+  version: "2026.07.21.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     challenge: {

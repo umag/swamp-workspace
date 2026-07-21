@@ -1,5 +1,5 @@
 /**
- * Contract tests pinning mppx@0.8.6 behavior to the MPP specs:
+ * Contract tests pinning mppx@0.8.12 behavior to the MPP specs:
  *  - draft-ryan-httpauth-payment-01 (the "Payment" HTTP auth scheme)
  *  - mpp-specs draft-stripe-charge-00 (the stripe charge method)
  *
@@ -16,8 +16,8 @@ import {
   assertMatch,
   assertNotEquals,
 } from "jsr:@std/assert@1";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.6";
-import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.6/server";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.8.12";
+import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.12/server";
 
 // ---------------------------------------------------------------------------
 // Spec fixtures (draft-stripe-charge-00 §request / §credential)
@@ -143,6 +143,78 @@ Deno.test("receipt: round-trips and enforces status literal", () => {
 
   const parsed = Receipt.Schema.safeParse({ ...receipt, status: "failed" });
   assert(!parsed.success, "Schema must reject non-'success' status literal");
+});
+
+// ---------------------------------------------------------------------------
+// Golden wire vectors (byte-exact, pinned for the current mppx pin)
+//
+// The round-trip tests above prove serialize/deserialize are self-consistent,
+// but a silent wire-format change that still round-trips (and still
+// self-HMAC-verifies) would pass them. These vectors pin the EXACT serialized
+// bytes for the spec fixtures, so a future mppx bump that alters the wire
+// encoding fails loudly HERE — at which point re-derive the expected value FROM
+// THE SPEC before bumping (do not blindly regenerate it from the new mppx).
+//
+// Determinism: Challenge.from is a pure function of {params, secretKey}; the
+// HMAC-SHA256 id and base64url encodings are deterministic (two independent
+// runs produce identical bytes).
+// ---------------------------------------------------------------------------
+
+const GOLDEN_CHALLENGE_ID = "V0ZKMpOO-nQLWcF9sWjQYEyQPwl-3cNlHT1P4obeM-s";
+
+// The request="" token decodes (base64url) to:
+//   {"amount":"1000","currency":"usd","methodDetails":
+//    {"networkId":"profile_test_fixture","paymentMethodTypes":["card","link"]}}
+const GOLDEN_CHALLENGE_WIRE =
+  'Payment id="V0ZKMpOO-nQLWcF9sWjQYEyQPwl-3cNlHT1P4obeM-s", realm="api.example.test", method="stripe", intent="charge", request="eyJhbW91bnQiOiIxMDAwIiwiY3VycmVuY3kiOiJ1c2QiLCJtZXRob2REZXRhaWxzIjp7Im5ldHdvcmtJZCI6InByb2ZpbGVfdGVzdF9maXh0dXJlIiwicGF5bWVudE1ldGhvZFR5cGVzIjpbImNhcmQiLCJsaW5rIl19fQ"';
+
+// Decodes to {"challenge":{...echoed challenge...},
+//             "payload":{"spt":"spt_test_fixture_123","externalId":"ext-42"}}
+const GOLDEN_CREDENTIAL_WIRE =
+  "Payment eyJjaGFsbGVuZ2UiOnsiaWQiOiJWMFpLTXBPTy1uUUxXY0Y5c1dqUVlFeVFQd2wtM2NObEhUMVA0b2JlTS1zIiwiaW50ZW50IjoiY2hhcmdlIiwibWV0aG9kIjoic3RyaXBlIiwicmVhbG0iOiJhcGkuZXhhbXBsZS50ZXN0IiwicmVxdWVzdCI6ImV5SmhiVzkxYm5RaU9pSXhNREF3SWl3aVkzVnljbVZ1WTNraU9pSjFjMlFpTENKdFpYUm9iMlJFWlhSaGFXeHpJanA3SW01bGRIZHZjbXRKWkNJNkluQnliMlpwYkdWZmRHVnpkRjltYVhoMGRYSmxJaXdpY0dGNWJXVnVkRTFsZEdodlpGUjVjR1Z6SWpwYkltTmhjbVFpTENKc2FXNXJJbDE5ZlEifSwicGF5bG9hZCI6eyJzcHQiOiJzcHRfdGVzdF9maXh0dXJlXzEyMyIsImV4dGVybmFsSWQiOiJleHQtNDIifX0";
+
+// Decodes to {"method":"stripe","reference":"pi_test_fixture_123",
+//             "status":"success","timestamp":"2026-07-03T00:00:00.000Z"}
+const GOLDEN_RECEIPT_WIRE =
+  "eyJtZXRob2QiOiJzdHJpcGUiLCJyZWZlcmVuY2UiOiJwaV90ZXN0X2ZpeHR1cmVfMTIzIiwic3RhdHVzIjoic3VjY2VzcyIsInRpbWVzdGFtcCI6IjIwMjYtMDctMDNUMDA6MDA6MDAuMDAwWiJ9";
+
+Deno.test("golden: serialized wire bytes are byte-exact for the pinned mppx", () => {
+  const challenge = Challenge.from({
+    ...SPEC_CHALLENGE_PARAMS,
+    secretKey: SERVER_SECRET,
+  });
+  assertEquals(
+    challenge.id,
+    GOLDEN_CHALLENGE_ID,
+    "challenge id (HMAC-SHA256) drifted — re-derive from the spec before bumping",
+  );
+  assertEquals(
+    Challenge.serialize(challenge),
+    GOLDEN_CHALLENGE_WIRE,
+    "challenge wire format drifted — re-derive from the spec before bumping",
+  );
+
+  const credential = Credential.from({
+    challenge,
+    payload: { spt: "spt_test_fixture_123", externalId: "ext-42" },
+  });
+  assertEquals(
+    Credential.serialize(credential),
+    GOLDEN_CREDENTIAL_WIRE,
+    "credential wire format drifted — re-derive from the spec before bumping",
+  );
+
+  const receipt = Receipt.from({
+    method: "stripe",
+    reference: "pi_test_fixture_123",
+    status: "success",
+    timestamp: "2026-07-03T00:00:00.000Z",
+  });
+  assertEquals(
+    Receipt.serialize(receipt),
+    GOLDEN_RECEIPT_WIRE,
+    "receipt wire format drifted — re-derive from the spec before bumping",
+  );
 });
 
 // ---------------------------------------------------------------------------
