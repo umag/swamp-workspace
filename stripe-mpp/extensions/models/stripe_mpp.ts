@@ -18,7 +18,12 @@
  *  - error redaction: secret keys and spt_ bearer ids never surface in errors
  *  - test-mode gates on test helpers
  *
- * Buyer methods:  probe, mintToken, pay, getIssuedToken, revokeToken
+ * Agent buyer:    probe, mintToken, pay, getIssuedToken, revokeToken
+ * Consumer buyer: listConsumerPaymentMethods, createSpendRequest,
+ *                 getSpendRequest, cancelSpendRequest, paySpendRequest
+ *                 (a human WITHOUT a Stripe account grants a Shared Payment
+ *                 Token from their Link wallet via `link-cli --mcp` over stdio;
+ *                 spent BY REFERENCE — see lib/link_cli.ts)
  * Seller methods: createChallenge, verifyCredential, chargeToken,
  *                 issueReceipt, getCharge, listCharges, refundCharge,
  *                 getGrantedToken, createTestGrantedToken
@@ -26,7 +31,10 @@
  * Caveats (see README): headless SPT minting requires an existing `pm_` and
  * an `active` mint result — `requires_action` (SCA) has no server-only
  * completion and fails loud. The Business Network Profile (`profile_...`)
- * is Dashboard-only.
+ * is Dashboard-only. The consumer-buyer flow is US-only (Link), needs an
+ * authenticated link-cli session co-located with the model, and is inert
+ * (fail-closed) otherwise; the binding spend cap is the consumer-approved
+ * grant, not paySpendRequest's advisory pre-flight.
  *
  * @module
  */
@@ -34,6 +42,7 @@ import { z } from "npm:zod@4";
 import { Challenge, Credential, Receipt } from "npm:mppx@0.8.6";
 import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.6/server";
 import Stripe from "npm:stripe@22.4.0-beta.1";
+import { callTool, type LinkCliConfig } from "./lib/link_cli.ts";
 
 // ============================================================================
 // Global arguments
@@ -78,6 +87,27 @@ const GlobalArgsSchema = z.object({
   ),
   paymentMethodTypes: z.array(z.string()).default(["card", "link"]).describe(
     "Payment method types advertised in seller challenges.",
+  ),
+  // ---- Consumer buyer (Link grant) — see lib/link_cli.ts. -----------------
+  linkCliPath: z.string().optional().describe(
+    "ABSOLUTE path to the installed @stripe/link-cli binary (a non-writable " +
+      "install location is recommended). The consumer-grant methods fail " +
+      "closed when this is unset or not absolute. The binary is spawned by " +
+      "absolute path, so a PATH-shadowing binary cannot hijack which " +
+      "executable runs. Requires an authenticated link-cli device session " +
+      "(`link-cli auth login`, US Link account) on the same host.",
+  ),
+  linkCliVersion: z.string().default("0.9.0").describe(
+    "Pinned link-cli version. The MCP initialize serverInfo.version is " +
+      "checked against it as DRIFT DETECTION only (a shadow binary can spoof " +
+      "it — this is not an integrity guarantee).",
+  ),
+  allowLiveGrants: z.boolean().default(false).describe(
+    "Consumer-grant live-money opt-in. Default false forces link-cli test " +
+      "mode. link-cli exposes NO session live/test signal, so this is " +
+      "config-only — a documented regression vs the createTestGrantedToken " +
+      "credential cross-check. Set true ONLY on a US Link account you intend " +
+      "to move real money on.",
   ),
 });
 type GlobalArgs = z.infer<typeof GlobalArgsSchema>;
@@ -187,6 +217,42 @@ const SummarySchema = z.object({
   truncated: z.boolean(),
   fetchedAt: z.string(),
 }).passthrough();
+
+// Consumer buyer (Link grant) resources. These use z.strictObject — DELIBERATELY
+// breaking the .passthrough() house style — so a stray field (above all a raw
+// spt_ bearer credential) fails the write STRUCTURALLY, not just via the
+// adversarial /spt_/ regex test. Payloads are built field-by-field from named
+// values, never spread from the link-cli response.
+const SpendRequestSchema = z.strictObject({
+  id: z.string(), // lsrq_
+  status: z.string(), // created|pending_approval|approved|denied|expired|cancelled
+  outcome: z.enum([
+    "created",
+    "retrieved",
+    "approved",
+    "denied",
+    "expired",
+    "cancelled",
+    "blocked",
+    "paid",
+    "pay-failed",
+  ]),
+  amount: z.string().optional(), // minor units string (what we requested/pinned)
+  currency: z.string().optional(),
+  networkId: z.string().optional(), // resolved payee, for the audit trail
+  paymentMethodId: z.string().optional(),
+  intentKey: z.string().optional(), // deterministic correlation anchor (idemKey)
+  error: z.string().optional(),
+  fetchedAt: z.string(),
+});
+
+const ConsumerPaymentMethodSchema = z.strictObject({
+  id: z.string(), // csmrpd_
+  kind: z.string().optional(),
+  display: z.string().optional(), // as link-cli returns it (assumed masked
+  // upstream); redact() scrubs sk_/spt_ but does NOT mask PAN/holder text.
+  fetchedAt: z.string(),
+});
 
 // ============================================================================
 // Execution context
@@ -478,7 +544,158 @@ export function amountExceeds(amount: string, maxAmount: string): boolean {
   }
 }
 
+/** A spend-guard violation, with the short form for the audit record and the
+ * long form for the thrown error. */
+export interface GuardViolation {
+  recordError: string;
+  throwError: string;
+}
+
+/** Evaluate a picked stripe/charge challenge against a spend guard
+ * (payee, realm, currency, canonical amount, ceiling). Returns the first
+ * violation or null. SHARED by `pay` (binding, atomic — the credential is
+ * bound to this same challenge) and `paySpendRequest` (advisory pre-flight —
+ * mpp_pay re-fetches and spends against its OWN challenge, so this is
+ * defense-in-depth, NOT a binding cap). */
+export function challengeGuardViolation(
+  picked: {
+    amount?: string;
+    currency?: string;
+    networkId?: string;
+    realm?: string;
+  },
+  gp: {
+    expectedNetworkId?: string;
+    expectedRealm?: string;
+    currency: string;
+    maxAmount: string;
+  },
+): GuardViolation | null {
+  const { amount, currency, networkId, realm } = picked;
+  if (
+    gp.expectedNetworkId !== undefined && networkId !== gp.expectedNetworkId
+  ) {
+    return {
+      recordError: `challenge payee ${networkId} != expected ` +
+        `${gp.expectedNetworkId}`,
+      throwError:
+        `Challenge payee (networkId ${networkId}) does not match the ` +
+        `expected payee (${gp.expectedNetworkId}) — possible ` +
+        "recipient-swap attack; payment blocked.",
+    };
+  }
+  if (gp.expectedRealm !== undefined && realm !== gp.expectedRealm) {
+    return {
+      recordError: `challenge realm ${realm} != expected ${gp.expectedRealm}`,
+      throwError: `Challenge realm (${realm}) does not match the expected ` +
+        `realm (${gp.expectedRealm}) — payment blocked.`,
+    };
+  }
+  if (!currency || currency.toLowerCase() !== gp.currency.toLowerCase()) {
+    return {
+      recordError: `challenge currency ${currency} != expected ${gp.currency}`,
+      throwError: `Challenge currency (${currency}) does not match the ` +
+        `expected currency (${gp.currency}) — payment blocked.`,
+    };
+  }
+  if (!amount || !isCanonicalMinorUnits(amount)) {
+    return {
+      recordError: `challenge amount ${amount} is not canonical minor units`,
+      throwError: `Challenge amount (${amount}) is not a canonical ` +
+        "minor-units integer — payment blocked (defends against " +
+        "amount-parsing confusion).",
+    };
+  }
+  if (amountExceeds(amount, gp.maxAmount)) {
+    return {
+      recordError: `challenge amount ${amount} exceeds maxAmount ` +
+        `${gp.maxAmount}`,
+      throwError: `Challenge amount (${amount} ${currency}) exceeds the ` +
+        `maxAmount guard (${gp.maxAmount}) — payment blocked.`,
+    };
+  }
+  return null;
+}
+
 const now = () => new Date().toISOString();
+
+// ---- Consumer buyer (Link grant) helpers ----------------------------------
+
+/** Anchored id patterns — refuse anything that isn't a well-formed id before it
+ * reaches link-cli (defence-in-depth alongside the leading-dash guard). */
+const LSRQ = /^lsrq_[A-Za-z0-9]+$/;
+const CSMRPD = /^csmrpd_[A-Za-z0-9]+$/;
+const PROFILE = /^profile_(test_)?[A-Za-z0-9]+$/;
+
+/** Card-network minimum per currency, minor units (docs-sourced — NOT a
+ * link-cli input constraint; enforced here so a sub-minimum grant is refused
+ * before a consumer is ever prompted). */
+const MIN_CHARGE: Record<string, bigint> = { usd: 50n };
+
+/** Build the link-cli MCP config from globals, failing CLOSED when the binary
+ * path is unset or not absolute (a PATH-shadowing binary must not be able to
+ * hijack which executable runs). */
+function linkCliConfig(g: GlobalArgs): LinkCliConfig {
+  const p = g.linkCliPath;
+  if (!p || !p.startsWith("/")) {
+    throw new Error(
+      "Consumer-grant methods require an ABSOLUTE linkCliPath to an " +
+        "installed @stripe/link-cli (fail-closed). Install it to a " +
+        "non-writable location and set the linkCliPath global. These methods " +
+        "also need an authenticated link-cli session (`link-cli auth login`, " +
+        "US Link account) on this host; they are inert otherwise.",
+    );
+  }
+  // Defense-in-depth cross-check: link-cli exposes no session live/test signal,
+  // so allowLiveGrants is config-only. Refuse the contradictory combination
+  // where the instance is nominally test (testMode) yet opts into live grants —
+  // it would move real money on what reads as a test instance.
+  if (g.testMode && g.allowLiveGrants) {
+    throw new Error(
+      "Contradictory config: testMode=true with allowLiveGrants=true would " +
+        "create LIVE consumer grants on a test-labelled instance. Set " +
+        "allowLiveGrants=false (test grants) or testMode=false (live instance).",
+    );
+  }
+  return {
+    binPath: p,
+    version: g.linkCliVersion,
+    // Live grants only when explicitly opted in; default is test mode.
+    test: !g.allowLiveGrants,
+    timeoutMs: g.timeoutMs,
+  };
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+function strOrUndef(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+/** link-cli returns amount as an integer (minor units); persist as a string. */
+function toAmountStr(v: unknown): string | undefined {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" && Number.isInteger(v)) return String(v);
+  return undefined;
+}
+
+/** Reject a Link-origin id (lsrq_/csmrpd_) on the agent-token methods with an
+ * actionable message: these are not platform-issued tokens, so
+ * issuedTokens.retrieve/revoke (which use the platform secretKey) would 404/403.
+ * A Link grant is spent by reference via paySpendRequest. */
+function assertNotLinkOriginId(g: GlobalArgs, id: string): void {
+  if (LSRQ.test(id) || CSMRPD.test(id)) {
+    throw new Error(
+      redact(
+        g,
+        `"${id}" is a Link-origin id (spend request / consumer payment ` +
+          "method), not a platform-issued Shared Payment Token. Link grants " +
+          "are spent by reference via paySpendRequest and cannot be retrieved " +
+          "or revoked through the platform secret key.",
+      ),
+    );
+  }
+}
 
 // ============================================================================
 // Method argument schemas
@@ -538,6 +755,60 @@ const PayArgs = z.object({
 
 const SptIdArgs = z.object({
   sptId: z.string().describe("Shared Payment Token id (spt_...)."),
+});
+
+// ---- Consumer buyer (Link grant) argument schemas -------------------------
+
+const ListConsumerPaymentMethodsArgs = z.object({});
+
+const CreateSpendRequestArgs = z.object({
+  amount: z.string().describe(
+    'Amount to authorise, minor-units STRING (e.g. "500" = $5.00). ' +
+      "Converted to an integer only at the JSON-RPC boundary. <=500000; must " +
+      "meet the card-network minimum ($0.50 USD).",
+  ),
+  currency: z.string().default("usd").describe(
+    "Currency (ISO, lowercase). US-only Link; default usd.",
+  ),
+  context: z.string().min(100).describe(
+    "Purchase description + rationale the consumer READS when approving. " +
+      "link-cli requires >= 100 characters.",
+  ),
+  networkId: z.string().optional().describe(
+    "Payee Business Network Profile (profile_...). Defaults to the global " +
+      "networkId; a per-call value must still be an anchored profile id.",
+  ),
+  paymentMethodId: z.string().optional().describe(
+    "Consumer Link payment method (csmrpd_...). Omit to let the consumer pick " +
+      "in the Link app.",
+  ),
+  externalId: z.string().optional().describe(
+    "Correlation id; also anchors the deterministic intent key persisted on " +
+      "the audit record. NOTE: link-cli has no idempotency key and this model " +
+      "does no coalescing, so a duplicate identical createSpendRequest call " +
+      "produces a duplicate consumer approval prompt.",
+  ),
+});
+
+const SpendRequestIdArgs = z.object({
+  id: z.string().describe("Spend request id (lsrq_...)."),
+});
+
+const PaySpendRequestArgs = z.object({
+  ...HttpArgs,
+  id: z.string().describe("Approved spend request id (lsrq_...) to spend."),
+  maxAmount: z.string().describe(
+    "ADVISORY pre-flight ceiling (minor units). NOTE: the binding cap is the " +
+      "amount the consumer approved at grant time (Stripe-enforced) — mpp_pay " +
+      "re-fetches and spends against its own challenge, so this pre-flight " +
+      "cannot bind what link-cli actually pays.",
+  ),
+  currency: z.string().describe("Expected challenge currency (advisory)."),
+  expectedNetworkId: z.string().optional().describe(
+    "Advisory payee pin for the pre-flight challenge.",
+  ),
+  expectedRealm: z.string().optional().describe("Advisory realm pin."),
+  externalId: z.string().optional().describe("Correlation id."),
 });
 
 const CreateChallengeArgs = z.object({
@@ -703,10 +974,11 @@ async function retrievePaymentIntent(
 // Model
 // ============================================================================
 
-/** Stripe MPP model: buyer (probe/mint/pay) + full seller API. */
+/** Stripe MPP model: agent buyer (probe/mint/pay) + consumer buyer (Link
+ * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.07.16.2",
+  version: "2026.07.21.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     challenge: {
@@ -770,6 +1042,25 @@ export const model = {
     summary: {
       description: "Fan-out listing summary.",
       schema: SummarySchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
+    spendRequest: {
+      description:
+        "Consumer Link spend-request lifecycle — written on EVERY outcome " +
+        "(outcome ∈ created/retrieved/cancelled/blocked/paid/pay-failed; the " +
+        "approval status approved|denied|expired is carried in the `status` " +
+        "field of a retrieved record). " +
+        "Holds the lsrq_ reference only; NEVER a raw spt_ credential.",
+      schema: SpendRequestSchema,
+      lifetime: "infinite",
+      garbageCollection: 20,
+    },
+    consumerPaymentMethod: {
+      description:
+        "Consumer Link payment method (csmrpd_; display as link-cli returns " +
+        "it, assumed masked upstream — not additionally masked here).",
+      schema: ConsumerPaymentMethodSchema,
       lifetime: "infinite",
       garbageCollection: 10,
     },
@@ -944,76 +1235,28 @@ export const model = {
         const { challenge, amount, currency, networkId, realm } = picked;
         const challengeInfo = { id: challenge.id, amount, currency };
 
-        // Recipient guard — pin the payee/realm BEFORE trusting the challenge.
-        // A MITM or hostile resource can inject a well-formed stripe/charge
-        // challenge that names the attacker's profile; without pinning, the
-        // amount/currency could look right while the money goes elsewhere.
-        if (
-          args.expectedNetworkId !== undefined &&
-          networkId !== args.expectedNetworkId
-        ) {
+        // Recipient + spend guard — pin payee/realm/currency/amount BEFORE the
+        // credential ever leaves this process. A MITM or hostile resource can
+        // inject a well-formed stripe/charge challenge that names the attacker's
+        // profile; without pinning, the amount/currency could look right while
+        // the money goes elsewhere. `pay` is atomic: the credential below is
+        // bound to this SAME challenge, so the guard is binding.
+        const violation = challengeGuardViolation(
+          { amount, currency, networkId, realm },
+          {
+            expectedNetworkId: args.expectedNetworkId,
+            expectedRealm: args.expectedRealm,
+            currency: args.currency,
+            maxAmount: args.maxAmount,
+          },
+        );
+        if (violation) {
           await record({
             outcome: "blocked",
             challenge: challengeInfo,
-            error: `challenge payee ${networkId} != expected ` +
-              `${args.expectedNetworkId}`,
+            error: violation.recordError,
           });
-          throw new Error(
-            `Challenge payee (networkId ${networkId}) does not match the ` +
-              `expected payee (${args.expectedNetworkId}) — possible ` +
-              "recipient-swap attack; payment blocked.",
-          );
-        }
-        if (args.expectedRealm !== undefined && realm !== args.expectedRealm) {
-          await record({
-            outcome: "blocked",
-            challenge: challengeInfo,
-            error: `challenge realm ${realm} != expected ${args.expectedRealm}`,
-          });
-          throw new Error(
-            `Challenge realm (${realm}) does not match the expected realm ` +
-              `(${args.expectedRealm}) — payment blocked.`,
-          );
-        }
-
-        // Spend guard — BEFORE the credential ever leaves this process.
-        if (
-          !currency || currency.toLowerCase() !== args.currency.toLowerCase()
-        ) {
-          await record({
-            outcome: "blocked",
-            challenge: challengeInfo,
-            error:
-              `challenge currency ${currency} != expected ${args.currency}`,
-          });
-          throw new Error(
-            `Challenge currency (${currency}) does not match the expected ` +
-              `currency (${args.currency}) — payment blocked.`,
-          );
-        }
-        if (!amount || !isCanonicalMinorUnits(amount)) {
-          await record({
-            outcome: "blocked",
-            challenge: challengeInfo,
-            error: `challenge amount ${amount} is not canonical minor units`,
-          });
-          throw new Error(
-            `Challenge amount (${amount}) is not a canonical minor-units ` +
-              "integer — payment blocked (defends against amount-parsing " +
-              "confusion).",
-          );
-        }
-        if (amountExceeds(amount, args.maxAmount)) {
-          await record({
-            outcome: "blocked",
-            challenge: challengeInfo,
-            error:
-              `challenge amount ${amount} exceeds maxAmount ${args.maxAmount}`,
-          });
-          throw new Error(
-            `Challenge amount (${amount} ${currency}) exceeds the maxAmount ` +
-              `guard (${args.maxAmount}) — payment blocked.`,
-          );
+          throw new Error(violation.throwError);
         }
 
         const authorization = Credential.serialize(Credential.from({
@@ -1080,6 +1323,7 @@ export const model = {
       sensitiveOutput: true,
       execute: async (args: z.infer<typeof SptIdArgs>, context: ExecCtx) => {
         const g = parseGlobals(context);
+        assertNotLinkOriginId(g, args.sptId);
         const client = sdk(g);
         const token = await redacting(
           g,
@@ -1106,6 +1350,7 @@ export const model = {
       arguments: SptIdArgs,
       execute: async (args: z.infer<typeof SptIdArgs>, context: ExecCtx) => {
         const g = parseGlobals(context);
+        assertNotLinkOriginId(g, args.sptId);
         const client = sdk(g);
         const token = await redacting(
           g,
@@ -1859,6 +2104,424 @@ export const model = {
             fetchedAt: now(),
           },
         );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    // -------------------------------------------- consumer buyer (Link grant)
+    // A human WITHOUT a Stripe account grants a Shared Payment Token from their
+    // Link wallet, which the model then spends BY REFERENCE (mpp_pay by lsrq_).
+    // Transport is `link-cli --mcp` over stdio (see lib/link_cli.ts). US-only
+    // Link; inert unless linkCliPath is set and a link-cli session is
+    // authenticated on this host.
+    listConsumerPaymentMethods: {
+      description:
+        "List the consumer's Link wallet payment methods (csmrpd_). Fan-out: " +
+        "one consumerPaymentMethod resource per item plus a summary " +
+        "(summary-consumer-payment-methods). Requires an authenticated " +
+        "link-cli session; inert otherwise.",
+      arguments: ListConsumerPaymentMethodsArgs,
+      execute: async (
+        _args: z.infer<typeof ListConsumerPaymentMethodsArgs>,
+        context: ExecCtx,
+      ) => {
+        const g = parseGlobals(context);
+        const cfg = linkCliConfig(g);
+        const red = (s: string) => redact(g, s);
+        const res = await callTool(
+          { tool: "payment-methods_list", args: {} },
+          cfg,
+          red,
+        );
+        const items: unknown[] = Array.isArray(res)
+          ? res
+          : (isRecord(res) && Array.isArray(res.data) ? res.data : []);
+        const handles: unknown[] = [];
+        const ids: string[] = [];
+        for (const it of items) {
+          if (!isRecord(it) || typeof it.id !== "string") continue;
+          ids.push(it.id);
+          const display = strOrUndef(it.display);
+          const h = await context.writeResource(
+            "consumerPaymentMethod",
+            `cpm-${slug(it.id)}`,
+            {
+              id: it.id,
+              kind: strOrUndef(it.type) ?? strOrUndef(it.kind),
+              display: display ? red(display) : undefined,
+              fetchedAt: now(),
+            },
+          );
+          handles.push(h);
+        }
+        const summary = await context.writeResource(
+          "summary",
+          "summary-consumer-payment-methods",
+          {
+            scope: "consumer-payment-methods",
+            total: ids.length,
+            ids,
+            truncated: false,
+            fetchedAt: now(),
+          },
+        );
+        handles.push(summary);
+        return { dataHandles: handles };
+      },
+    },
+
+    getSpendRequest: {
+      description:
+        "Retrieve a consumer spend request by lsrq_ (single-shot; interval 0). " +
+        "Do NOT call in a poll loop — the ~10-minute approval wait is a " +
+        "workflow's manual_approval step (timeout 600), not per-model-lock " +
+        "contention. Statuses: created | pending_approval | approved | denied " +
+        "| expired.",
+      arguments: SpendRequestIdArgs,
+      sensitiveOutput: true,
+      execute: async (
+        args: z.infer<typeof SpendRequestIdArgs>,
+        context: ExecCtx,
+      ) => {
+        const g = parseGlobals(context);
+        if (!LSRQ.test(args.id)) {
+          throw new Error(
+            `Not a spend-request id (lsrq_...): ${redact(g, args.id)}`,
+          );
+        }
+        const cfg = linkCliConfig(g);
+        const red = (s: string) => redact(g, s);
+        const res = await callTool(
+          { tool: "spend-request_retrieve", args: { id: args.id } },
+          cfg,
+          red,
+        );
+        const sr = isRecord(res) ? res : {};
+        const handle = await context.writeResource(
+          "spendRequest",
+          `spend-${slug(args.id)}`,
+          {
+            id: args.id,
+            status: strOrUndef(sr.status) ?? "unknown",
+            outcome: "retrieved" as const,
+            amount: toAmountStr(sr.amount),
+            currency: strOrUndef(sr.currency),
+            networkId: strOrUndef(sr.network_id) ?? strOrUndef(sr.networkId),
+            paymentMethodId: strOrUndef(sr.payment_method_id) ??
+              strOrUndef(sr.paymentMethodId),
+            fetchedAt: now(),
+          },
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    cancelSpendRequest: {
+      description:
+        "Cancel a PENDING consumer spend request (read-before-cancel). Note: " +
+        "there is no revocation for an ALREADY-APPROVED grant — cancel covers " +
+        "pending requests only.",
+      arguments: SpendRequestIdArgs,
+      execute: async (
+        args: z.infer<typeof SpendRequestIdArgs>,
+        context: ExecCtx,
+      ) => {
+        const g = parseGlobals(context);
+        if (!LSRQ.test(args.id)) {
+          throw new Error(
+            `Not a spend-request id (lsrq_...): ${redact(g, args.id)}`,
+          );
+        }
+        const cfg = linkCliConfig(g);
+        const red = (s: string) => redact(g, s);
+        // Read before cancel so the audit trail records the prior state.
+        await callTool(
+          { tool: "spend-request_retrieve", args: { id: args.id } },
+          cfg,
+          red,
+        );
+        const res = await callTool(
+          { tool: "spend-request_cancel", args: { id: args.id } },
+          cfg,
+          red,
+        );
+        const sr = isRecord(res) ? res : {};
+        const handle = await context.writeResource(
+          "spendRequest",
+          `spend-${slug(args.id)}`,
+          {
+            id: args.id,
+            status: strOrUndef(sr.status) ?? "cancelled",
+            outcome: "cancelled" as const,
+            fetchedAt: now(),
+          },
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    createSpendRequest: {
+      description:
+        "Create a consumer Link spend request — the PRIMARY (binding) guard " +
+        "for the consumer flow. amount cap/floor, currency, and the " +
+        "vault-pinned payee are enforced HERE, before the consumer is " +
+        "prompted, because the consumer-APPROVED grant is the binding spend " +
+        "cap (paySpendRequest's later pre-flight is only advisory). " +
+        "requestApproval=false: this does NOT block; poll getSpendRequest via " +
+        "a workflow manual_approval step for the terminal status.",
+      arguments: CreateSpendRequestArgs,
+      sensitiveOutput: true,
+      execute: async (
+        args: z.infer<typeof CreateSpendRequestArgs>,
+        context: ExecCtx,
+      ) => {
+        const g = parseGlobals(context);
+        const cfg = linkCliConfig(g);
+        const red = (s: string) => redact(g, s);
+        const currency = args.currency.toLowerCase();
+        const networkId = args.networkId ?? g.networkId;
+        const intentKey = await idemKey("spend-request", [
+          args.externalId,
+          networkId,
+          args.amount,
+          currency,
+          args.paymentMethodId,
+        ]);
+        // Write the audit record on EVERY outcome before throwing. Pre-lsrq
+        // (blocked/guard) records are keyed by the intent; success by the lsrq_.
+        const blocked = async (error: string): Promise<never> => {
+          await context.writeResource(
+            "spendRequest",
+            `spend-${slug(args.externalId ?? intentKey)}`,
+            {
+              id: intentKey,
+              status: "blocked",
+              outcome: "blocked" as const,
+              amount: args.amount,
+              currency,
+              networkId,
+              paymentMethodId: args.paymentMethodId,
+              intentKey,
+              error,
+              fetchedAt: now(),
+            },
+          );
+          throw new Error(red(error));
+        };
+
+        // ---- Primary guards, BEFORE the consumer is ever prompted ----------
+        if (!networkId) {
+          await blocked(
+            "createSpendRequest requires a payee Business Network Profile — " +
+              "set the networkId global (fail-closed).",
+          );
+        }
+        if (!PROFILE.test(networkId!)) {
+          await blocked(
+            `Not a Business Network Profile id (profile_...): ${networkId}`,
+          );
+        }
+        if (args.paymentMethodId && !CSMRPD.test(args.paymentMethodId)) {
+          await blocked(
+            `Not a consumer payment method id (csmrpd_...): ${args.paymentMethodId}`,
+          );
+        }
+        if (!isCanonicalMinorUnits(args.amount)) {
+          await blocked(
+            `Amount (${args.amount}) is not a canonical minor-units integer.`,
+          );
+        }
+        if (amountExceeds(args.amount, "500000")) {
+          await blocked(
+            `Amount (${args.amount}) exceeds link-cli's 500000 minor-unit cap.`,
+          );
+        }
+        const floor = MIN_CHARGE[currency];
+        if (floor !== undefined && BigInt(args.amount) < floor) {
+          await blocked(
+            `Amount (${args.amount} ${currency}) is below the ${floor} ` +
+              "minor-unit card-network minimum.",
+          );
+        }
+
+        // ---- Create the grant. test mode is DERIVED from allowLiveGrants ---
+        const res = await callTool(
+          {
+            tool: "spend-request_create",
+            args: {
+              credentialType: "shared_payment_token",
+              networkId,
+              amount: Number(args.amount), // canonical string -> integer at wire
+              currency,
+              context: args.context,
+              requestApproval: false,
+              test: cfg.test,
+              ...(args.paymentMethodId
+                ? { paymentMethodId: args.paymentMethodId }
+                : {}),
+            },
+          },
+          cfg,
+          red,
+        );
+        const sr = isRecord(res) ? res : {};
+        const lsrq = strOrUndef(sr.id);
+        if (!lsrq || !LSRQ.test(lsrq)) {
+          await blocked("link-cli returned no valid spend-request id.");
+        }
+
+        // ---- Response-echo verification: fail closed on a swapped grant ----
+        const echoNet = strOrUndef(sr.network_id) ?? strOrUndef(sr.networkId);
+        const echoAmt = toAmountStr(sr.amount);
+        const echoCur = strOrUndef(sr.currency);
+        if (echoNet !== undefined && echoNet !== networkId) {
+          await blocked(
+            `Grant echo mismatch: payee ${echoNet} != requested ${networkId}.`,
+          );
+        }
+        if (echoAmt !== undefined && echoAmt !== args.amount) {
+          await blocked(
+            `Grant echo mismatch: amount ${echoAmt} != requested ${args.amount}.`,
+          );
+        }
+        if (echoCur !== undefined && echoCur.toLowerCase() !== currency) {
+          await blocked(
+            `Grant echo mismatch: currency ${echoCur} != requested ${currency}.`,
+          );
+        }
+        const echoPm = strOrUndef(sr.payment_method_id) ??
+          strOrUndef(sr.paymentMethodId);
+        if (
+          args.paymentMethodId !== undefined && echoPm !== undefined &&
+          echoPm !== args.paymentMethodId
+        ) {
+          await blocked(
+            `Grant echo mismatch: payment method ${echoPm} != requested ` +
+              `${args.paymentMethodId}.`,
+          );
+        }
+
+        const handle = await context.writeResource(
+          "spendRequest",
+          `spend-${slug(lsrq!)}`,
+          {
+            id: lsrq!,
+            status: strOrUndef(sr.status) ?? "created",
+            outcome: "created" as const,
+            amount: args.amount,
+            currency,
+            networkId,
+            paymentMethodId: args.paymentMethodId,
+            intentKey,
+            fetchedAt: now(),
+          },
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    paySpendRequest: {
+      description:
+        "Spend an APPROVED consumer grant against an MPP-protected URL, by " +
+        "reference (link-cli mpp_pay --spendRequestId). The pre-flight guard " +
+        "against the 402 is ADVISORY only: mpp_pay re-fetches the URL and " +
+        "spends against its OWN challenge, so it cannot bind our pins — the " +
+        "binding cap is the consumer-approved grant (createSpendRequest). Our " +
+        "own `pay` cannot spend a Link grant (it has no raw spt_).",
+      arguments: PaySpendRequestArgs,
+      sensitiveOutput: true,
+      execute: async (
+        args: z.infer<typeof PaySpendRequestArgs>,
+        context: ExecCtx,
+      ) => {
+        const g = parseGlobals(context);
+        if (!LSRQ.test(args.id)) {
+          throw new Error(
+            `Not a spend-request id (lsrq_...): ${redact(g, args.id)}`,
+          );
+        }
+        const cfg = linkCliConfig(g);
+        const red = (s: string) => redact(g, s);
+        const record = (extra: Record<string, unknown>) =>
+          context.writeResource("spendRequest", `spend-${slug(args.id)}`, {
+            id: args.id,
+            ...extra,
+            fetchedAt: now(),
+          });
+
+        // ADVISORY pre-flight: probe the 402 and run the shared guard. This
+        // catches an obviously-wrong target before spending, but is NOT binding.
+        const first = await redacting(g, () => fetchResource(g, args));
+        if (first.status === 402) {
+          const picked = pickStripeChallenge(Challenge.fromResponseList(first));
+          await first.body?.cancel().catch(() => {});
+          if (picked) {
+            const violation = challengeGuardViolation(
+              {
+                amount: picked.amount,
+                currency: picked.currency,
+                networkId: picked.networkId,
+                realm: picked.realm,
+              },
+              {
+                expectedNetworkId: args.expectedNetworkId,
+                expectedRealm: args.expectedRealm,
+                currency: args.currency,
+                maxAmount: args.maxAmount,
+              },
+            );
+            if (violation) {
+              await record({
+                status: "blocked",
+                outcome: "blocked",
+                error: violation.recordError,
+              });
+              throw new Error(violation.throwError);
+            }
+          }
+        } else {
+          await first.body?.cancel().catch(() => {});
+        }
+
+        // Delegate the actual spend to link-cli mpp_pay, by lsrq_ reference.
+        const payArgs: Record<string, unknown> = {
+          url: args.url,
+          spendRequestId: args.id,
+          method: args.httpMethod,
+        };
+        if (args.body) payArgs.data = args.body;
+        let outcome: "paid" | "pay-failed" = "paid";
+        let payErr: string | undefined;
+        try {
+          await callTool({ tool: "mpp_pay", args: payArgs }, cfg, red);
+        } catch (e) {
+          outcome = "pay-failed";
+          payErr = (e as Error).message;
+        }
+
+        // Close out the grant with link-cli's outcome telemetry (best-effort).
+        try {
+          await callTool(
+            {
+              tool: "report",
+              args: {
+                spendRequestId: args.id,
+                outcome: outcome === "paid" ? "success" : "blocked",
+              },
+            },
+            cfg,
+            red,
+          );
+        } catch { /* telemetry must not mask the payment outcome */ }
+
+        const handle = await record({
+          status: outcome,
+          outcome,
+          error: payErr,
+        });
+        if (outcome === "pay-failed") {
+          throw new Error(payErr ?? "mpp_pay failed");
+        }
         return { dataHandles: [handle] };
       },
     },

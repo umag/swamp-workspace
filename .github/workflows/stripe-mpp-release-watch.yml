@@ -46,6 +46,15 @@ jobs:
           test -n "$mppx_pin" || { echo "::error::mppx pin not found in $PINS_FILE"; exit 1; }
           test -n "$stripe_pin" || { echo "::error::stripe pin not found in $PINS_FILE"; exit 1; }
 
+          # link-cli is a BINARY, not an npm: import, so it has no import
+          # specifier — its pin is the `linkCliVersion` global default. Missing
+          # is non-fatal (the consumer flow is optional).
+          # `|| true`: an absent pin must yield "" so the `if [ -n ... ]` guard
+          # below skips this optional branch — NOT abort the whole step under
+          # `set -euo pipefail` (which would also take down the required
+          # mppx/stripe check as collateral).
+          linkcli_pin=$(grep -aoE 'linkCliVersion.*default\("[0-9][^"]*"' "$PINS_FILE" | head -1 | sed -E 's/.*default\("([^"]+)".*/\1/' || true)
+
           mppx_latest=$(curl -fsSL https://registry.npmjs.org/mppx | jq -r '.["dist-tags"].latest')
           stripe_preview=$(curl -fsSL https://registry.npmjs.org/stripe | jq -r '.["dist-tags"]["public-preview"] // .["dist-tags"].beta')
 
@@ -55,6 +64,11 @@ jobs:
           stale=""
           [ "$mppx_pin" != "$mppx_latest" ] && stale="${stale}- \`mppx\`: pinned \`$mppx_pin\`, latest \`$mppx_latest\`\n"
           [ "$stripe_pin" != "$stripe_preview" ] && stale="${stale}- \`stripe\`: pinned \`$stripe_pin\`, public-preview \`$stripe_preview\`\n"
+          if [ -n "$linkcli_pin" ]; then
+            linkcli_latest=$(curl -fsSL 'https://registry.npmjs.org/@stripe%2flink-cli' | jq -r '.["dist-tags"].latest')
+            echo "link-cli: pinned=$linkcli_pin latest=$linkcli_latest"
+            [ "$linkcli_pin" != "$linkcli_latest" ] && stale="${stale}- \`@stripe/link-cli\`: pinned \`$linkcli_pin\`, latest \`$linkcli_latest\` (re-pin the MCP contract fixtures in stripe_mpp_test.ts)\n"
+          fi
 
           {
             echo "stale<<EOF"

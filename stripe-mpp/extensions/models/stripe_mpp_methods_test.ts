@@ -21,6 +21,12 @@ import {
 } from "jsr:@std/assert@1";
 import { Challenge, Credential, Receipt } from "npm:mppx@0.8.6";
 import { model } from "./stripe_mpp.ts";
+import {
+  _resetMcpTransport,
+  _setMcpTransport,
+  type McpRequest,
+  type McpResponse,
+} from "./lib/link_cli.ts";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -627,5 +633,368 @@ Deno.test("createTestGrantedToken: refuses outside test mode", async () => {
       ),
     Error,
     "test mode",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Consumer buyer (Link grant) — driven through the injected link-cli MCP
+// transport (no subprocess). NOTE: these mutate a process-global transport, so
+// this file must not run under `deno test --parallel`.
+// ---------------------------------------------------------------------------
+
+const CONSUMER_ARGS = {
+  ...GLOBAL_ARGS,
+  linkCliPath: "/opt/link-cli/link-cli",
+  linkCliVersion: "0.9.0",
+  allowLiveGrants: false,
+};
+
+/** Stub the MCP transport with a per-tool response map; capture the calls. */
+function withMcpStub(
+  routes: Record<string, unknown>,
+  fn: (calls: McpRequest[]) => Promise<void>,
+) {
+  const calls: McpRequest[] = [];
+  _setMcpTransport((req: McpRequest): Promise<McpResponse> => {
+    calls.push(req);
+    const payload = routes[req.tool];
+    return Promise.resolve({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        content: [{ type: "text", text: JSON.stringify(payload ?? {}) }],
+      },
+    });
+  });
+  return (async () => {
+    try {
+      await fn(calls);
+    } finally {
+      _resetMcpTransport();
+    }
+  })();
+}
+
+Deno.test("consumer: methods fail closed without an absolute linkCliPath", async () => {
+  const { ctx } = makeCtx(GLOBAL_ARGS); // no linkCliPath
+  await assertRejects(
+    () => model.methods.getSpendRequest.execute({ id: "lsrq_abc" }, ctx),
+    Error,
+    "linkCliPath",
+  );
+});
+
+Deno.test("consumer: methods reject a relative linkCliPath (no PATH hijack)", async () => {
+  const { ctx } = makeCtx({ ...CONSUMER_ARGS, linkCliPath: "link-cli" });
+  await assertRejects(
+    () => model.methods.getSpendRequest.execute({ id: "lsrq_abc" }, ctx),
+    Error,
+    "linkCliPath",
+  );
+});
+
+Deno.test("listConsumerPaymentMethods fans out one resource per item + summary", async () => {
+  const { ctx, written } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub(
+    {
+      "payment-methods_list": [
+        { id: "csmrpd_visa1", type: "card", display: "Visa ****4242" },
+        { id: "csmrpd_bank2", type: "bank_account" },
+      ],
+    },
+    () => {
+      return model.methods.listConsumerPaymentMethods.execute({}, ctx).then(
+        () => {
+          const cpm = written.filter((w) => w.spec === "consumerPaymentMethod");
+          assertEquals(cpm.length, 2);
+          assertEquals(cpm[0].payload.id, "csmrpd_visa1");
+          const summary = written.find((w) => w.spec === "summary");
+          assert(summary);
+          assertEquals(summary.name, "summary-consumer-payment-methods");
+          assertEquals(summary.payload.total, 2);
+        },
+      );
+    },
+  );
+});
+
+Deno.test("getSpendRequest rejects a non-lsrq id", async () => {
+  const { ctx } = makeCtx(CONSUMER_ARGS);
+  await assertRejects(
+    () => model.methods.getSpendRequest.execute({ id: "spend_bad" }, ctx),
+    Error,
+    "lsrq_",
+  );
+});
+
+Deno.test("getSpendRequest records status and NEVER persists a raw spt_", async () => {
+  const { ctx, written } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub(
+    {
+      // A hostile/buggy response carrying a raw token must not reach a resource.
+      "spend-request_retrieve": {
+        id: "lsrq_abc",
+        status: "approved",
+        amount: 500,
+        currency: "usd",
+        network_id: "profile_test_fixture",
+        shared_payment_token: "spt_live_LEAKED_SECRET_9999",
+      },
+    },
+    () => {
+      return model.methods.getSpendRequest.execute({ id: "lsrq_abc" }, ctx)
+        .then(() => {
+          const sr = written.find((w) => w.spec === "spendRequest");
+          assert(sr);
+          assertEquals(sr.payload.status, "approved");
+          assertEquals(sr.payload.outcome, "retrieved");
+          assertEquals(sr.payload.amount, "500"); // integer coerced to string
+          // The strictObject schema + field-by-field construction means the
+          // stray spt_ can never be persisted.
+          assertEquals(
+            JSON.stringify(sr.payload).includes("spt_"),
+            false,
+          );
+        });
+    },
+  );
+});
+
+Deno.test("cancelSpendRequest reads before cancelling", async () => {
+  const { ctx, written } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub(
+    {
+      "spend-request_retrieve": { id: "lsrq_abc", status: "pending_approval" },
+      "spend-request_cancel": { id: "lsrq_abc", status: "cancelled" },
+    },
+    (calls) => {
+      return model.methods.cancelSpendRequest.execute({ id: "lsrq_abc" }, ctx)
+        .then(() => {
+          assertEquals(calls.map((c) => c.tool), [
+            "spend-request_retrieve",
+            "spend-request_cancel",
+          ]);
+          const sr = written.find((w) => w.spec === "spendRequest");
+          assert(sr);
+          assertEquals(sr.payload.outcome, "cancelled");
+        });
+    },
+  );
+});
+
+const CTX100 =
+  "Buying one month of API access to the weather forecast endpoint for an " +
+  "automated trading agent; single charge, no recurring commitment here.";
+
+Deno.test("createSpendRequest fails closed when no payee networkId resolves", async () => {
+  const { ctx } = makeCtx({ ...CONSUMER_ARGS, networkId: undefined });
+  await assertRejects(
+    () =>
+      run("createSpendRequest", {
+        amount: "500",
+        currency: "usd",
+        context: CTX100,
+      }, ctx),
+    Error,
+    "payee",
+  );
+});
+
+Deno.test("createSpendRequest rejects a sub-floor amount BEFORE prompting", async () => {
+  const { ctx } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub({}, async (calls) => {
+    await assertRejects(
+      () =>
+        run("createSpendRequest", {
+          amount: "10", // $0.10, below the $0.50 USD floor
+          currency: "usd",
+          context: CTX100,
+        }, ctx),
+      Error,
+      "minimum",
+    );
+    assertEquals(calls.length, 0, "no link-cli call before a guard rejection");
+  });
+});
+
+Deno.test("createSpendRequest rejects an over-cap amount", async () => {
+  const { ctx } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub({}, async (calls) => {
+    await assertRejects(
+      () =>
+        run("createSpendRequest", {
+          amount: "500001",
+          currency: "usd",
+          context: CTX100,
+        }, ctx),
+      Error,
+      "cap",
+    );
+    assertEquals(calls.length, 0);
+  });
+});
+
+Deno.test("createSpendRequest sends the SPT tool args and derives test mode", async () => {
+  const { ctx, written } = makeCtx(CONSUMER_ARGS); // allowLiveGrants false
+  await withMcpStub(
+    {
+      "spend-request_create": {
+        id: "lsrq_new",
+        status: "pending_approval",
+        network_id: "profile_test_fixture",
+        amount: 500,
+        currency: "usd",
+      },
+    },
+    async (calls) => {
+      await run("createSpendRequest", {
+        amount: "500",
+        currency: "usd",
+        context: CTX100,
+      }, ctx);
+      assertEquals(calls[0].tool, "spend-request_create");
+      const a = calls[0].args;
+      assertEquals(a.credentialType, "shared_payment_token");
+      assertEquals(a.networkId, "profile_test_fixture");
+      assertEquals(a.amount, 500); // canonical string -> integer at the wire
+      assertEquals(a.requestApproval, false);
+      assertEquals(a.test, true); // derived from allowLiveGrants=false
+      const sr = written.find((w) => w.spec === "spendRequest");
+      assert(sr);
+      assertEquals(sr.payload.id, "lsrq_new");
+      assertEquals(sr.payload.outcome, "created");
+    },
+  );
+});
+
+Deno.test("createSpendRequest blocks a grant whose echoed payee was swapped", async () => {
+  const { ctx } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub(
+    {
+      "spend-request_create": {
+        id: "lsrq_evil",
+        status: "pending_approval",
+        network_id: "profile_test_ATTACKER", // != requested
+        amount: 500,
+        currency: "usd",
+      },
+    },
+    async () => {
+      await assertRejects(
+        () =>
+          run("createSpendRequest", {
+            amount: "500",
+            currency: "usd",
+            context: CTX100,
+          }, ctx),
+        Error,
+        "echo mismatch",
+      );
+    },
+  );
+});
+
+Deno.test("paySpendRequest: advisory pre-flight blocks an over-ceiling 402 before mpp_pay", async () => {
+  const { ctx, written } = makeCtx(CONSUMER_ARGS);
+  const fx = fixture402("100000", "usd"); // 1000.00 demanded
+  await withFetchStub([() => fx.response()], async () => {
+    await withMcpStub({}, async (calls) => {
+      await assertRejects(
+        () =>
+          run("paySpendRequest", {
+            url: "https://api.example.test/paid",
+            id: "lsrq_abc",
+            maxAmount: "1000", // 10.00 ceiling
+            currency: "usd",
+          }, ctx),
+        Error,
+        "exceeds",
+      );
+      assert(
+        !calls.some((c) => c.tool === "mpp_pay"),
+        "mpp_pay must not run after the advisory guard blocks",
+      );
+    });
+  });
+  const sr = written.find((w) => w.spec === "spendRequest");
+  assert(sr);
+  assertEquals(sr.payload.outcome, "blocked");
+});
+
+Deno.test("paySpendRequest: spends by reference via mpp_pay, then reports", async () => {
+  const { ctx, written } = makeCtx(CONSUMER_ARGS);
+  const fx = fixture402("1000", "usd"); // within the 1000 ceiling
+  await withFetchStub([() => fx.response()], async () => {
+    await withMcpStub(
+      { "mpp_pay": { ok: true }, "report": { ok: true } },
+      async (calls) => {
+        await run("paySpendRequest", {
+          url: "https://api.example.test/paid",
+          id: "lsrq_abc",
+          maxAmount: "1000",
+          currency: "usd",
+        }, ctx);
+        const pay = calls.find((c) => c.tool === "mpp_pay");
+        assert(pay, "mpp_pay called");
+        assertEquals(pay.args.spendRequestId, "lsrq_abc"); // BY REFERENCE
+        assert(calls.some((c) => c.tool === "report"), "report telemetry sent");
+      },
+    );
+  });
+  const sr = written.find((w) => w.spec === "spendRequest");
+  assert(sr);
+  assertEquals(sr.payload.outcome, "paid");
+});
+
+Deno.test("getIssuedToken/revokeToken reject a Link-origin id with guidance", async () => {
+  const { ctx } = makeCtx(GLOBAL_ARGS);
+  for (const m of ["getIssuedToken", "revokeToken"]) {
+    await assertRejects(
+      () => run(m, { sptId: "lsrq_notAnIssuedToken" }, ctx),
+      Error,
+      "paySpendRequest",
+    );
+  }
+});
+
+Deno.test("consumer: testMode + allowLiveGrants together is refused", async () => {
+  const { ctx } = makeCtx({
+    ...CONSUMER_ARGS,
+    testMode: true,
+    allowLiveGrants: true,
+  });
+  await assertRejects(
+    () => model.methods.getSpendRequest.execute({ id: "lsrq_abc" }, ctx),
+    Error,
+    "Contradictory config",
+  );
+});
+
+Deno.test("createSpendRequest blocks a grant whose echoed payment method was swapped", async () => {
+  const { ctx } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub(
+    {
+      "spend-request_create": {
+        id: "lsrq_pm",
+        status: "pending_approval",
+        network_id: "profile_test_fixture",
+        amount: 500,
+        currency: "usd",
+        payment_method_id: "csmrpd_ATTACKER",
+      },
+    },
+    async () => {
+      await assertRejects(
+        () =>
+          run("createSpendRequest", {
+            amount: "500",
+            currency: "usd",
+            context: CTX100,
+            paymentMethodId: "csmrpd_mycard",
+          }, ctx),
+        Error,
+        "payment method",
+      );
+    },
   );
 });

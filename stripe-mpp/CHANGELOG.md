@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026.07.21.1
+
+Consumer buyer (Link grant): a human WITHOUT a Stripe account can now fund agent
+payments from their **Link wallet**. Five methods behind a new `lib/link_cli.ts`
+anti-corruption layer that drives Stripe's `link-cli` as an MCP server over
+**stdio** (`link-cli --mcp`) — deliberately NOT its HTTP `serve` mode, which
+binds all interfaces with `Access-Control-Allow-Origin: *` and no auth (see
+`SPIKE-link-cli.md`).
+
+- `listConsumerPaymentMethods`, `createSpendRequest`, `getSpendRequest`,
+  `cancelSpendRequest`, `paySpendRequest`.
+- The grant is spent BY REFERENCE (`mpp_pay --spendRequestId`); the model never
+  holds a raw `spt_` (persists `lsrq_` only, strictObject resources). No Link
+  token custody — link-cli owns its device-flow session on disk; the subprocess
+  is spawned `clearEnv`.
+- `createSpendRequest` is the PRIMARY binding guard (anchored payee, amount cap
+  `≤500000` + `$0.50` USD floor, `context≥100`, response-echo) before the
+  consumer is prompted; `paySpendRequest`'s pre-flight is advisory only.
+- New non-secret globals: `linkCliPath` (absolute, fail-closed),
+  `linkCliVersion` (drift-detection preflight), `allowLiveGrants` (default false
+  → test mode).
+- Extracted `pay`'s spend-guard into the shared `challengeGuardViolation()`
+  helper (behaviour-preserving).
+- **US-only** (Stripe Link) and inert without an authenticated co-located
+  link-cli session; the four consumer methods fail closed, the existing 14 are
+  unaffected. **Not live-verified** (Link is US-only; the maintainer is EU) —
+  built on the observed v0.9.0 tool contract, pinned by fixtures.
+
+## 2026.07.16.2
+
+Housekeeping: aligned the model `version` field with the manifest version so the
+published model type version and the package version do not drift (the CI
+model-version check enforces this).
+
 ## 2026.07.13.1
 
 Dependency bump: `mppx@0.8.5 → 0.8.6` (patch). No breaking changes to the

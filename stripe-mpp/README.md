@@ -58,6 +58,33 @@ swamp model method run stripe-mpp pay \
 swamp data get stripe-mpp payment-https-api-example-com-paid --json
 ```
 
+## Consumer buyer example (Link grant, US-only)
+
+For a human WITHOUT a Stripe account: they grant a Shared Payment Token from
+their **Link wallet** and the model spends it by reference. Requires `link-cli`
+installed at an absolute path (`linkCliPath` global) and an authenticated
+session (`link-cli auth login`, US Link account) on the same host; the four
+methods below are inert (fail closed) otherwise, and the other 14 methods are
+unaffected.
+
+```bash
+# createSpendRequest is the PRIMARY guard (payee/amount/currency, before the
+# consumer is prompted). Returns an lsrq_; does NOT block on approval.
+swamp model method run stripe-mpp createSpendRequest \
+  --input amount=500 --input currency=usd \
+  --input context="<>= 100 chars the consumer reads when approving this charge>"
+
+# The consumer approves in their Link app; poll for the terminal status from a
+# workflow manual_approval step (do NOT loop this call).
+swamp model method run stripe-mpp getSpendRequest --input id=lsrq_...
+
+# Once approved, spend by reference. The binding cap is the consumer-approved
+# grant amount, not this call's advisory maxAmount.
+swamp model method run stripe-mpp paySpendRequest \
+  --input url=https://api.example.com/paid --input id=lsrq_... \
+  --input maxAmount=500 --input currency=usd
+```
+
 ## Seller example: charge agents for your endpoint
 
 ```bash
@@ -86,7 +113,12 @@ swamp model method run stripe-mpp refundCharge \
 | buyer  | `probe`                          | Parse a 402's payment challenges without paying        |
 | buyer  | `mintToken`                      | Mint a capped SPT from a `pm_` (headless; see caveats) |
 | buyer  | `pay`                            | Guarded end-to-end payment with receipt decode         |
-| buyer  | `getIssuedToken` / `revokeToken` | Token lifecycle                                        |
+| buyer  | `getIssuedToken` / `revokeToken` | Agent-buyer token lifecycle                            |
+| buyer  | `listConsumerPaymentMethods`     | Consumer/Link: list wallet payment methods (csmrpd\_)  |
+| buyer  | `createSpendRequest`             | Consumer/Link: PRIMARY guard; create a grant (lsrq\_)  |
+| buyer  | `getSpendRequest`                | Consumer/Link: single-shot status (poll via workflow)  |
+| buyer  | `cancelSpendRequest`             | Consumer/Link: cancel a PENDING grant                  |
+| buyer  | `paySpendRequest`                | Consumer/Link: spend a grant by reference (mpp\_pay)   |
 | seller | `createChallenge`                | WWW-Authenticate value + problem+json body             |
 | seller | `verifyCredential`               | HMAC/expiry/method verdict (never throws)              |
 | seller | `chargeToken`                    | Settle an SPT; success ONLY when `succeeded`           |
