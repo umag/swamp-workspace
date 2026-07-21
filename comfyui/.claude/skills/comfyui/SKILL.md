@@ -1,29 +1,28 @@
 ---
 name: comfyui
-description: Drive a ComfyUI server from swamp via the @magistr/comfyui/instance model — generate images with the local Ideogram 4.0 text-to-image model whose prompt is a STRUCTURED JSON CAPTION with per-object bounding boxes. Turn a plain idea into a bboxed caption with Claude (generate_caption), validate/assemble one by hand (build_caption), patch+queue a workflow and fetch the image (generate), or snapshot the server (lookup/sync). Triggers on "comfyui", "ideogram", "ideogram 4", "generate image", "text to image", "bounding box prompt", "bbox caption", "structured caption", "@magistr/comfyui", "drive comfyui", "queue prompt", "comfyui workflow".
+description: Drive a ComfyUI server from swamp via the @magistr/comfyui/instance model. Ships two bundled workflow templates — `ideogram` (Ideogram 4.0, STRUCTURED JSON CAPTION with per-object bounding boxes) and `krea` (FLUX Krea turbo, plain-text prompt + stackable style LoRAs). Turn an idea into a bboxed caption with Claude (generate_caption), assemble one by hand (build_caption), render one image (generate) or a batch by seed (generate_batch), inspect a node class (node_info), or snapshot the server (lookup/sync). Triggers on "comfyui", "ideogram", "krea", "flux krea", "generate image", "text to image", "image batch", "style lora", "bounding box prompt", "bbox caption", "@magistr/comfyui", "drive comfyui", "queue prompt", "comfyui workflow".
 ---
 
 # @magistr/comfyui
 
-Drives a ComfyUI server over its HTTP API. Built for the **local Ideogram 4.0**
-text-to-image model, whose prompt is a **structured JSON caption**: a scene
-summary plus a `compositional_deconstruction` whose `elements[]` each carry a
-**bounding box** and description.
+Drives a ComfyUI server over its HTTP API. Two bundled **API-format** workflow
+templates, picked by name so you never hand-wire node ids:
 
-## The bbox/caption contract (important)
+- **`ideogram`** (default) — local **Ideogram 4.0**, prompt = a **structured
+  JSON caption** whose `compositional_deconstruction.elements[]` each carry a
+  **bounding box**.
+- **`krea`** — **FLUX Krea turbo**, a **plain-text** prompt (bboxes ignored)
+  with stackable **style LoRAs**.
+
+## The bbox/caption contract (Ideogram)
 
 - A caption element bbox is **`[y1, x1, y2, x2]`** (Y-first), **integers
-  normalized 0–1000**, top-left origin, with `y1<y2` and `x1<x2`. The bbox is
-  **optional** per element (omit it for crowds/skies/scattered detail).
+  normalized 0–1000**, top-left origin, `y1<y2` and `x1<x2`. Optional per
+  element (omit for crowds/skies/scattered detail).
 - Two element types: `obj` (a subject) and `text` (carries a verbatim `text`
-  string). One coherent subject = one `obj` element; never split a subject into
-  its parts.
-- The generator emits three top-level keys: `aspect_ratio`,
-  `high_level_description`,
+  string). One coherent subject = one `obj`; never split a subject into parts.
+- Three top-level keys: `aspect_ratio`, `high_level_description`,
   `compositional_deconstruction{background, elements}`.
-
-A well-formed caption (the shape both `generate_caption` and `build_caption`
-emit and validate):
 
 ```json
 {
@@ -51,61 +50,69 @@ emit and validate):
 
 ## Model: `@magistr/comfyui/instance`
 
-Global args: `baseUrl` (default `http://127.0.0.1:8188`; set to your server),
-`clientId?`, `workflowPath?` (host path to an **API-format** workflow JSON),
-`outputDir` (default `./out`), `pollIntervalMs`, `timeoutMs`, and for
-`generate_caption`: `anthropicApiKey` (set via a vault ref), `captionModel`
-(default `claude-sonnet-4-20250514`), `captionMaxTokens`.
+Global args: `baseUrl` (default `http://127.0.0.1:8188`), `clientId?`,
+`workflowPath?` (host path to an API-format graph; overrides the bundled
+template), `outputDir` (default `./out`), `pollIntervalMs`, `timeoutMs`, and for
+`generate_caption`: `anthropicApiKey` (vault ref), `captionModel`,
+`captionMaxTokens`.
 
-| Method             | What it does                                                                                                                                                  |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lookup` / `sync`  | GET `/system_stats` → `server` resource snapshot                                                                                                              |
-| `generate_caption` | idea + aspectRatio → Claude (Anthropic Messages API, same contract as `@keeb/anthropic`) → validated caption → `caption` resource                             |
-| `build_caption`    | assemble + validate a caption from explicit `summary`/`style`/`background`/`objects[{bbox,desc}]` (you supply the boxes) → `caption` resource                 |
-| `generate`         | patch `caption`/`seed`/`resolution` into an API-format graph by node id → POST `/prompt` → poll `/history` → GET `/view` → save image → `generation` resource |
+| Method             | What it does                                                                                                    |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `lookup` / `sync`  | GET `/system_stats` → `server` resource snapshot                                                                |
+| `node_info`        | GET `/object_info/<classType>` → `node_info` resource (valid combos, e.g. ResolutionSelector aspect ratios)     |
+| `build_caption`    | assemble + validate a caption from explicit `summary`/`style`/`background`/`objects[{bbox,desc}]` → `caption`   |
+| `generate_caption` | idea + aspectRatio → Claude (Anthropic Messages API) → validated caption → `caption`                            |
+| `generate`         | pick `template`, patch caption/seed/resolution (+LoRA) → POST `/prompt` → poll `/history` → save → `generation` |
+| `generate_batch`   | queue many prompts varying only by seed (`count` random, or `seeds[]`) → save all → `batch`                     |
 
 ```bash
-# idea → bboxed caption (Claude); set anthropicApiKey via a vault ref
+# idea → caption (Claude); then render with the ideogram template
 swamp model method run mycomfy generate_caption --input idea="a cozy retro travel poster of a mountain cabin, title SWAMP" --input aspectRatio=9:16
-# caption → image (needs the API-format graph + the caption/seed node ids)
-swamp model method run mycomfy generate --input caption@... --input captionNodeId=98:24 --input seed=77777 --input seedNodeId=98:18 --input workflow@graph.json
+swamp model method run mycomfy generate --input template=ideogram --input caption@caption.txt --input 'resolution=9:16 (Portrait Widescreen)'
+
+# Krea: plain-text prompt + a style LoRA, random seed
+swamp model method run mycomfy generate --input template=krea --input lora=krea2_softwatercolor --input 'caption=art deco watercolor style. a fox asleep in tall grass'
+
+# a batch of 6 variations
+swamp model method run mycomfy generate_batch --input template=krea --input count=6 --input 'caption=a lighthouse at dusk'
 ```
 
-## Getting the API-format workflow graph (gotcha)
+## Templates, seeds, LoRAs
 
-ComfyUI's **saved** workflows are UI-format with subgraphs and **cannot** be
-POSTed to `/prompt`. Get the flattened **API-format** graph from
-`GET {baseUrl}/history` → `entry.prompt[2]` after running the workflow once in
-the UI (or use ComfyUI's _Export (API)_ menu). In the Ideogram-4 template the
-caption node is `CLIPTextEncode` (flattened id `98:24`, input `text`) and the
-seed is `RandomNoise` (`98:18`, input `noise_seed`).
+- **template**: `ideogram` (bboxes honored) or `krea` (plain text). Each maps
+  caption/seed/resolution node ids automatically; override with explicit
+  `*NodeId`/`*InputKey`, an inline `workflow`, or `workflowPath`.
+- **resolution**: an aspect-ratio combo string — list them with
+  `node_info --input classType=ResolutionSelector` (e.g. `3:2 (Photo)`,
+  `16:9 (Widescreen)`, `9:16 (Portrait Widescreen)`).
+- **seed**: omit `seed` for a random one (recorded in `generation`/`batch`);
+  pass `seed=<n>` to fix it. `generate_batch` takes `seeds:[…]` or `count`.
+- **LoRAs (krea)**: `lora=<name>` + `loraStrength`, or stack with
+  `loras=["a","b"]` (+ `loraStrengths=[…]`). List installed with
+  `node_info --input classType=LoraLoaderModelOnly`. Put trigger words in the
+  caption.
 
 ## Typical flow
 
-1. `lookup` / `sync` first — confirms the server is up (writes the `server`
-   resource). If it errors, the ComfyUI server is unreachable; start it (default
-   `:8188`) before going further.
-2. `generate_caption` (idea → caption) **or** `build_caption` (explicit boxes).
+1. `lookup`/`sync` first — confirms the server is up. If it errors, start
+   ComfyUI (default `:8188`) before going further.
+2. `generate_caption` (idea → caption) **or** `build_caption` (explicit boxes)
+   for Ideogram; for Krea just write a plain-text prompt.
 3. **Validate before you generate.** Both caption methods reject a malformed
-   caption at build time (bbox not `[y1,x1,y2,x2]` / out of 0–1000 / `y1≥y2` or
-   `x1≥x2`, a `text` element missing its `text`). Confirm the `caption` resource
-   was written before step 5 — a rejected caption never reaches `generate`.
-4. Read the caption text from the `caption` resource (CEL:
-   `data.latest("mycomfy","caption").attributes.text`).
-5. `generate` with that caption text + the caption/seed node ids + the
-   API-format `workflow`.
+   caption (bad bbox / out of 0–1000 / reversed axis / `text` missing its text).
+   Confirm the `caption` resource exists before generating.
+4. `generate` (one) or `generate_batch` (many) with the caption + `template` (+
+   `lora`/`resolution`/`seed`). Read the saved path(s) from the
+   `generation`/`batch` resource.
 
 ## Errors & recovery
 
-- **Server down** → `lookup`/`sync` fails fast on `GET /system_stats`; start
-  ComfyUI and retry. Don't call `generate` against a dead server.
-- **`generate` 400 with `node_errors`** → the API-format graph or the
-  `captionNodeId`/`seedNodeId` are wrong (e.g. a UI-format workflow, or stale
-  node ids). The client surfaces the `node_errors` text; fix the graph/ids (see
-  the API-format gotcha above) and retry. This is the most common failure.
-- **Poll timeout (`timeoutMs`)** → the prompt was queued but didn't finish in
-  time; check the ComfyUI queue/console, then raise `timeoutMs` or
-  `pollIntervalMs`.
-- **`generate_caption` validation throw** → Claude returned a caption that fails
-  the contract; re-run (often transient) or fall back to `build_caption` with
-  explicit boxes.
+- **Server down** → `lookup`/`sync` fails fast on `/system_stats`; start
+  ComfyUI.
+- **`generate` 400 with `node_errors`** → wrong graph or node ids (a UI-format
+  workflow, stale ids, or a bad `template`). The client surfaces `node_errors`;
+  fix and retry. Most common failure.
+- **Poll timeout (`timeoutMs`)** → queued but not finished in time; check the
+  ComfyUI queue/console, then raise `timeoutMs`/`pollIntervalMs`.
+- **`generate_caption` validation throw** → Claude returned an off-contract
+  caption; re-run (often transient) or fall back to `build_caption`.

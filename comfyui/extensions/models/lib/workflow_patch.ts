@@ -69,6 +69,79 @@ export function patchWorkflow(graph: ApiGraph, patches: NodePatch[]): ApiGraph {
   return clone;
 }
 
+/** Wiring needed to stack LoRA loaders into a model chain. */
+export interface LoraChainConfig {
+  /** An existing single LoRA loader, reused as the first (and prototype) link. */
+  loaderNodeId: string;
+  nameKey: string;
+  strengthKey: string;
+  /** The loader's model-input key (its input from the previous link / base). */
+  modelKey: string;
+  /** Node whose input should receive the chain's final model output. */
+  consumerNodeId: string;
+  consumerKey: string;
+}
+
+/** One LoRA to stack: file name (`.safetensors` optional) and its strength. */
+export interface LoraSpec {
+  name: string;
+  strength: number;
+}
+
+/**
+ * Stack `loras` into a chain of loader nodes feeding the consumer's model input.
+ * The base model is whatever the existing loader currently reads from
+ * (`loader.inputs[modelKey]`). The first LoRA reuses `loaderNodeId`; each
+ * subsequent one is a new node `<loaderNodeId>:lora<i>` wired to the previous.
+ * The consumer input is repointed at the last loader. The graph is deep-cloned;
+ * a no-op (returns a clone) when `loras` is empty. `.safetensors` is appended to
+ * a bare name.
+ */
+export function chainLoras(
+  graph: ApiGraph,
+  cfg: LoraChainConfig,
+  loras: LoraSpec[],
+): ApiGraph {
+  const clone = structuredClone(graph);
+  if (loras.length === 0) return clone;
+
+  const loader = clone[cfg.loaderNodeId];
+  if (loader === undefined) {
+    throw new Error(`lora loader node '${cfg.loaderNodeId}' not found`);
+  }
+  const consumer = clone[cfg.consumerNodeId];
+  if (consumer === undefined) {
+    throw new Error(`lora consumer node '${cfg.consumerNodeId}' not found`);
+  }
+
+  const classType = loader.class_type;
+  const protoInputs = { ...loader.inputs };
+  const base = protoInputs[cfg.modelKey];
+
+  let prev: unknown = base;
+  let lastId = cfg.loaderNodeId;
+  loras.forEach((l, i) => {
+    const file = l.name.endsWith(".safetensors")
+      ? l.name
+      : `${l.name}.safetensors`;
+    const id = i === 0 ? cfg.loaderNodeId : `${cfg.loaderNodeId}:lora${i}`;
+    clone[id] = {
+      class_type: classType,
+      inputs: {
+        ...protoInputs,
+        [cfg.nameKey]: file,
+        [cfg.strengthKey]: l.strength,
+        [cfg.modelKey]: prev,
+      },
+    };
+    prev = [id, 0];
+    lastId = id;
+  });
+
+  consumer.inputs = { ...consumer.inputs, [cfg.consumerKey]: [lastId, 0] };
+  return clone;
+}
+
 export interface IdeogramOverrides {
   caption?: string;
   captionNodeId?: string;

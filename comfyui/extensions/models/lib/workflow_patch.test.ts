@@ -3,10 +3,46 @@ import { describe, it } from "jsr:@std/testing@1/bdd";
 import {
   type ApiGraph,
   applyIdeogramOverrides,
+  chainLoras,
   findNodesByClass,
   findNodesByTitle,
   patchWorkflow,
 } from "./workflow_patch.ts";
+
+/** A minimal Krea-like model chain: UNET → lora loader → switch. */
+function loraGraph(): ApiGraph {
+  return {
+    unet: {
+      class_type: "UNETLoader",
+      inputs: { unet_name: "base.safetensors" },
+    },
+    loader: {
+      class_type: "LoraLoaderModelOnly",
+      inputs: {
+        lora_name: "baked.safetensors",
+        strength_model: 0.8,
+        model: ["unet", 0],
+      },
+    },
+    sw: {
+      class_type: "ComfySwitchNode",
+      inputs: {
+        switch: ["b", 0],
+        on_false: ["unet", 0],
+        on_true: ["loader", 0],
+      },
+    },
+  };
+}
+
+const LORA_CFG = {
+  loaderNodeId: "loader",
+  nameKey: "lora_name",
+  strengthKey: "strength_model",
+  modelKey: "model",
+  consumerNodeId: "sw",
+  consumerKey: "on_true",
+};
 
 function sampleGraph(): ApiGraph {
   return {
@@ -146,5 +182,68 @@ describe("applyIdeogramOverrides", () => {
     const out = applyIdeogramOverrides(graph, {});
     assertEquals(out, graph);
     if (out === graph) throw new Error("expected a clone even when empty");
+  });
+});
+
+describe("chainLoras", () => {
+  it("sets a single lora on the existing loader (appends .safetensors)", () => {
+    const out = chainLoras(loraGraph(), LORA_CFG, [
+      { name: "krea2_darkbrush", strength: 1.0 },
+    ]);
+    assertEquals(out.loader.inputs.lora_name, "krea2_darkbrush.safetensors");
+    assertEquals(out.loader.inputs.strength_model, 1.0);
+    // First link still reads the base UNET; consumer still points at it.
+    assertEquals(out.loader.inputs.model, ["unet", 0]);
+    assertEquals(out.sw.inputs.on_true, ["loader", 0]);
+    // No extra nodes were added.
+    assertEquals(Object.keys(out).sort(), ["loader", "sw", "unet"]);
+  });
+
+  it("chains multiple loras and repoints the consumer at the last", () => {
+    const out = chainLoras(loraGraph(), LORA_CFG, [
+      { name: "a", strength: 1.0 },
+      { name: "b.safetensors", strength: 0.5 },
+      { name: "c", strength: 0.7 },
+    ]);
+    // First reuses `loader` reading the base UNET.
+    assertEquals(out.loader.inputs.lora_name, "a.safetensors");
+    assertEquals(out.loader.inputs.model, ["unet", 0]);
+    // Second and third are new nodes chained to the previous.
+    assertEquals(out["loader:lora1"].inputs.lora_name, "b.safetensors");
+    assertEquals(out["loader:lora1"].inputs.strength_model, 0.5);
+    assertEquals(out["loader:lora1"].inputs.model, ["loader", 0]);
+    assertEquals(out["loader:lora2"].inputs.lora_name, "c.safetensors");
+    assertEquals(out["loader:lora2"].inputs.model, ["loader:lora1", 0]);
+    // The switch now consumes the last link in the chain.
+    assertEquals(out.sw.inputs.on_true, ["loader:lora2", 0]);
+  });
+
+  it("does not mutate the input and no-ops on an empty list", () => {
+    const graph = loraGraph();
+    const out = chainLoras(graph, LORA_CFG, []);
+    assertEquals(out, graph);
+    if (out === graph) throw new Error("expected a clone even when empty");
+    // A non-empty call must not touch the original.
+    chainLoras(graph, LORA_CFG, [{ name: "x", strength: 1 }]);
+    assertEquals(graph.loader.inputs.lora_name, "baked.safetensors");
+  });
+
+  it("throws when the loader or consumer node is missing", () => {
+    assertThrows(
+      () =>
+        chainLoras(loraGraph(), { ...LORA_CFG, loaderNodeId: "nope" }, [
+          { name: "a", strength: 1 },
+        ]),
+      Error,
+      "loader node 'nope'",
+    );
+    assertThrows(
+      () =>
+        chainLoras(loraGraph(), { ...LORA_CFG, consumerNodeId: "nope" }, [
+          { name: "a", strength: 1 },
+        ]),
+      Error,
+      "consumer node 'nope'",
+    );
   });
 });
