@@ -191,11 +191,15 @@ async function defaultStdioTransport(
       method: "notifications/initialized",
       params: {},
     }));
+    // Args are passed verbatim as JSON — never as argv. The `test` flag is NOT
+    // injected here (link-cli tool schemas are additionalProperties:false, so an
+    // unexpected key is rejected); the caller adds it only to spend-request
+    // creation, derived from allowLiveGrants.
     await writer.write(encode({
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
-      params: { name: req.tool, arguments: { ...req.args, test: cfg.test } },
+      params: { name: req.tool, arguments: req.args },
     }));
     await writer.close();
 
