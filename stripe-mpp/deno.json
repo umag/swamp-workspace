@@ -3,6 +3,7 @@
     "check": "deno check extensions/models/stripe_mpp.ts",
     "test": "deno test --allow-net --allow-env extensions/models/ --permit-no-files",
     "test:soak": "FC_NUM_RUNS=10000 deno test --allow-net --allow-env extensions/models/stripe_mpp_property_test.ts extensions/models/stripe_mpp_invariant_property_test.ts extensions/models/stripe_mpp_flow_property_test.ts",
+    "test:live": "LIVE_LINK_CLI=1 deno test --allow-run --allow-net --allow-env --allow-read extensions/models/stripe_mpp_live_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

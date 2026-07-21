@@ -18,7 +18,12 @@
  *  - error redaction: secret keys and spt_ bearer ids never surface in errors
  *  - test-mode gates on test helpers
  *
- * Buyer methods:  probe, mintToken, pay, getIssuedToken, revokeToken
+ * Agent buyer:    probe, mintToken, pay, getIssuedToken, revokeToken
+ * Consumer buyer: listConsumerPaymentMethods, createSpendRequest,
+ *                 getSpendRequest, cancelSpendRequest, paySpendRequest
+ *                 (a human WITHOUT a Stripe account grants a Shared Payment
+ *                 Token from their Link wallet via `link-cli --mcp` over stdio;
+ *                 spent BY REFERENCE — see lib/link_cli.ts)
  * Seller methods: createChallenge, verifyCredential, chargeToken,
  *                 issueReceipt, getCharge, listCharges, refundCharge,
  *                 getGrantedToken, createTestGrantedToken
@@ -26,7 +31,10 @@
  * Caveats (see README): headless SPT minting requires an existing `pm_` and
  * an `active` mint result — `requires_action` (SCA) has no server-only
  * completion and fails loud. The Business Network Profile (`profile_...`)
- * is Dashboard-only.
+ * is Dashboard-only. The consumer-buyer flow is US-only (Link), needs an
+ * authenticated link-cli session co-located with the model, and is inert
+ * (fail-closed) otherwise; the binding spend cap is the consumer-approved
+ * grant, not paySpendRequest's advisory pre-flight.
  *
  * @module
  */
@@ -936,7 +944,7 @@ async function retrievePaymentIntent(
 /** Stripe MPP model: buyer (probe/mint/pay) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.07.16.2",
+  version: "2026.07.21.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     challenge: {
