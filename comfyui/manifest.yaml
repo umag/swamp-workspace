@@ -1,18 +1,22 @@
 manifestVersion: 1
 name: "@magistr/comfyui"
-version: "2026.07.16.2"
+version: "2026.07.21.1"
 description: |
-  Drive a ComfyUI server over its HTTP API from swamp. Built for the local
-  Ideogram 4.0 text-to-image workflow, whose prompt is a STRUCTURED JSON CAPTION
-  (scene summary + per-object descriptions with bounding boxes [y1,x1,y2,x2]
-  normalized 0-1000).
+  Drive a ComfyUI server over its HTTP API from swamp. Ships two bundled
+  API-format workflow templates — `ideogram` (Ideogram 4.0, whose prompt is a
+  STRUCTURED JSON CAPTION with per-object bounding boxes [y1,x1,y2,x2] normalized
+  0-1000) and `krea` (FLUX Krea turbo, plain-text prompt with stackable style
+  LoRAs) — so you generate without hand-wiring node ids.
 
   One model:
   - `instance` — connect to a ComfyUI server (default http://127.0.0.1:8188),
-    snapshot it (`lookup`/`sync`), turn a plain idea into a validated bboxed
-    caption with Claude (`generate_caption`), assemble one from explicit boxes
-    (`build_caption`), and `generate`: patch the caption/seed/resolution into an
-    API-format workflow graph, POST /prompt, poll /history, fetch the image.
+    snapshot it (`lookup`/`sync`), inspect a node class (`node_info`), turn a
+    plain idea into a validated bboxed caption with Claude (`generate_caption`)
+    or assemble one from explicit boxes (`build_caption`), `generate` one image,
+    or `generate_batch` many (one per seed). `generate` picks a bundled
+    `template`, patches caption/seed/resolution (and chains any `lora`/`loras`),
+    POSTs /prompt, polls /history, and fetches the image. Omit `seed` for a
+    random one (recorded in the result).
 
   `generate_caption` calls the Anthropic Messages API (same request contract as
   @keeb/anthropic) with the Ideogram-4 magic prompt, and accepts either an
@@ -27,10 +31,16 @@ skills:
 additionalFiles:
   - README.md
   - LICENSE.md
+  - workflows/ideogram.api.json
+  - workflows/krea.api.json
 labels:
   - comfyui
   - ideogram
+  - krea
+  - flux
   - image
   - text-to-image
   - bounding-box
+  - lora
+  - batch
   - automation

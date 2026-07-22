@@ -19,6 +19,8 @@ function fakeContext(overrides: Record<string, unknown> = {}) {
     writeResource: (spec: string, name: string, data: unknown) => {
       captured.push({ spec, name, data });
     },
+    extensionFile: (rel: string) =>
+      new URL(`../../${rel}`, import.meta.url).pathname,
   };
   return { context, captured };
 }
@@ -172,6 +174,255 @@ describe("@magistr/comfyui/instance model", () => {
     const bytes = await Deno.readFile(g.paths[0]);
     assertEquals(bytes.length, 4);
     await Deno.remove(dir, { recursive: true });
+  });
+
+  it("generate auto-picks and records a random seed when omitted", async () => {
+    const dir = await Deno.makeTempDir();
+    const { context, captured } = fakeContext({
+      outputDir: dir,
+      pollIntervalMs: 1,
+      timeoutMs: 5000,
+    });
+    let postedSeed: unknown;
+    const f = stub(
+      globalThis,
+      "fetch",
+      (input: string | URL | Request, init?: RequestInit) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL
+          ? input.href
+          : input.url;
+        if (url.endsWith("/prompt")) {
+          const body = JSON.parse(String(init?.body)) as {
+            prompt: Record<string, { inputs: Record<string, unknown> }>;
+          };
+          postedSeed = body.prompt["18"].inputs.noise_seed;
+          return Promise.resolve(
+            new Response(JSON.stringify({ prompt_id: "p1" }), { status: 200 }),
+          );
+        }
+        if (url.includes("/history/")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                p1: {
+                  status: { completed: true },
+                  outputs: {
+                    "9": {
+                      images: [{
+                        filename: "out.png",
+                        subfolder: "",
+                        type: "output",
+                      }],
+                    },
+                  },
+                },
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }),
+        );
+      },
+    );
+    try {
+      const args = model.methods.generate.arguments.parse({
+        caption: '{"x":1}',
+        captionNodeId: "24",
+        seedNodeId: "18",
+        workflow: {
+          "24": { class_type: "CLIPTextEncode", inputs: { text: "" } },
+          "18": { class_type: "RandomNoise", inputs: { noise_seed: 0 } },
+        },
+      });
+      await model.methods.generate.execute(args, context);
+    } finally {
+      f.restore();
+    }
+    const gen = captured.find((c) => c.spec === "generation");
+    assertExists(gen);
+    const g = gen.data as { seed: number | null };
+    // A numeric seed was chosen, patched into the graph, and recorded — and the
+    // recorded value equals what was actually POSTed to /prompt.
+    assertEquals(typeof g.seed, "number");
+    assertEquals(g.seed, postedSeed);
+    assertEquals(Number.isInteger(g.seed), true);
+    await Deno.remove(dir, { recursive: true });
+  });
+
+  it("generate leaves seed null when no seed node is known", async () => {
+    const dir = await Deno.makeTempDir();
+    const { context, captured } = fakeContext({
+      outputDir: dir,
+      pollIntervalMs: 1,
+      timeoutMs: 5000,
+    });
+    const f = stub(globalThis, "fetch", (input: string | URL | Request) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.href
+        : input.url;
+      if (url.endsWith("/prompt")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ prompt_id: "p1" }), { status: 200 }),
+        );
+      }
+      if (url.includes("/history/")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              p1: {
+                status: { completed: true },
+                outputs: {
+                  "9": {
+                    images: [{
+                      filename: "out.png",
+                      subfolder: "",
+                      type: "output",
+                    }],
+                  },
+                },
+              },
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }),
+      );
+    });
+    try {
+      // Inline workflow, no template and no seedNodeId → nothing to randomize.
+      const args = model.methods.generate.arguments.parse({
+        caption: '{"x":1}',
+        captionNodeId: "24",
+        workflow: {
+          "24": { class_type: "CLIPTextEncode", inputs: { text: "" } },
+        },
+      });
+      await model.methods.generate.execute(args, context);
+    } finally {
+      f.restore();
+    }
+    const gen = captured.find((c) => c.spec === "generation");
+    assertExists(gen);
+    assertEquals((gen.data as { seed: number | null }).seed, null);
+    await Deno.remove(dir, { recursive: true });
+  });
+
+  it("generate_batch queues one prompt per seed and records them all", async () => {
+    const dir = await Deno.makeTempDir();
+    const { context, captured } = fakeContext({
+      outputDir: dir,
+      pollIntervalMs: 1,
+      timeoutMs: 5000,
+    });
+    let n = 0;
+    const postedSeeds: unknown[] = [];
+    const f = stub(
+      globalThis,
+      "fetch",
+      (input: string | URL | Request, init?: RequestInit) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL
+          ? input.href
+          : input.url;
+        if (url.endsWith("/prompt")) {
+          const body = JSON.parse(String(init?.body)) as {
+            prompt: Record<string, { inputs: Record<string, unknown> }>;
+          };
+          postedSeeds.push(body.prompt["18"].inputs.noise_seed);
+          const id = `p${++n}`;
+          return Promise.resolve(
+            new Response(JSON.stringify({ prompt_id: id }), { status: 200 }),
+          );
+        }
+        const m = url.match(/\/history\/(p\d+)/);
+        if (m) {
+          const id = m[1];
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                [id]: {
+                  status: { completed: true },
+                  outputs: {
+                    "9": {
+                      images: [{
+                        filename: `out_${id}.png`,
+                        subfolder: "",
+                        type: "output",
+                      }],
+                    },
+                  },
+                },
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }),
+        );
+      },
+    );
+    try {
+      const args = model.methods.generate_batch.arguments.parse({
+        caption: '{"x":1}',
+        captionNodeId: "24",
+        seedNodeId: "18",
+        seeds: [11, 22, 33],
+        workflow: {
+          "24": { class_type: "CLIPTextEncode", inputs: { text: "" } },
+          "18": { class_type: "RandomNoise", inputs: { noise_seed: 0 } },
+        },
+      });
+      await model.methods.generate_batch.execute(args, context);
+    } finally {
+      f.restore();
+    }
+    // One prompt per seed, each carrying its own seed.
+    assertEquals(n, 3);
+    assertEquals(postedSeeds, [11, 22, 33]);
+    const batch = captured.find((c) => c.spec === "batch");
+    assertExists(batch);
+    const b = batch.data as {
+      count: number;
+      seeds: number[];
+      items: { seed: number; promptId: string; paths: string[] }[];
+      paths: string[];
+    };
+    assertEquals(b.count, 3);
+    assertEquals(b.seeds, [11, 22, 33]);
+    assertEquals(b.items.map((i) => i.seed), [11, 22, 33]);
+    assertEquals(b.items.map((i) => i.promptId), ["p1", "p2", "p3"]);
+    assertEquals(b.paths.length, 3);
+    await Deno.remove(dir, { recursive: true });
+  });
+
+  it("generate_batch throws when no seed node is known", async () => {
+    const { context } = fakeContext();
+    const args = model.methods.generate_batch.arguments.parse({
+      caption: '{"x":1}',
+      captionNodeId: "24",
+      count: 3,
+      workflow: {
+        "24": { class_type: "CLIPTextEncode", inputs: { text: "" } },
+      },
+    });
+    let threw = false;
+    try {
+      await model.methods.generate_batch.execute(args, context);
+    } catch (e) {
+      threw = true;
+      assertEquals((e as Error).message.includes("seed node"), true);
+    }
+    assertEquals(threw, true);
   });
 
   it("generate_caption asks Claude and stores a validated caption", async () => {

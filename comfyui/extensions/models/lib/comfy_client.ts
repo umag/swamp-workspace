@@ -71,6 +71,21 @@ export class ComfyClient {
     return entry ?? null;
   }
 
+  /** Fetch a node class's input spec from `/object_info/<classType>`. */
+  async fetchObjectInfo(
+    classType: string,
+  ): Promise<Record<string, unknown>> {
+    const res = await this.#fetch(
+      `${this.baseUrl}/object_info/${encodeURIComponent(classType)}`,
+    );
+    if (!res.ok) {
+      throw new Error(
+        `ComfyUI /object_info failed: ${res.status} ${res.statusText}`,
+      );
+    }
+    return (await res.json()) as Record<string, unknown>;
+  }
+
   collectImages(entry: HistoryEntry): ImageRef[] {
     const images: ImageRef[] = [];
     const outputs = entry.outputs ?? {};
