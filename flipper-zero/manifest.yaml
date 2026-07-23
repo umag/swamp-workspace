@@ -1,0 +1,55 @@
+manifestVersion: 1
+name: "@magistr/flipper-zero"
+version: "2026.07.23.4"
+description: |
+  Control a Flipper Zero over its USB serial CLI from swamp.
+
+  Model:
+  - `@magistr/flipper-zero` — one instance per Flipper (identified by its serial
+    port, or auto-detected). Methods drive the device's text CLI (the `>: `
+    prompt) and RPC protocol, persisting structured results as swamp data:
+    - `detect`         — find the serial port without talking to the device.
+    - `info`           — read device/firmware/power info (`info device`, with a
+      `device_info` fallback) parsed into attributes.
+    - `exec`           — run any single CLI command and capture its output.
+    - `storage-list`   — list an SD-card directory (`storage list <path>`).
+    - `storage-read`   — read a file's contents (`storage read <path>`).
+    - `apps`           — list the built-in loader apps (`loader list`).
+    - `installed-apps` — list SD-card apps/scripts under /ext/apps grouped by
+      category, each with a launchable path (`storage tree`).
+    - `launch`         — launch an app by path/name (`loader open`), refusing to
+      open over a running app unless force is set.
+    - `close`          — close the running app: soft `loader close`, escalating
+      to a simulated long Back press for apps (games) that ignore it.
+    - `running`        — report the currently-running app (`loader info`).
+    - `screenshot`     — capture the 128x64 screen over RPC (start_rpc_session +
+      Gui screen stream) and render it as ASCII and braille.
+    - `reboot`         — reboot the device (`power reboot`).
+
+  Cross-platform serial handling: macOS `cu.usbmodemflip*` and Linux `ttyACM*`
+  nodes are auto-detected; the line is put into raw, no-echo mode via stty and
+  each exchange syncs to a fresh prompt before sending a single, newline-free
+  command. All device I/O goes through subprocesses (macOS requires --allow-all
+  for /dev, which swamp models are not granted). Captured output is bounded to
+  guard against huge reads.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/flipper_zero.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - bots/snake_bot.ts
+
+platforms: []
+
+labels:
+  - flipper-zero
+  - serial
+  - usb
+  - hardware
+  - cli
