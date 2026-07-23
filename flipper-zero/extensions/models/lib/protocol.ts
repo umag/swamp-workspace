@@ -285,6 +285,92 @@ export function looksLikeUnknownCommand(text: string): boolean {
   return /command not found|unknown command|`[^`]+` command/i.test(text);
 }
 
+// Matches a main (`>: `) or sub-shell (`[nfc]>: `) prompt at the start of a line.
+const ANY_PROMPT = /^\s*(?:\[[a-z0-9_-]+\])?>:\s?/i;
+// The `nfc` command prints a dolphin drawn from '0' characters (with a stray
+// digit in the eye, e.g. "0005"). Match digits+space only AND a run of zeros —
+// widening to "all digits" would swallow legitimate numeric output.
+const SPLASH_ART = /^[0-9\s]+$/;
+function isSplashArt(line: string): boolean {
+  return SPLASH_ART.test(line) && /000/.test(line);
+}
+
+/**
+ * Clean the transcript of a multi-command session (see `sequenceCapture`).
+ *
+ * Unlike {@link cleanResponse}, which anchors on a single echoed command after
+ * one `>: ` prompt, this copes with the prompt changing mid-session: it strips
+ * any prompt prefix, drops lines that are just an echoed command, and discards
+ * the connect banner plus the NFC ASCII-art splash.
+ */
+export function cleanSequenceOutput(raw: string, commands: string[]): string {
+  const text = normalizeNewlines(stripAnsi(raw));
+  const sent = new Set(commands.map((c) => c.trim()).filter((c) => c.length));
+  const all = text.split("\n");
+
+  // Everything before the first prompt is the connect banner.
+  const firstPrompt = all.findIndex((l) => ANY_PROMPT.test(l));
+  const lines = firstPrompt >= 0 ? all.slice(firstPrompt) : all;
+
+  const kept: string[] = [];
+  for (const line of lines) {
+    const body = line.replace(ANY_PROMPT, "").trim();
+    if (body.length === 0) continue;
+    if (sent.has(body)) continue; // echoed command
+    if (isSplashArt(body)) continue; // NFC splash art
+    kept.push(body);
+  }
+  return kept.join("\n");
+}
+
+/** One decoded reception captured by a `listen` run. */
+export interface ListenEvent {
+  /** First line of the block — usually the protocol/summary line. */
+  summary: string;
+  /** All lines of the block. */
+  lines: string[];
+}
+
+// Lines that are CLI chrome rather than an actual reception.
+//
+// NOTE: this is a denylist, and it is heuristic. Every receiver announces
+// itself differently (sub-GHz prints a keystore banner + "Listening at
+// frequency...", IR "Receiving INFRARED...", the NFC sub-shell a welcome +
+// "Run `help`..."), so this has needed widening each time a new receiver was
+// wired. It is grouped into two kinds: generic CLI chrome (welcome/help/prompt
+// furniture, which is firmware-wide) and per-receiver status verbs. The full
+// transcript is always preserved in the `output`/`raw` fields, so a missed
+// pattern inflates `eventCount` but never loses data.
+const LISTEN_NOISE = new RegExp(
+  [
+    // generic CLI chrome
+    "^(welcome to|run `?help|find out more|available commands|press|use )",
+    // per-receiver status verbs
+    "^(listening|receiving|reading|scanning|waiting|searching|exit|rssi)",
+    // sub-GHz specifics
+    "^(no key|ok\\b|load_keystore|deleted|restarting|aborted)",
+  ].join("|"),
+  "i",
+);
+
+/**
+ * Split captured receiver output into discrete events: blocks separated by
+ * blank lines, with status lines stripped out. Blocks left empty are dropped.
+ */
+export function parseListenEvents(output: string): ListenEvent[] {
+  const text = normalizeNewlines(stripAnsi(output));
+  const events: ListenEvent[] = [];
+  for (const block of text.split(/\n\s*\n/)) {
+    const lines = block
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !LISTEN_NOISE.test(l));
+    if (lines.length === 0) continue;
+    events.push({ summary: lines[0], lines });
+  }
+  return events;
+}
+
 /** Flipper monochrome display dimensions. */
 export const SCREEN_WIDTH = 128;
 export const SCREEN_HEIGHT = 64;

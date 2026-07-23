@@ -229,6 +229,142 @@ export async function captureRpc(
   return stdout;
 }
 
+/**
+ * Run a streaming receive command (`subghz rx`, `ir rx`, …) for a fixed window.
+ *
+ * These commands block until a key is pressed, and stay silent while nothing is
+ * in the air — so an idle-based read would stop immediately. Instead we send the
+ * command, capture for `listenMs`, then send a keypress to stop it and collect
+ * the tail.
+ */
+export async function listenCapture(
+  port: string,
+  command: string,
+  opts: { baud: string; listenMs: number },
+): Promise<string> {
+  assertPortPath(port);
+  assertBaud(opts.baud);
+  const listen = Math.max(0.5, opts.listenMs / 1000).toFixed(2);
+  const script = [
+    'exec 3<>"$FZ_PORT"',
+    `stty ${STTY_FILE_FLAG} "$FZ_PORT" ${opts.baud} raw -echo min 0 time 20`,
+    'printf "%s\\r" "$FZ_CMD" >&3',
+    "cat <&3 &",
+    "CATPID=$!",
+    // Always reap the reader, even if the script exits early.
+    "trap 'kill $CATPID 2>/dev/null' EXIT",
+    `sleep ${listen}`,
+    // Any key stops an rx command; then let the tail drain.
+    "printf '\\r' >&3",
+    "sleep 0.6",
+    "kill $CATPID 2>/dev/null",
+    "wait $CATPID 2>/dev/null",
+  ].join("\n");
+
+  const child = new Deno.Command("bash", {
+    args: ["-c", script],
+    clearEnv: true,
+    env: childEnv({ FZ_PORT: port, FZ_CMD: command }),
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  // Backstop only: the script terminates itself well before this.
+  const timer = setTimeout(() => {
+    try {
+      child.kill("SIGKILL");
+    } catch { /* already exited */ }
+  }, opts.listenMs + 15_000);
+  const { stdout, stderr } = await child.output();
+  clearTimeout(timer);
+
+  const raw = new TextDecoder().decode(stdout);
+  if (raw.length === 0) {
+    const err = new TextDecoder().decode(stderr).trim();
+    if (/resource busy|device busy|\bbusy\b/i.test(err)) {
+      throw new Error(
+        `Serial port ${port} is busy — quit qFlipper or any serial terminal ` +
+          `holding it, then retry. (${err})`,
+      );
+    }
+    if (err) throw new Error(`Listen on ${port} failed: ${err}`);
+  }
+  return raw;
+}
+
+/** One step of a {@link sequenceCapture}: text to send, then how long to wait. */
+export interface SequenceStep {
+  /** Command to send (a CR is appended). Empty string sends a bare CR. */
+  send: string;
+  /** Milliseconds to wait after sending, before the next step. */
+  waitMs: number;
+}
+
+/**
+ * Run a sequence of commands in ONE serial session, capturing everything.
+ *
+ * Needed for sub-shells: `nfc` switches the prompt from `>: ` to `[nfc]>: `, so
+ * the enter → work → `exit` cycle must happen inside a single session that
+ * always runs its final step. Doing it as separate `exchange` calls risks
+ * leaving the device stranded in the sub-shell, where every later command
+ * blocks waiting for a `>: ` that never comes.
+ */
+export async function sequenceCapture(
+  port: string,
+  steps: SequenceStep[],
+  opts: { baud: string },
+): Promise<string> {
+  assertPortPath(port);
+  assertBaud(opts.baud);
+  if (steps.length === 0) throw new Error("sequenceCapture needs a step.");
+
+  const env: Record<string, string> = { FZ_PORT: port };
+  const lines = [
+    'exec 3<>"$FZ_PORT"',
+    `stty ${STTY_FILE_FLAG} "$FZ_PORT" ${opts.baud} raw -echo min 0 time 20`,
+    "cat <&3 &",
+    "CATPID=$!",
+    // Always reap the reader, however the script ends.
+    "trap 'kill $CATPID 2>/dev/null' EXIT",
+  ];
+  let totalWait = 0;
+  steps.forEach((step, i) => {
+    env[`FZ_CMD_${i}`] = step.send;
+    lines.push(`printf "%s\\r" "$FZ_CMD_${i}" >&3`);
+    const wait = Math.max(0.1, step.waitMs / 1000);
+    totalWait += wait;
+    lines.push(`sleep ${wait.toFixed(2)}`);
+  });
+  lines.push("kill $CATPID 2>/dev/null", "wait $CATPID 2>/dev/null");
+
+  const child = new Deno.Command("bash", {
+    args: ["-c", lines.join("\n")],
+    clearEnv: true,
+    env: childEnv(env),
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const timer = setTimeout(() => {
+    try {
+      child.kill("SIGKILL");
+    } catch { /* already exited */ }
+  }, totalWait * 1000 + 15_000);
+  const { stdout, stderr } = await child.output();
+  clearTimeout(timer);
+
+  const raw = new TextDecoder().decode(stdout);
+  if (raw.length === 0) {
+    const err = new TextDecoder().decode(stderr).trim();
+    if (/resource busy|device busy|\bbusy\b/i.test(err)) {
+      throw new Error(
+        `Serial port ${port} is busy — quit qFlipper or any serial terminal ` +
+          `holding it, then retry. (${err})`,
+      );
+    }
+    if (err) throw new Error(`Command sequence on ${port} failed: ${err}`);
+  }
+  return raw;
+}
+
 function hexEscape(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((b) => `\\x${b.toString(16).padStart(2, "0")}`)

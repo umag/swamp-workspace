@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/flipper-zero"
-version: "2026.07.23.4"
+version: "2026.07.23.6"
 description: |
   Control a Flipper Zero over its USB serial CLI from swamp.
 
@@ -24,6 +24,8 @@ description: |
     - `running`        — report the currently-running app (`loader info`).
     - `screenshot`     — capture the 128x64 screen over RPC (start_rpc_session +
       Gui screen stream) and render it as ASCII and braille.
+    - `listen`         — receive-only capture on sub-GHz, infrared, 125kHz RFID
+      or NFC (which runs through the device's `[nfc]` sub-shell).
     - `reboot`         — reboot the device (`power reboot`).
 
   Cross-platform serial handling: macOS `cu.usbmodemflip*` and Linux `ttyACM*`

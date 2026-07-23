@@ -8,6 +8,7 @@ import { assertEquals, assertThrows } from "jsr:@std/assert@1";
 import {
   candidatePorts,
   cleanResponse,
+  cleanSequenceOutput,
   findScreenFrame,
   framebufferBase64,
   hasPrompt,
@@ -16,6 +17,7 @@ import {
   parseAppList,
   parseDeviceInfo,
   parseFileSize,
+  parseListenEvents,
   parseLoaderInfo,
   parseStorageList,
   parseStorageTree,
@@ -213,6 +215,95 @@ Deno.test("parseLoaderInfo detects the running app", () => {
     running: false,
     app: null,
   });
+});
+
+Deno.test("cleanSequenceOutput strips prompts, echoes and NFC splash art", () => {
+  // Shape taken from a real capture: banner, main prompt, sub-shell prompt,
+  // the '0'-character dolphin, then the payload.
+  const raw = [
+    "Welcome to Flipper Zero Command Line Interface!",
+    ">: nfc",
+    "   0000      0000   ",
+    "        0005        ",
+    "Welcome to NFC Command Line Interface!",
+    "[nfc]>: scanner",
+    "Found card: 04A2B3C4",
+    "[nfc]>: exit",
+    ">: ",
+  ].join("\r\n");
+  assertEquals(
+    cleanSequenceOutput(raw, ["nfc", "scanner", "", "exit"]),
+    [
+      "Welcome to NFC Command Line Interface!",
+      "Found card: 04A2B3C4",
+    ].join("\n"),
+  );
+});
+
+Deno.test("cleanSequenceOutput handles a sub-shell prompt with no output", () => {
+  const raw = ">: nfc\r\n[nfc]>: scanner\r\n[nfc]>: exit\r\n>: ";
+  assertEquals(cleanSequenceOutput(raw, ["nfc", "scanner", "exit"]), "");
+});
+
+Deno.test("parseListenEvents drops the sub-GHz startup banner", () => {
+  // Exactly what the device emits when nothing is in the air.
+  const quiet = [
+    "Load_keystore keeloq_mfcodes OK",
+    "Load_keystore keeloq_mfcodes_user Absent",
+    "Listening at frequency: 433919830 device: 0. Press CTRL+C to stop",
+  ].join("\n");
+  assertEquals(parseListenEvents(quiet), []);
+});
+
+Deno.test("parseListenEvents drops the infrared banner", () => {
+  // Exactly what `ir rx` emits with no remote pressed.
+  const quiet = "Receiving  INFRARED...\nPress Ctrl+C to abort";
+  assertEquals(parseListenEvents(quiet), []);
+});
+
+Deno.test("parseListenEvents drops the NFC sub-shell banner", () => {
+  // Exactly what a real `nfc` -> `scanner` -> `exit` run emits with no card.
+  const quiet = [
+    "Welcome to NFC Command Line Interface!",
+    "Run `help` or `?` to list available commands",
+    "Press Ctrl+C to abort",
+  ].join("\n");
+  assertEquals(parseListenEvents(quiet), []);
+});
+
+Deno.test("parseListenEvents reports a card over the NFC banner", () => {
+  const withCard = [
+    "Welcome to NFC Command Line Interface!",
+    "Run `help` or `?` to list available commands",
+    "Press Ctrl+C to abort",
+    "ISO14443-4A, UID: 04 A2 B3 C4 D5 E6 F7",
+  ].join("\n");
+  const events = parseListenEvents(withCard);
+  assertEquals(events.length, 1);
+  assertEquals(events[0].summary, "ISO14443-4A, UID: 04 A2 B3 C4 D5 E6 F7");
+});
+
+Deno.test("parseListenEvents strips banner lines mixed into a block", () => {
+  // Noise is dropped per line, so a banner glued to real data still parses.
+  const mixed = "Receiving  INFRARED...\nNEC, A:0x04, C:0x08";
+  const events = parseListenEvents(mixed);
+  assertEquals(events.length, 1);
+  assertEquals(events[0].summary, "NEC, A:0x04, C:0x08");
+});
+
+Deno.test("parseListenEvents captures a decoded reception", () => {
+  const captured = [
+    "Load_keystore keeloq_mfcodes OK",
+    "Listening at frequency: 433919830 device: 0. Press CTRL+C to stop",
+    "",
+    "Princeton 24bit",
+    "Key:0x00ABCDEF",
+    "Te:350us",
+  ].join("\n");
+  const events = parseListenEvents(captured);
+  assertEquals(events.length, 1);
+  assertEquals(events[0].summary, "Princeton 24bit");
+  assertEquals(events[0].lines.length, 3);
 });
 
 Deno.test("findScreenFrame extracts the 1024-byte framebuffer", () => {
