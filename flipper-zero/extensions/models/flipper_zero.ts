@@ -18,6 +18,7 @@
  * - `screenshot`     — capture the screen over RPC, render ASCII/braille.
  * - `show-image`     — draw an image on the screen (RPC virtual display).
  * - `play-snake`     — play Snake autonomously with a survival bot.
+ * - `listen`         — receive on sub-GHz / IR / RFID for a window.
  * - `reboot`         — reboot the device (`power reboot`).
  *
  * Serial framing lives in ./lib/serial.ts; text parsing in ./lib/protocol.ts.
@@ -30,7 +31,9 @@ import {
   captureRpc,
   exchange,
   listDevNames,
+  listenCapture,
   sendRpcHold,
+  sequenceCapture,
 } from "./lib/serial.ts";
 import {
   startScreenStream,
@@ -45,6 +48,7 @@ import {
 import {
   candidatePorts,
   cleanResponse,
+  cleanSequenceOutput,
   findScreenFrame,
   framebufferBase64,
   installedAppsFromTree,
@@ -52,6 +56,7 @@ import {
   parseAppList,
   parseDeviceInfo,
   parseFileSize,
+  parseListenEvents,
   parseLoaderInfo,
   parseStorageList,
   parseStorageTree,
@@ -314,7 +319,7 @@ async function closeRunningApp(globalArgs: GlobalArgs): Promise<{
 /** The @magistr/flipper-zero model. */
 export const model = {
   type: "@magistr/flipper-zero",
-  version: "2026.07.23.4",
+  version: "2026.07.23.6",
   globalArguments: InputSchema,
   resources: {
     "device-port": {
@@ -494,6 +499,26 @@ export const model = {
         died: z.boolean(),
         decisions: z.record(z.string(), z.number()),
         log: z.string(),
+        timestamp: z.string(),
+      }),
+      lifetime: "infinite",
+      garbageCollection: 20,
+    },
+    "listen-result": {
+      description: "What a receiver picked up during a listen window",
+      schema: z.object({
+        port: z.string(),
+        source: z.enum(["subghz", "ir", "rfid", "nfc"]),
+        command: z.string(),
+        frequency: z.number().nullable(),
+        seconds: z.number(),
+        eventCount: z.number(),
+        events: z.array(z.object({
+          summary: z.string(),
+          lines: z.array(z.string()),
+        })),
+        output: z.string(),
+        raw: z.string(),
         timestamp: z.string(),
       }),
       lifetime: "infinite",
@@ -1023,6 +1048,96 @@ export const model = {
           died: /GAME OVER|STALLED/.test(log),
           decisions,
           log,
+          timestamp: new Date().toISOString(),
+        });
+        return {};
+      },
+    },
+
+    listen: {
+      description:
+        "Listen on one of the device's receivers for a fixed window and capture " +
+        "what it decodes: sub-GHz radio (default 433.92MHz), infrared, or a " +
+        "125kHz RFID card. Receive-only — transmitting is not wrapped.",
+      arguments: z.object({
+        source: z.enum(["subghz", "ir", "rfid", "nfc"]).default("subghz")
+          .describe("Which receiver to listen on."),
+        seconds: z.number().positive().default(15).describe(
+          "How long to listen (default 15).",
+        ),
+        frequency: z.number().int().positive().default(433920000).describe(
+          "Sub-GHz frequency in Hz (default 433920000 = 433.92MHz).",
+        ),
+        raw: z.boolean().optional().describe(
+          "Capture raw timings instead of decoded packets (subghz/ir).",
+        ),
+        external: z.boolean().optional().describe(
+          "Use an external CC1101 module (device 1) instead of the internal.",
+        ),
+      }),
+      execute: async (
+        args: {
+          source?: "subghz" | "ir" | "rfid" | "nfc";
+          seconds?: number;
+          frequency?: number;
+          raw?: boolean;
+          external?: boolean;
+        },
+        context: ExecContext,
+      ) => {
+        const source = args.source ?? "subghz";
+        const seconds = args.seconds ?? 15;
+        const frequency = args.frequency ?? 433_920_000;
+        const device = args.external ? 1 : 0;
+
+        const port = await resolvePort(context.globalArgs);
+        let command: string;
+        let raw: string;
+        let output: string;
+
+        if (source === "nfc") {
+          // `nfc` opens a sub-shell ([nfc]>: ), so enter, scan, and exit inside
+          // one session — otherwise the device is left stranded in the shell.
+          command = "nfc scanner";
+          const steps = [
+            { send: "nfc", waitMs: 1200 },
+            { send: "scanner", waitMs: seconds * 1000 },
+            { send: "", waitMs: 800 }, // a keypress stops the scanner
+            { send: "exit", waitMs: 700 },
+          ];
+          raw = await sequenceCapture(port, steps, {
+            baud: context.globalArgs.baud,
+          });
+          output = cleanSequenceOutput(raw, steps.map((s) => s.send));
+        } else {
+          if (source === "subghz") {
+            command = args.raw
+              ? `subghz rx_raw ${frequency}`
+              : `subghz rx ${frequency} ${device}`;
+          } else if (source === "ir") {
+            command = args.raw ? "ir rx raw" : "ir rx";
+          } else {
+            command = "rfid read";
+          }
+          assertSingleLineCommand(command);
+          raw = await listenCapture(port, command, {
+            baud: context.globalArgs.baud,
+            listenMs: seconds * 1000,
+          });
+          output = cleanResponse(raw, command);
+        }
+        const events = parseListenEvents(output);
+
+        await context.writeResource("listen-result", "listen-result", {
+          port,
+          source,
+          command,
+          frequency: source === "subghz" ? frequency : null,
+          seconds,
+          eventCount: events.length,
+          events,
+          output,
+          raw,
           timestamp: new Date().toISOString(),
         });
         return {};

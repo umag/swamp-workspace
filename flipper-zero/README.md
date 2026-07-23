@@ -22,22 +22,23 @@ When `port` is omitted the model looks for `/dev/cu.usbmodemflip*` (macOS), then
 
 ### Methods
 
-| Method           | CLI / RPC                | Result resource   |
-| ---------------- | ------------------------ | ----------------- |
-| `detect`         | _(none)_                 | `device-port`     |
-| `info`           | `info device`            | `device-info`     |
-| `exec`           | _your command_           | `command-output`  |
-| `storage-list`   | `storage list <path>`    | `storage-listing` |
-| `storage-read`   | `storage read <path>`    | `file-content`    |
-| `apps`           | `loader list` (built-in) | `app-list`        |
-| `installed-apps` | `storage tree /ext/apps` | `installed-apps`  |
-| `launch`         | `loader open <app>`      | `launch-result`   |
-| `close`          | `loader close` → Back    | `close-result`    |
-| `running`        | `loader info`            | `loader-info`     |
-| `screenshot`     | RPC screen stream        | `screenshot`      |
-| `show-image`     | RPC virtual display      | `image-shown`     |
-| `play-snake`     | RPC stream + input       | `snake-game`      |
-| `reboot`         | `power reboot`           | `reboot-result`   |
+| Method           | CLI / RPC                     | Result resource   |
+| ---------------- | ----------------------------- | ----------------- |
+| `detect`         | _(none)_                      | `device-port`     |
+| `info`           | `info device`                 | `device-info`     |
+| `exec`           | _your command_                | `command-output`  |
+| `storage-list`   | `storage list <path>`         | `storage-listing` |
+| `storage-read`   | `storage read <path>`         | `file-content`    |
+| `apps`           | `loader list` (built-in)      | `app-list`        |
+| `installed-apps` | `storage tree /ext/apps`      | `installed-apps`  |
+| `launch`         | `loader open <app>`           | `launch-result`   |
+| `close`          | `loader close` → Back         | `close-result`    |
+| `running`        | `loader info`                 | `loader-info`     |
+| `screenshot`     | RPC screen stream             | `screenshot`      |
+| `show-image`     | RPC virtual display           | `image-shown`     |
+| `play-snake`     | RPC stream + input            | `snake-game`      |
+| `listen`         | `subghz`/`ir`/`rfid`/`nfc` rx | `listen-result`   |
+| `reboot`         | `power reboot`                | `reboot-result`   |
 
 ## Quick start
 
@@ -126,6 +127,43 @@ The bot needs a long-lived, full-permission serial session (a ~166ms game tick
 versus ~1.7s of swamp CLI startup rules out per-move method calls), so the
 method runs `bots/snake_bot.ts` as a `deno --allow-all` child process and
 captures its log.
+
+## Listening (receive-only)
+
+`listen` runs one of the device's receivers for a fixed window and captures what
+it decodes. **Receive only** — `subghz tx`, `tx_from_file` and `ir tx` exist on
+the device but are deliberately not wrapped.
+
+| `source` | Command                | Picks up                               |
+| -------- | ---------------------- | -------------------------------------- |
+| `subghz` | `subghz rx <freq> <d>` | 433/868/915MHz remotes, sensors        |
+| `ir`     | `ir rx`                | NEC, Samsung32, RC5/6, SIRC, Kaseikyo… |
+| `rfid`   | `rfid read`            | 125kHz LF cards                        |
+| `nfc`    | `nfc` → `scanner`      | 13.56MHz cards                         |
+
+```bash
+swamp model @magistr/flipper-zero method run listen my-flipper \
+  --input '{"source":"nfc","seconds":20}'
+swamp data query 'name == "listen-result"' --select 'content.output' --json
+# -> Protocols detected: Mifare Ultralight, Mifare Classic
+```
+
+Pass `raw: true` for `subghz`/`ir` to capture raw timings instead of decoded
+packets, and `external: true` to use an external CC1101 module.
+
+These commands **block until a keypress** and stay silent when nothing is in the
+air, so an idle-based read would stop instantly. `listenCapture` sends the
+command, captures for the window, then sends a keypress to stop it.
+
+**NFC is a sub-shell.** `nfc` switches the prompt from `>:` to `[nfc]>:`, so the
+enter → `scanner` → `exit` cycle runs through `sequenceCapture` as a single
+session that always executes its final step. Splitting it across calls risks
+stranding the device in the sub-shell, where every later command blocks forever
+waiting for a `>:` that never comes.
+
+**`eventCount` is heuristic.** Each receiver announces itself with different
+banner text, filtered by a denylist of CLI chrome. A missed pattern inflates the
+count but never loses data — the full transcript is always in `output`/`raw`.
 
 ## Notes & limitations
 
