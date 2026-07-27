@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/music-library"
-version: "2026.07.07.1"
+version: "2026.07.17.1"
 description: |
   Multidimensional music library catalog built WITHOUT touching the
   filesystem: the inventory and raw tags come from an existing gonic scan
@@ -33,6 +33,14 @@ description: |
   stream-level tags and reporting the encoding-fix trace — for debugging
   individual files.
 
+  The `bpm` method analyzes tempo per track with essentia
+  (RhythmExtractor2013 multifeature) in a throwaway container per worker,
+  reporting bpm, beat-detection confidence, beat-interval spread, key/scale
+  and danceability. The confidence matters more than the bpm: the beat
+  tracker imposes an even grid even on rubato or ambient material, so a
+  track can look metronomic while having no pulse you could follow. Results
+  carry over between runs, so a whole-library pass can be resumed.
+
 repository: "https://github.com/umag/swamp-workspace"
 paths:
   base: manifest
@@ -42,6 +50,7 @@ models:
 
 reports:
   - extensions/reports/verify_triage.ts
+  - extensions/reports/bpm_running.ts
 
 additionalFiles:
   - README.md

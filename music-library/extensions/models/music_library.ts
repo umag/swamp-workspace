@@ -20,6 +20,7 @@
 
 import { z } from "npm:zod@4";
 import jschardet from "npm:jschardet@3.1.4";
+import { buildRunning, type RunTrack } from "../lib/running.ts";
 
 // --- Global arguments ---
 
@@ -42,6 +43,12 @@ const GlobalArgsSchema = z.object({
     .string()
     .default("/mnt/user/music")
     .describe("Music root path on the host"),
+  bpmImage: z
+    .string()
+    .default("mtgupf/essentia:latest")
+    .describe(
+      "Docker image with the essentia python bindings, used by the bpm method",
+    ),
   legacyEncodings: z
     .array(z.string())
     .default(["windows-1251", "koi8-r", "ibm866", "shift_jis", "gbk"])
@@ -72,6 +79,13 @@ async function sshRun(
       "ConnectTimeout=10",
       "-o",
       "BatchMode=yes",
+      // Keep multi-hour sessions (whole-library bpm/verify runs) from being
+      // torn down by an idle-NAT timeout or a brief network blip: probe every
+      // 20s, tolerate ~2min of silence before giving up.
+      "-o",
+      "ServerAliveInterval=20",
+      "-o",
+      "ServerAliveCountMax=6",
       `${sshUser}@${host}`,
       command,
     ],
@@ -1521,6 +1535,217 @@ type VerifyProblem = {
   errors: string[];
 };
 
+// --- Tempo analysis (bpm) ---
+
+// Runs inside the essentia image (python bindings, no ffmpeg/jq there). Reads
+// one file path per line on stdin, writes one compact JSON record per line.
+//
+// Decoding once and feeding the same buffer to every algorithm is the whole
+// point: the essentia CLI extractors each re-decode the file, which costs more
+// than the analysis. RhythmExtractor2013 also yields a real beat-detection
+// confidence, which the `essentia_streaming_extractor_music` JSON does not
+// expose — and that number is what separates a track with an actual beat from
+// one where the tracker merely imposed an even grid.
+const ANALYZE_PY = `
+import json, math, signal, sys, time
+import essentia, essentia.standard as es
+
+essentia.log.infoActive = False
+essentia.log.warningActive = False
+SR = 44100
+
+class Timeout(Exception):
+    pass
+
+def _alarm(signum, frame):
+    raise Timeout("analysis exceeded per-file timeout")
+
+signal.signal(signal.SIGALRM, _alarm)
+
+def analyze(path, window_sec, start_frac):
+    t0 = time.time()
+    out = {"path": path}
+    audio = es.MonoLoader(filename=path, sampleRate=SR)()
+    total = len(audio) / float(SR)
+    out["lengthSec"] = round(total, 2)
+    windowed = False
+    if window_sec > 0 and total > window_sec:
+        start = max(0.0, (total - window_sec) * start_frac)
+        a = int(start * SR)
+        audio = audio[a:a + int(window_sec * SR)]
+        windowed = True
+    out["windowed"] = windowed
+    out["analyzedSec"] = round(len(audio) / float(SR), 2)
+    if out["analyzedSec"] < 10:
+        raise ValueError("too short to analyze: %.2fs" % out["analyzedSec"])
+
+    bpm, ticks, conf, estimates, intervals = es.RhythmExtractor2013(
+        method="multifeature")(audio)
+    out["bpm"] = round(float(bpm), 2)
+    out["beatsConfidence"] = round(float(conf), 4)
+    out["beatsCount"] = int(len(ticks))
+
+    iv = [float(x) for x in intervals]
+    if len(iv) > 2:
+        mean = sum(iv) / len(iv)
+        var = sum((x - mean) ** 2 for x in iv) / len(iv)
+        out["ibiCv"] = round(math.sqrt(var) / mean if mean else 0.0, 4)
+    est = [float(x) for x in estimates]
+    if est:
+        em = sum(est) / len(est)
+        ev = sum((x - em) ** 2 for x in est) / len(est)
+        out["estStd"] = round(math.sqrt(ev), 3)
+
+    key, scale, strength = es.KeyExtractor()(audio)
+    out["key"] = key
+    out["scale"] = scale
+    out["keyStrength"] = round(float(strength), 4)
+    out["danceability"] = round(float(es.Danceability()(audio)[0]), 4)
+    out["ms"] = int((time.time() - t0) * 1000)
+    return out
+
+win = float(sys.argv[1])
+frac = float(sys.argv[2])
+timeout = int(sys.argv[3]) if len(sys.argv) > 3 else 240
+for line in sys.stdin:
+    p = line.rstrip("\\n")
+    if not p:
+        continue
+    try:
+        # A gonic length of 0/unknown lets a genuinely huge file slip past the
+        # host-side maxLengthSec skip; without this a single such file decodes
+        # for hours and, at concurrency 1, hangs the whole batch. On timeout we
+        # emit a failure so the file is recorded and never retried.
+        if timeout > 0:
+            signal.alarm(timeout)
+        rec = analyze(p, win, frac)
+        rec["rc"] = 0
+    except Timeout as e:
+        rec = {"path": p, "rc": 2, "err": str(e)}
+    except Exception as e:
+        rec = {"path": p, "rc": 1, "err": str(e)[:300]}
+    finally:
+        signal.alarm(0)
+    sys.stdout.write(json.dumps(rec, separators=(",", ":")) + "\\n")
+    sys.stdout.flush()
+`;
+
+/**
+ * Band for essentia's RhythmExtractor2013 beat-detection confidence, whose
+ * documented range is 0–5.32. Low bands mean the tracker could not find a
+ * convincing beat (rubato ballads, ambient, solo classical) — the reported bpm
+ * for those is a grid it imposed, not a pulse you could run to.
+ */
+export function bpmConfidenceBand(conf: number | null | undefined): string {
+  if (conf === null || conf === undefined || !Number.isFinite(conf)) {
+    return "unknown";
+  }
+  if (conf === 0) return "none";
+  if (conf < 1) return "very-low";
+  if (conf < 1.5) return "low";
+  if (conf < 3.5) return "good";
+  return "excellent";
+}
+
+type BpmTrack = {
+  path: string;
+  bpm: number | null;
+  beatsConfidence: number | null;
+  confidenceBand: string;
+  beatsCount: number | null;
+  ibiCv: number | null;
+  estStd: number | null;
+  key: string | null;
+  scale: string | null;
+  keyStrength: number | null;
+  danceability: number | null;
+  lengthSec: number | null;
+  analyzedSec: number | null;
+  windowed: boolean;
+  ms: number | null;
+};
+
+type BpmFailure = { path: string; err: string };
+
+/**
+ * Parse one JSON record emitted by ANALYZE_PY into a track row or a failure.
+ * Unparseable lines (essentia writes stray native warnings to stdout on some
+ * files) are ignored rather than failing the whole batch.
+ */
+export function parseBpmLine(
+  line: string,
+  relOf: (containerPath: string) => string,
+): { track?: BpmTrack; failure?: BpmFailure } {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("{")) return {};
+  let rec: Record<string, unknown>;
+  try {
+    rec = JSON.parse(trimmed);
+  } catch {
+    return {};
+  }
+  const path = typeof rec.path === "string" ? rec.path : null;
+  if (!path) return {};
+  const rel = relOf(path);
+  if (rec.rc !== 0) {
+    return {
+      failure: {
+        path: rel,
+        err: String(rec.err ?? "unknown error").slice(0, 300),
+      },
+    };
+  }
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const str = (v: unknown): string | null => typeof v === "string" ? v : null;
+  const conf = num(rec.beatsConfidence);
+  return {
+    track: {
+      path: rel,
+      bpm: num(rec.bpm),
+      beatsConfidence: conf,
+      confidenceBand: bpmConfidenceBand(conf),
+      beatsCount: num(rec.beatsCount),
+      ibiCv: num(rec.ibiCv),
+      estStd: num(rec.estStd),
+      key: str(rec.key),
+      scale: str(rec.scale),
+      keyStrength: num(rec.keyStrength),
+      danceability: num(rec.danceability),
+      lengthSec: num(rec.lengthSec),
+      analyzedSec: num(rec.analyzedSec),
+      windowed: rec.windowed === true,
+      ms: num(rec.ms),
+    },
+  };
+}
+
+/**
+ * Name of the `bpm` resource covering a scope. The `running` method reads back
+ * exactly what a matching `bpm` run wrote, so both must derive it identically.
+ */
+export function bpmResourceName(path: string, pathPrefix: string): string {
+  if (path) {
+    return `bpm-file-${slugify(path.split("/").pop() || path)}-${hash8(path)}`;
+  }
+  if (pathPrefix) {
+    return `bpm-${slugify(pathPrefix)}-${hash8(pathPrefix)}`;
+  }
+  return "bpm-library";
+}
+
+/** Distribution of analyzed tracks across 10-bpm buckets. */
+export function bpmHistogram(tracks: BpmTrack[]): Record<string, number> {
+  const hist: Record<string, number> = {};
+  for (const t of tracks) {
+    if (t.bpm === null) continue;
+    const lo = Math.floor(t.bpm / 10) * 10;
+    const key = `${lo}-${lo + 10}`;
+    hist[key] = (hist[key] ?? 0) + 1;
+  }
+  return hist;
+}
+
 // --- Resource schemas ---
 
 const TrackSchema = z.object({
@@ -1689,6 +1914,105 @@ const VerifySchema = z.object({
   ),
 });
 
+const BpmSchema = z.object({
+  kind: z.literal("bpm"),
+  startedAt: z.string(),
+  elapsedSec: z.number(),
+  params: z.object({
+    path: z.string(),
+    pathPrefix: z.string(),
+    limit: z.number(),
+    concurrency: z.number(),
+    windowSec: z.number(),
+    windowStart: z.number(),
+    minLengthSec: z.number(),
+    maxLengthSec: z.number(),
+    perFileTimeoutSec: z.number(),
+    reanalyze: z.boolean(),
+  }),
+  analyzed: z.number(),
+  carriedOver: z.number(),
+  failed: z.number(),
+  newlyFailed: z.number(),
+  skippedShort: z.number(),
+  skippedLong: z.number(),
+  skippedUnsafePaths: z.number(),
+  missingRecords: z.number(),
+  stats: z.object({
+    bpmMedian: z.number().nullable(),
+    confidenceBands: z.record(z.string(), z.number()),
+    bpmHistogram: z.record(z.string(), z.number()),
+    analysisRateX: z.number().nullable(),
+  }),
+  tracks: z.array(
+    z.object({
+      path: z.string(),
+      bpm: z.number().nullable(),
+      beatsConfidence: z.number().nullable(),
+      confidenceBand: z.string(),
+      beatsCount: z.number().nullable(),
+      ibiCv: z.number().nullable(),
+      estStd: z.number().nullable(),
+      key: z.string().nullable(),
+      scale: z.string().nullable(),
+      keyStrength: z.number().nullable(),
+      danceability: z.number().nullable(),
+      lengthSec: z.number().nullable(),
+      analyzedSec: z.number().nullable(),
+      windowed: z.boolean(),
+      ms: z.number().nullable(),
+    }),
+  ),
+  failures: z.array(z.object({ path: z.string(), err: z.string() })),
+});
+
+const PlaylistSchema = z.object({
+  kind: z.literal("playlist"),
+  generatedAt: z.string(),
+  source: z.string(),
+  sourceAnalyzed: z.number(),
+  params: z.object({
+    pathPrefix: z.string(),
+    minSpm: z.number(),
+    maxSpm: z.number(),
+    minConfidence: z.number(),
+    targetMin: z.number(),
+    limit: z.number(),
+  }),
+  tracksTotal: z.number(),
+  eligible: z.number(),
+  excluded: z.object({ noPulse: z.number(), outOfRange: z.number() }),
+  totalSec: z.number(),
+  buckets: z.array(
+    z.object({
+      range: z.string(),
+      tracks: z.number(),
+      minutes: z.number(),
+    }),
+  ),
+  albums: z.array(
+    z.object({
+      dir: z.string(),
+      tracks: z.number(),
+      runnable: z.number(),
+      meanConfidence: z.number(),
+    }),
+  ),
+  tracks: z.array(
+    z.object({
+      path: z.string(),
+      bpm: z.number(),
+      spm: z.number(),
+      mult: z.number(),
+      confidence: z.number(),
+      danceability: z.number().nullable(),
+      key: z.string().nullable(),
+      scale: z.string().nullable(),
+      lengthSec: z.number(),
+    }),
+  ),
+});
+
 const ProbeSchema = z.object({
   kind: z.literal("probe"),
   path: z.string(),
@@ -1739,8 +2063,8 @@ ORDER BY a.left_path, a.right_path, t.filename;`;
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.07.07.1",
-  reports: ["@magistr/music-verify-triage"],
+  version: "2026.07.17.1",
+  reports: ["@magistr/music-verify-triage", "@magistr/music-bpm-running"],
   globalArguments: GlobalArgsSchema,
   resources: {
     library: {
@@ -1786,6 +2110,20 @@ export const model = {
       schema: VerifySchema,
       lifetime: "infinite",
       garbageCollection: 5,
+    },
+    bpm: {
+      description:
+        "Tempo analysis: bpm, beat-detection confidence, key and danceability per track",
+      schema: BpmSchema,
+      lifetime: "infinite",
+      garbageCollection: 5,
+    },
+    playlist: {
+      description:
+        "Cadence-matched running playlist derived from a bpm resource",
+      schema: PlaylistSchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
     },
     probe: {
       description: "Deep ffprobe result for a single file",
@@ -2157,6 +2495,371 @@ export const model = {
           skippedUnsafePaths,
           problemsTruncated,
           problems: problemsTruncated ? problems.slice(0, 2000) : problems,
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    bpm: {
+      description:
+        "Analyze tempo per track (essentia): bpm, beat-detection confidence, key/scale and danceability — the confidence tells a real pulse from a grid imposed on rubato",
+      arguments: z.object({
+        path: z
+          .string()
+          .default("")
+          .describe(
+            "Analyze a single file: library-relative, or absolute host/container path",
+          ),
+        pathPrefix: z
+          .string()
+          .default("")
+          .describe(
+            "Only analyze tracks whose library-relative path starts with this prefix",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(0)
+          .default(0)
+          .describe("Cap the number of tracks analyzed (0 = no cap)"),
+        concurrency: z
+          .number()
+          .int()
+          .min(1)
+          .max(32)
+          .default(8)
+          .describe(
+            "Parallel analyzer containers; each one decodes and analyzes its chunk serially",
+          ),
+        windowSec: z
+          .number()
+          .min(0)
+          .default(0)
+          .describe(
+            "Analyze only this many seconds of each track (0 = whole track). A 120s window reproduces whole-track bpm to within ~1 bpm. It caps analysis cost, not decode: the file is still decoded in full, so a 4h wav still takes minutes",
+          ),
+        windowStart: z
+          .number()
+          .min(0)
+          .max(1)
+          .default(0.5)
+          .describe(
+            "Where the window sits, as a fraction of the slack (0 = start, 0.5 = centred, 1 = end)",
+          ),
+        minLengthSec: z
+          .number()
+          .int()
+          .min(0)
+          .default(30)
+          .describe(
+            "Skip tracks shorter than this — interludes and skits have no stable tempo",
+          ),
+        maxLengthSec: z
+          .number()
+          .int()
+          .min(0)
+          .default(1200)
+          .describe(
+            "Skip tracks longer than this (0 = no cap). Multi-hour mixes and ambient have no single runnable tempo, cost minutes each to decode, and overflow essentia's RhythmExtractor2013 onset buffer — so they are excluded rather than analyzed",
+          ),
+        perFileTimeoutSec: z
+          .number()
+          .int()
+          .min(0)
+          .default(240)
+          .describe(
+            "Abort analysis of any single file after this many seconds and record it as failed (0 = no timeout). Guards against a huge file whose gonic length is 0/unknown slipping past maxLengthSec and hanging the whole batch",
+          ),
+        reanalyze: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Re-analyze tracks already present in the previous run instead of carrying their results over",
+          ),
+      }),
+      execute: async (args, context) => {
+        const {
+          host,
+          sshUser,
+          dbPath,
+          containerMusicRoot,
+          hostMusicRoot,
+          bpmImage,
+        } = context.globalArgs;
+        const startedAt = new Date();
+        const relOf = (cpath: string) =>
+          cpath.startsWith(containerMusicRoot + "/")
+            ? cpath.slice(containerMusicRoot.length + 1)
+            : cpath;
+
+        let files: { cpath: string; rel: string; lengthSec: number | null }[] =
+          [];
+        if (args.path) {
+          let p = args.path;
+          if (p.startsWith(hostMusicRoot + "/")) {
+            p = containerMusicRoot + p.slice(hostMusicRoot.length);
+          } else if (!p.startsWith(containerMusicRoot + "/")) {
+            p = containerMusicRoot + "/" + p.replace(/^\/+/, "");
+          }
+          files.push({ cpath: p, rel: relOf(p), lengthSec: null });
+        } else {
+          const rows = await sqliteJson(host, sshUser, dbPath, VERIFY_SQL);
+          for (const row of rows) {
+            const rel = (row.left_path || "") + row.right_path + "/" +
+              row.filename;
+            if (args.pathPrefix && !rel.startsWith(args.pathPrefix)) continue;
+            files.push({
+              cpath: containerMusicRoot + "/" + rel,
+              rel,
+              lengthSec: row.length || null,
+            });
+          }
+        }
+
+        const reportName = bpmResourceName(args.path, args.pathPrefix);
+
+        // Resume: a whole-library pass runs for hours, so previously analyzed
+        // tracks are carried over rather than recomputed unless asked. Prior
+        // failures are carried too and treated as done — a file that failed
+        // (corrupt, or too long for the beat tracker) is deterministic, so
+        // retrying it every batch just re-decodes it for nothing and, for
+        // multi-hour files, tanks the whole run.
+        const carried: BpmTrack[] = [];
+        const carriedFailures: BpmFailure[] = [];
+        if (!args.reanalyze && context.readResource) {
+          const prev = await context.readResource(reportName) as
+            | { tracks?: BpmTrack[]; failures?: BpmFailure[] }
+            | null;
+          if (prev?.tracks?.length) carried.push(...prev.tracks);
+          if (prev?.failures?.length) carriedFailures.push(...prev.failures);
+        }
+        const done = new Set([
+          ...carried.map((t) => t.path),
+          ...carriedFailures.map((f) => f.path),
+        ]);
+        if (done.size > 0) files = files.filter((f) => !done.has(f.rel));
+
+        // Short tracks have no tempo worth trusting; a single explicit path is
+        // always honored (the caller asked for that file by name).
+        const beforeShort = files.length;
+        if (!args.path && args.minLengthSec > 0) {
+          files = files.filter(
+            (f) => f.lengthSec === null || f.lengthSec >= args.minLengthSec,
+          );
+        }
+        const skippedShort = beforeShort - files.length;
+
+        // Very long files (mixes, ambient, hours-long rips) have no single
+        // runnable tempo, cost minutes each to decode, and overflow essentia's
+        // RhythmExtractor2013 onset buffer — skip them at the source.
+        const beforeLong = files.length;
+        if (!args.path && args.maxLengthSec > 0) {
+          files = files.filter(
+            (f) => f.lengthSec === null || f.lengthSec <= args.maxLengthSec,
+          );
+        }
+        const skippedLong = beforeLong - files.length;
+
+        // The python side reads one path per line, so a newline in a filename
+        // would desynchronize the record stream.
+        const safe = files.filter((f) =>
+          !["\n", "\r"].some((c) => f.cpath.includes(c))
+        );
+        const skippedUnsafePaths = files.length - safe.length;
+        const work = args.limit > 0 ? safe.slice(0, args.limit) : safe;
+
+        const inner = `echo ${btoa(ANALYZE_PY)} | base64 -d > /tmp/a.py; ` +
+          `exec python3 /tmp/a.py ${args.windowSec} ${args.windowStart} ${args.perFileTimeoutSec}`;
+        const remoteCmd = `docker run --rm -i -v ${
+          shQuote(`${hostMusicRoot}:${containerMusicRoot}:ro`)
+        } --entrypoint sh ${shQuote(bpmImage)} -c ${shQuote(inner)}`;
+
+        const workerCount = Math.min(
+          args.concurrency,
+          Math.max(1, work.length),
+        );
+        const chunks: typeof work[] = Array.from(
+          { length: workerCount },
+          () => [],
+        );
+        work.forEach((f, i) => chunks[i % workerCount].push(f));
+
+        const outputs = await Promise.all(chunks.map((chunk) => {
+          if (chunk.length === 0) return Promise.resolve("");
+          const stdin = chunk.map((f) => f.cpath).join("\n") + "\n";
+          return sshRun(host, sshUser, remoteCmd, stdin);
+        }));
+
+        const tracks: BpmTrack[] = [];
+        const newFailures: BpmFailure[] = [];
+        for (const out of outputs) {
+          for (const line of out.split("\n")) {
+            const { track, failure } = parseBpmLine(line, relOf);
+            if (track) tracks.push(track);
+            else if (failure) newFailures.push(failure);
+          }
+        }
+        const missingRecords = work.length -
+          (tracks.length + newFailures.length);
+        const failures = [...carriedFailures, ...newFailures];
+
+        const all = [...carried, ...tracks].sort((a, b) =>
+          a.path < b.path ? -1 : a.path > b.path ? 1 : 0
+        );
+        const bpms = all
+          .map((t) => t.bpm)
+          .filter((b): b is number => b !== null)
+          .sort((a, b) => a - b);
+        const bpmMedian = bpms.length > 0
+          ? Math.round(bpms[Math.floor(bpms.length / 2)] * 100) / 100
+          : null;
+        const confidenceBands: Record<string, number> = {};
+        for (const t of all) {
+          confidenceBands[t.confidenceBand] =
+            (confidenceBands[t.confidenceBand] ?? 0) + 1;
+        }
+        // realtime factor of the analyzers themselves, not of the whole run
+        const audioSec = tracks.reduce((s, t) => s + (t.analyzedSec ?? 0), 0);
+        const cpuSec = tracks.reduce((s, t) => s + (t.ms ?? 0), 0) / 1000;
+        const analysisRateX = cpuSec > 0
+          ? Math.round((audioSec / cpuSec) * 10) / 10
+          : null;
+
+        const handle = await context.writeResource("bpm", reportName, {
+          kind: "bpm",
+          startedAt: startedAt.toISOString(),
+          elapsedSec: Math.round((Date.now() - startedAt.getTime()) / 1000),
+          params: {
+            path: args.path,
+            pathPrefix: args.pathPrefix,
+            limit: args.limit,
+            concurrency: args.concurrency,
+            windowSec: args.windowSec,
+            windowStart: args.windowStart,
+            minLengthSec: args.minLengthSec,
+            maxLengthSec: args.maxLengthSec,
+            perFileTimeoutSec: args.perFileTimeoutSec,
+            reanalyze: args.reanalyze,
+          },
+          analyzed: tracks.length,
+          carriedOver: carried.length,
+          failed: failures.length,
+          newlyFailed: newFailures.length,
+          skippedShort,
+          skippedLong,
+          skippedUnsafePaths,
+          missingRecords,
+          stats: {
+            bpmMedian,
+            confidenceBands,
+            bpmHistogram: bpmHistogram(all),
+            analysisRateX,
+          },
+          tracks: all,
+          failures,
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    running: {
+      description:
+        "Build a tunable running playlist from an existing bpm analysis: matches each track's tempo to your cadence at 1x/2x/half, gated on beat confidence so rubato and ambient never sneak in. Reads stored data — no audio is touched, so it is instant and re-tunable",
+      arguments: z.object({
+        pathPrefix: z
+          .string()
+          .default("")
+          .describe(
+            "Which bpm analysis to draw from — must match the pathPrefix the bpm method ran with (empty = whole-library analysis)",
+          ),
+        minSpm: z
+          .number()
+          .min(30)
+          .max(300)
+          .default(150)
+          .describe("Slowest cadence you will run at, in steps per minute"),
+        maxSpm: z
+          .number()
+          .min(30)
+          .max(300)
+          .default(190)
+          .describe("Fastest cadence you will run at, in steps per minute"),
+        minConfidence: z
+          .number()
+          .min(0)
+          .max(5.32)
+          .default(1.5)
+          .describe(
+            "Minimum essentia beat-detection confidence (0-5.32). Below ~1.5 the reported bpm is a grid laid over rubato or ambient material, not a pulse — lower this only if you want to see what was rejected",
+          ),
+        targetMin: z
+          .number()
+          .min(0)
+          .default(0)
+          .describe(
+            "Trim the playlist to roughly this many minutes, keeping the strongest beats (0 = keep everything)",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(0)
+          .default(0)
+          .describe("Cap the number of tracks (0 = no cap)"),
+      }),
+      execute: async (args, context) => {
+        if (args.minSpm > args.maxSpm) {
+          throw new Error(
+            `minSpm (${args.minSpm}) is above maxSpm (${args.maxSpm}) — the cadence window is empty`,
+          );
+        }
+        const source = bpmResourceName("", args.pathPrefix);
+        if (!context.readResource) {
+          throw new Error("readResource unavailable — cannot load bpm data");
+        }
+        const bpm = await context.readResource(source) as
+          | { tracks?: RunTrack[] }
+          | null;
+        if (!bpm?.tracks?.length) {
+          throw new Error(
+            `No bpm analysis found at "${source}" — run: swamp model method run ${context.modelName} bpm` +
+              (args.pathPrefix
+                ? ` --input pathPrefix="${args.pathPrefix}"`
+                : ""),
+          );
+        }
+
+        const r = buildRunning(bpm.tracks, {
+          minSpm: args.minSpm,
+          maxSpm: args.maxSpm,
+          minConfidence: args.minConfidence,
+          targetMin: args.targetMin,
+          limit: args.limit,
+        });
+
+        const scope = args.pathPrefix ? slugify(args.pathPrefix) : "library";
+        const name = `running-${scope}-${Math.round(args.minSpm)}-${
+          Math.round(args.maxSpm)
+        }`;
+        const handle = await context.writeResource("playlist", name, {
+          kind: "playlist",
+          generatedAt: new Date().toISOString(),
+          source,
+          sourceAnalyzed: bpm.tracks.length,
+          params: {
+            pathPrefix: args.pathPrefix,
+            minSpm: args.minSpm,
+            maxSpm: args.maxSpm,
+            minConfidence: args.minConfidence,
+            targetMin: args.targetMin,
+            limit: args.limit,
+          },
+          tracksTotal: r.playlist.length,
+          eligible: r.eligible,
+          excluded: r.excluded,
+          totalSec: Math.round(r.totalSec),
+          buckets: r.buckets,
+          albums: r.albums,
+          tracks: r.playlist,
         });
         return { dataHandles: [handle] };
       },
