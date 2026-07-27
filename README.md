@@ -3,6 +3,14 @@
 Swamp extensions monorepo. Each subdirectory is a self-contained extension with
 its own `manifest.yaml`, `.swamp.yaml`, skills, models, and tests.
 
+## Quality standard
+
+Every extension is held to a machine-checked bar defined in
+[`STANDARD.md`](STANDARD.md): five required test suites, README/CHANGELOG/
+bundled-skill docs, and a never-regress registry quality score. A
+shrink-only `quality-allowlist.txt` tolerates today's backlog while it gets
+backfilled; the `compliance` CI job enforces it globally on every PR.
+
 ## Extensions
 
 ### Development, automation & orchestration
@@ -92,6 +100,11 @@ PR checks:
 
 - `deno-check` — `deno fmt --check`, `lint`, type `check`, and `test` (per
   extension). The most common red is `deno fmt --check` — run `deno fmt` first.
+- `compliance` — the [quality standard](STANDARD.md) gate: every
+  extension's `quality.yaml` (five suites + docs), the shrink-only
+  allowlist, and a never-regress registry score. Runs GLOBAL (every
+  extension, every PR), tokenless. See `STANDARD.md` for how to run it
+  locally and fix a failure.
 - `skill-review` — tessl quality review (per skill, threshold 90%)
 - `skill-trigger-eval` — promptfoo routing eval on Sonnet (≥90% pass). A new
   skill must also be added to the routing prompt list in
