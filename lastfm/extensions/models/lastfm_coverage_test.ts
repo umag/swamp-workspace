@@ -130,6 +130,27 @@ Deno.test("scrobbleKey: identity is (uts, artist, track)", () => {
   assert(scrobbleKey(s(1, "a", "t")) !== scrobbleKey(s(1, "b", "t")));
 });
 
+Deno.test("scrobbleKey: the delimiter is unambiguous — shifting a space between fields is a different key", () => {
+  // With a printable separator these two collide and one scrobble silently
+  // swallows the other.
+  assert(
+    scrobbleKey(s(1, "a b", "c")) !== scrobbleKey(s(1, "a", "b c")),
+    "artist/track boundary must be unambiguous",
+  );
+});
+
+Deno.test("scrobbleKey: the source carries no raw control byte", async () => {
+  // A raw NUL in the source makes `file` report "data" and silences grep.
+  // The delimiter must be written as an escape, not embedded literally.
+  const src = await Deno.readTextFile(
+    new URL("./lastfm.ts", import.meta.url),
+  );
+  assert(
+    !src.includes(String.fromCharCode(0)),
+    "lastfm.ts contains a raw NUL byte - write the delimiter as \\u0000",
+  );
+});
+
 Deno.test("scrobbleKey: album is NOT part of identity", () => {
   const withAlbum: Scrobble = { ...s(1, "a", "t"), album: "X" };
   assertEquals(scrobbleKey(withAlbum), scrobbleKey(s(1, "a", "t")));

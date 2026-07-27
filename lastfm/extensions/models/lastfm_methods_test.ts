@@ -569,6 +569,58 @@ Deno.test("sync-history: resyncYear rewinds the cursor to that year's start", as
   );
 });
 
+Deno.test("sync-history: a truncated walk HOLDS the cursor so older pages are not skipped", async () => {
+  // getRecentTracks pages newest-first, so stopping early leaves a gap at the
+  // OLD end of the range. Advancing the cursor to the newest uts seen would
+  // put that gap permanently behind the cursor and those scrobbles would never
+  // be fetched again. This is the regression guard for that data loss.
+  const priorUts = 1_000_000;
+  const { ctx, written } = makeCtx(GLOBAL_ARGS, {
+    "history.u3BpaT": { user: "u3BpaT", lastUts: priorUts },
+  });
+  await withFetchStub(
+    (url) => {
+      const page = Number(url.searchParams.get("page") ?? "1");
+      // Newest first: page 1 is the most recent.
+      return recentPage(
+        [{ uts: UTS_2008 - page * 1000, artist: "A", track: `t${page}` }],
+        page,
+        10,
+      );
+    },
+    async () => {
+      await run("sync-history", { maxPages: 2 }, ctx);
+      const history = written.find((w) => w.spec === "history");
+      assert(history, "history must be written");
+      assertEquals(
+        history.payload.lastUts,
+        priorUts,
+        "a truncated walk must NOT advance the cursor past the unread gap",
+      );
+      assertEquals(
+        history.payload.truncated,
+        true,
+        "truncation must be reported",
+      );
+    },
+  );
+});
+
+Deno.test("sync-history: a complete walk DOES advance the cursor", async () => {
+  const { ctx, written } = makeCtx(GLOBAL_ARGS, {
+    "history.u3BpaT": { user: "u3BpaT", lastUts: 1000 },
+  });
+  await withFetchStub(
+    () => recentPage([{ uts: UTS_2008, artist: "A", track: "t1" }], 1, 1),
+    async () => {
+      await run("sync-history", { maxPages: 5 }, ctx);
+      const history = written.find((w) => w.spec === "history");
+      assertEquals(history?.payload.lastUts, UTS_2008);
+      assertEquals(history?.payload.truncated, false);
+    },
+  );
+});
+
 Deno.test("sync-history: maxPages stops the walk early and says so", async () => {
   const { ctx, logs } = makeCtx();
   await withFetchStub(

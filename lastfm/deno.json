@@ -1,7 +1,7 @@
 {
   "tasks": {
     "check": "deno check extensions/models/lastfm.ts extensions/reports/lastfm_stats.ts",
-    "test": "deno test --allow-env extensions/ --permit-no-files",
+    "test": "deno test --allow-env --allow-read=extensions/models extensions/ --permit-no-files",
     "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env extensions/models/lastfm_property_test.ts",
     "test:live": "LIVE_LASTFM=1 deno test --allow-net --allow-env extensions/models/lastfm_live_test.ts",
     "fmt": "deno fmt",
