@@ -194,7 +194,87 @@ jobs:
 
       - name: Type check (scripts)
         working-directory: scripts
-        run: deno check build-promptfoo-tests.ts build-ci-report.ts
+        run: deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts
+
+  compliance:
+    name: compliance (extension quality standard)
+    runs-on: ubuntu-latest
+    # Deliberately NOT `needs: discover` and no diff-scoped `if:` — this job
+    # runs GLOBAL, every extension, every PR and push, regardless of which
+    # files a given change touched. See STANDARD.md "Why the compliance job
+    # runs GLOBAL, not diff-scoped": a shared-file-only change (or an
+    # extension rename) must never bypass per-extension enforcement.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # checkBaselineImmutable (check_allowlist.ts) diffs
+          # quality-offenders.baseline.txt against the merge-base with
+          # origin/master, so real history is needed (not a shallow clone).
+          fetch-depth: 0
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.3
+
+      - name: Test (scripts)
+        working-directory: scripts
+        run: deno task test
+
+      - name: Setup swamp (pinned — a rubric/auth change is a deliberate bump)
+        uses: ./.github/actions/setup-swamp
+        with:
+          version: "20260727.000815.0-sha.db74fcac"
+
+      - name: Smoke-check — this job stays tokenless
+        run: |
+          set -eo pipefail
+          # `swamp extension quality` runs fully offline/local (verified
+          # 2026-07: scores stripe-mpp and pihole with no auth configured at
+          # all). This job must NEVER gain the publish-scoped SWAMP_API_KEY
+          # the extension-publish job uses — a future workflow edit that
+          # reintroduces it here would hand that credential to every PR run
+          # for no reason. Guard it explicitly so that drift is loud.
+          if [ -f "$HOME/.config/swamp/auth.json" ]; then
+            echo "::error::swamp auth file present in the compliance job — it must stay tokenless"
+            exit 1
+          fi
+          if [ -n "${SWAMP_API_KEY:-}" ]; then
+            echo "::error::SWAMP_API_KEY set in the compliance job — it must stay tokenless"
+            exit 1
+          fi
+          echo "OK: no swamp credentials present in this job"
+
+      # Each of the three gates runs regardless of whether an earlier one
+      # failed (`!cancelled()`, not the default "stop on first failure") —
+      # the same aggregate-don't-abort philosophy check_compliance.ts itself
+      # applies across extensions, applied here across gates: one CI run
+      # surfaces every finding instead of a fix-push-fail-fix-push cycle.
+      # The job's own conclusion still fails if ANY step below fails.
+      - name: Check compliance (every extension's quality.yaml)
+        if: ${{ !cancelled() }}
+        working-directory: scripts
+        run: deno task quality:check --json ../compliance-summary.json
+
+      - name: Check allowlist (shrink-only + baseline immutability)
+        if: ${{ !cancelled() }}
+        working-directory: scripts
+        run: deno task quality:allowlist --json ../allowlist-summary.json
+
+      - name: Check score ratchet (never regress, rubric-version-aware)
+        if: ${{ !cancelled() }}
+        working-directory: scripts
+        run: deno task quality:ratchet --json ../ratchet-summary.json
+
+      - name: Upload compliance summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: compliance-summary
+          path: |
+            compliance-summary.json
+            allowlist-summary.json
+            ratchet-summary.json
 
   skill-review:
     name: skill-review (tessl)
@@ -323,10 +403,13 @@ jobs:
   pr-report:
     name: pr-report (sticky comment)
     runs-on: ubuntu-latest
-    needs: [discover, skill-review, skill-trigger-eval]
-    # Always run on PRs so the reports post even when a gate fails — but only
-    # when an in-scope skill was reviewed (else there are no reports to post).
-    if: always() && github.event_name == 'pull_request' && needs.discover.outputs.skills != '[]'
+    needs: [discover, skill-review, skill-trigger-eval, compliance]
+    # Always run on PRs so the reports post even when a gate fails. The
+    # compliance report runs GLOBAL on every PR, so (unlike the old
+    # skills-only guard this replaced) there is always at least one report
+    # worth posting — tessl/promptfoo sections just fall back to "no
+    # artifact" placeholders when no in-scope skill changed.
+    if: always() && github.event_name == 'pull_request'
     permissions:
       contents: read
       pull-requests: write
@@ -372,6 +455,7 @@ jobs:
           }
           upsert "ci-report:tessl" tessl-report.md
           upsert "ci-report:promptfoo" promptfoo-report.md
+          upsert "ci-report:compliance" compliance-report.md
 
   extension-publish:
     name: extension-publish (on manifest version bump)
