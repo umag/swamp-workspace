@@ -1,0 +1,32 @@
+manifestVersion: 1
+name: "@magistr/anilist-chart"
+version: "2026.07.21.1"
+description: |
+  Read-only render layer for the AniList chat statistics site: turns the
+  `anilist_metadata` and `user_scores` ClickHouse tables (written by the
+  `@anilist/api` ingest model) into the six static pages — the «Доска почёта»
+  board, the /anime landing, and the four genre charts (chart, current, fresh,
+  bayes). This is a faithful port of the legacy Python (generate_board.py,
+  generate_landing.py, anilist_chart*.py); every ranking rule, formatter, and
+  award is reproduced from the oracle. The render boundary is strictly
+  read-only — the worst failure is a stale page for a week, fixable by re-run.
+
+  Methods render the pages from whatever data is present and publish each page
+  that rendered (fan-out; one failing page never suppresses the rest).
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/anilist_chart.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - anilist
+  - anime
+  - clickhouse
+  - charts
+  - render

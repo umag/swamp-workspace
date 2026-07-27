@@ -1,0 +1,29 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/**/*.ts",
+    "test": "deno test --ignore=extensions/models/lib/clickhouse.test.ts,extensions/models/lib/css_parity.test.ts extensions/models/",
+    "test:css": "deno test --allow-read extensions/models/lib/css_parity.test.ts",
+    "test:live": "deno test --allow-net --allow-env extensions/models/lib/clickhouse.test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "zod": "npm:zod@4"
+  },
+  "compilerOptions": {
+    "noImplicitAny": false
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "exclude": ["fixtures"]
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}
