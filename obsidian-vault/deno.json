@@ -1,7 +1,7 @@
 {
   "tasks": {
-    "check": "deno check extensions/models/obsidian_vault.ts",
-    "test": "deno test extensions/models/ --permit-no-files",
+    "check": "deno check extensions/models/",
+    "test": "deno test extensions/models/ --permit-no-files --allow-read --allow-write --allow-env",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
