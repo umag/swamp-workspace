@@ -72,6 +72,9 @@ gate:
     withheld from the default gate so a test reaching the network fails loudly.
 
 counts:
-  tests_passing: 86
-  suites_present: 5
+  tests_passing: 103
+  suites_present: 4
   suites_blocked: 1
+  report_suites_present: 1
+  methods_with_method_level_tests: 13
+  methods_total: 13

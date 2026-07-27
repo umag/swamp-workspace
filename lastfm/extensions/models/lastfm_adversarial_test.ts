@@ -252,19 +252,24 @@ Deno.test("adversarial: a duplicate across a page boundary is stored once", asyn
   );
 });
 
-Deno.test("adversarial: page drift — a shrinking walk does not silently skip", async () => {
-  // Page 1 reports 3 pages; by page 2 the API claims only 1. The walk must
-  // terminate cleanly rather than loop or throw.
+Deno.test("adversarial: page drift — every fetched scrobble is kept, none silently dropped", async () => {
+  // Page 1 advertises 3 pages; by page 2 the API claims only 1 (someone
+  // scrobbled mid-walk and the window shifted). Terminating is not enough —
+  // every scrobble actually returned must survive into a chunk, or the walk
+  // has silently lost data.
   const { ctx, written } = makeCtx();
+  const served: string[] = [];
   await withRawFetch(
     (url) => {
       const page = Number(url.searchParams.get("page") ?? "1");
+      const track = `t${page}`;
+      served.push(track);
       return json({
         recenttracks: {
           "@attr": { page: String(page), totalPages: page === 1 ? "3" : "1" },
           track: [{
             artist: { "#text": "A", mbid: "" },
-            name: `t${page}`,
+            name: track,
             date: { uts: String(UTS - page) },
           }],
         },
@@ -272,7 +277,29 @@ Deno.test("adversarial: page drift — a shrinking walk does not silently skip",
     },
     async () => {
       await run("sync-history", {}, ctx);
-      assert(written.find((w) => w.spec === "history"), "walk completed");
+
+      const stored = written
+        .filter((w) => w.spec === "scrobbles")
+        .flatMap((w) =>
+          ((w.payload as { scrobbles?: Array<{ track: string }> }).scrobbles) ??
+            []
+        )
+        .map((s) => s.track)
+        .sort();
+
+      assertEquals(
+        stored,
+        [...served].sort(),
+        "every scrobble the API returned must land in a chunk",
+      );
+
+      const history = written.find((w) => w.spec === "history");
+      assert(history, "the walk must record its state");
+      assertEquals(
+        (history.payload as { added: number }).added,
+        served.length,
+        "the reported count must match what was actually fetched",
+      );
     },
   );
 });

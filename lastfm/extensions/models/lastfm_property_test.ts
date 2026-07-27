@@ -82,17 +82,26 @@ Deno.test("property: dedupe is idempotent — deduping twice equals deduping onc
   );
 });
 
-Deno.test("property: dedupe is order-independent — shuffling yields the same key set", () => {
+Deno.test("property: dedupe is order-independent — any permutation yields the same key set", () => {
   fc.assert(
-    fc.property(historyArb, fc.integer(), (history, seed) => {
-      const shuffled = [...history].sort(
-        (a, b) => ((a.uts + seed) % 7) - ((b.uts + seed) % 7),
-      );
-      assertEquals(
-        dedupeScrobbles(shuffled).map(scrobbleKey).sort(),
-        dedupeScrobbles(history).map(scrobbleKey).sort(),
-      );
-    }),
+    fc.property(
+      historyArb.chain((history) =>
+        fc.tuple(
+          fc.constant(history),
+          // A genuine permutation of the same rows, not a partial reorder.
+          fc.shuffledSubarray(history, {
+            minLength: history.length,
+            maxLength: history.length,
+          }),
+        )
+      ),
+      ([history, permuted]) => {
+        assertEquals(
+          dedupeScrobbles(permuted).map(scrobbleKey).sort(),
+          dedupeScrobbles(history).map(scrobbleKey).sort(),
+        );
+      },
+    ),
     cfg,
   );
 });

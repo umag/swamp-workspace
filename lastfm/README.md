@@ -41,26 +41,26 @@ globalArguments:
 
 ### Lookups
 
-| Method | Wraps | Notes |
-|--------|-------|-------|
-| `profile` | `user.getInfo` | Playcount, artist/album/track counts, registration date |
-| `loved-tracks` | `user.getLovedTracks` | Paged |
-| `artist-info` | `artist.getInfo` | Includes *your* playcount for that artist |
-| `album-info` | `album.getInfo` | Includes your playcount |
-| `track-info` | `track.getInfo` | Includes your playcount |
+| Method         | Wraps                 | Notes                                                   |
+| -------------- | --------------------- | ------------------------------------------------------- |
+| `profile`      | `user.getInfo`        | Playcount, artist/album/track counts, registration date |
+| `loved-tracks` | `user.getLovedTracks` | Paged                                                   |
+| `artist-info`  | `artist.getInfo`      | Includes _your_ playcount for that artist               |
+| `album-info`   | `album.getInfo`       | Includes your playcount                                 |
+| `track-info`   | `track.getInfo`       | Includes your playcount                                 |
 
 ### Charts
 
-| Method | Wraps |
-|--------|-------|
-| `top-artists` / `top-albums` / `top-tracks` | `user.getTop*` |
-| `weekly-chart-list` | `user.getWeeklyChartList` |
-| `weekly-artist-chart` / `weekly-album-chart` / `weekly-track-chart` | `user.getWeekly*Chart` |
+| Method                                                              | Wraps                     |
+| ------------------------------------------------------------------- | ------------------------- |
+| `top-artists` / `top-albums` / `top-tracks`                         | `user.getTop*`            |
+| `weekly-chart-list`                                                 | `user.getWeeklyChartList` |
+| `weekly-artist-chart` / `weekly-album-chart` / `weekly-track-chart` | `user.getWeekly*Chart`    |
 
 `period` is a closed enum — `overall`, `7day`, `1month`, `3month`, `6month`,
-`12month`. Anything else is rejected at the argument boundary rather than
-passed through, because the API silently coerces an unrecognised period to
-`overall` and returns a plausible wrong answer.
+`12month`. Anything else is rejected at the argument boundary rather than passed
+through, because the API silently coerces an unrecognised period to `overall`
+and returns a plausible wrong answer.
 
 ### History
 
@@ -72,17 +72,17 @@ Pages `user.getRecentTracks` into one `scrobbles.<year>` resource per calendar
 year, plus a `history.<user>` resource holding the sync cursor and per-year
 counts.
 
-| Argument | Purpose |
-|----------|---------|
-| `from` / `to` | Explicit UNIX range; `to` defaults to now and may not be in the future |
-| `resyncYear` | Rebuild one year from scratch — the only way to shed scrobbles deleted upstream |
-| `limit` | Page size, 1–200 (default 200) |
-| `maxPages` | Safety cap for one run; re-run to continue from the cursor |
+| Argument      | Purpose                                                                         |
+| ------------- | ------------------------------------------------------------------------------- |
+| `from` / `to` | Explicit UNIX range; `to` defaults to now and may not be in the future          |
+| `resyncYear`  | Rebuild one year from scratch — the only way to shed scrobbles deleted upstream |
+| `limit`       | Page size, 1–200 (default 200)                                                  |
+| `maxPages`    | Safety cap for one run; re-run to continue from the cursor                      |
 
-**It is idempotent.** Re-running adds only what is new: scrobbles are deduped
-on `(uts, artist, track)`, and a year chunk's content is a pure function of the
-scrobbles it holds, so an unchanged year produces byte-identical data and no
-new version.
+**It is idempotent.** Re-running adds only what is new: scrobbles are deduped on
+`(uts, artist, track)`, and a year chunk's content is a pure function of the
+scrobbles it holds, so an unchanged year produces byte-identical data and no new
+version.
 
 ## Report: `@magistr/lastfm-stats`
 
@@ -116,10 +116,10 @@ data.latest("my-lastfm", "profile.u3BpaT").attributes.playcount
 Last.fm has **no header-auth option** — `api_key` is a query parameter on every
 request. Three consequences are enforced in the model:
 
-1. The base URL is pinned to `https://ws.audioscrobbler.com/2.0/`. The
-   published docs give an `http://` root, which would put the key in cleartext
-   on the wire. A non-`https:` `baseUrl` override is refused at the argument
-   boundary rather than requested.
+1. The base URL is pinned to `https://ws.audioscrobbler.com/2.0/`. The published
+   docs give an `http://` root, which would put the key in cleartext on the
+   wire. A non-`https:` `baseUrl` override is refused at the argument boundary
+   rather than requested.
 2. `apiKey` is marked sensitive, so swamp never persists it in cleartext.
 3. Every URL passes through a redaction helper before it can reach an error
    message, a log line, or a test fixture.
@@ -135,8 +135,8 @@ bare `response.ok` check reads them as success. Codes are classified per
 - **Transient** — 8, 11, 16, 29 (rate limit). These retry with exponential
   backoff.
 
-Unknown codes are treated as permanent: hammering an unrecognised failure is
-how a key ends up suspended.
+Unknown codes are treated as permanent: hammering an unrecognised failure is how
+a key ends up suspended.
 
 ## Dependencies
 
@@ -147,7 +147,7 @@ Pinned exactly, per CLAUDE.md Rule 7 — swamp's bundler inlines npm packages, s
 - `npm:fast-check@4.8.0` (tests only)
 
 This deviates deliberately from the workspace's usual `npm:zod@4`, which is a
-major-version *range*.
+major-version _range_.
 
 ## Tests
 
