@@ -155,6 +155,12 @@ function buildDefaultQuality(
       },
       skill: { state: "backlog", justification: DEFAULT_BACKLOG_JUSTIFICATION },
     },
+    // rubricVersion: 3 must track whatever rubric `swamp extension quality`
+    // is currently live on (verified 2026-07: rubricVersion 3,
+    // maxEarnablePoints 14) — score_ratchet.ts's evaluateRatchet() treats a
+    // mismatch as "rebaseline", never a fail, so drifting this default is
+    // self-correcting but should still be bumped deliberately alongside a
+    // real rubric bump rather than left stale by accident.
     ratchet: { rubricVersion: 3, baselinePercentage: 0, label: "unscored" },
   };
 }
