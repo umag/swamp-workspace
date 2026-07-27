@@ -1,0 +1,5 @@
+# Fixture: a quality.yaml that forgot to declare a `watch:` block at all —
+# loadQualityWatch must fail loud with a descriptive error rather than
+# silently treating this as "nothing to watch".
+schemaVersion: 1
+extension: demo-ext-oops

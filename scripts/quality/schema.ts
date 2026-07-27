@@ -9,6 +9,7 @@
  * silently drift apart.
  */
 import { z } from "npm:zod@4";
+import { WatchSourceSchema } from "../lib/watch_schema.ts";
 
 export const SCHEMA_VERSION = 1;
 
@@ -92,14 +93,17 @@ const suitesShape = Object.fromEntries(
 const TestsSchema = z.object(suitesShape).strict();
 
 /**
- * watch: block — Phase A validates only the state/justification envelope.
- * `sources[]` carries Phase B's four-kind union.
- * TODO(phase-b): import + validate with scripts/lib/watch_schema.ts once it
- * exists (out of scope for this schema — see STANDARD.md "Release watch").
+ * watch: block — the `sources[]` union and the present-arm envelope
+ * (issueLabel, optional justification) are Phase B's executable contract,
+ * imported from scripts/lib/watch_schema.ts so the compliance gate applies
+ * the same deep validation the release-watch resolver does. (This resolves
+ * Phase A's original TODO: validate here once watch_schema.ts exists.)
  */
 const watchPresent = z.object({
   state: z.literal("present"),
-  sources: z.array(z.unknown()).min(1),
+  sources: z.array(WatchSourceSchema).min(1),
+  issueLabel: z.string().min(1),
+  justification: z.string().optional(),
 }).strict();
 
 const WatchSchema = z.discriminatedUnion("state", [

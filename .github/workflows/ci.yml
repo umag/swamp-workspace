@@ -194,7 +194,9 @@ jobs:
 
       - name: Type check (scripts)
         working-directory: scripts
-        run: deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts
+        run: >-
+          deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts
+          lib/watch_schema.ts release_watch.ts soak_schedule.ts
 
   compliance:
     name: compliance (extension quality standard)

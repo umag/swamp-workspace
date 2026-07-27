@@ -144,13 +144,16 @@ lowercase ISO.
   counterparty network_id". Pass a `sellerNetworkId` (the counterparty's
   profile) distinct from the minting account's own profile.
 - **SPT is US-only** (Stripe). Paying agents/customers must be US-based.
-- Both deps ride **vendor preview channels** with exact pins. The release-watch
-  GitHub Actions cron (`.github/workflows/stripe-mpp-release-watch.yml` in this
-  workspace) checks npm dist-tags against the pins parsed from
-  `extensions/models/stripe_mpp.ts` and raises one idempotent GH issue when they
-  go stale. **If the import specifiers move to another file, update that
-  workflow in the same change.** Pin bumps must pass the spec-fixture contract
-  tests in `stripe_mpp_test.ts` — they pin the MPP wire format.
+- Both deps ride **vendor preview channels** with exact pins. The generic weekly
+  release-watch GitHub Actions cron (`.github/workflows/release-watch.yml` in
+  this workspace) reads `stripe-mpp/quality.yaml`'s `watch:` block, checks npm
+  dist-tags against the pins parsed from `extensions/models/stripe_mpp.ts`, and
+  raises one idempotent GH issue when they go stale (schema:
+  `scripts/lib/watch_schema.ts`; docs: `scripts/README.md`). **If the import
+  specifiers move to another file, update the `pin.file` path in
+  `stripe-mpp/quality.yaml` in the same change.** Pin bumps must pass the
+  spec-fixture contract tests in `stripe_mpp_test.ts` — they pin the MPP wire
+  format.
 - Plain-http resource URLs are refused unless `allowInsecure=true` AND the host
   is localhost (test fixtures).
 
@@ -162,7 +165,9 @@ deno task check && deno task test
 
 97 offline tests, deterministic, across seven layers (property `numRuns` is
 env-overridable via `FC_NUM_RUNS`; `deno task test:soak` runs at 10000 — see the
-nightly `stripe-mpp-property-soak` workflow):
+generic nightly `.github/workflows/property-soak.yml` workflow, which
+auto-discovers and rotates this extension's three `*_property_test.ts` files in
+with the rest of the fleet):
 
 - **6 spec-fixture contract tests** — challenge/credential/receipt codecs +
   server 402 shape, quoted from draft-ryan-httpauth-payment-01 and mpp-specs
