@@ -212,6 +212,12 @@ extension; already-authored files are returned unchanged.
   );
 }
 
+// Extension names are directory names on disk (see extensions.ts) — never
+// accept anything else here. Without this, `deno run scaffold.ts
+// ../../../../etc` would `join(root, name, "quality.yaml")` straight past
+// the repo root and write to an arbitrary filesystem location.
+const SAFE_NAME = /^[A-Za-z0-9._-]+$/;
+
 if (import.meta.main) {
   if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
     printHelp();
@@ -220,6 +226,13 @@ if (import.meta.main) {
   const name = Deno.args.find((a) => !a.startsWith("-"));
   if (!name) {
     console.error("error: missing <extension-name> argument (see --help)");
+    Deno.exit(1);
+  }
+  if (!SAFE_NAME.test(name) || name === "." || name === "..") {
+    console.error(
+      `error: invalid <extension-name> "${name}" — must match ${SAFE_NAME} ` +
+        `(a real extension directory name, no path separators or traversal)`,
+    );
     Deno.exit(1);
   }
   const root = join(dirname(fromFileUrl(import.meta.url)), "..", "..");

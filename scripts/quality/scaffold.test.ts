@@ -5,7 +5,7 @@
  * freshly-generated output must itself pass check_compliance.ts (the
  * round-trip the plan review flagged as missing in round 1).
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
 import { parse as parseYaml } from "jsr:@std/yaml@1.0.10";
 import { checkExtension } from "./check_compliance.ts";
@@ -144,4 +144,22 @@ Deno.test("round-trip: scaffolder output on disk parses back through parseYaml +
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("scaffold.ts CLI rejects a path-traversal-shaped extension name instead of writing outside the repo", async () => {
+  const scriptUrl = new URL("./scaffold.ts", import.meta.url);
+  const cmd = new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--allow-read",
+      "--allow-write",
+      scriptUrl.pathname,
+      "../../../../tmp/quality-scaffold-escape-attempt",
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const { code, stderr } = await cmd.output();
+  assertEquals(code, 1);
+  assertStringIncludes(new TextDecoder().decode(stderr), "invalid");
 });
