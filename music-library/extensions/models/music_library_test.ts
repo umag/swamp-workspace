@@ -10,6 +10,8 @@ import {
   assertEquals,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  bpmConfidenceBand,
+  bpmHistogram,
   buildCube,
   classifyVerify,
   findDupes,
@@ -18,6 +20,7 @@ import {
   isPlaceholder,
   normDupeKey,
   parseAlbumDir,
+  parseBpmLine,
   parseFfmpegVerifyOutput,
   parseTrackFilename,
   slugify,
@@ -569,4 +572,86 @@ Deno.test("classifyVerify: verdicts", () => {
   assertEquals(classifyVerify(0, [], 200, 3, "quick", 15), "truncated");
   // quick mode: file shorter than the tail window → no verdict possible
   assertEquals(classifyVerify(0, [], 10, null, "quick", 15), "ok");
+});
+
+// --- bpm ---
+
+const REL = (p: string) =>
+  p.startsWith("/music/") ? p.slice("/music/".length) : p;
+
+// verbatim analyzer output from a live run over Apocalyptica's Metallica covers
+const SANDMAN =
+  '{"path":"/music/Apocalyptica/1996_-_Plays Metallica By Four Cellos/01-Enter Sandman.mp3","lengthSec":220.87,"windowed":false,"analyzedSec":220.87,"bpm":135.14,"beatsConfidence":2.6899,"beatsCount":496,"ibiCv":0.0177,"estStd":2.112,"key":"E","scale":"major","keyStrength":0.8791,"danceability":1.1554,"ms":4600,"rc":0}';
+const UNFORGIVEN =
+  '{"path":"/music/Apocalyptica/1996_-_Plays Metallica By Four Cellos/04-The Unforgiven.mp3","lengthSec":322.38,"windowed":false,"analyzedSec":322.38,"bpm":150.29,"beatsConfidence":0.6995,"beatsCount":804,"ibiCv":0.0209,"estStd":2.653,"key":"A","scale":"minor","keyStrength":0.8384,"danceability":0.9221,"ms":6520,"rc":0}';
+
+Deno.test("bpmConfidenceBand: essentia's 0–5.32 scale", () => {
+  assertEquals(bpmConfidenceBand(0), "none");
+  assertEquals(bpmConfidenceBand(0.6995), "very-low");
+  assertEquals(bpmConfidenceBand(1.2), "low");
+  assertEquals(bpmConfidenceBand(1.5), "good");
+  assertEquals(bpmConfidenceBand(2.6899), "good");
+  assertEquals(bpmConfidenceBand(3.5), "excellent");
+  assertEquals(bpmConfidenceBand(5.32), "excellent");
+  assertEquals(bpmConfidenceBand(null), "unknown");
+  assertEquals(bpmConfidenceBand(NaN), "unknown");
+});
+
+Deno.test("parseBpmLine: a real record maps to a library-relative track", () => {
+  const { track, failure } = parseBpmLine(SANDMAN, REL);
+  assertEquals(failure, undefined);
+  assert(track);
+  assertEquals(
+    track.path,
+    "Apocalyptica/1996_-_Plays Metallica By Four Cellos/01-Enter Sandman.mp3",
+  );
+  assertEquals(track.bpm, 135.14);
+  assertEquals(track.beatsConfidence, 2.6899);
+  assertEquals(track.confidenceBand, "good");
+  assertEquals(track.key, "E");
+  assertEquals(track.scale, "major");
+  assertEquals(track.danceability, 1.1554);
+  assertEquals(track.windowed, false);
+});
+
+Deno.test("parseBpmLine: a metronomic ibiCv does not imply a real beat", () => {
+  // The Unforgiven is rubato: essentia still lays down an even grid (ibiCv
+  // 0.0209, as steady-looking as Enter Sandman's 0.0177) but reports it barely
+  // detected a pulse. The band, not the interval spread, is the honest signal.
+  const { track } = parseBpmLine(UNFORGIVEN, REL);
+  assert(track);
+  assert(track.ibiCv !== null && track.ibiCv < 0.03);
+  assertEquals(track.confidenceBand, "very-low");
+});
+
+Deno.test("parseBpmLine: failure records carry the error, not a track", () => {
+  const line =
+    '{"path":"/music/x/broken.mp3","rc":1,"err":"too short to analyze: 4.00s"}';
+  const { track, failure } = parseBpmLine(line, REL);
+  assertEquals(track, undefined);
+  assert(failure);
+  assertEquals(failure.path, "x/broken.mp3");
+  assert(failure.err.includes("too short"));
+});
+
+Deno.test("parseBpmLine: native essentia chatter on stdout is ignored", () => {
+  // essentia's C++ side writes warnings that are not JSON; they must not kill
+  // the batch or masquerade as results
+  assertEquals(parseBpmLine("", REL), {});
+  assertEquals(parseBpmLine("[WARNING] MonoLoader: sample rate", REL), {});
+  assertEquals(parseBpmLine("{not json", REL), {});
+  assertEquals(parseBpmLine('{"rc":0,"bpm":120}', REL), {}); // no path
+});
+
+Deno.test("bpmHistogram: buckets by 10 bpm", () => {
+  const t = (bpm: number | null) =>
+    parseBpmLine(
+      JSON.stringify({ path: "/music/a.mp3", rc: 0, bpm }),
+      REL,
+    ).track!;
+  const hist = bpmHistogram([t(135.14), t(139.9), t(140), t(99.95), t(null)]);
+  assertEquals(hist["130-140"], 2);
+  assertEquals(hist["140-150"], 1);
+  assertEquals(hist["90-100"], 1);
+  assertEquals(Object.keys(hist).length, 3);
 });

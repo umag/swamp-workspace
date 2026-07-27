@@ -1,7 +1,7 @@
 {
   "tasks": {
-    "check": "deno check extensions/models/music_library.ts extensions/models/music_library_test.ts",
-    "test": "deno test extensions/models/music_library_test.ts",
+    "check": "deno check extensions/models/music_library.ts extensions/models/music_library_test.ts extensions/lib/running.ts extensions/lib/running_test.ts extensions/reports/verify_triage.ts extensions/reports/verify_triage_test.ts extensions/reports/bpm_running.ts",
+    "test": "deno test extensions/models/music_library_test.ts extensions/lib/running_test.ts extensions/reports/verify_triage_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
