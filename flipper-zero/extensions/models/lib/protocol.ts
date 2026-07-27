@@ -371,6 +371,99 @@ export function parseListenEvents(output: string): ListenEvent[] {
   return events;
 }
 
+function assertMatch(value: string, re: RegExp, label: string): string {
+  const v = value.trim();
+  if (!re.test(v)) {
+    throw new Error(`Invalid ${label}: ${JSON.stringify(value)}`);
+  }
+  return v;
+}
+const ALNUM = /^[A-Za-z0-9]+$/; // protocols, remote names, key types
+const IDENT = /^[A-Za-z0-9_]+$/; // universal-remote signal names
+const HEX = /^[0-9A-Fa-f]+(?: [0-9A-Fa-f]+)*$/; // one or more hex bytes
+const DEV_PATH = /^\/[^\s]+$/; // an absolute device path, no spaces
+
+/** Arguments describing what to transmit. */
+export interface TransmitArgs {
+  source: "ir" | "subghz" | "rfid";
+  // ir: either a raw protocol frame …
+  protocol?: string;
+  address?: string;
+  command?: string;
+  // … or a bundled universal-remote signal.
+  universalRemote?: string;
+  signal?: string;
+  // subghz: replay a saved capture …
+  file?: string;
+  // … or transmit a raw key.
+  key?: string;
+  frequency?: number;
+  te?: number;
+  // rfid: emulate a card.
+  keyType?: string;
+  keyData?: string;
+  // shared
+  repeat?: number;
+  external?: boolean;
+}
+
+/**
+ * Build the device CLI command for a transmit request, validating every field
+ * so nothing untrusted reaches the shell/CLI. `mode` distinguishes a one-shot
+ * transmit (`tx`) from a continuous `emulate` that must be time-boxed.
+ *
+ * @throws if the fields for the chosen source are missing or malformed.
+ */
+export function buildTransmitCommand(
+  a: TransmitArgs,
+): { command: string; mode: "tx" | "emulate" } {
+  const device = a.external ? 1 : 0;
+  const repeat = a.repeat ?? 1;
+
+  if (a.source === "ir") {
+    if (a.universalRemote && a.signal) {
+      const remote = assertMatch(a.universalRemote, ALNUM, "universalRemote");
+      const signal = assertMatch(a.signal, IDENT, "signal");
+      return { command: `ir universal ${remote} ${signal}`, mode: "tx" };
+    }
+    if (a.protocol && a.address && a.command) {
+      const p = assertMatch(a.protocol, ALNUM, "protocol");
+      const addr = assertMatch(a.address, HEX, "address");
+      const cmd = assertMatch(a.command, HEX, "command");
+      return { command: `ir tx ${p} ${addr} ${cmd}`, mode: "tx" };
+    }
+    throw new Error(
+      "ir transmit needs {protocol,address,command} or {universalRemote,signal}.",
+    );
+  }
+
+  if (a.source === "subghz") {
+    if (a.file) {
+      const file = assertMatch(a.file, DEV_PATH, "file");
+      return {
+        command: `subghz tx_from_file ${file} ${repeat} ${device}`,
+        mode: "tx",
+      };
+    }
+    if (a.key && a.frequency && a.te) {
+      const key = assertMatch(a.key, HEX, "key");
+      return {
+        command: `subghz tx ${key} ${a.frequency} ${a.te} ${repeat} ${device}`,
+        mode: "tx",
+      };
+    }
+    throw new Error("subghz transmit needs {file} or {key,frequency,te}.");
+  }
+
+  // rfid
+  if (a.keyType && a.keyData) {
+    const kt = assertMatch(a.keyType, ALNUM, "keyType");
+    const kd = assertMatch(a.keyData, HEX, "keyData");
+    return { command: `rfid emulate ${kt} ${kd}`, mode: "emulate" };
+  }
+  throw new Error("rfid transmit needs {keyType,keyData}.");
+}
+
 /** Flipper monochrome display dimensions. */
 export const SCREEN_WIDTH = 128;
 export const SCREEN_HEIGHT = 64;

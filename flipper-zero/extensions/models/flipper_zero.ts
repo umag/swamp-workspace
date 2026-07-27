@@ -18,7 +18,8 @@
  * - `screenshot`     — capture the screen over RPC, render ASCII/braille.
  * - `show-image`     — draw an image on the screen (RPC virtual display).
  * - `play-snake`     — play Snake autonomously with a survival bot.
- * - `listen`         — receive on sub-GHz / IR / RFID for a window.
+ * - `listen`         — receive on sub-GHz / IR / RFID / NFC for a window.
+ * - `transmit`       — emit IR / sub-GHz / RFID (owner-operated).
  * - `reboot`         — reboot the device (`power reboot`).
  *
  * Serial framing lives in ./lib/serial.ts; text parsing in ./lib/protocol.ts.
@@ -46,6 +47,7 @@ import {
   invertFramebuffer,
 } from "./lib/image.ts";
 import {
+  buildTransmitCommand,
   candidatePorts,
   cleanResponse,
   cleanSequenceOutput,
@@ -319,7 +321,7 @@ async function closeRunningApp(globalArgs: GlobalArgs): Promise<{
 /** The @magistr/flipper-zero model. */
 export const model = {
   type: "@magistr/flipper-zero",
-  version: "2026.07.23.6",
+  version: "2026.07.24.1",
   globalArguments: InputSchema,
   resources: {
     "device-port": {
@@ -499,6 +501,21 @@ export const model = {
         died: z.boolean(),
         decisions: z.record(z.string(), z.number()),
         log: z.string(),
+        timestamp: z.string(),
+      }),
+      lifetime: "infinite",
+      garbageCollection: 20,
+    },
+    "transmit-result": {
+      description: "Outcome of an emit/transmit on a radio",
+      schema: z.object({
+        port: z.string(),
+        source: z.enum(["ir", "subghz", "rfid"]),
+        command: z.string(),
+        mode: z.enum(["tx", "emulate"]),
+        seconds: z.number().nullable(),
+        output: z.string(),
+        raw: z.string(),
         timestamp: z.string(),
       }),
       lifetime: "infinite",
@@ -1136,6 +1153,114 @@ export const model = {
           seconds,
           eventCount: events.length,
           events,
+          output,
+          raw,
+          timestamp: new Date().toISOString(),
+        });
+        return {};
+      },
+    },
+
+    transmit: {
+      description:
+        "Emit on one of the device's radios (owner-operated): send an infrared " +
+        "code (raw protocol or bundled universal remote), replay a saved " +
+        "sub-GHz capture or transmit a raw key, or emulate an RFID card. " +
+        "Sub-GHz TX is region-restricted by the Flipper firmware; you are " +
+        "responsible for lawful use.",
+      arguments: z.object({
+        source: z.enum(["ir", "subghz", "rfid"]).describe(
+          "Which radio to emit on.",
+        ),
+        protocol: z.string().optional().describe(
+          "IR protocol, e.g. NEC, Samsung32, RC5 (with address+command).",
+        ),
+        address: z.string().optional().describe("IR address, hex."),
+        command: z.string().optional().describe("IR command, hex."),
+        universalRemote: z.string().optional().describe(
+          "Bundled universal remote: tv, audio, ac, or projector (with signal).",
+        ),
+        signal: z.string().optional().describe(
+          "Universal-remote signal name, e.g. Power, Mute, Vol_up.",
+        ),
+        file: z.string().optional().describe(
+          "Path to a saved capture to replay, e.g. /ext/subghz/gate.sub.",
+        ),
+        key: z.string().optional().describe(
+          "Raw sub-GHz key, hex (with frequency+te).",
+        ),
+        frequency: z.number().int().positive().optional().describe(
+          "Sub-GHz frequency in Hz (for a raw key).",
+        ),
+        te: z.number().int().positive().optional().describe(
+          "Sub-GHz timing element in microseconds (for a raw key).",
+        ),
+        keyType: z.string().optional().describe(
+          "RFID key type to emulate, e.g. EM4100, H10301, Indala26.",
+        ),
+        keyData: z.string().optional().describe("RFID key data, hex."),
+        repeat: z.number().int().positive().optional().describe(
+          "Repeat count for sub-GHz transmits (default 1).",
+        ),
+        seconds: z.number().positive().default(10).describe(
+          "How long to emulate, for RFID (default 10).",
+        ),
+        external: z.boolean().optional().describe(
+          "Use an external CC1101 module (sub-GHz).",
+        ),
+      }),
+      execute: async (
+        args: {
+          source: "ir" | "subghz" | "rfid";
+          protocol?: string;
+          address?: string;
+          command?: string;
+          universalRemote?: string;
+          signal?: string;
+          file?: string;
+          key?: string;
+          frequency?: number;
+          te?: number;
+          keyType?: string;
+          keyData?: string;
+          repeat?: number;
+          seconds?: number;
+          external?: boolean;
+        },
+        context: ExecContext,
+      ) => {
+        const { command, mode } = buildTransmitCommand(args);
+        assertSingleLineCommand(command);
+        const port = await resolvePort(context.globalArgs);
+
+        let raw: string;
+        const seconds = args.seconds ?? 10;
+        if (mode === "emulate") {
+          // `rfid emulate` runs until a keypress — time-box it like a listen.
+          raw = await listenCapture(port, command, {
+            baud: context.globalArgs.baud,
+            listenMs: seconds * 1000,
+          });
+        } else {
+          // A one-shot transmit returns to the prompt once it has been sent.
+          const res = await exchange(
+            port,
+            command,
+            exchangeOpts(context.globalArgs),
+          );
+          raw = res.raw;
+        }
+        const output = cleanResponse(raw, command);
+        if (/usage:|invalid|error|not found|no such/i.test(output)) {
+          throw new Error(`Transmit rejected by device: ${output}`);
+        }
+
+        await context.writeResource("transmit-result", "transmit-result", {
+          port,
+          source: args.source,
+          command,
+          mode,
+          seconds: mode === "emulate" ? seconds : null,
           output,
           raw,
           timestamp: new Date().toISOString(),

@@ -38,6 +38,7 @@ When `port` is omitted the model looks for `/dev/cu.usbmodemflip*` (macOS), then
 | `show-image`     | RPC virtual display           | `image-shown`     |
 | `play-snake`     | RPC stream + input            | `snake-game`      |
 | `listen`         | `subghz`/`ir`/`rfid`/`nfc` rx | `listen-result`   |
+| `transmit`       | `ir`/`subghz`/`rfid` tx       | `transmit-result` |
 | `reboot`         | `power reboot`                | `reboot-result`   |
 
 ## Quick start
@@ -131,8 +132,7 @@ captures its log.
 ## Listening (receive-only)
 
 `listen` runs one of the device's receivers for a fixed window and captures what
-it decodes. **Receive only** — `subghz tx`, `tx_from_file` and `ir tx` exist on
-the device but are deliberately not wrapped.
+it decodes. For the transmit side, see `transmit` below.
 
 | `source` | Command                | Picks up                               |
 | -------- | ---------------------- | -------------------------------------- |
@@ -164,6 +164,38 @@ waiting for a `>:` that never comes.
 **`eventCount` is heuristic.** Each receiver announces itself with different
 banner text, filtered by a denylist of CLI chrome. A missed pattern inflates the
 count but never loses data — the full transcript is always in `output`/`raw`.
+
+## Transmitting (owner-operated)
+
+`transmit` emits on one of the device's radios — controlling **your own**
+hardware: an IR code to your TV, a replay of a Sub-GHz capture you saved from
+your own remote, or emulation of your own RFID card. **Sub-GHz TX is
+region-restricted by the Flipper firmware**, and you are responsible for lawful
+use. Only single transmit primitives that mirror the device CLI are exposed — no
+jamming, brute-forcing or flood tooling.
+
+| `source` | Input                        | Command                                      |
+| -------- | ---------------------------- | -------------------------------------------- |
+| `ir`     | `{protocol,address,command}` | `ir tx <p> <a> <c>`                          |
+| `ir`     | `{universalRemote,signal}`   | `ir universal <remote> <signal>`             |
+| `subghz` | `{file}`                     | `subghz tx_from_file <file> <repeat> <dev>`  |
+| `subghz` | `{key,frequency,te}`         | `subghz tx <key> <freq> <te> <repeat> <dev>` |
+| `rfid`   | `{keyType,keyData}`          | `rfid emulate <type> <data>`                 |
+
+```bash
+# IR: mute your TV via the bundled universal remote
+swamp model @magistr/flipper-zero method run transmit my-flipper \
+  --input '{"source":"ir","universalRemote":"tv","signal":"Mute"}'
+
+# Sub-GHz: replay a capture you saved earlier
+swamp model @magistr/flipper-zero method run transmit my-flipper \
+  --input '{"source":"subghz","file":"/ext/subghz/gate.sub","repeat":3}'
+```
+
+Every field is validated (protocols/types alphanumeric, hex data hex, paths
+`/dev`-style) so nothing untrusted reaches the CLI. `rfid` emulation runs until
+a keypress, so it is time-boxed by `seconds` (default 10); IR and Sub-GHz
+transmits are one-shot.
 
 ## Notes & limitations
 

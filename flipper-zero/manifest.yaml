@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/flipper-zero"
-version: "2026.07.23.6"
+version: "2026.07.24.1"
 description: |
   Control a Flipper Zero over its USB serial CLI from swamp.
 
@@ -26,6 +26,10 @@ description: |
       Gui screen stream) and render it as ASCII and braille.
     - `listen`         — receive-only capture on sub-GHz, infrared, 125kHz RFID
       or NFC (which runs through the device's `[nfc]` sub-shell).
+    - `transmit`       — owner-operated emit on IR (protocol or universal
+      remote), sub-GHz (replay a saved capture or a raw key), or RFID emulate.
+      Sub-GHz TX is region-restricted by the firmware. RX and TX only; no
+      jamming or brute-force tooling.
     - `reboot`         — reboot the device (`power reboot`).
 
   Cross-platform serial handling: macOS `cu.usbmodemflip*` and Linux `ttyACM*`

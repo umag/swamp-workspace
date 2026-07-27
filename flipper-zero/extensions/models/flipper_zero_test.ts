@@ -6,6 +6,7 @@
 
 import { assertEquals, assertThrows } from "jsr:@std/assert@1";
 import {
+  buildTransmitCommand,
   candidatePorts,
   cleanResponse,
   cleanSequenceOutput,
@@ -304,6 +305,85 @@ Deno.test("parseListenEvents captures a decoded reception", () => {
   assertEquals(events.length, 1);
   assertEquals(events[0].summary, "Princeton 24bit");
   assertEquals(events[0].lines.length, 3);
+});
+
+Deno.test("buildTransmitCommand builds IR protocol and universal frames", () => {
+  assertEquals(
+    buildTransmitCommand({
+      source: "ir",
+      protocol: "NEC",
+      address: "04",
+      command: "08",
+    }),
+    { command: "ir tx NEC 04 08", mode: "tx" },
+  );
+  assertEquals(
+    buildTransmitCommand({
+      source: "ir",
+      universalRemote: "tv",
+      signal: "Power",
+    }),
+    { command: "ir universal tv Power", mode: "tx" },
+  );
+});
+
+Deno.test("buildTransmitCommand builds sub-GHz replay and raw key", () => {
+  assertEquals(
+    buildTransmitCommand({
+      source: "subghz",
+      file: "/ext/subghz/gate.sub",
+      repeat: 3,
+    }),
+    { command: "subghz tx_from_file /ext/subghz/gate.sub 3 0", mode: "tx" },
+  );
+  assertEquals(
+    buildTransmitCommand({
+      source: "subghz",
+      key: "AABBCC",
+      frequency: 433920000,
+      te: 350,
+      external: true,
+    }),
+    { command: "subghz tx AABBCC 433920000 350 1 1", mode: "tx" },
+  );
+});
+
+Deno.test("buildTransmitCommand builds an RFID emulate", () => {
+  assertEquals(
+    buildTransmitCommand({
+      source: "rfid",
+      keyType: "EM4100",
+      keyData: "1234567890",
+    }),
+    { command: "rfid emulate EM4100 1234567890", mode: "emulate" },
+  );
+});
+
+Deno.test("buildTransmitCommand rejects malformed and incomplete input", () => {
+  // shell metacharacters can't reach the CLI
+  assertThrows(
+    () =>
+      buildTransmitCommand({
+        source: "ir",
+        protocol: "NEC; reboot",
+        address: "04",
+        command: "08",
+      }),
+    Error,
+    "protocol",
+  );
+  // path must be a real /dev-style path, no spaces/injection
+  assertThrows(
+    () => buildTransmitCommand({ source: "subghz", file: "/ext/a; rm -rf" }),
+    Error,
+    "file",
+  );
+  // missing required fields
+  assertThrows(
+    () => buildTransmitCommand({ source: "rfid" }),
+    Error,
+    "keyType",
+  );
 });
 
 Deno.test("findScreenFrame extracts the 1024-byte framebuffer", () => {
