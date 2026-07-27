@@ -14,9 +14,11 @@ import {
   assertThrows,
 } from "jsr:@std/assert@1";
 import {
+  buildObsidianArgs,
   buildSearchMatcher,
   classifyWrite,
   CLI_ONLY_METHODS,
+  coerceProperty,
   extractHeadings,
   extractInlineTags,
   extractPrRefs,
@@ -26,6 +28,7 @@ import {
   isHiddenSegment,
   mergeProperties,
   model,
+  propertyTypeHint,
   readProperties,
   resolveVaultPath,
   resolveVaultPathSafe,
@@ -863,4 +866,362 @@ Deno.test("the registry fallback fails with an actionable message when the vault
       await Deno.remove(home, { recursive: true });
     }
   });
+});
+
+// --- CLI backend contract ------------------------------------------------
+//
+// The CLI adapter cannot run in CI (it needs the Obsidian desktop app), so its
+// contract is pinned at the argv boundary instead. These assertions are what
+// stands between a silent CLI-side regression and a user finding it.
+
+Deno.test("buildObsidianArgs puts the command first and the vault immediately after", () => {
+  assertEquals(
+    buildObsidianArgs("read", { file: "note.md" }, "myvault"),
+    ["read", "vault=myvault", "file=note.md"],
+  );
+});
+
+Deno.test("buildObsidianArgs renders params as key=value and appends bare flags last", () => {
+  assertEquals(
+    buildObsidianArgs("tags", { format: "json" }, "myvault", ["counts"]),
+    ["tags", "vault=myvault", "format=json", "counts"],
+  );
+});
+
+Deno.test("buildObsidianArgs fails with an actionable message when vault is unset", () => {
+  assertThrows(
+    () => buildObsidianArgs("read", {}, undefined),
+    Error,
+    "vault global argument",
+  );
+});
+
+Deno.test("append folds the separator into the content and sends the inline flag", async () => {
+  const calls: string[][] = [];
+  const original = Deno.Command;
+  // deno-lint-ignore no-explicit-any
+  (Deno as any).Command = class {
+    constructor(_cmd: string, opts: { args: string[] }) {
+      calls.push(opts.args);
+    }
+    output() {
+      return Promise.resolve({
+        success: true,
+        code: 0,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+      });
+    }
+  };
+  try {
+    const a = fsContext("/unused", { vaultRoot: undefined, backend: "cli" });
+    await model.methods.append.execute(
+      { file: "log.md", content: "entry", separator: "\n\n" },
+      a.context,
+    );
+    assertEquals(calls[0], [
+      "append",
+      "vault=testvault",
+      "file=log.md",
+      "content=\n\nentry",
+      "inline",
+    ]);
+  } finally {
+    // deno-lint-ignore no-explicit-any
+    (Deno as any).Command = original;
+  }
+});
+
+Deno.test("search rejects regex on the CLI backend and points at vaultRoot", async () => {
+  const a = fsContext("/unused", { vaultRoot: undefined, backend: "cli" });
+  await assertRejects(
+    () =>
+      model.methods.search.execute(
+        { query: "x", regex: true },
+        a.context,
+      ),
+    Error,
+    "vaultRoot",
+  );
+});
+
+// --- Property coercion ---------------------------------------------------
+
+Deno.test("coerceProperty parses a JSON array for the list type", () => {
+  assertEquals(coerceProperty('["a","b"]', "list"), ["a", "b"]);
+});
+
+Deno.test("coerceProperty falls back to comma splitting for a malformed list", () => {
+  assertEquals(coerceProperty("a, b ,c", "list"), ["a", "b", "c"]);
+});
+
+Deno.test("coerceProperty wraps a non-array JSON value for the list type", () => {
+  assertEquals(coerceProperty('"solo"', "list"), ['"solo"']);
+});
+
+Deno.test("coerceProperty converts numbers and leaves unparseable ones alone", () => {
+  assertEquals(coerceProperty("42", "number"), 42);
+  assertEquals(coerceProperty("4.5", "number"), 4.5);
+  assertEquals(coerceProperty("not-a-number", "number"), "not-a-number");
+});
+
+Deno.test("coerceProperty reads the checkbox truthy spellings", () => {
+  assertEquals(coerceProperty("true", "checkbox"), true);
+  assertEquals(coerceProperty("yes", "checkbox"), true);
+  assertEquals(coerceProperty("1", "checkbox"), true);
+  assertEquals(coerceProperty("false", "checkbox"), false);
+});
+
+Deno.test("coerceProperty passes text and untyped values through untouched", () => {
+  assertEquals(coerceProperty("plain", "text"), "plain");
+  assertEquals(coerceProperty("plain", undefined), "plain");
+});
+
+// --- prepend on the filesystem backend -----------------------------------
+
+Deno.test("prepend inserts after the frontmatter and leaves it untouched", async () => {
+  await withVault(async (root) => {
+    await Deno.writeTextFile(`${root}/note.md`, fixture("block-list.md"));
+    const a = fsContext(root);
+    await model.methods.prepend.execute(
+      { file: "note.md", content: "INSERTED" },
+      a.context,
+    );
+    const next = await Deno.readTextFile(`${root}/note.md`);
+    const props = readProperties(next);
+    assertEquals(props.tags, ["social", "social-posts"]);
+    assertEquals(props.title, "@handle posts 2014");
+    const { body } = splitFrontmatter(next);
+    assert(
+      body.startsWith("INSERTED"),
+      `body began with: ${body.slice(0, 40)}`,
+    );
+    assert(next.includes("Body text that must survive"), "original body lost");
+  });
+});
+
+Deno.test("prepend honours a custom separator", async () => {
+  await withVault(async (root) => {
+    await Deno.writeTextFile(`${root}/note.md`, "existing");
+    const a = fsContext(root);
+    await model.methods.prepend.execute(
+      { file: "note.md", content: "new", separator: " | " },
+      a.context,
+    );
+    assertEquals(await Deno.readTextFile(`${root}/note.md`), "new | existing");
+  });
+});
+
+Deno.test("prepend into a note without frontmatter adds no frontmatter", async () => {
+  await withVault(async (root) => {
+    await Deno.writeTextFile(`${root}/note.md`, "body only");
+    const a = fsContext(root);
+    await model.methods.prepend.execute(
+      { file: "note.md", content: "top" },
+      a.context,
+    );
+    const next = await Deno.readTextFile(`${root}/note.md`);
+    assert(!next.startsWith("---"), "frontmatter should not be invented");
+    assertEquals(next, "top\nbody only");
+  });
+});
+
+Deno.test("prepend into a missing note creates it with just the content", async () => {
+  await withVault(async (root) => {
+    const a = fsContext(root);
+    await model.methods.prepend.execute(
+      { file: "fresh.md", content: "only" },
+      a.context,
+    );
+    assertEquals(await Deno.readTextFile(`${root}/fresh.md`), "only");
+  });
+});
+
+// --- Guards and cleanup --------------------------------------------------
+
+Deno.test("list honours the ext filter", async () => {
+  await withVault(async (root) => {
+    await Deno.writeTextFile(`${root}/a.md`, "a");
+    await Deno.writeTextFile(`${root}/b.txt`, "b");
+    const a = fsContext(root);
+    await model.methods.list.execute({ ext: "md" }, a.context);
+    assertEquals(a.captured[0].attrs.files, ["a.md"]);
+  });
+});
+
+Deno.test("blockDotObsidian=false lets .obsidian through without a per-call opt-in", () => {
+  const p = resolveVaultPath(
+    cfg({ blockDotObsidian: false }),
+    ".obsidian/app.json",
+  );
+  assertEquals(p.vaultRelativePath, ".obsidian/app.json");
+});
+
+Deno.test("a symlink pointing inside the vault is still refused", async () => {
+  await withVault(async (root) => {
+    await Deno.writeTextFile(`${root}/real.md`, "content");
+    await Deno.symlink(`${root}/real.md`, `${root}/alias.md`);
+    await assertRejects(
+      () => resolveVaultPathSafe(cfg({ vaultRoot: root }), "alias.md"),
+      Error,
+      "symlink",
+    );
+  });
+});
+
+Deno.test("a successful write leaves no temp file behind", async () => {
+  await withVault(async (root) => {
+    const a = fsContext(root);
+    await model.methods.create.execute(
+      { name: "note.md", content: "body" },
+      a.context,
+    );
+    const names: string[] = [];
+    for await (const entry of Deno.readDir(root)) names.push(entry.name);
+    assertEquals(names.filter((n) => n.includes(".tmp")), []);
+    assertEquals(names, ["note.md"]);
+  });
+});
+
+Deno.test("vaultRoot unset reports what to set", () => {
+  assertThrows(
+    () => resolveVaultPath(cfg({ vaultRoot: undefined }), "note.md"),
+    Error,
+    "vaultRoot is not set",
+  );
+});
+
+Deno.test("an ambiguous vault name in the registry is reported, not guessed", async () => {
+  await withVault(async (root) => {
+    const home = await Deno.makeTempDir();
+    const prevHome = Deno.env.get("HOME");
+    try {
+      const cfgDir = Deno.build.os === "darwin"
+        ? `${home}/Library/Application Support/obsidian`
+        : `${home}/.config/obsidian`;
+      await Deno.mkdir(cfgDir, { recursive: true });
+      await Deno.mkdir(`${root}/one/notes`, { recursive: true });
+      await Deno.mkdir(`${root}/two/notes`, { recursive: true });
+      await Deno.writeTextFile(
+        `${cfgDir}/obsidian.json`,
+        JSON.stringify({
+          vaults: {
+            a: { path: `${root}/one/notes` },
+            b: { path: `${root}/two/notes` },
+          },
+        }),
+      );
+      Deno.env.set("HOME", home);
+      await assertRejects(
+        () => resolveVaultRootFromRegistry("notes"),
+        Error,
+        "ambiguous",
+      );
+    } finally {
+      if (prevHome) Deno.env.set("HOME", prevHome);
+      await Deno.remove(home, { recursive: true });
+    }
+  });
+});
+
+// --- Walk robustness and determinism --------------------------------------
+
+Deno.test("an unreadable root propagates rather than reporting an empty vault", async () => {
+  await withVault(async (root) => {
+    const a = fsContext(root);
+    await assertRejects(
+      () => model.methods.list.execute({ folder: "no-such-folder" }, a.context),
+      Error,
+    );
+  });
+});
+
+Deno.test("an unreadable subdirectory is skipped and the rest of the walk completes", async () => {
+  await withVault(async (root) => {
+    await Deno.writeTextFile(`${root}/a.md`, "a");
+    await Deno.mkdir(`${root}/locked`);
+    await Deno.writeTextFile(`${root}/locked/hidden.md`, "x");
+    await Deno.mkdir(`${root}/open`);
+    await Deno.writeTextFile(`${root}/open/b.md`, "b");
+    await Deno.chmod(`${root}/locked`, 0o000);
+    try {
+      const a = fsContext(root);
+      await model.methods.list.execute({ recursive: true }, a.context);
+      assertEquals(a.captured[0].attrs.files, ["a.md", "open/b.md"]);
+    } finally {
+      await Deno.chmod(`${root}/locked`, 0o755);
+    }
+  });
+});
+
+Deno.test("list output is sorted so limit truncates predictably", async () => {
+  await withVault(async (root) => {
+    for (const name of ["delta", "alpha", "charlie", "bravo"]) {
+      await Deno.writeTextFile(`${root}/${name}.md`, name);
+    }
+    const a = fsContext(root);
+    await model.methods.list.execute({}, a.context);
+    assertEquals(a.captured[0].attrs.files, [
+      "alpha.md",
+      "bravo.md",
+      "charlie.md",
+      "delta.md",
+    ]);
+
+    const b = fsContext(root);
+    await model.methods.list.execute({ limit: 2 }, b.context);
+    assertEquals(b.captured[0].attrs.files, ["alpha.md", "bravo.md"]);
+  });
+});
+
+Deno.test("search results are sorted by path", async () => {
+  await withVault(async (root) => {
+    for (const name of ["zulu", "alpha", "mike"]) {
+      await Deno.writeTextFile(`${root}/${name}.md`, "needle");
+    }
+    const a = fsContext(root);
+    await model.methods.search.execute({ query: "needle" }, a.context);
+    assertEquals(
+      (a.captured[0].attrs.results as { file: string }[]).map((r) => r.file),
+      ["alpha.md", "mike.md", "zulu.md"],
+    );
+  });
+});
+
+// --- Permission preservation ----------------------------------------------
+
+Deno.test("overwriting an existing note preserves its permissions", async () => {
+  await withVault(async (root) => {
+    await Deno.writeTextFile(`${root}/private.md`, "original");
+    await Deno.chmod(`${root}/private.md`, 0o600);
+    const a = fsContext(root);
+    await model.methods.create.execute(
+      { name: "private.md", content: "replacement", overwrite: true },
+      a.context,
+    );
+    const mode = (await Deno.stat(`${root}/private.md`)).mode! & 0o777;
+    assertEquals(mode, 0o600, "existing permissions must not be relaxed");
+  });
+});
+
+Deno.test("a newly created note gets defaultFileMode", async () => {
+  await withVault(async (root) => {
+    const a = fsContext(root, { defaultFileMode: 0o640 });
+    await model.methods.create.execute(
+      { name: "fresh.md", content: "x" },
+      a.context,
+    );
+    const mode = (await Deno.stat(`${root}/fresh.md`)).mode! & 0o777;
+    assertEquals(mode, 0o640);
+  });
+});
+
+// --- Property type agreement across backends ------------------------------
+
+Deno.test("propertyTypeHint maps JavaScript types to Obsidian property types", () => {
+  assertEquals(propertyTypeHint(["a"]), "list");
+  assertEquals(propertyTypeHint(true), "checkbox");
+  assertEquals(propertyTypeHint(3), "number");
+  assertEquals(propertyTypeHint("text"), undefined);
+  assertEquals(propertyTypeHint(null), undefined);
 });

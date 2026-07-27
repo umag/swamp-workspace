@@ -714,9 +714,20 @@ async function writeAtomic(
   const idx = path.lastIndexOf("/");
   const dir = idx > 0 ? path.slice(0, idx) : ".";
   const temp = `${dir}/.swamp-obsidian-${crypto.randomUUID()}.tmp`;
+
+  // Overwriting must not change a note's permissions. defaultFileMode applies
+  // to notes this model creates, not to ones the user already owns — a vault
+  // holding private archives may deliberately carry tighter modes.
+  let effectiveMode = mode;
+  try {
+    effectiveMode = (await Deno.stat(path)).mode ?? mode;
+  } catch {
+    // New file — defaultFileMode is correct.
+  }
+
   try {
     await Deno.writeTextFile(temp, content);
-    await chmodQuietly(temp, mode);
+    await chmodQuietly(temp, effectiveMode);
     await Deno.rename(temp, path);
   } catch (err) {
     await Deno.remove(temp).catch(() => {});
@@ -724,25 +735,40 @@ async function writeAtomic(
   }
 }
 
-/** Walk markdown files under a directory, skipping hidden directories. */
+/**
+ * Walk markdown files under a directory, skipping hidden directories.
+ *
+ * Deno.readDir is lazy — it does not throw at the call site, it throws on first
+ * iteration. So the guard has to sit around the iteration, and it deliberately
+ * only covers recursion: a subdirectory that cannot be read is skipped so one
+ * permission problem does not abort a whole-vault digest, while an unreadable
+ * root propagates so a typo'd folder is reported rather than silently empty.
+ */
 async function* walkFiles(
   root: string,
   recursive: boolean,
   includeHidden: boolean,
+  isRoot = true,
 ): AsyncGenerator<string> {
-  let entries: AsyncIterable<Deno.DirEntry>;
+  const entries: Deno.DirEntry[] = [];
   try {
-    entries = Deno.readDir(root);
-  } catch {
-    return;
+    for await (const entry of Deno.readDir(root)) entries.push(entry);
+  } catch (err) {
+    if (isRoot) throw err;
+    return; // unreadable subdirectory — skip it, keep walking
   }
-  for await (const entry of entries) {
+
+  // Sort so output ordering is deterministic across runs and `limit` truncates
+  // a predictable subset rather than whatever the filesystem happened to yield.
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const entry of entries) {
     if (!includeHidden && isHiddenSegment(entry.name)) continue;
     const path = `${root}/${entry.name}`;
     if (entry.isFile) {
       yield path;
     } else if (entry.isDirectory && recursive) {
-      yield* walkFiles(path, recursive, includeHidden);
+      yield* walkFiles(path, recursive, includeHidden, false);
     }
   }
 }
@@ -769,12 +795,18 @@ function joinSeparator(
 
 // --- CLI helpers ---------------------------------------------------------
 
-async function runObsidian(
+/**
+ * Assemble the argv for an Obsidian CLI invocation.
+ *
+ * Split out from runObsidian so the CLI backend's contract is assertable
+ * without a running desktop app — the adapter itself cannot be exercised in CI.
+ */
+export function buildObsidianArgs(
   command: string,
   params: Record<string, string>,
   vault: string | undefined,
   bareFlags: string[] | undefined = undefined,
-) {
+): string[] {
   if (!vault) {
     throw new Error(
       `The CLI backend needs the vault global argument (the registered Obsidian vault name) to run "${command}".`,
@@ -789,6 +821,16 @@ async function runObsidian(
   if (bareFlags) {
     for (const flag of bareFlags) args.push(flag);
   }
+  return args;
+}
+
+async function runObsidian(
+  command: string,
+  params: Record<string, string>,
+  vault: string | undefined,
+  bareFlags: string[] | undefined = undefined,
+) {
+  const args = buildObsidianArgs(command, params, vault, bareFlags);
 
   let output: Deno.CommandOutput;
   try {
@@ -1028,7 +1070,9 @@ export const model = {
             const prefix = args.folder
               ? `${trimTrailingSlash(args.folder)}/`
               : "";
-            files = files.filter((f) => !f.slice(prefix.length).includes("/"));
+            files = files.filter((f) =>
+              f.startsWith(prefix) && !f.slice(prefix.length).includes("/")
+            );
           }
           if (limit > 0 && files.length > limit) {
             files = files.slice(0, limit);
@@ -1036,6 +1080,7 @@ export const model = {
           }
         }
 
+        files.sort((a, b) => a.localeCompare(b));
         context.logger?.info?.("Listed {count} files", { count: files.length });
         const handle = await context.writeResource("notes", "main", {
           files,
@@ -1570,10 +1615,9 @@ export const model = {
           }
         }
 
-        const results = [...grouped.entries()].map(([file, matches]) => ({
-          file,
-          matches,
-        }));
+        const results = [...grouped.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([file, matches]) => ({ file, matches }));
         context.logger?.info?.("Search matched {count} files", {
           count: results.length,
         });
@@ -2164,7 +2208,9 @@ export const model = {
               value: Array.isArray(value)
                 ? JSON.stringify(value)
                 : String(value),
-              ...(Array.isArray(value) ? { type: "list" } : {}),
+              ...(propertyTypeHint(value)
+                ? { type: propertyTypeHint(value)! }
+                : {}),
             }, context.globalArgs.vault);
           }
         }
@@ -2233,6 +2279,18 @@ export const model = {
     },
   },
 };
+
+/**
+ * Obsidian property type for a JavaScript value, or undefined when the default
+ * text type is right. Keeps the CLI backend storing the same type the
+ * filesystem backend would write through the YAML document.
+ */
+export function propertyTypeHint(value: unknown): string | undefined {
+  if (Array.isArray(value)) return "list";
+  if (typeof value === "boolean") return "checkbox";
+  if (typeof value === "number") return "number";
+  return undefined;
+}
 
 /** Interpret a CLI-style string value against its declared property type. */
 export function coerceProperty(

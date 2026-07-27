@@ -32,44 +32,44 @@ swamp model method run my-vault digest --input folder=Notes --json
 
 ## Backends
 
-| Global argument | Meaning |
-|---|---|
-| `vault` | Registered Obsidian vault name. Required by the CLI backend. Also used to look up `vaultRoot` in Obsidian's own vault registry when `vaultRoot` is omitted. |
-| `vaultRoot` | Absolute path to the vault directory. Setting it enables the filesystem backend and takes precedence over the registry lookup. |
-| `backend` | `auto` (default) picks `fs` when `vaultRoot` is set and `cli` otherwise; `cli` always shells to the Obsidian binary; `fs` always reads the directory and refuses methods that need Obsidian's index. |
-| `blockDotObsidian` | Default `true`. Refuses to read or write inside `.obsidian` unless a method is called with `allowDotObsidian=true`. |
-| `defaultFileMode` / `defaultDirectoryMode` | Permissions applied to files and directories the filesystem backend creates. |
+| Global argument                            | Meaning                                                                                                                                                                                              |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vault`                                    | Registered Obsidian vault name. Required by the CLI backend. Also used to look up `vaultRoot` in Obsidian's own vault registry when `vaultRoot` is omitted.                                          |
+| `vaultRoot`                                | Absolute path to the vault directory. Setting it enables the filesystem backend and takes precedence over the registry lookup.                                                                       |
+| `backend`                                  | `auto` (default) picks `fs` when `vaultRoot` is set and `cli` otherwise; `cli` always shells to the Obsidian binary; `fs` always reads the directory and refuses methods that need Obsidian's index. |
+| `blockDotObsidian`                         | Default `true`. Refuses to read or write inside `.obsidian` unless a method is called with `allowDotObsidian=true`.                                                                                  |
+| `defaultFileMode` / `defaultDirectoryMode` | Permissions applied to files and directories the filesystem backend creates.                                                                                                                         |
 
 If `vaultRoot` is omitted the model looks the vault up by name in Obsidian's
 registry (`~/Library/Application Support/obsidian/obsidian.json` on macOS,
 `~/.config/obsidian/obsidian.json` on Linux). The registry keeps pointing at a
 vault's old location after you move the directory, so the resolved path is
 verified to exist before use and the error names both the registry file and the
-missing directory. **Passing `vaultRoot` explicitly is more reliable** and avoids
-reading Obsidian's config directory at all.
+missing directory. **Passing `vaultRoot` explicitly is more reliable** and
+avoids reading Obsidian's config directory at all.
 
 ### Which backend serves which method
 
-| Method | Filesystem | CLI | Notes |
-|---|---|---|---|
-| `list` | yes | yes | `recursive` and `limit` are filesystem-side; the CLI list is filtered after the fact |
-| `read` | yes | yes | |
-| `fileInfo` | yes | yes | reports `exists: false` rather than failing |
-| `create` | yes | yes | reports `created` / `updated` / `unchanged`; `template` is CLI-only |
-| `append` | yes | yes | |
-| `prepend` | yes | yes | |
-| `delete` | yes | yes | trashes to `.trash/` by default on both; `permanent` and `dryRun` supported |
-| `search` | yes | yes | `regex` and `caseSensitive` are filesystem-only |
-| `digest` | yes | — | needs a vault directory |
-| `properties` | yes | yes | |
-| `propertySet` | yes | yes | |
-| `setProperties` | yes | yes | one call, many properties |
-| `propertyRemove` | yes | yes | |
-| `move` | — | yes | Obsidian rewrites the wikilinks that point at the note |
-| `tags`, `tag` | — | yes | needs Obsidian's tag index |
-| `links`, `backlinks` | — | yes | needs Obsidian's link index |
-| `orphans`, `unresolved` | — | yes | needs Obsidian's link index |
-| `daily`, `dailyRead`, `dailyAppend`, `dailyPrepend` | — | yes | needs Obsidian's daily-note configuration |
+| Method                                              | Filesystem | CLI | Notes                                                                                |
+| --------------------------------------------------- | ---------- | --- | ------------------------------------------------------------------------------------ |
+| `list`                                              | yes        | yes | `recursive` and `limit` are filesystem-side; the CLI list is filtered after the fact |
+| `read`                                              | yes        | yes |                                                                                      |
+| `fileInfo`                                          | yes        | yes | reports `exists: false` rather than failing                                          |
+| `create`                                            | yes        | yes | reports `created` / `updated` / `unchanged`; `template` is CLI-only                  |
+| `append`                                            | yes        | yes |                                                                                      |
+| `prepend`                                           | yes        | yes |                                                                                      |
+| `delete`                                            | yes        | yes | trashes to `.trash/` by default on both; `permanent` and `dryRun` supported          |
+| `search`                                            | yes        | yes | `regex` and `caseSensitive` are filesystem-only                                      |
+| `digest`                                            | yes        | —   | needs a vault directory                                                              |
+| `properties`                                        | yes        | yes |                                                                                      |
+| `propertySet`                                       | yes        | yes |                                                                                      |
+| `setProperties`                                     | yes        | yes | one call, many properties                                                            |
+| `propertyRemove`                                    | yes        | yes |                                                                                      |
+| `move`                                              | —          | yes | Obsidian rewrites the wikilinks that point at the note                               |
+| `tags`, `tag`                                       | —          | yes | needs Obsidian's tag index                                                           |
+| `links`, `backlinks`                                | —          | yes | needs Obsidian's link index                                                          |
+| `orphans`, `unresolved`                             | —          | yes | needs Obsidian's link index                                                          |
+| `daily`, `dailyRead`, `dailyAppend`, `dailyPrepend` | —          | yes | needs Obsidian's daily-note configuration                                            |
 
 Calling a CLI-only method while the desktop app is closed reports which method
 needs the index and that `vaultRoot` cannot serve it. Under `backend=fs` the
@@ -146,6 +146,12 @@ the result carries `truncated: true` rather than silently stopping short.
   renamed, so a sync client never sees a half-written note.
 - **Logging.** Vault-relative paths and counts only — never note content or
   frontmatter values.
+- **Permissions.** Overwriting a note preserves its existing mode;
+  `defaultFileMode` applies only to notes the model creates.
+- **Ordering.** `list` and `search` return results sorted by vault-relative
+  path, so output is stable across runs and `limit` truncates predictably. An
+  unreadable subdirectory is skipped rather than aborting the walk; an
+  unreadable root is reported.
 
 Deno permissions: read and write on `vaultRoot`, plus read on Obsidian's config
 directory if you rely on the registry lookup, plus subprocess execution for the
