@@ -70,6 +70,11 @@ async function git(
  * "no violation" (not a crash) when there is no git history to diff against
  * (e.g. a fresh checkout with no merge-base) — the caller still has the
  * plain subset check as a floor.
+ *
+ * Bootstrapping case: if the baseline file does not exist AT ALL at the
+ * merge-base, this IS the seed commit — every line is the initial baseline
+ * by definition, not "growth" (a naive diff would otherwise show every
+ * line as "+" and reject the very PR that seeds the file).
  */
 export async function checkBaselineImmutable(
   root: string,
@@ -80,6 +85,14 @@ export async function checkBaselineImmutable(
   const mergeBase = await git(root, "merge-base", baseRef, "HEAD");
   if (!mergeBase.success) return violations;
   const mergeBaseSha = mergeBase.stdout.trim();
+
+  const existedAtMergeBase = await git(
+    root,
+    "cat-file",
+    "-e",
+    `${mergeBaseSha}:${baselineRelPath}`,
+  );
+  if (!existedAtMergeBase.success) return violations;
 
   const diff = await git(
     root,

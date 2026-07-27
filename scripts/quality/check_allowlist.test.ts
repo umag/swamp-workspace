@@ -184,6 +184,40 @@ Deno.test("checkBaselineImmutable does not flag a line REMOVED from the baseline
   }
 });
 
+Deno.test("checkBaselineImmutable does NOT flag the SEED commit itself (file absent at merge-base entirely)", async () => {
+  // The exact bootstrapping case: the PR that introduces
+  // quality-offenders.baseline.txt for the first time necessarily adds
+  // every line as a "+" in a naive diff — that must never be treated as
+  // "growth", or the gate would reject its own seeding PR.
+  const root = await makeGitRepo();
+  try {
+    await Deno.writeTextFile(join(root, "README.md"), "seed\n");
+    await git(root, "add", "-A");
+    await git(root, "commit", "-q", "-m", "repo exists, no baseline yet");
+    await git(root, "checkout", "-q", "-b", "feature");
+    await Deno.writeTextFile(
+      join(root, "quality-offenders.baseline.txt"),
+      "# immutable baseline\nalpha\nbeta\ngamma\n",
+    );
+    await git(root, "add", "-A");
+    await git(
+      root,
+      "commit",
+      "-q",
+      "-m",
+      "seed the baseline for the first time",
+    );
+    const violations = await checkBaselineImmutable(
+      root,
+      "quality-offenders.baseline.txt",
+      "master",
+    );
+    assertEquals(violations, []);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("checkBaselineImmutable degrades to no-violation (not a crash) when there is no git history at all", async () => {
   const root = await Deno.makeTempDir({ prefix: "quality-allowlist-nogit-" });
   try {
