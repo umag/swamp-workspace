@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/headphones"
-version: "2026.07.16.2"
+version: "2026.07.27.1"
 description: |
   Headphones music-download automation API for swamp — manage artists, albums,
   and the wanted queue on a Headphones instance over its JSON API.
@@ -10,6 +10,15 @@ description: |
     album operations (find/add/get/queue/unqueue), list views (wanted, snatched,
     upcoming, history), and system actions (force-search, force-process,
     version/update checks, logs, restart, update).
+
+  Bulk onboarding:
+  - `set-extras` enables extra release types (EPs, singles, live, compilation,
+    demo, …) for an artist via the web UI's getExtras form — the only surface
+    Headphones exposes for it — then re-imports the discography from MusicBrainz.
+  - `onboard-artists` is a single idempotent fan-out: for each MusicBrainz artist
+    ID it adds the artist, enables extras, waits for the import to settle, and
+    queues every not-yet-active release, leaving Wanted/Snatched/Downloaded ones
+    untouched.
 
   Includes an optional SSH-backed `audit-library` method that cross-checks the
   Headphones database (Status=Downloaded) against the music filesystem to report

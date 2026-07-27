@@ -27,6 +27,33 @@ const GlobalArgsSchema = z.object({
     .describe("Music library root on the SSH host"),
 });
 
+// The 14 extra release types offered by the getExtras form, in form order.
+const EXTRA_TYPES = [
+  "single",
+  "ep",
+  "compilation",
+  "soundtrack",
+  "live",
+  "remix",
+  "spokenword",
+  "audiobook",
+  "other",
+  "dj-mix",
+  "mixtape/street",
+  "broadcast",
+  "interview",
+  "demo",
+] as const;
+
+// Sensible default for a band: real releases, not interviews/audiobooks/broadcasts.
+const DEFAULT_EXTRA_TYPES: readonly (typeof EXTRA_TYPES)[number][] = [
+  "ep",
+  "single",
+  "live",
+  "compilation",
+  "demo",
+];
+
 // --- helpers ---
 
 async function api(
@@ -41,7 +68,11 @@ async function api(
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v);
   }
-  const response = await fetch(url.toString());
+  // Bound every request so a stalled instance can't hang a method indefinitely
+  // (the onboard-artists poll loop relies on this to honour timeoutSeconds).
+  const response = await fetch(url.toString(), {
+    signal: AbortSignal.timeout(60_000),
+  });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(
@@ -54,6 +85,30 @@ async function api(
   } catch {
     return { raw: text };
   }
+}
+
+// Headphones' JSON API has no command for per-artist extras; the only surface is
+// the web UI's getExtras form (GET /getExtras?ArtistID=..&newstyle=true&<type>=1).
+// It sets IncludeExtras + Extras on the artist, then re-imports it from MusicBrainz.
+async function webUi(
+  host: string,
+  path: string,
+  params: Record<string, string>,
+) {
+  const url = new URL(`${host.replace(/\/+$/, "")}/${path}`);
+  for (const [k, v] of Object.entries(params)) {
+    url.searchParams.set(k, v);
+  }
+  const response = await fetch(url.toString(), {
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `${path} failed: ${response.status} - ${body.slice(0, 200)}`,
+    );
+  }
+  return await response.text();
 }
 
 // --- SSH helpers (for audit-library) ---
@@ -197,7 +252,7 @@ const TaskResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/headphones",
-  version: "2026.07.16.2",
+  version: "2026.07.27.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     artists: {
@@ -205,6 +260,37 @@ export const model = {
       schema: z.object({
         artists: z.array(ArtistSchema),
         total: z.number(),
+        timestamp: z.string(),
+      }),
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
+    onboarding: {
+      description:
+        "Result of onboarding artists: extras enabled and discographies queued",
+      schema: z.object({
+        artists: z.array(
+          z.object({
+            artistId: z.string(),
+            artistName: z.string(),
+            extras: z.array(z.string()),
+            loaded: z.boolean(),
+            totalAlbums: z.number(),
+            queued: z.number(),
+            alreadyActive: z.number(),
+            failed: z.array(
+              z.object({
+                albumId: z.string(),
+                title: z.string(),
+                error: z.string(),
+              }),
+            ),
+            // Set when the artist itself could not be onboarded (bad ID, import
+            // failure); the rest of the batch still proceeds.
+            error: z.string().optional(),
+          }),
+        ),
+        totalQueued: z.number(),
         timestamp: z.string(),
       }),
       lifetime: "infinite",
@@ -370,6 +456,180 @@ export const model = {
           message: `Added artist ${args.id}`,
           timestamp: new Date().toISOString(),
         });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    "set-extras": {
+      description:
+        "Enable extra release types (EPs, singles, live, etc.) for an artist and re-import its discography from MusicBrainz",
+      arguments: z.object({
+        id: z.string().describe("MusicBrainz artist ID"),
+        types: z
+          .array(z.enum(EXTRA_TYPES))
+          .optional()
+          .describe(
+            `Extra release types to include (default: ${
+              DEFAULT_EXTRA_TYPES.join(", ")
+            }). Valid: ${EXTRA_TYPES.join(", ")}`,
+          ),
+      }),
+      execute: async (args, context) => {
+        const { host } = context.globalArgs;
+        const types = args.types?.length ? args.types : DEFAULT_EXTRA_TYPES;
+        const params: Record<string, string> = {
+          ArtistID: args.id,
+          newstyle: "true",
+        };
+        // The form submits only the checked boxes; each checked type is "<type>=1".
+        for (const t of types) params[t] = "1";
+        await webUi(host, "getExtras", params);
+        const handle = await context.writeResource("task", "set-extras", {
+          message: `Enabled extras for artist ${args.id}: ${types.join(", ")}`,
+          timestamp: new Date().toISOString(),
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    "onboard-artists": {
+      description:
+        "Fan-out: add artists, enable extras, wait for the MusicBrainz import to settle, and queue every not-yet-active release. Idempotent — releases already Wanted/Snatched/Downloaded are left alone.",
+      arguments: z.object({
+        ids: z.array(z.string()).describe("MusicBrainz artist IDs"),
+        types: z
+          .array(z.enum(EXTRA_TYPES))
+          .optional()
+          .describe(
+            `Extra release types to include (default: ${
+              DEFAULT_EXTRA_TYPES.join(", ")
+            })`,
+          ),
+        queue: z
+          .boolean()
+          .optional()
+          .describe("Queue the releases after import (default: true)"),
+        timeoutSeconds: z
+          .number()
+          .optional()
+          .describe(
+            "Max wait per artist for the import to settle (default: 240)",
+          ),
+      }),
+      execute: async (args, context) => {
+        const { host, apiKey } = context.globalArgs;
+        const types = args.types?.length ? args.types : DEFAULT_EXTRA_TYPES;
+        const doQueue = args.queue !== false;
+        const timeoutMs = (args.timeoutSeconds ?? 240) * 1000;
+        type AlbumFailure = { albumId: string; title: string; error: string };
+        type ArtistSummary = {
+          artistId: string;
+          artistName: string;
+          extras: string[];
+          loaded: boolean;
+          totalAlbums: number;
+          queued: number;
+          alreadyActive: number;
+          failed: AlbumFailure[];
+          error?: string;
+        };
+        const summaries: ArtistSummary[] = [];
+        let totalQueued = 0;
+
+        for (const id of args.ids) {
+          // One bad ID (typo, deleted artist, transient failure) must not abort
+          // the whole batch or discard the summaries already collected — record
+          // a per-artist error and move on. Re-running is safe (idempotent).
+          try {
+            await api(host, apiKey, "addArtist", { id });
+
+            const extrasParams: Record<string, string> = {
+              ArtistID: id,
+              newstyle: "true",
+            };
+            for (const t of types) extrasParams[t] = "1";
+            await webUi(host, "getExtras", extrasParams);
+
+            // Both addArtist and getExtras kick off async MusicBrainz imports;
+            // querying before they settle returns a partial discography.
+            const deadline = Date.now() + timeoutMs;
+            let row: Record<string, unknown> = {};
+            let albums: Record<string, unknown>[] = [];
+            let loaded = false;
+            while (Date.now() < deadline) {
+              const data = await api(host, apiKey, "getArtist", { id });
+              row =
+                (Array.isArray(data.artist) ? data.artist[0] : data.artist) ??
+                  {};
+              albums = Array.isArray(data.albums) ? data.albums : [];
+              if (row.Status !== "Loading") {
+                loaded = true;
+                break;
+              }
+              await new Promise((r) => setTimeout(r, 5000));
+            }
+
+            // Only null/empty/Skipped are inert; Wanted/Snatched/Downloaded are
+            // already in flight and must not be re-queued.
+            const pending = albums.filter((a) => {
+              const s = a.Status;
+              return s === null || s === undefined || s === "" ||
+                s === "Skipped";
+            });
+
+            const failed: AlbumFailure[] = [];
+            let queued = 0;
+            if (doQueue) {
+              for (const a of pending) {
+                const albumId = String(a.AlbumID ?? "");
+                try {
+                  await api(host, apiKey, "queueAlbum", { id: albumId });
+                  queued++;
+                } catch (e) {
+                  failed.push({
+                    albumId,
+                    title: String(a.AlbumTitle ?? ""),
+                    error: e instanceof Error ? e.message : String(e),
+                  });
+                }
+              }
+            }
+            totalQueued += queued;
+
+            summaries.push({
+              artistId: id,
+              artistName: String(row.ArtistName ?? ""),
+              extras: [...types],
+              loaded,
+              totalAlbums: albums.length,
+              queued,
+              alreadyActive: albums.length - pending.length,
+              failed,
+            });
+          } catch (e) {
+            summaries.push({
+              artistId: id,
+              artistName: "",
+              extras: [...types],
+              loaded: false,
+              totalAlbums: 0,
+              queued: 0,
+              alreadyActive: 0,
+              failed: [],
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
+
+        const handle = await context.writeResource(
+          "onboarding",
+          "onboard-artists",
+          {
+            artists: summaries,
+            totalQueued,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
