@@ -1,0 +1,88 @@
+// Landing (/anime) SHAFT-cut-in CSS.
+// GENERATED from fixtures/landing_css.txt — byte-exact; the css-parity test
+// (test:css) asserts this constant equals that fixture. Do not hand-edit.
+
+export const LANDING_CSS = `:root{
+  --red:   oklch(0.455 0.192 27);
+  --black: oklch(0.155 0.006 60);
+  --bone:  oklch(0.945 0.006 85);
+}
+
+*{box-sizing:border-box}
+
+body{
+  margin:0;
+  background:var(--black);
+  color:var(--bone);
+  font-family:'Golos Text',Helvetica,Arial,sans-serif;
+  font-size:16px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+
+.card{padding:clamp(46px,9vw,104px) clamp(18px,5vw,64px);display:block;text-decoration:none}
+.red  {background:var(--red);   color:var(--bone)}
+.blk  {background:var(--black); color:var(--bone)}
+.bone {background:var(--bone);  color:var(--black)}
+.in{max-width:1080px;margin:0 auto}
+.bar{height:9px;background:var(--black)}
+.blk + .bar{background:var(--red)}
+
+.part{display:flex;align-items:baseline;gap:14px;margin-bottom:clamp(18px,3.6vw,34px)}
+.part i{font-style:normal;font-size:clamp(13px,1.7vw,18px);opacity:.55}
+.part span{font-size:11px;letter-spacing:.42em;text-transform:uppercase;opacity:.62}
+.part::after{content:'';flex:1;height:1px;background:currentColor;opacity:.28}
+
+/* ── masthead ─────────────────────────────────────────────── */
+.mast h1{font-weight:800;letter-spacing:-.045em;line-height:.86;margin:0;
+  font-size:clamp(2.4rem,8.4vw,5.6rem);text-wrap:balance}
+.mast .sub{margin:24px 0 0;max-width:48ch;opacity:.76;font-size:clamp(.95rem,1.7vw,1.1rem)}
+.nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:1px;
+  background:oklch(0.95 0.006 85 / .18);margin-top:clamp(32px,5vw,52px)}
+.nums div{background:var(--black);padding:18px 16px}
+.nums b{display:block;font-weight:800;font-size:clamp(1.5rem,3.4vw,2.2rem);letter-spacing:-.04em;
+  line-height:1;font-variant-numeric:tabular-nums}
+.nums span{display:block;font-size:10px;letter-spacing:.2em;text-transform:uppercase;opacity:.58;margin-top:7px}
+
+/* ── destination cards ────────────────────────────────────── */
+/* The card grounds never change: the alternation IS the structure, and
+   repainting a whole field on hover fought it. The affordance is carried by
+   the one element that is already an instruction. */
+a.card{outline:0}
+a.card .go{display:inline-block;margin-top:26px;font-size:11px;letter-spacing:.34em;text-transform:uppercase;
+  position:relative;padding-bottom:6px}
+a.card .go::after{
+  content:'';position:absolute;left:0;bottom:0;height:2px;width:2.4em;
+  background:currentColor;transition:width .18s cubic-bezier(.2,.9,.25,1);
+}
+a.card:hover .go::after,
+a.card:focus-visible .go::after{width:100%}
+a.card .go i{font-style:normal;display:inline-block;margin-left:.7em;
+  transition:transform .18s cubic-bezier(.2,.9,.25,1)}
+a.card:hover .go i,
+a.card:focus-visible .go i{transform:translateX(.45em)}
+/* keyboard users get a real focus ring, since the hover cue alone is too quiet */
+a.card:focus-visible{box-shadow:inset 0 0 0 3px currentColor}
+
+.dest{display:grid;grid-template-columns:auto minmax(0,1fr);gap:clamp(20px,4.5vw,56px);align-items:start}
+.dest .ord{font-weight:800;letter-spacing:-.06em;line-height:.76;
+  font-size:clamp(3.4rem,11vw,7.2rem);font-variant-numeric:tabular-nums;opacity:.9}
+.dest h2{font-weight:800;letter-spacing:-.04em;line-height:.94;margin:0;
+  font-size:clamp(2rem,6.4vw,4.2rem)}
+.dest .d{margin:18px 0 0;max-width:54ch;font-size:clamp(.92rem,1.6vw,1.05rem);opacity:.8;line-height:1.5}
+.dest .fig{margin:22px 0 0;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.dest .fig b{font-weight:800;font-size:clamp(1.3rem,3vw,1.9rem);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.dest .fig span{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;opacity:.62}
+
+@media (max-width:620px){
+  .dest{grid-template-columns:minmax(0,1fr);gap:10px}
+  .dest .ord{font-size:3.2rem}
+}
+
+.foot{font-size:11px;line-height:1.7;letter-spacing:.02em;opacity:.55;max-width:70ch}
+
+@media (prefers-reduced-motion: reduce){
+  a.card .go::after,a.card .go i{transition:none}
+}
+`;

@@ -1,0 +1,316 @@
+:root{
+  --paper:  oklch(0.955 0.014 108);
+  --paper2: oklch(0.975 0.010 105);
+  --band:   oklch(0.90 0.025 108);
+  --cover:  oklch(0.42 0.030 106);
+  --ink:    oklch(0.28 0.03 250);
+  --ink2:   oklch(0.50 0.02 250);
+  --ink3:   oklch(0.58 0.025 250);
+  --hand:   oklch(0.34 0.08 255);
+  --rule:   oklch(0.72 0.045 220 / .62);
+  --rule2:  oklch(0.78 0.03 220 / .70);
+  --heavy:  oklch(0.42 0.04 250);
+  --pen:    oklch(0.46 0.17 26);
+  --pen2:   oklch(0.50 0.16 26 / .75);
+  --pitch:  26px;
+}
+
+*{box-sizing:border-box}
+
+body{
+  margin:0;
+  background:var(--cover);
+  background-image:
+    repeating-linear-gradient(58deg, oklch(0.38 0.03 104 / .5) 0 3px, transparent 3px 9px),
+    repeating-linear-gradient(-52deg, oklch(0.47 0.03 108 / .35) 0 2px, transparent 2px 11px);
+  color:var(--ink);
+  font-family:Georgia,'Times New Roman',serif;
+  font-size:16px;
+  line-height:26px;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ── the bound page ───────────────────────────────────────── */
+.jour{
+  position:relative;
+  max-width:1000px;
+  margin:0 auto;
+  background:var(--paper);
+  box-shadow:0 0 0 1px oklch(0.80 0.02 110), 0 24px 60px -30px oklch(0.15 0.02 100 / .9);
+  padding:52px clamp(16px,3.6vw,44px) 78px clamp(40px,6vw,72px);
+  overflow:hidden;
+}
+/* the gutter: sewn edge of the register */
+.jour::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:clamp(16px,3.2vw,30px);
+  background:
+    repeating-linear-gradient(oklch(0.46 0.05 96 / .55) 0 9px, transparent 9px 22px) center/2px 100% no-repeat,
+    linear-gradient(90deg, oklch(0.70 0.05 96), oklch(0.86 0.03 102) 62%, var(--paper));
+  border-right:1px solid oklch(0.78 0.03 104);
+}
+
+/* one voice for every printed service label. 9.5px text in a 26px band puts
+   its baseline 2px high, so every .lbl is nudged back down onto the rule;
+   the few that sit at a different phase override .top below. */
+.lbl{font-size:9.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink3);font-weight:400;
+  line-height:26px;position:relative;top:2px}
+/* one voice for handwriting in blue ink */
+.hand{font-family:'Caveat','Golos Text',Georgia,cursive;color:var(--hand);font-style:normal}
+/* red pen: only for marks a teacher would actually make. These are rotated
+   off the baseline on purpose — a teacher's marks are not written on the
+   rule — so they are the one thing on the page exempt from the grid. */
+.pen{font-family:'Caveat','Golos Text',Georgia,cursive;color:var(--pen);font-style:normal}
+
+/* ── масthead: the printed frame on the cover sheet ─────────
+   chrome above the content: 2+2+1+21 = 26, and the same below */
+.mast{border:2px solid var(--heavy);padding:2px;margin-bottom:52px;background:none}
+.mast-in{border:1px solid oklch(0.62 0.035 250);padding:21px clamp(16px,3vw,32px)}
+/* 26 + 9 + 1 + 16 = 52 */
+.mast .top-lbl{display:block;margin-bottom:16px;border-bottom:1px solid var(--rule2);padding-bottom:9px}
+/* 78 + 26 = 104 */
+.mast h1{font-size:65.6px;font-weight:400;letter-spacing:-.015em;line-height:78px;margin:0 0 26px;
+  position:relative;top:8px}
+/* 26 + 8 + 1 + 17 = 52. flex-start, not baseline: both children carry a full
+   26px line box, so the browser's baseline group cannot inflate the row, and
+   the two nudges land both baselines on the same rule anyway. */
+.klass{margin:0 0 17px;display:flex;align-items:flex-start;gap:0 10px;flex-wrap:wrap;
+  border-bottom:1px solid oklch(0.72 0.03 250 / .55);padding-bottom:8px}
+.klass .hand{font-size:28.8px;line-height:26px;
+  position:relative;top:-4px}
+.dek{margin:0;max-width:54ch;color:var(--ink2);font-size:.97rem;
+  position:relative;top:0px}
+/* 26 + 1 + 25 + 26 = 78 */
+.mast-run{display:flex;align-items:flex-start;gap:0 22px;flex-wrap:wrap;margin-top:26px;
+  border-top:1px solid var(--rule2);padding-top:25px}
+.mast-run .pen{font-size:1.28rem;line-height:26px;transform:rotate(-5deg);display:inline-block;
+  margin-left:auto;padding-right:6px}
+
+/* ── section heads: a ruled caption, as printed on the form ─
+   26 + 7 + 2 + 17 = 52 */
+.sec{margin-top:52px}
+.sec-h{display:flex;align-items:flex-start;gap:0 14px;margin-bottom:17px;
+  border-bottom:2px solid var(--heavy);padding-bottom:7px}
+.sec-h h2{font-size:22.4px;font-weight:400;margin:0;letter-spacing:.01em;line-height:26px;
+  position:relative;top:-3px}
+.sec-h .lbl{margin-left:auto;text-align:right}
+.note{color:var(--ink2);font-size:.9rem;margin:0 0 26px;max-width:62ch;
+  position:relative;top:0px}
+
+/* ── сводный лист: the three top honours ──────────────────────
+   1 + 28 + (52+c) + (52+c) + (48+c) + 1 = 182 = 7 bands, so the two 1px
+   frame rules are absorbed and nothing below the block drifts */
+.svod{border:1px solid oklch(0.62 0.035 250);background:none}
+.svod-h{background:var(--band);border-bottom:2px solid var(--heavy);
+  display:flex;justify-content:space-between;align-items:flex-start;gap:0 12px;flex-wrap:wrap;
+  padding:0 16px}
+.svod-h .lbl{top:1px}
+.lead{display:grid;grid-template-columns:30px minmax(0,auto) minmax(0,1fr);
+  gap:0 clamp(12px,2.4vw,26px);align-items:center;
+  padding:26px clamp(12px,2.2vw,20px) 25px;
+  border-bottom:1px solid var(--rule2)}
+.lead:last-child{border-bottom:0;padding-bottom:22px}
+.lead-n{font-size:11px;color:var(--ink3);text-align:center;align-self:start;padding-top:0;
+  line-height:26px;font-variant-numeric:tabular-nums;
+  position:relative;top:-2px}
+/* the mark, circled in red the way a grade is circled.
+   Rotated, so exempt from the rules — but its box is 13+78+13 = 104. */
+.lead-mark{position:relative;padding:13px clamp(20px,3.4vw,30px);justify-self:center}
+.lead-mark::before{content:'';position:absolute;inset:0;border:2.5px solid var(--pen2);
+  border-radius:50%;transform:rotate(-4deg)}
+.lead-mark span{display:block;font-family:'Caveat','Golos Text',Georgia,cursive;
+  font-size:clamp(46px,8.4vw,72px);line-height:78px;color:var(--pen);
+  transform:rotate(-2.5deg);white-space:nowrap;text-align:center}
+.lead-txt .lbl{display:block;top:-1px}
+.lead h3{font-size:26.4px;font-weight:400;margin:0;line-height:52px;
+  position:relative;top:6px}
+.lead .who{font-size:25.6px;line-height:26px;display:block;margin:0;
+  position:relative;top:-6px}
+.lead .sub{margin:0;font-size:.9rem;font-style:italic;color:var(--ink2);
+  position:relative;top:-3px}
+
+/* ── журнал успеваемости: the register proper ─────────────────
+   1 (frame) + 39 (thead) + n·(26+content) + 11 (frame padding) + 1 = 52 + n·26.
+   border-collapse is separate here: collapsed borders are split across the
+   cell edge, which puts half-pixels into every row height and walks the whole
+   table off the grid. With 0 spacing and only right/bottom borders set, it
+   draws identically.
+   Each column's text is put on the rule by its padding-top rather than by a
+   nudge, because a relative offset would drag the cell's borders with it. */
+.regwrap{border:1px solid oklch(0.62 0.035 250);background:none;
+  padding-bottom:11px}
+.reg{width:100%;border-collapse:separate;border-spacing:0}
+.reg th{
+  font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;font-weight:400;
+  color:var(--ink3);text-align:left;background:var(--band);
+  line-height:26px;white-space:nowrap;
+  /* 1 + 26 + 10 + 2 = 39; padding-top 1 is what lands the column heads on a
+     rule, so it is not free to change */
+  padding:1px 10px 10px;
+  border-bottom:2px solid var(--heavy);border-right:1px solid oklch(0.72 0.03 250 / .6);
+  vertical-align:bottom;
+}
+.reg th:last-child{border-right:0}
+.reg td{
+  vertical-align:top;font-size:13px;line-height:26px;
+  border-right:1px solid var(--rule2);
+  border-bottom:1px solid var(--rule2);
+}
+.reg tr:last-child td{border-bottom:0}
+/* the column rules stay on .nn/.mk so they apply to the head as well as the
+   body, but the padding is scoped to td — a .reg .nn padding also matches
+   <th class="nn">, which silently made the head 53px instead of 39 and walked
+   the whole tbody off the grid */
+.reg .nn{width:34px;text-align:center}
+.reg td.nn{font-size:10.5px;color:var(--ink3);font-variant-numeric:tabular-nums;padding:13px 10px 13px}
+.reg td.zv{font-size:14px;padding:12px 10px 14px}
+.reg td.who{font-size:17px;padding:12px 10px 14px}
+/* line-height:1, not the inherited 26px: two font sizes on one line place
+   their equal 26px boxes at different heights (baselines align, boxes do
+   not), and the union comes out 27px — one stray pixel per register row.
+   A 9px box hides entirely inside the 11.5px text's box, and the td strut
+   still holds every line at exactly 26. */
+.reg td.pr .unit{font-style:normal;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;font-size:9px;line-height:1;margin-right:8px;white-space:nowrap}
+.reg td.pr{font-size:11.5px;font-style:italic;color:var(--ink2);padding:13px 10px 13px}
+.reg .pr{border-right:0}
+/* the mark is rotated red pen, so it is exempt from the rules — but its cell
+   must not drive the row off the grid: 1 + 24 + 1 = 26, one band, and the
+   text columns (52 minimum) always win the row height. The translateY is
+   paint-only, dropping the mark level with its звание. */
+.reg .mk{width:96px;text-align:center;border-right:1px solid var(--rule2)}
+.reg td.mk{font-size:0;line-height:0;padding:1px 10px 1px}
+.mark{display:flex;flex-direction:column;justify-content:center;align-items:center;
+  height:24px;max-width:88px;margin:0 auto;
+  font-family:'Caveat','Golos Text',Georgia,cursive;
+  font-size:23px;line-height:24px;color:var(--pen);transform:rotate(-4deg) translateY(11px)}
+.mark small{display:block;font-size:8.5px;font-family:Georgia,serif;line-height:12px;
+  transform:rotate(4deg);color:oklch(0.52 0.06 26);margin-top:0}
+.inl{display:none}
+
+/* ── сводная ведомость по жанрам ──────────────────────────────
+   1 + 50 (vhead) + n·78 (vrow) + 1 = 52 + n·78 */
+.vedwrap{border:1px solid oklch(0.62 0.035 250);background:none}
+/* row-gap must be 0, not the column gap: below 760px this grid stacks, and an
+   8px gutter between the stacked rows put every row 16px off the grid */
+.vhead,.vrow{display:grid;
+  grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,2.5fr) 74px;
+  gap:0 clamp(8px,1.6vw,16px);align-items:center}
+/* flex-start so the tick strip under one label cannot re-centre its neighbours
+   off the grid; 5 + (26+13) + 4 + 2 = 50 */
+.vhead{background:var(--band);border-bottom:2px solid var(--heavy);padding:5px 14px 4px;
+  align-items:start}
+.vhead .lbl{display:block;top:-4px}
+.vhead .tk{display:flex;gap:0;line-height:13px}
+.vhead .tk span{flex:1;text-align:right;font-size:8px;letter-spacing:.04em;color:var(--ink3);
+  font-variant-numeric:tabular-nums;position:static}
+/* the same column heads, folded for a narrow page — 5 + 26 + 17 + 2 = 50 */
+.vhead-n{display:none;grid-template-columns:minmax(0,1fr) 66px;gap:0 12px;align-items:start;
+  background:var(--band);border-bottom:2px solid var(--heavy);padding:5px 14px 17px}
+.vhead-n .lbl{display:block;top:-4px}
+/* 17 + 44 (the circled figure, the tallest thing in the row) + 16 + 1 = 78,
+   and the 17 is chosen so centring the 26px text inside 44 lands it on a rule */
+.vrow{padding:17px 14px 16px;border-bottom:1px solid var(--rule)}
+.vrow:last-child{border-bottom:0;padding-bottom:17px}
+.vrow .g{font-size:14px;position:relative;top:1px}
+.vrow .w{font-size:16px;position:relative;top:1px}
+/* the share, drawn across ten ruled cells of ten points each */
+.track{position:relative;display:flex;height:19px;border:1px solid oklch(0.70 0.03 250 / .8);
+  background:oklch(0.99 0.005 106)}
+.track i{flex:1;border-right:1px solid oklch(0.74 0.03 250 / .55)}
+.track i:last-child{border-right:0}
+.track b{position:absolute;left:0;top:0;bottom:0;width:var(--p);
+  background:repeating-linear-gradient(48deg,
+    oklch(0.44 0.06 252 / .60) 0 2px, oklch(0.44 0.06 252 / .22) 2px 5px)}
+/* the exact figure, circled */
+.circ{width:66px;height:44px;line-height:41px;text-align:center;
+  border:2px solid var(--pen2);border-radius:50%;
+  font-family:'Caveat','Golos Text',Georgia,cursive;font-size:17px;color:var(--pen);
+  transform:rotate(-5deg);justify-self:center}
+
+/* ── пары: photographs tipped into the journal ────────────────
+   26 + (13+260+13) + 26 + n·26 + 26 = 364 + n·26. The photographs are given a
+   grid-multiple height instead of an aspect-ratio: a fluid ratio makes the
+   card height depend on the column width, which walks the footer off the
+   rules. object-fit:cover crops exactly as before. */
+.pairs{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:26px}
+.tip{position:relative;background:var(--paper2);padding:26px clamp(12px,2.2vw,18px);
+  box-shadow:0 16px 34px -22px oklch(0.12 0.02 100 / .95), 0 0 0 1px oklch(0.80 0.02 104)}
+.tip:nth-child(odd){transform:rotate(-0.7deg)}
+.tip:nth-child(even){transform:rotate(0.55deg)}
+.mount{position:relative;background:oklch(0.90 0.018 104);padding:13px}
+.shots{display:flex;gap:6px}
+.shots img{flex:1 1 0;min-width:0;width:100%;height:260px;object-fit:cover;display:block;
+  filter:saturate(.66) contrast(1.02) sepia(.10)}
+/* уголки — photo corners, the way a picture is fixed to the inside cover */
+.cn{position:absolute;width:22px;height:22px;background:oklch(0.66 0.035 100 / .9)}
+.cn1{left:0;top:0;clip-path:polygon(0 0,100% 0,0 100%)}
+.cn2{right:0;top:0;clip-path:polygon(100% 0,100% 100%,0 0)}
+.cn3{left:0;bottom:0;clip-path:polygon(0 0,0 100%,100% 100%)}
+.cn4{right:0;bottom:0;clip-path:polygon(100% 0,100% 100%,0 100%)}
+.tip-b{display:grid;grid-template-columns:minmax(0,1fr) 66px;gap:0 14px;align-items:start;margin-top:26px}
+.tip-b .txt{grid-column:1;grid-row:1}
+.tip h3{font-size:1.25rem;font-weight:400;margin:0;line-height:26px;
+  position:relative;top:-2px}
+.tip .who{font-size:1.15rem;display:block;margin:0;line-height:26px;
+  position:relative;top:-1px}
+.tip p{margin:0;font-size:.88rem;color:var(--ink2);
+  position:relative;top:0px}
+/* block, not inline-block: an inline-block whose baseline sits lower than the
+   parent's strut makes its line box 27px, and the card — and the footer under
+   it — drift by a pixel per pair */
+.tip .cap{display:block;width:fit-content;max-width:100%;
+  font-size:1.25rem;line-height:26px;margin-top:26px;transform:rotate(-1.2deg)}
+.tip .circ{grid-column:2;grid-row:1;align-self:start;margin-top:4px}
+
+/* ── подвал ─────────────────────────────────────────────────
+   2 + 24 = 26 above the first line */
+.foot{margin-top:52px;border-top:2px solid var(--heavy);padding-top:24px}
+.foot .lbl{display:block}
+.foot p{margin:0;color:var(--ink2);font-size:.85rem;max-width:68ch;
+  position:relative;top:1px}
+
+/* ── narrow ───────────────────────────────────────────────────
+   Every override here has to keep its block on a whole number of bands, so
+   the row heights and the nudges are restated rather than inherited. */
+@media (max-width:760px){
+  /* the display steps: same measured-baseline discipline, smaller cut.
+     78 → 52 for the headline keeps its block on whole bands (52 + 26 = 78) */
+  .mast h1{font-size:46px;line-height:52px;top:2px}
+  .klass .hand{font-size:21.6px;top:-2px}
+  .sec-h h2{font-size:18.4px;top:-1px}
+  .lead h3{font-size:20.8px;top:8px}
+  .lead .who{font-size:20.8px;top:-5px}
+  .vhead{display:none}
+  .vhead-n{display:grid}
+  /* stacked: 26 (жанр) + 26 (хранитель) + 26 (шкала) = 78; 12 + 78 + 13 + 1 = 104 */
+  .vrow{grid-template-columns:minmax(0,1fr) 66px;padding:12px 14px 13px}
+  .vrow:last-child{padding-bottom:14px}
+  .vrow .g{grid-column:1;grid-row:1;top:-11px}
+  .vrow .w{grid-column:1;grid-row:2;top:-11px}
+  .vrow .circ{grid-column:2;grid-row:1 / span 2;width:60px;height:40px;line-height:37px;font-size:15px}
+  /* 19px track + 7px = the third 26px band */
+  .vrow .track{grid-column:1 / -1;grid-row:3;margin-top:7px}
+}
+@media (max-width:680px){
+  .reg .who,.reg .pr{display:none}
+  .inl{display:block}
+  /* the folded cell is three stacked 26px lines, so the row is 104 */
+  .reg .zv .inl.who-i{font-family:'Caveat','Golos Text',Georgia,cursive;color:var(--hand);
+    font-size:16px;line-height:26px;margin-top:0;
+    position:relative;top:0px}
+  .reg .zv .inl.pr-i{font-size:11px;font-style:italic;color:var(--ink2);line-height:26px;
+    margin-top:0;position:relative;top:1px}
+  .reg .mk{border-right:0}
+}
+@media (max-width:620px){
+  .lead{grid-template-columns:30px minmax(0,1fr);row-gap:26px}
+  .lead-mark{grid-column:2;justify-self:start}
+  .lead-txt{grid-column:2}
+}
+@media (max-width:600px){
+  .shots img{height:208px}
+}
+@media (max-width:480px){
+  .mast h1{font-size:36.8px;top:5px}
+  .tip:nth-child(odd),.tip:nth-child(even){transform:none}
+  .mast-run .pen{margin-left:0}
+}
