@@ -1,0 +1,56 @@
+# Immutable seed of "not fully compliant" extensions (missing >=1 required
+# suite or docs item — see STANDARD.md) at the moment the compliance gate
+# landed (2026-07). This file is WRITE-ONCE: check_allowlist.ts's
+# checkBaselineImmutable diffs it against the merge-base with origin/master
+# and fails CI on any ADDED line (removing a line — i.e. an extension
+# reaching full compliance and being deleted from this baseline along with
+# quality-allowlist.txt — is fine; growth is not). Do not add entries here
+# after the seed commit. quality-allowlist.txt may only ever be a SUBSET of
+# this file. See STANDARD.md "Seeding the baseline".
+anilist
+anime-cron
+arckit
+bandcamp
+cadvisor
+career-kb
+comfyui
+cozystack-linstor
+cozystack-platform
+dawarich
+fc-task-server
+fidonet-msgbase
+firecracker
+flipper-zero
+fragrantica
+gonic
+good-planning
+headphones
+homeassistant
+issue-lifecycle
+jabber
+jscad-cad
+jscad-stl-slicer
+jscad-stl-validator
+juick
+kaiten
+libvirt
+livejournal-import
+music-library
+musicbrainz
+observability-agent
+obsidian-vault
+obsidian-yt-archiver
+pihole
+porkbun
+seadex
+seanime
+shoko
+skype
+swamp-go-brr
+talm-cluster
+talos-node
+telegram-import
+telegram-send
+tubearchivist
+victorialogs
+victoriametrics
