@@ -1,7 +1,8 @@
 {
   "tasks": {
     "check": "deno check extensions/models/cozystack_linstor.ts",
-    "test": "deno test extensions/models/ --permit-no-files",
+    "test": "deno test --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/cozystack_linstor_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
