@@ -1,0 +1,17 @@
+{
+  "Total": 3,
+  "List": [
+    {
+      "IDs": { "ID": 9001, "AniDB": 88001, "ParentSeries": 101 },
+      "Name": "Episode 13"
+    },
+    {
+      "IDs": { "ID": 9002, "AniDB": 88002, "ParentSeries": 102 },
+      "Name": "Episode 25"
+    },
+    {
+      "IDs": { "ID": 9003, "AniDB": 88003, "ParentSeries": 102 },
+      "Name": "Episode 26"
+    }
+  ]
+}

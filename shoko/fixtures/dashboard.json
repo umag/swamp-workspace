@@ -1,0 +1,13 @@
+{
+  "CollectionStats": {
+    "FileCount": 120,
+    "SeriesCount": 42,
+    "EpisodeCount": 980,
+    "FileSizeOnDisk": 123456789012
+  },
+  "QueueStats": {
+    "HasherQueueCount": 0,
+    "GeneralQueueCount": 2,
+    "ImageQueueCount": 0
+  }
+}

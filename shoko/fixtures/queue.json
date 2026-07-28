@@ -1,0 +1,5 @@
+[
+  { "Name": "General", "Status": "Idle", "Type": "General" },
+  { "Name": "Hasher", "Status": "Running", "Type": "Hasher" },
+  { "Name": "Images", "Status": "Idle", "Type": "Images" }
+]
