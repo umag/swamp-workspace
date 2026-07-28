@@ -1,0 +1,5 @@
+{
+  "success": true,
+  "stdout": "",
+  "stderr": "warning: field \"machine.network.extraHosts\" is deprecated and will be removed in a future release\n"
+}
