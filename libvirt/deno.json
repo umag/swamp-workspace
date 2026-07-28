@@ -1,7 +1,8 @@
 {
   "tasks": {
     "check": "deno check extensions/models/libvirt_host.ts extensions/models/libvirt_network.ts extensions/models/libvirt_storage.ts extensions/models/libvirt_vm.ts",
-    "test": "deno test extensions/models/",
+    "test": "deno test --allow-env=FC_NUM_RUNS --allow-read=extensions extensions/models/",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS --allow-read=extensions extensions/models/libvirt_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
