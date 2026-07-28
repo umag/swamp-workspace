@@ -1,0 +1,30 @@
+[
+  {
+    "stor_pools": [
+      {
+        "node_name": "worker-0",
+        "stor_pool_name": "data",
+        "provider_kind": "ZFS",
+        "props": { "StorDriver/StorPoolName": "data" },
+        "free_space": {
+          "free_capacity": 3221225472,
+          "total_capacity": 10737418240
+        }
+      },
+      {
+        "node_name": "worker-1",
+        "stor_pool_name": "data",
+        "provider_kind": "ZFS",
+        "props": {},
+        "free_space": { "free_capacity": 0, "total_capacity": 10737418240 },
+        "reports": [
+          { "ret_code": 8321, "message": "Storage pool check failed" }
+        ]
+      },
+      {
+        "node_name": "worker-2",
+        "stor_pool_name": "data"
+      }
+    ]
+  }
+]

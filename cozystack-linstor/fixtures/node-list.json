@@ -1,0 +1,29 @@
+[
+  {
+    "nodes": [
+      {
+        "name": "worker-0",
+        "type": "SATELLITE",
+        "connection_status": "ONLINE",
+        "net_interfaces": [
+          { "name": "default", "address": "192.0.2.10" }
+        ]
+      },
+      {
+        "name": "worker-1",
+        "type": "SATELLITE",
+        "connection_status": "OFFLINE",
+        "net_interfaces": [
+          { "name": "default", "address": "192.0.2.11" },
+          { "name": "eth1", "address": "192.0.2.21" }
+        ]
+      },
+      {
+        "name": "worker-2",
+        "type": "COMBINED",
+        "connection_status": "ONLINE",
+        "net_interfaces": []
+      }
+    ]
+  }
+]

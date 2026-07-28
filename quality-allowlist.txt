@@ -16,7 +16,6 @@ bandcamp
 cadvisor
 career-kb
 comfyui
-cozystack-linstor
 cozystack-platform
 dawarich
 fc-task-server
@@ -47,7 +46,6 @@ seanime
 shoko
 skype
 swamp-go-brr
-talos-node
 telegram-import
 telegram-send
 tubearchivist
