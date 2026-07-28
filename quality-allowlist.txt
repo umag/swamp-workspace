@@ -1,0 +1,57 @@
+# Shrink-only allowlist of tolerated compliance offenders (see STANDARD.md).
+# An extension listed here is currently missing >=1 required suite or docs
+# item (its quality.yaml marks that block "backlog"); the compliance gate
+# tolerates it ONLY while it stays on this list. This file MAY ONLY SHRINK:
+# check_allowlist.ts fails CI if it ever contains a name absent from the
+# immutable quality-offenders.baseline.txt (growth), or if an extension's
+# backlog state and its allowlist membership disagree in either direction.
+# Removing a name here means: bring that extension to full compliance
+# first (all five suites + docs present or explicitly na). Backfill work is
+# tracked in the Phase D issue: ext-quality-test-backfill.
+anilist
+anime-cron
+arckit
+bandcamp
+cadvisor
+career-kb
+comfyui
+cozystack-linstor
+cozystack-platform
+dawarich
+fc-task-server
+fidonet-msgbase
+firecracker
+flipper-zero
+fragrantica
+gonic
+good-planning
+headphones
+homeassistant
+issue-lifecycle
+jabber
+jscad-cad
+jscad-stl-slicer
+jscad-stl-validator
+juick
+kaiten
+libvirt
+livejournal-import
+music-library
+musicbrainz
+observability-agent
+obsidian-vault
+obsidian-yt-archiver
+pihole
+porkbun
+seadex
+seanime
+shoko
+skype
+swamp-go-brr
+talm-cluster
+talos-node
+telegram-import
+telegram-send
+tubearchivist
+victorialogs
+victoriametrics

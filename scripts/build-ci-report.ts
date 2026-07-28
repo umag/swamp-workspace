@@ -215,10 +215,113 @@ async function buildPromptfoo(): Promise<string> {
   ].join("\n");
 }
 
+function complianceViolationLines(
+  violations: J[],
+  fileField = "extension",
+): string[] {
+  if (violations.length === 0) return ["_none_"];
+  return violations.map((v) => {
+    const scope = asStr(v[fileField]);
+    const prefix = scope ? `\`${scope}\`: ` : "";
+    return `- ${prefix}**[${asStr(v.rule)}]** ${asStr(v.what)}\n  - WHY: ${
+      asStr(v.why)
+    }\n  - FIX: ${asStr(v.fix)}`;
+  });
+}
+
+async function buildCompliance(): Promise<string> {
+  // check_compliance.ts / check_allowlist.ts / score_ratchet.ts each write
+  // their own small --json summary directly to the artifact dir (no
+  // per-tool subdirectory the way tessl/promptfoo use) — see the
+  // `compliance` job in .github/workflows/ci.yml.
+  const readJson = async (name: string): Promise<J | null> => {
+    try {
+      return parseLoose(await Deno.readTextFile(`${artDir}/${name}`));
+    } catch {
+      return null;
+    }
+  };
+  const compliance = await readJson(
+    "compliance-summary/compliance-summary.json",
+  );
+  const allowlist = await readJson("compliance-summary/allowlist-summary.json");
+  const ratchet = await readJson("compliance-summary/ratchet-summary.json");
+
+  if (!compliance && !allowlist && !ratchet) {
+    return [
+      "<!-- ci-report:compliance -->",
+      "## extension quality — compliance report",
+      "",
+      "_No compliance-summary artifact found for this run._",
+      "",
+    ].join("\n");
+  }
+
+  const complianceViolations = asArr(compliance?.violations).map(asObj);
+  const allowlistViolations = asArr(allowlist?.violations).map(asObj);
+  const reports = asArr(ratchet?.reports).map(asObj);
+  const ratchetFailures = reports.filter((r) =>
+    asStr(asObj(r.outcome).status) === "fail"
+  );
+  const ratchetRebaselines = reports.filter((r) =>
+    asStr(asObj(r.outcome).status) === "rebaseline"
+  );
+
+  const totalBlocking = complianceViolations.length +
+    allowlistViolations.length + ratchetFailures.length;
+  const header = totalBlocking > 0
+    ? `❌ ${totalBlocking} blocking finding(s) — see STANDARD.md for the fix pattern`
+    : `✅ all ${
+      asArr(compliance?.checked).length
+    } extensions compliant, allowlist consistent, no score regressions`;
+
+  const ratchetFailLines = ratchetFailures.length
+    ? ratchetFailures.map((r) =>
+      `- \`${asStr(r.extension)}\`: ${asStr(asObj(r.outcome).message)}`
+    )
+    : ["_none_"];
+  const rebaselineLines = ratchetRebaselines.length
+    ? ratchetRebaselines.map((r) =>
+      `- \`${asStr(r.extension)}\`: ${asStr(asObj(r.outcome).message)}`
+    )
+    : ["_none_"];
+
+  return [
+    "<!-- ci-report:compliance -->",
+    "## extension quality — compliance report",
+    "",
+    `Runs GLOBAL (every extension, every run — see STANDARD.md "Why global").${runLine}`,
+    "",
+    header,
+    "",
+    `### Compliance violations (${complianceViolations.length})`,
+    "",
+    ...complianceViolationLines(complianceViolations, "extension"),
+    "",
+    `### Allowlist violations (${allowlistViolations.length})`,
+    "",
+    ...complianceViolationLines(allowlistViolations, ""),
+    "",
+    `### Score ratchet failures (${ratchetFailures.length})`,
+    "",
+    ...ratchetFailLines,
+    "",
+    `<details><summary>Rubric-version rebaselines (${ratchetRebaselines.length}, informational)</summary>`,
+    "",
+    ...rebaselineLines,
+    "",
+    "</details>",
+    "",
+  ].join("\n");
+}
+
 const tessl = await buildTessl();
 const promptfoo = await buildPromptfoo();
+const compliance = await buildCompliance();
 await Deno.writeTextFile("tessl-report.md", tessl);
 await Deno.writeTextFile("promptfoo-report.md", promptfoo);
+await Deno.writeTextFile("compliance-report.md", compliance);
 console.log(
-  `tessl-report.md (${tessl.length} chars), promptfoo-report.md (${promptfoo.length} chars)`,
+  `tessl-report.md (${tessl.length} chars), promptfoo-report.md (${promptfoo.length} chars), ` +
+    `compliance-report.md (${compliance.length} chars)`,
 );

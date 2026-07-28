@@ -1,0 +1,59 @@
+# Hand-authored: stripe-mpp is the ONE extension that carries all five
+# required suites today (see STANDARD.md "Seeding the baseline"). It is NOT
+# on quality-allowlist.txt — every block this phase actually enforces
+# (the five suites + docs) is "present", never "backlog".
+schemaVersion: 1
+extension: stripe-mpp
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - "extensions/models/stripe_mpp_test.ts"
+      - "extensions/models/stripe_mpp_live_test.ts"
+      - "extensions/models/lib/link_cli.test.ts"
+  methods:
+    state: present
+    files:
+      - "extensions/models/stripe_mpp_methods_test.ts"
+  adversarial:
+    state: present
+    files:
+      - "extensions/models/stripe_mpp_adversarial_test.ts"
+  coverage:
+    state: present
+    files:
+      - "extensions/models/stripe_mpp_coverage_test.ts"
+  property-invariant-flow:
+    state: present
+    files:
+      - "extensions/models/stripe_mpp_property_test.ts"
+      - "extensions/models/stripe_mpp_invariant_property_test.ts"
+      - "extensions/models/stripe_mpp_flow_property_test.ts"
+watch:
+  # Phase A only DECLARES this shape (see STANDARD.md) — the generalized
+  # release-watch workflow is Phase B's (ext-quality-release-watch-soak) to
+  # build, for every extension including this one. Not allowlist-gated.
+  state: backlog
+  justification: "no generalized release-watch yet — tracked in ext-quality-test-backfill"
+canary:
+  # Phase C's (ext-quality-live-canary) live-verification workflow does not
+  # exist yet either; CI itself cannot hold real Stripe test-mode secrets.
+  state: backlog
+  justification: "live canary workflow not built yet — tracked in ext-quality-test-backfill"
+docs:
+  readme:
+    state: present
+    files:
+      - "README.md"
+  changelog:
+    state: present
+    files:
+      - "CHANGELOG.md"
+  skill:
+    state: present
+    files:
+      - ".claude/skills/stripe-mpp/SKILL.md"
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"
