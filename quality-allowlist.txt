@@ -16,7 +16,6 @@ bandcamp
 cadvisor
 career-kb
 comfyui
-cozystack-platform
 dawarich
 fc-task-server
 fidonet-msgbase
