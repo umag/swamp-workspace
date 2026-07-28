@@ -42,7 +42,6 @@ musicbrainz
 observability-agent
 obsidian-vault
 obsidian-yt-archiver
-pihole
 seadex
 seanime
 shoko

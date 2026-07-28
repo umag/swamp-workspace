@@ -1,0 +1,10 @@
+{
+  "session": {
+    "valid": true,
+    "totp": false,
+    "sid": "FAKE-SID-SYNTHETIC-0000000000000000",
+    "csrf": "FAKE-CSRF-SYNTHETIC-0000000000000000",
+    "validity": 300,
+    "message": null
+  }
+}
