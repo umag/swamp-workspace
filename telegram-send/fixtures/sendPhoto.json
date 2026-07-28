@@ -1,0 +1,36 @@
+{
+  "ok": true,
+  "result": {
+    "message_id": 1002,
+    "from": {
+      "id": 987654321,
+      "is_bot": true,
+      "first_name": "SwampNotifyBot",
+      "username": "swamp_notify_bot"
+    },
+    "chat": {
+      "id": 555000111,
+      "first_name": "Jordan",
+      "username": "jordan_example",
+      "type": "private"
+    },
+    "date": 1752600060,
+    "photo": [
+      {
+        "file_id": "AgACAgIAAxkDAAIBAWEXAMPLE0001",
+        "file_unique_id": "AQADEXAMPLE0001",
+        "file_size": 1243,
+        "width": 90,
+        "height": 90
+      },
+      {
+        "file_id": "AgACAgIAAxkDAAIBAWEXAMPLE0002",
+        "file_unique_id": "AQADEXAMPLE0002",
+        "file_size": 18320,
+        "width": 320,
+        "height": 320
+      }
+    ],
+    "caption": "build green"
+  }
+}
