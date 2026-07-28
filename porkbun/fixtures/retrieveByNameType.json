@@ -1,0 +1,14 @@
+{
+  "status": "SUCCESS",
+  "records": [
+    {
+      "id": "1000000002",
+      "name": "www.example.com",
+      "type": "CNAME",
+      "content": "example.com",
+      "ttl": "600",
+      "prio": "0",
+      "notes": ""
+    }
+  ]
+}

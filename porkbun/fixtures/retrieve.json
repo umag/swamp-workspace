@@ -1,0 +1,41 @@
+{
+  "status": "SUCCESS",
+  "records": [
+    {
+      "id": "1000000001",
+      "name": "example.com",
+      "type": "A",
+      "content": "192.0.2.10",
+      "ttl": "600",
+      "prio": "0",
+      "notes": ""
+    },
+    {
+      "id": "1000000002",
+      "name": "www.example.com",
+      "type": "CNAME",
+      "content": "example.com",
+      "ttl": "600",
+      "prio": "0",
+      "notes": ""
+    },
+    {
+      "id": "1000000003",
+      "name": "example.com",
+      "type": "MX",
+      "content": "mail.example.com",
+      "ttl": "600",
+      "prio": "10",
+      "notes": "primary mail exchanger"
+    },
+    {
+      "id": "1000000004",
+      "name": "_dmarc.example.com",
+      "type": "TXT",
+      "content": "v=DMARC1; p=none;",
+      "ttl": "3600",
+      "prio": "0",
+      "notes": ""
+    }
+  ]
+}

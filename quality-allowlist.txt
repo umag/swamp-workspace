@@ -43,7 +43,6 @@ observability-agent
 obsidian-vault
 obsidian-yt-archiver
 pihole
-porkbun
 seadex
 seanime
 shoko
