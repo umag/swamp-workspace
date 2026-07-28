@@ -1,7 +1,9 @@
 {
   "tasks": {
     "check": "deno check extensions/models/pihole.ts",
-    "test": "deno test extensions/models/",
+    "test": "deno test --allow-env=FC_NUM_RUNS,LIVE_PIHOLE --allow-read=extensions,fixtures --permit-no-files extensions/models/",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS,LIVE_PIHOLE --allow-read=extensions,fixtures extensions/models/pihole_property_test.ts",
+    "test:live": "LIVE_PIHOLE=1 deno test --allow-env=FC_NUM_RUNS,LIVE_PIHOLE,PIHOLE_LIVE_HOST,PIHOLE_LIVE_PASSWORD --allow-read=extensions,fixtures --allow-net extensions/models/pihole_live_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

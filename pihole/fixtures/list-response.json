@@ -1,0 +1,11 @@
+{
+  "config": {
+    "dns": {
+      "hosts": [
+        "192.0.2.10 nas.example.test",
+        "192.0.2.11 printer.example.test",
+        "198.51.100.20 media.example.test"
+      ]
+    }
+  }
+}
