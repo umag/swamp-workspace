@@ -1,0 +1,5 @@
+{
+  "success": false,
+  "stdout": "",
+  "stderr": "rpc error: code = InvalidArgument desc = machine config validation failed: 1 error occurred:\n\t* missing required field \"machine.install.disk\"\n\n"
+}

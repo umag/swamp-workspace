@@ -1,0 +1,5 @@
+{
+  "success": true,
+  "stdout": "NODE         SERVICE      STATE     HEALTH\n192.0.2.10   apid         Running   OK\n192.0.2.10   containerd   Running   OK\n192.0.2.10   cri          Running   OK\n192.0.2.10   etcd         Running   OK\n192.0.2.10   kubelet      Running   OK\n192.0.2.10   machined     Running   OK\n192.0.2.10   trustd       Running   OK\n",
+  "stderr": ""
+}

@@ -1,0 +1,5 @@
+{
+  "success": true,
+  "stdout": "NODE         ID                 HOSTNAME   PEER-URL                  CLIENT-URL                 LEARNER\n192.0.2.10   634a1dccd6e0d1e5   cp1        https://192.0.2.10:2380   https://192.0.2.10:2379   false\n192.0.2.11   9f39a7b0c8d21a44   cp2        https://192.0.2.11:2380   https://192.0.2.11:2379   false\n192.0.2.12   2b6e4f91a3c9d075   cp3        https://192.0.2.12:2380   https://192.0.2.12:2379   true\n",
+  "stderr": ""
+}

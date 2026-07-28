@@ -1,0 +1,5 @@
+{
+  "success": true,
+  "stdout": "{\n  \"platform\": {\n    \"name\": \"metal\",\n    \"mode\": \"metal\"\n  },\n  \"version\": {\n    \"tag\": \"v1.9.5\",\n    \"sha\": \"8f61e6dd\",\n    \"built\": \"2026-01-15T00:00:00Z\",\n    \"go_version\": \"go1.23.4\",\n    \"os\": \"linux\",\n    \"arch\": \"amd64\"\n  }\n}\n",
+  "stderr": ""
+}

@@ -47,7 +47,6 @@ shoko
 skype
 swamp-go-brr
 talm-cluster
-talos-node
 telegram-import
 telegram-send
 tubearchivist
