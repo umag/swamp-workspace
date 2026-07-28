@@ -30,14 +30,47 @@ tests:
       - "extensions/models/stripe_mpp_invariant_property_test.ts"
       - "extensions/models/stripe_mpp_flow_property_test.ts"
 watch:
-  # Phase A only DECLARES this shape (see STANDARD.md) — the generalized
-  # release-watch workflow is Phase B's (ext-quality-release-watch-soak) to
-  # build, for every extension including this one. Not allowlist-gated.
-  state: backlog
-  justification: "no generalized release-watch yet — tracked in ext-quality-test-backfill"
+  # Owned by Phase B (ext-quality-release-watch-soak): the executable
+  # contract is scripts/lib/watch_schema.ts, consumed by the generic
+  # .github/workflows/release-watch.yml (the bespoke stripe-mpp-release-
+  # watch.yml was deleted in the same commit). Preserves the exact prior
+  # behavior: mppx vs "latest"; stripe vs "public-preview" with "beta"
+  # fallback (SPT endpoints ride the preview channel); @stripe/link-cli
+  # OPTIONAL (required: false) — a missing/renamed pin must never fail the
+  # whole run. Before bumping any pin, run the spec-fixture contract tests
+  # (extensions/models/stripe_mpp_test.ts) — they pin the MPP wire format
+  # and decide whether method code needs changes.
+  state: present
+  issueLabel: stripe-mpp-release-watch
+  sources:
+    - kind: npm
+      package: mppx
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/stripe_mpp.ts
+        pattern: 'npm:mppx@([0-9][^/"]*)'
+        required: true
+    - kind: npm
+      package: stripe
+      channel: public-preview
+      channelFallback: beta
+      pin:
+        from: source
+        file: extensions/models/stripe_mpp.ts
+        pattern: 'npm:stripe@([0-9][^/"]*)'
+        required: true
+    - kind: npm
+      package: "@stripe/link-cli"
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/stripe_mpp.ts
+        pattern: 'linkCliVersion.*default\("([0-9][^"]*)"'
+        required: false
 canary:
   # Phase C's (ext-quality-live-canary) live-verification workflow does not
-  # exist yet either; CI itself cannot hold real Stripe test-mode secrets.
+  # cover CI here; CI itself cannot hold real Stripe test-mode secrets.
   state: backlog
   justification: "live canary workflow not built yet — tracked in ext-quality-test-backfill"
 docs:

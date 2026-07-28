@@ -271,15 +271,42 @@ Deno.test("watch present state requires at least one source entry", () => {
   assert(!result.success);
 });
 
-Deno.test("watch present state accepts opaque sources[] entries (validated elsewhere, by Phase B)", () => {
+Deno.test("watch present state accepts a valid Phase-B source (deep validation via watch_schema.ts)", () => {
   const fixture = validFixture();
   fixture.watch = {
     state: "present",
-    sources: [{ kind: "npm", package: "mppx", distTag: "latest" }],
+    issueLabel: "mppx-release-watch",
+    sources: [{
+      kind: "npm",
+      package: "mppx",
+      channel: "latest",
+      pin: {
+        from: "source",
+        file: "extensions/models/stripe_mpp.ts",
+        pattern: 'npm:mppx@([0-9][^/"]*)',
+        required: true,
+      },
+    }],
   };
   const result = QualityFileSchema.safeParse(fixture);
   assert(
     result.success,
     JSON.stringify(!result.success && result.error.issues),
   );
+});
+
+Deno.test("watch present state REJECTS a malformed source (no more opaque passthrough)", () => {
+  // The original Phase-A schema passed sources[] through unvalidated with a
+  // TODO to wire scripts/lib/watch_schema.ts once it existed. It exists now
+  // — a source that satisfies neither arm of the four-kind union (here: the
+  // retired `distTag` field instead of `channel` + `pin`) must fail the
+  // compliance gate, not slide through to a runtime resolver error.
+  const fixture = validFixture();
+  fixture.watch = {
+    state: "present",
+    issueLabel: "mppx-release-watch",
+    sources: [{ kind: "npm", package: "mppx", distTag: "latest" }],
+  };
+  const result = QualityFileSchema.safeParse(fixture);
+  assert(!result.success);
 });

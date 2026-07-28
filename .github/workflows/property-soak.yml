@@ -1,0 +1,111 @@
+# Generic nightly rotating property-soak: auto-discovers every
+# `<extension>/extensions/models/*_property_test.ts` file (scripts/
+# soak_schedule.ts) and soaks tonight's 7-night-rotation bucket at a much
+# higher fast-check iteration count than CI's tuned default. Replaces
+# stripe-mpp's bespoke property-soak workflow (deleted in the SAME commit as
+# this file lands — atomic migration, see the commit message).
+#
+# Nights with fewer than 7 discovered files are EXPECTED to have an empty
+# bucket on some days — the `soak` job below is gated on
+# `needs.discover.outputs.files != '[]'`, mirroring ci.yml's own
+# `skill-review` / `skill-trigger-eval` empty-matrix guard: an empty array
+# expands to an empty matrix, which GitHub marks as a FAILED run unless
+# explicitly gated. An empty night is a green no-op, never a red run.
+name: property soak
+
+on:
+  schedule:
+    - cron: "37 3 * * *" # nightly, 03:37 UTC
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "fast-check numRuns override (nightly uses 1000000)"
+        required: false
+        default: "10000"
+      target:
+        description: "soak only this one extension's property files, overriding tonight's rotation"
+        required: false
+        default: ""
+      all:
+        description: "soak every discovered property test file, ignoring rotation"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: discover tonight's soak bucket
+    runs-on: ubuntu-latest
+    outputs:
+      files: ${{ steps.schedule.outputs.files }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.3
+
+      - id: schedule
+        working-directory: scripts
+        env:
+          # workflow_dispatch inputs, even from a trusted operator, are
+          # passed via env — never spliced with `${{ }}` directly into this
+          # script's text — matching the anti-injection discipline documented
+          # in release-watch.yml.
+          TARGET: ${{ github.event.inputs.target }}
+          RUN_ALL: ${{ github.event.inputs.all }}
+        run: |
+          set -eo pipefail
+          args=(--root .. --out ../soak-bucket.json)
+          if [ "$RUN_ALL" = "true" ]; then
+            args+=(--all)
+          elif [ -n "$TARGET" ]; then
+            args+=(--target "$TARGET")
+          fi
+          deno run --allow-read=.. --allow-write=../soak-bucket.json soak_schedule.ts "${args[@]}"
+          {
+            echo "files<<EOF"
+            cat ../soak-bucket.json
+            # Unconditional blank line: guarantees "EOF" starts on its own
+            # line for the $GITHUB_OUTPUT heredoc parser even if the JSON
+            # file itself doesn't end in a newline (defense in depth —
+            # soak_schedule.ts's --out already writes a trailing newline).
+            echo
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  soak:
+    name: soak
+    needs: discover
+    if: needs.discover.outputs.files != '[]'
+    runs-on: ubuntu-latest
+    # A few-hour soak per property file; stays under GitHub's 6h per-job cap.
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: ${{ fromJson(needs.discover.outputs.files) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.3
+
+      - name: Type-check ${{ matrix.pair.extension }}
+        working-directory: ${{ matrix.pair.extension }}
+        run: deno task check
+
+      - name: Property soak (FC_NUM_RUNS)
+        working-directory: ${{ matrix.pair.extension }}
+        env:
+          # Scheduled runs have no `runs` input → default to the multi-hour
+          # 1,000,000-per-property soak (same convention as the original
+          # stripe-mpp bespoke workflow). Manual dispatch uses the input.
+          FC_NUM_RUNS: ${{ github.event.inputs.runs || '1000000' }}
+        run: deno test --allow-env=FC_NUM_RUNS "${{ matrix.pair.file }}"

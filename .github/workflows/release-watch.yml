@@ -1,0 +1,137 @@
+# Generic weekly release-watch for every extension that declares `watch:`
+# sources in its own quality.yaml (schema: scripts/lib/watch_schema.ts; docs:
+# scripts/README.md). Replaces stripe-mpp's bespoke release-watch workflow
+# (deleted in the SAME commit as this file lands — atomic migration, see the
+# commit message).
+#
+# SECURITY: every upstream-derived string (a release tag/name, scraped page
+# text, package metadata) reaches this workflow ONLY inside
+# release-watch-report.json — written entirely by scripts/release_watch.ts,
+# which treats every upstream HTTP response as untrusted input. The
+# "Raise or update per-extension drift issues" step reads that JSON file
+# from disk inside actions/github-script and uses the parsed values ONLY as
+# REST API (octokit) parameters — never re-injected into a shell command or
+# spliced via `${{ }}` into a `run:` script. This is deliberate: `${{ }}`
+# interpolation of upstream-influenceable data directly into shell/script
+# text is exactly the class of bug this design avoids (an upstream
+# maintainer — or an attacker who lands a release name/tag — could otherwise
+# inject into the runner).
+name: release watch
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # weekly, Monday 06:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.3
+
+      - name: Resolve upstream drift for every extension
+        working-directory: scripts
+        env:
+          # Raises the unauthenticated 60/hour GitHub API rate limit to
+          # 5000/hour for github-release sources. Standard, safe use of a
+          # trusted secret via env — NOT the upstream-data-via-${{ }} pattern
+          # this workflow otherwise avoids.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          deno run \
+            --allow-net \
+            --allow-read=.. \
+            --allow-write=../release-watch-report.json \
+            --allow-env=GITHUB_TOKEN \
+            release_watch.ts --root .. --out ../release-watch-report.json
+
+      - name: Raise or update per-extension drift issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const report = JSON.parse(
+              fs.readFileSync("release-watch-report.json", "utf8"),
+            );
+
+            for (const ext of report.extensions) {
+              // A config error (malformed quality.yaml) is Phase A/ci.yml's
+              // concern at PR time, not a release-watch issue — never file
+              // one for it, just surface it in the run log.
+              if (ext.loadError) {
+                core.warning(`${ext.extension}: quality.yaml load error — ${ext.loadError}`);
+                continue;
+              }
+              for (const r of ext.results) {
+                if (r.status === "unreachable") {
+                  core.warning(`${ext.extension}: source unreachable this run (not drift) — ${r.detail}`);
+                }
+              }
+              if (!ext.hasDrift) continue;
+
+              const stale = ext.results.filter((r) => r.status === "drift").map((r) => `- ${r.detail}`);
+              const unreachable = ext.results.filter((r) => r.status === "unreachable").map((r) => `- ${r.detail}`);
+              const bodyLines = [
+                `Upstream release drift detected for \`${ext.extension}\`:`,
+                "",
+                ...stale,
+              ];
+              if (unreachable.length > 0) {
+                bodyLines.push(
+                  "",
+                  "_Some sources were unreachable this run (not counted as drift, retried next week):_",
+                  ...unreachable,
+                );
+              }
+              bodyLines.push("", `_Last checked: ${report.generatedAt} (weekly cron)._`);
+              const body = bodyLines.join("\n");
+
+              // Idempotency: dedupe by LABEL, not exact title. This means an
+              // already-open issue from the previous per-extension workflow
+              // (e.g. stripe-mpp's old "stripe-mpp-release-watch" label) is
+              // picked up and updated in place — title normalized to the
+              // generic "<ext>: upstream release drift" format — rather than
+              // orphaned or duplicated on cutover.
+              const { data: existing } = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: "open",
+                labels: ext.issueLabel,
+              });
+              if (existing.length > 1) {
+                core.warning(
+                  `${ext.extension}: multiple open issues carry the "${ext.issueLabel}" label (${
+                    existing.map((i) => "#" + i.number).join(", ")
+                  }) — updating the oldest, leaving the rest for manual triage.`,
+                );
+              }
+              const target = [...existing].sort((a, b) => a.number - b.number)[0];
+              if (target) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: target.number,
+                  title: ext.issueTitle,
+                  body,
+                });
+                core.info(`Updated existing issue #${target.number} for ${ext.extension}`);
+              } else {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: ext.issueTitle,
+                  body,
+                  labels: [ext.issueLabel],
+                });
+                core.info(`Opened new drift issue for ${ext.extension}`);
+              }
+            }

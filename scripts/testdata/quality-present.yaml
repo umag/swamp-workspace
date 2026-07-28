@@ -1,0 +1,18 @@
+# Fixture: a minimal Phase-A-shaped quality.yaml carrying a `watch:` block
+# with state=present. The extra top-level keys (schemaVersion, extension)
+# simulate fields OWNED by Phase A (ext-quality-standard-ci-gate) — this
+# module (watch_schema.ts) must ignore them and validate only `watch:`.
+schemaVersion: 1
+extension: demo-ext
+watch:
+  state: present
+  issueLabel: demo-ext-release-watch
+  sources:
+    - kind: npm
+      package: demo-pkg
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/demo_ext.ts
+        pattern: 'npm:demo-pkg@([0-9][^/"]*)'
+        required: true

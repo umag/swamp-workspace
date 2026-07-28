@@ -1,8 +1,8 @@
 {
   "tasks": {
     "build-promptfoo": "deno run --allow-read --allow-write build-promptfoo-tests.ts",
-    "check": "deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts",
-    "test": "deno test --allow-read --allow-write --allow-run --allow-env quality/",
+    "check": "deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts lib/watch_schema.ts release_watch.ts soak_schedule.ts",
+    "test": "deno test --allow-read --allow-write --allow-run --allow-env=FC_NUM_RUNS,QUALITY_REPO_ROOT,PATH .",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint",
@@ -11,6 +11,7 @@
     "quality:ratchet": "deno run --allow-read --allow-write --allow-run=swamp --allow-env=QUALITY_REPO_ROOT quality/score_ratchet.ts",
     "quality:scaffold": "deno run --allow-read --allow-write quality/scaffold.ts"
   },
+  "imports": { "zod": "npm:zod@4" },
   "fmt": {
     "lineWidth": 80,
     "indentWidth": 2,

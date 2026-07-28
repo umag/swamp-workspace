@@ -1,0 +1,8 @@
+# Fixture: quality.yaml with watch.state=na — no upstream to watch, with a
+# required justification.
+schemaVersion: 1
+extension: demo-ext-local-only
+watch:
+  state: na
+  justification: >-
+    Pure local swamp automation with no upstream dependency to watch.
