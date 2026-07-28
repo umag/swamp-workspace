@@ -1,0 +1,35 @@
+{
+  "data": {
+    "lists": [
+      {
+        "type": "anime",
+        "status": "CURRENT",
+        "entries": [
+          {
+            "mediaId": 100001,
+            "media": {
+              "id": 100001,
+              "title": {
+                "romaji": "Fixture Chronicles",
+                "english": "Fixture Chronicles",
+                "userPreferred": "Fixture Chronicles"
+              },
+              "status": "RELEASING",
+              "format": "TV"
+            },
+            "listData": {
+              "status": "CURRENT",
+              "progress": 3,
+              "score": 0
+            },
+            "libraryData": {
+              "unwatchedCount": 1
+            },
+            "currentEpisodeCount": 12
+          }
+        ]
+      }
+    ],
+    "continueWatchingList": []
+  }
+}

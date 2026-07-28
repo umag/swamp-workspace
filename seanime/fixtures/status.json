@@ -1,0 +1,28 @@
+{
+  "data": {
+    "os": "linux",
+    "version": "2.5.0",
+    "isOffline": false,
+    "user": {
+      "id": 424242,
+      "name": "swamp-fixture-user",
+      "isCustomToken": true
+    },
+    "settings": {
+      "library": {
+        "libraryPath": "/anime/tv",
+        "autoUpdateProgress": true
+      },
+      "torrent": {
+        "defaultTorrentClient": "qbittorrent",
+        "qbittorrentHost": "http://seanime.example.com:8080"
+      },
+      "anilist": {
+        "hideAudienceScore": false
+      }
+    },
+    "themeSettings": {
+      "animeEntryScreenLayout": "big-poster"
+    }
+  }
+}
