@@ -1,0 +1,21 @@
+{
+  "apiVersion": "apps.cozystack.io/v1alpha1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "apps.cozystack.io/v1alpha1",
+      "kind": "Postgres",
+      "metadata": {
+        "name": "db",
+        "namespace": "tenant-root",
+        "creationTimestamp": "2026-07-01T00:00:00Z"
+      },
+      "spec": { "replicas": 2, "size": "10Gi" },
+      "status": {
+        "conditions": [
+          { "type": "Ready", "status": "True", "message": "all good" }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "cozystack-operator",
+    "namespace": "cozy-system",
+    "creationTimestamp": "2026-07-01T00:00:00Z"
+  },
+  "spec": {
+    "replicas": 1
+  },
+  "status": {
+    "replicas": 1,
+    "readyReplicas": 1
+  }
+}

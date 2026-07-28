@@ -1,0 +1,22 @@
+{
+  "apiVersion": "helm.toolkit.fluxcd.io/v2",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": { "name": "cozystack", "namespace": "cozy-system" },
+      "status": {
+        "conditions": [
+          { "type": "Ready", "status": "True", "message": "" }
+        ]
+      }
+    },
+    {
+      "metadata": { "name": "ingress-nginx", "namespace": "cozy-ingress" },
+      "status": {
+        "conditions": [
+          { "type": "Ready", "status": "False", "message": "install retrying" }
+        ]
+      }
+    }
+  ]
+}

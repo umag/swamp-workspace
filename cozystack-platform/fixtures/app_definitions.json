@@ -1,0 +1,40 @@
+{
+  "apiVersion": "cozystack.io/v1alpha1",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": {
+        "name": "postgres",
+        "creationTimestamp": "2026-07-01T00:00:00Z"
+      },
+      "spec": {
+        "application": {
+          "kind": "Postgres",
+          "plural": "postgreses",
+          "singular": "postgres"
+        },
+        "dashboard": {
+          "category": "database",
+          "description": "PostgreSQL database"
+        }
+      }
+    },
+    {
+      "metadata": {
+        "name": "kubernetes",
+        "creationTimestamp": "2026-07-01T00:00:00Z"
+      },
+      "spec": {
+        "application": {
+          "kind": "Kubernetes",
+          "plural": "kuberneteses",
+          "singular": "kubernetes"
+        },
+        "dashboard": {
+          "category": "compute",
+          "description": "Managed Kubernetes cluster"
+        }
+      }
+    }
+  ]
+}
