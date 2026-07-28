@@ -1,0 +1,19 @@
+{
+  "apiVersion": "apps.cozystack.io/v1alpha1",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": {
+        "name": "root",
+        "namespace": "tenant-root",
+        "creationTimestamp": "2026-07-01T00:00:00Z"
+      },
+      "spec": { "host": "cluster.example" },
+      "status": {
+        "conditions": [
+          { "type": "Ready", "status": "True", "message": "" }
+        ]
+      }
+    }
+  ]
+}

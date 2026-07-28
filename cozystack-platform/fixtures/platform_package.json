@@ -1,0 +1,16 @@
+{
+  "apiVersion": "cozystack.io/v1alpha1",
+  "kind": "Package",
+  "metadata": {
+    "name": "cozystack.cozystack-platform",
+    "creationTimestamp": "2026-07-01T00:00:00Z"
+  },
+  "spec": {
+    "variant": "isp-full"
+  },
+  "status": {
+    "conditions": [
+      { "type": "Ready", "status": "True", "message": "" }
+    ]
+  }
+}

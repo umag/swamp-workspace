@@ -1,0 +1,19 @@
+{
+  "apiVersion": "cozystack.io/v1alpha1",
+  "kind": "List",
+  "items": [
+    {
+      "metadata": {
+        "name": "db-0",
+        "namespace": "tenant-root",
+        "creationTimestamp": "2026-07-01T00:00:00Z"
+      },
+      "status": {
+        "kind": "VirtualMachine",
+        "type": "vm",
+        "resources": { "cpu": "2", "memory": "4Gi" },
+        "operational": true
+      }
+    }
+  ]
+}
