@@ -1,0 +1,4 @@
+{
+  "status": { "readyReplicas": 1 },
+  "spec": { "replicas": 1 }
+}
