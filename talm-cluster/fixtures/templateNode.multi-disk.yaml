@@ -1,0 +1,35 @@
+version: v1alpha1
+debug: false
+persist: true
+machine:
+  type: controlplane
+  token: fake.talm.token.do.not.use
+  ca:
+    crt: FAKE-CA-CRT-NOT-REAL
+    key: FAKE-CA-KEY-NOT-REAL
+  install:
+    disk: /dev/sr0
+    image: ghcr.io/siderolabs/installer:v1.7.0
+    wipe: false
+  # NOTE (synthetic fixture): a second sr-device text occurrence, to exercise
+  # the install-disk rewrite regex's missing `g` flag — talm.ts's
+  # `config.replace(/disk: \/dev\/sr\d+/, ...)` rewrites only the FIRST
+  # match, so this second occurrence must survive the post-processing
+  # unrewritten. Not a realistic Talos field — a plain comment is enough
+  # since the model does raw string replace, never YAML-aware parsing.
+  # secondary candidate: disk: /dev/sr1
+  network:
+    hostname: cp1
+    interfaces:
+      - interface: eth0
+        vip:
+          ip: 192.0.2.20
+cluster:
+  id: FAKE-CLUSTER-ID-DO-NOT-USE
+  secret: FAKE-CLUSTER-SECRET-NOTREAL
+  controlPlane:
+    endpoint: https://192.0.2.10:6443
+  token: fake.bootstrap.token.do.not.use
+  ca:
+    crt: FAKE-CLUSTER-CA-CRT-NOTREAL
+    key: FAKE-CLUSTER-CA-KEY-NOTREAL

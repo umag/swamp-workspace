@@ -1,0 +1,5 @@
+waiting for etcd to be healthy: OK
+waiting for kubelet to be healthy: OK
+waiting for all nodes memory sizes: OK
+waiting for all nodes disk sizes: OK
+cluster is healthy

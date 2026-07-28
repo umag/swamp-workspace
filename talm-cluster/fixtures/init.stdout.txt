@@ -1,0 +1,5 @@
+generating PKI and tokens for cluster "demo-cluster" (preset: cozystack)
+wrote secrets.yaml
+wrote values.yaml
+wrote patches/
+cluster directory ready: .talos/demo-cluster

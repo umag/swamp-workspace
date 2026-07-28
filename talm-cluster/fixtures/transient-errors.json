@@ -1,0 +1,34 @@
+{
+  "templateNode": [
+    "connection refused",
+    "connection error",
+    "Unavailable",
+    "i/o timeout",
+    "deadline exceeded"
+  ],
+  "apply": [
+    "connection refused",
+    "connection reset",
+    "Unavailable",
+    "deadline exceeded",
+    "i/o timeout"
+  ],
+  "bootstrap": [
+    "connection refused",
+    "connection error",
+    "Unavailable",
+    "deadline exceeded",
+    "etcd",
+    "i/o timeout",
+    "transport is closing"
+  ],
+  "health": [
+    "connection refused",
+    "connection error",
+    "Unavailable",
+    "i/o timeout",
+    "deadline exceeded",
+    "transport is closing",
+    "healthcheck error"
+  ]
+}
