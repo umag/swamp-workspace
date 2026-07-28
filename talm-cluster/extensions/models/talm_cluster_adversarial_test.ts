@@ -244,7 +244,7 @@ Deno.test("pin: an attacker-shaped transient stderr is classified transient WITH
         cb();
         return 0;
       }
-    ) as typeof globalThis.setTimeout;
+    ) as unknown as typeof globalThis.setTimeout;
     (globalThis as unknown as { setTimeout: unknown }).setTimeout =
       fakeSetTimeout;
 

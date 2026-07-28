@@ -120,7 +120,7 @@ function withSyncSetTimeout(fn: () => Promise<void>) {
       cb(...args);
       return 0 as unknown as number;
     }
-  ) as typeof globalThis.setTimeout;
+  ) as unknown as typeof globalThis.setTimeout;
   return fn().finally(() => {
     globalRecord.setTimeout = original;
   });

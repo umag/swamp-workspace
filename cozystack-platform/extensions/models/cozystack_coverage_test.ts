@@ -163,7 +163,7 @@ function withImmediateTimers<T>(fn: () => Promise<T>): Promise<T> {
   ) => {
     if (typeof handler === "function") handler(...args);
     return 0;
-  }) as typeof setTimeout;
+  }) as unknown as typeof setTimeout;
   return fn().finally(() => {
     globalThis.setTimeout = original;
   });
