@@ -32,7 +32,6 @@ jscad-cad
 jscad-stl-slicer
 jscad-stl-validator
 juick
-kaiten
 livejournal-import
 music-library
 musicbrainz
