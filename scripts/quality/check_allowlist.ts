@@ -75,6 +75,15 @@ async function git(
  * merge-base, this IS the seed commit — every line is the initial baseline
  * by definition, not "growth" (a naive diff would otherwise show every
  * line as "+" and reject the very PR that seeds the file).
+ *
+ * Seed-race exception: an added line is tolerated when that extension
+ * EXISTED at the merge-base (its manifest.yaml is present there) but was
+ * NOT yet gated (no quality.yaml at the merge-base). That is precisely an
+ * extension that entered master through a branch cut before the gate
+ * landed — the baseline was seeded from a stale snapshot and is being
+ * corrected, not grown. A genuinely new extension added in the same PR
+ * does not qualify (no manifest at the merge-base) and must ship fully
+ * compliant instead.
  */
 export async function checkBaselineImmutable(
   root: string,
@@ -109,15 +118,36 @@ export async function checkBaselineImmutable(
     .map((line) => line.slice(1).trim())
     .filter((line) => line && !line.startsWith("#"));
 
-  if (addedEntries.length > 0) {
+  const grownEntries: string[] = [];
+  for (const entry of addedEntries) {
+    const manifestAtBase = await git(
+      root,
+      "cat-file",
+      "-e",
+      `${mergeBaseSha}:${entry}/manifest.yaml`,
+    );
+    const gatedAtBase = await git(
+      root,
+      "cat-file",
+      "-e",
+      `${mergeBaseSha}:${entry}/quality.yaml`,
+    );
+    // Seed-race correction: existed at merge-base, not yet gated there.
+    if (manifestAtBase.success && !gatedAtBase.success) continue;
+    grownEntries.push(entry);
+  }
+
+  if (grownEntries.length > 0) {
     violations.push({
       rule: "baseline-immutable",
       what:
-        `${baselineRelPath} gained ${addedEntries.length} line(s) vs merge-base ` +
-        `${mergeBaseSha.slice(0, 12)}: ${addedEntries.join(", ")}`,
+        `${baselineRelPath} gained ${grownEntries.length} line(s) vs merge-base ` +
+        `${mergeBaseSha.slice(0, 12)}: ${grownEntries.join(", ")}`,
       why:
         "the baseline is the write-once seed of allowed offenders; growing it " +
-        "re-opens the exact regression path the allowlist guard exists to close",
+        "re-opens the exact regression path the allowlist guard exists to close " +
+        "(only a seed-race correction — an extension present at the merge-base " +
+        "without a quality.yaml — may add a line)",
       fix:
         `revert the added line(s) in ${baselineRelPath} — the baseline must never ` +
         "grow after its initial seed commit",

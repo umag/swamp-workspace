@@ -9,6 +9,7 @@
 # first (all five suites + docs present or explicitly na). Backfill work is
 # tracked in the Phase D issue: ext-quality-test-backfill.
 anilist
+anilist-chart
 anime-cron
 arckit
 bandcamp

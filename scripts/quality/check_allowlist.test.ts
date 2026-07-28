@@ -151,6 +151,103 @@ Deno.test("checkBaselineImmutable flags a line ADDED to the baseline vs merge-ba
   }
 });
 
+Deno.test("checkBaselineImmutable tolerates a SEED-RACE correction (extension existed at merge-base without a quality.yaml)", async () => {
+  // The race this exception exists for: an extension merged to master via a
+  // branch cut BEFORE the gate landed, so the baseline was seeded from a
+  // stale snapshot. Adding that extension's line together with its first
+  // quality.yaml is a seed correction, not growth.
+  const root = await makeGitRepo();
+  try {
+    await Deno.mkdir(join(root, "raced-ext"), { recursive: true });
+    await Deno.writeTextFile(
+      join(root, "raced-ext", "manifest.yaml"),
+      "name: raced-ext\n",
+    );
+    await Deno.writeTextFile(
+      join(root, "quality-offenders.baseline.txt"),
+      "# immutable baseline\nalpha\n",
+    );
+    await git(root, "add", "-A");
+    await git(
+      root,
+      "commit",
+      "-q",
+      "-m",
+      "raced-ext exists, ungated; baseline seeded without it",
+    );
+    await git(root, "checkout", "-q", "-b", "fix");
+    await Deno.writeTextFile(
+      join(root, "raced-ext", "quality.yaml"),
+      "schemaVersion: 1\nextension: raced-ext\n",
+    );
+    await Deno.writeTextFile(
+      join(root, "quality-offenders.baseline.txt"),
+      "# immutable baseline\nalpha\nraced-ext\n",
+    );
+    await git(root, "add", "-A");
+    await git(root, "commit", "-q", "-m", "seed-race correction");
+    const violations = await checkBaselineImmutable(
+      root,
+      "quality-offenders.baseline.txt",
+      "master",
+    );
+    assertEquals(violations, []);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("checkBaselineImmutable still flags an added line for an extension ALREADY GATED at merge-base", async () => {
+  // The seed-race exception must not open a hole for regressing an
+  // already-gated extension back onto the baseline.
+  const root = await makeGitRepo();
+  try {
+    await Deno.mkdir(join(root, "gated-ext"), { recursive: true });
+    await Deno.writeTextFile(
+      join(root, "gated-ext", "manifest.yaml"),
+      "name: gated-ext\n",
+    );
+    await Deno.writeTextFile(
+      join(root, "gated-ext", "quality.yaml"),
+      "schemaVersion: 1\nextension: gated-ext\n",
+    );
+    await Deno.writeTextFile(
+      join(root, "quality-offenders.baseline.txt"),
+      "# immutable baseline\nalpha\n",
+    );
+    await git(root, "add", "-A");
+    await git(
+      root,
+      "commit",
+      "-q",
+      "-m",
+      "gated-ext fully gated; baseline seeded",
+    );
+    await git(root, "checkout", "-q", "-b", "feature");
+    await Deno.writeTextFile(
+      join(root, "quality-offenders.baseline.txt"),
+      "# immutable baseline\nalpha\ngated-ext\n",
+    );
+    await git(root, "add", "-A");
+    await git(
+      root,
+      "commit",
+      "-q",
+      "-m",
+      "attempt to regress gated-ext onto the baseline",
+    );
+    const violations = await checkBaselineImmutable(
+      root,
+      "quality-offenders.baseline.txt",
+      "master",
+    );
+    assert(violations.length > 0);
+    assert(violations.some((v) => v.what.includes("gated-ext")));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("checkBaselineImmutable does not flag a line REMOVED from the baseline (shrink is fine)", async () => {
   const root = await makeGitRepo();
   try {

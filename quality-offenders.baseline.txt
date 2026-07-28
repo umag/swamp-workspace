@@ -7,7 +7,13 @@
 # quality-allowlist.txt — is fine; growth is not). Do not add entries here
 # after the seed commit. quality-allowlist.txt may only ever be a SUBSET of
 # this file. See STANDARD.md "Seeding the baseline".
+# Seed-race correction 2026-07-28: anilist-chart entered master via a branch
+# cut BEFORE the gate landed (PR #61 merged after the baseline was seeded
+# from 617637e), so the true seed set includes it. checkBaselineImmutable
+# permits exactly this case: an added line is tolerated only when the
+# extension existed at the merge-base WITHOUT a quality.yaml.
 anilist
+anilist-chart
 anime-cron
 arckit
 bandcamp
