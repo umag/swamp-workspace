@@ -1,0 +1,31 @@
+version: v1alpha1
+debug: false
+persist: true
+machine:
+  type: controlplane
+  token: fake.talm.token.do.not.use
+  ca:
+    crt: FAKE-CA-CRT-NOT-REAL
+    key: FAKE-CA-KEY-NOT-REAL
+  install:
+    # Already a real block device (not talm's auto-discovered CD-ROM) —
+    # the disk-rewrite regex has nothing to match, so this section must
+    # come back byte-identical from templateNode's post-processing.
+    disk: /dev/vda
+    image: ghcr.io/siderolabs/installer:v1.7.0
+    wipe: false
+  network:
+    hostname: cp1
+    interfaces:
+      - interface: eth0
+        vip:
+          ip: 192.0.2.20
+cluster:
+  id: FAKE-CLUSTER-ID-DO-NOT-USE
+  secret: FAKE-CLUSTER-SECRET-NOTREAL
+  controlPlane:
+    endpoint: https://192.0.2.10:6443
+  token: fake.bootstrap.token.do.not.use
+  ca:
+    crt: FAKE-CLUSTER-CA-CRT-NOTREAL
+    key: FAKE-CLUSTER-CA-KEY-NOTREAL

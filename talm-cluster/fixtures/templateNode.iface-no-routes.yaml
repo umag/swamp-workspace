@@ -1,0 +1,33 @@
+version: v1alpha1
+debug: false
+persist: true
+machine:
+  type: controlplane
+  token: fake.talm.token.do.not.use
+  ca:
+    crt: FAKE-CA-CRT-NOT-REAL
+    key: FAKE-CA-KEY-NOT-REAL
+  install:
+    disk: /dev/sr0
+    image: ghcr.io/siderolabs/installer:v1.7.0
+    wipe: false
+  network:
+    hostname: cp1
+    interfaces:
+      # The interface line is followed by `addresses:`, not `routes:`/
+      # `vip:` — the dhcp-injection regex requires routes:/vip: on the
+      # VERY NEXT line, so the dhcp flag is NOT injected here. A static
+      # (non-DHCP) interface config must come back unchanged apart from
+      # the (unrelated) install-disk rewrite.
+      - interface: eth0
+        addresses:
+          - 192.0.2.10/24
+cluster:
+  id: FAKE-CLUSTER-ID-DO-NOT-USE
+  secret: FAKE-CLUSTER-SECRET-NOTREAL
+  controlPlane:
+    endpoint: https://192.0.2.10:6443
+  token: fake.bootstrap.token.do.not.use
+  ca:
+    crt: FAKE-CLUSTER-CA-CRT-NOTREAL
+    key: FAKE-CLUSTER-CA-KEY-NOTREAL
