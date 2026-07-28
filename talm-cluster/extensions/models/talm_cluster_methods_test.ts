@@ -181,7 +181,7 @@ function withFireImmediateTimeout<T>(fn: () => Promise<T>): Promise<T> {
   const fake = ((cb: (...args: unknown[]) => void) => {
     cb();
     return 0;
-  }) as typeof globalThis.setTimeout;
+  }) as unknown as typeof globalThis.setTimeout;
   (globalThis as unknown as { setTimeout: unknown }).setTimeout = fake;
   return fn().finally(() => {
     (globalThis as unknown as { setTimeout: unknown }).setTimeout = original;
