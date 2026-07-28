@@ -41,7 +41,6 @@ obsidian-vault
 obsidian-yt-archiver
 seadex
 seanime
-shoko
 skype
 swamp-go-brr
 telegram-import
