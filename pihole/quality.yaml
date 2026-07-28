@@ -8,6 +8,14 @@
 schemaVersion: 1
 extension: pihole
 tests:
+  # contract-fixture is anchored by pihole_dns_test.ts (wire encode/decode,
+  # independent of this suite). pihole_test.ts currently reads SYNTHETIC,
+  # hand-authored fixtures (pihole/fixtures/, RFC-5737 IPs, fake sid/csrf —
+  # see fixtures/README.md), NOT a captured live response — a real sanitized
+  # capture via the ext-canary-fixtures workflow (run from the WG-connected
+  # box) still needs to happen; replace or supplement the synthetic fixtures
+  # then and re-run this suite. pihole_live_test.ts is off by default
+  # (LIVE_PIHOLE=1) and only ever asserts in-memory.
   contract-fixture:
     state: present
     files:
