@@ -1,0 +1,20 @@
+[
+  {
+    "Status": "Snatched",
+    "DateAdded": "2026-07-15",
+    "Title": "Boards of Canada - Tomorrow's Harvest",
+    "URL": "https://example-indexer.test/nzb/12345",
+    "FolderName": "Boards.of.Canada-Tomorrows.Harvest-2013-FLAC",
+    "AlbumID": "1c2419b3-6303-3489-9f38-1a9c2c9f6f5a",
+    "Size": 412345678
+  },
+  {
+    "Status": "Processed",
+    "DateAdded": "2026-07-12",
+    "Title": "Autechre - SIGN",
+    "URL": "https://example-indexer.test/nzb/67890",
+    "FolderName": "Autechre-SIGN-2020-FLAC",
+    "AlbumID": "2b3c4d5e-1111-2222-3333-444455556666",
+    "Size": 298765432
+  }
+]

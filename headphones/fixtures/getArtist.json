@@ -1,0 +1,45 @@
+{
+  "artist": [
+    {
+      "ArtistID": "f59c5520-5f92-4d33-b271-c0b45741e0aa",
+      "ArtistName": "Boards of Canada",
+      "ArtistSortName": "Boards of Canada",
+      "Status": "Active",
+      "DateAdded": "2024-01-15",
+      "IncludeExtras": 1,
+      "LatestAlbum": "Tomorrow's Harvest",
+      "ReleaseDate": "2013-06-10",
+      "AlbumID": "1c2419b3-6303-3489-9f38-1a9c2c9f6f5a",
+      "LastUpdated": "2026-07-01 10:00:00",
+      "ArtworkURL": "http://coverartarchive.example/release-group/1c2419b3-6303-3489-9f38-1a9c2c9f6f5a/front",
+      "ThumbURL": "http://coverartarchive.example/release-group/1c2419b3-6303-3489-9f38-1a9c2c9f6f5a/front-250"
+    }
+  ],
+  "albums": [
+    {
+      "AlbumID": "1c2419b3-6303-3489-9f38-1a9c2c9f6f5a",
+      "AlbumTitle": "Tomorrow's Harvest",
+      "ArtistName": "Boards of Canada",
+      "ArtistID": "f59c5520-5f92-4d33-b271-c0b45741e0aa",
+      "ReleaseDate": "2013-06-10",
+      "Status": "Downloaded",
+      "Type": "Album",
+      "DateAdded": "2024-01-15",
+      "AlbumASIN": "B00CM0V8Q2",
+      "ArtworkURL": "http://coverartarchive.example/release-group/1c2419b3-6303-3489-9f38-1a9c2c9f6f5a/front"
+    },
+    {
+      "AlbumID": "3d4e5f6a-7777-8888-9999-aaaabbbbcccc",
+      "AlbumTitle": "Music Has the Right to Children",
+      "ArtistName": "Boards of Canada",
+      "ArtistID": "f59c5520-5f92-4d33-b271-c0b45741e0aa",
+      "ReleaseDate": "1998-04-20",
+      "Status": "Skipped",
+      "Type": "Album",
+      "DateAdded": "2024-01-15",
+      "AlbumASIN": "B000005AZY",
+      "ArtworkURL": "http://coverartarchive.example/release-group/3d4e5f6a-7777-8888-9999-aaaabbbbcccc/front"
+    }
+  ],
+  "description": []
+}

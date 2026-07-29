@@ -1,0 +1,24 @@
+[
+  {
+    "Status": "Wanted",
+    "AlbumASIN": "B000005AZY",
+    "DateAdded": "2024-01-15",
+    "AlbumTitle": "Music Has the Right to Children",
+    "ArtistName": "Boards of Canada",
+    "ReleaseDate": "1998-04-20",
+    "AlbumID": "3d4e5f6a-7777-8888-9999-aaaabbbbcccc",
+    "ArtistID": "f59c5520-5f92-4d33-b271-c0b45741e0aa",
+    "Type": "Album"
+  },
+  {
+    "Status": "Wanted",
+    "AlbumASIN": "B08XYZQWK1",
+    "DateAdded": "2026-07-10",
+    "AlbumTitle": "SIGN",
+    "ArtistName": "Autechre",
+    "ReleaseDate": "2020-08-21",
+    "AlbumID": "2b3c4d5e-1111-2222-3333-444455556666",
+    "ArtistID": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+    "Type": "Album"
+  }
+]

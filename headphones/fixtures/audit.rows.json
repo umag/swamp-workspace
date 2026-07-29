@@ -1,0 +1,20 @@
+[
+  {
+    "AlbumID": "1c2419b3-6303-3489-9f38-1a9c2c9f6f5a",
+    "ArtistName": "Boards of Canada",
+    "AlbumTitle": "Tomorrow's Harvest",
+    "ReleaseDate": "2013-06-10"
+  },
+  {
+    "AlbumID": "4f5e6d7c-2222-3333-4444-555566667777",
+    "ArtistName": "Autechre",
+    "AlbumTitle": "Confield",
+    "ReleaseDate": "2001-10-22"
+  },
+  {
+    "AlbumID": "5a6b7c8d-3333-4444-5555-666677778888",
+    "ArtistName": "Actress",
+    "AlbumTitle": "Ghettoville",
+    "ReleaseDate": "2014-01-27"
+  }
+]

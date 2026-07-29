@@ -1,0 +1,34 @@
+[
+  {
+    "ArtistID": "f59c5520-5f92-4d33-b271-c0b45741e0aa",
+    "ArtistName": "Boards of Canada",
+    "ArtistSortName": "Boards of Canada",
+    "Status": "Active",
+    "DateAdded": "2024-01-15",
+    "LatestAlbum": "Tomorrow's Harvest",
+    "ReleaseDate": "2013-06-10",
+    "AlbumID": "1c2419b3-6303-3489-9f38-1a9c2c9f6f5a",
+    "HaveTracks": 12,
+    "TotalTracks": 12,
+    "IncludeExtras": 1,
+    "LastUpdated": "2026-07-01 10:00:00",
+    "ArtworkURL": "http://coverartarchive.example/release-group/1c2419b3-6303-3489-9f38-1a9c2c9f6f5a/front",
+    "ThumbURL": "http://coverartarchive.example/release-group/1c2419b3-6303-3489-9f38-1a9c2c9f6f5a/front-250"
+  },
+  {
+    "ArtistID": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+    "ArtistName": "Autechre",
+    "ArtistSortName": "Autechre",
+    "Status": "Paused",
+    "DateAdded": "2024-03-02",
+    "LatestAlbum": "SIGN",
+    "ReleaseDate": "2020-08-21",
+    "AlbumID": "2b3c4d5e-1111-2222-3333-444455556666",
+    "HaveTracks": 8,
+    "TotalTracks": 10,
+    "IncludeExtras": 0,
+    "LastUpdated": "2026-06-20 09:30:00",
+    "ArtworkURL": "http://coverartarchive.example/release-group/2b3c4d5e-1111-2222-3333-444455556666/front",
+    "ThumbURL": "http://coverartarchive.example/release-group/2b3c4d5e-1111-2222-3333-444455556666/front-250"
+  }
+]
