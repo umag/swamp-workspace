@@ -43,7 +43,6 @@ seanime
 skype
 swamp-go-brr
 telegram-import
-telegram-send
 tubearchivist
 victorialogs
 victoriametrics

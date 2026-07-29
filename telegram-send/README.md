@@ -154,6 +154,13 @@ The Bot API caps payloads at:
 This extension does **not** implement retry/backoff — a 429 from Telegram
 surfaces as a thrown error from the method.
 
+**Security note:** the bot token is embedded in the Bot API request URL
+(`.../bot<token>/<method>`), not the request body. A well-formed API error
+response never echoes the token back, but a network-layer failure (DNS, TLS) can
+surface the token via the underlying HTTP client's own error message, since no
+redaction wrapper exists around the request calls today. See `CHANGELOG.md` for
+the tracked follow-up.
+
 ## License
 
 MIT — see [LICENSE.md](./LICENSE.md).

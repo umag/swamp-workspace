@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "result": {
+    "message_id": 1003,
+    "from": {
+      "id": 987654321,
+      "is_bot": true,
+      "first_name": "SwampNotifyBot",
+      "username": "swamp_notify_bot"
+    },
+    "chat": {
+      "id": 555000111,
+      "first_name": "Jordan",
+      "username": "jordan_example",
+      "type": "private"
+    },
+    "date": 1752600120,
+    "document": {
+      "file_name": "nightly-report.pdf",
+      "mime_type": "application/pdf",
+      "file_id": "BQACAgIAAxkDAAIBAmEXAMPLEDOC1",
+      "file_unique_id": "AQADEXAMPLEDOC1",
+      "file_size": 54210
+    },
+    "caption": "nightly report"
+  }
+}
