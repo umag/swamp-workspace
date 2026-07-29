@@ -39,4 +39,3 @@ obsidian-yt-archiver
 skype
 swamp-go-brr
 telegram-import
-victorialogs
