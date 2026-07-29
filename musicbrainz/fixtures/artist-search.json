@@ -1,0 +1,35 @@
+{
+  "created": "2026-01-15T10:00:00.000Z",
+  "count": 2,
+  "offset": 0,
+  "artists": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "type": "Group",
+      "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+      "score": 100,
+      "name": "Fixture Aurora Static",
+      "sort-name": "Fixture Aurora Static",
+      "country": "US",
+      "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States"
+      },
+      "disambiguation": "synthetic fixture artist",
+      "tags": [
+        { "count": 3, "name": "synthwave" }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "type": "Person",
+      "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+      "score": 90,
+      "name": "Fixture Marin Holloway",
+      "sort-name": "Holloway, Marin Fixture",
+      "country": "GB",
+      "disambiguation": ""
+    }
+  ]
+}

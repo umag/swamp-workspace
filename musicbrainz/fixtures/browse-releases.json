@@ -1,0 +1,13 @@
+{
+  "release-count": 1,
+  "release-offset": 0,
+  "releases": [
+    {
+      "id": "00000000-0000-0000-0000-000000000201",
+      "title": "Fixture Nightfall Static",
+      "status": "Official",
+      "date": "2021-05-14",
+      "country": "US"
+    }
+  ]
+}

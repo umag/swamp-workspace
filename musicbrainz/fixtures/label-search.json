@@ -1,0 +1,14 @@
+{
+  "created": "2026-01-15T10:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "labels": [
+    {
+      "id": "00000000-0000-0000-0000-000000000401",
+      "name": "Fixture Static Recordings",
+      "type": "Original Production",
+      "country": "US",
+      "disambiguation": "synthetic fixture label"
+    }
+  ]
+}

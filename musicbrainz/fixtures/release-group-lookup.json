@@ -1,0 +1,26 @@
+{
+  "id": "00000000-0000-0000-0000-000000000101",
+  "primary-type": "Album",
+  "title": "Fixture Nightfall Static",
+  "first-release-date": "2021-05-14",
+  "artist-credit": [
+    {
+      "name": "Fixture Aurora Static",
+      "artist": {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "name": "Fixture Aurora Static"
+      }
+    }
+  ],
+  "releases": [
+    {
+      "id": "00000000-0000-0000-0000-000000000201",
+      "title": "Fixture Nightfall Static",
+      "status": "Official",
+      "date": "2021-05-14"
+    }
+  ],
+  "tags": [
+    { "count": 2, "name": "ambient" }
+  ]
+}

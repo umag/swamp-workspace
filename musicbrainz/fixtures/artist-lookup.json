@@ -1,0 +1,23 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "type": "Group",
+  "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+  "name": "Fixture Aurora Static",
+  "sort-name": "Fixture Aurora Static",
+  "country": "US",
+  "area": {
+    "id": "489ce91b-6658-3307-9877-795b68554c98",
+    "name": "United States",
+    "sort-name": "United States"
+  },
+  "life-span": { "begin": "2010", "ended": false },
+  "disambiguation": "synthetic fixture artist",
+  "release-groups": [
+    {
+      "id": "00000000-0000-0000-0000-000000000101",
+      "title": "Fixture Nightfall Static",
+      "primary-type": "Album",
+      "first-release-date": "2021-05-14"
+    }
+  ]
+}
