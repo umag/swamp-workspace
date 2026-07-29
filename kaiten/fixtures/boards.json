@@ -1,0 +1,16 @@
+[
+  {
+    "id": 128,
+    "title": "Sprint Board",
+    "space_id": 42,
+    "created": "2026-01-07T08:00:00Z",
+    "updated": "2026-01-11T15:00:00Z",
+    "columns": [
+      { "id": 512, "title": "Backlog" },
+      { "id": 513, "title": "In Progress" }
+    ],
+    "lanes": [
+      { "id": 900, "title": "Default" }
+    ]
+  }
+]

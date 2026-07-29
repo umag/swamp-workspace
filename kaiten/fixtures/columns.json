@@ -1,0 +1,18 @@
+[
+  {
+    "id": 512,
+    "title": "Backlog",
+    "board_id": 128,
+    "type": 1,
+    "col_count": 2,
+    "sort_order": 10
+  },
+  {
+    "id": 513,
+    "title": "In Progress",
+    "board_id": 128,
+    "type": 2,
+    "col_count": 1,
+    "sort_order": 20
+  }
+]

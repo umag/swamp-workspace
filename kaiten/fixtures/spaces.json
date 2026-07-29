@@ -1,0 +1,22 @@
+[
+  {
+    "id": 42,
+    "uid": "SPACE-UID-0042",
+    "title": "Product Space",
+    "parent_entity_uuid": null,
+    "archived": false,
+    "sort_order": 100,
+    "created": "2026-01-05T09:00:00Z",
+    "updated": "2026-01-10T12:30:00Z"
+  },
+  {
+    "id": 43,
+    "uid": "SPACE-UID-0043",
+    "title": "Ops Space",
+    "parent_entity_uuid": "SPACE-UID-0042",
+    "archived": false,
+    "sort_order": 110,
+    "created": "2026-01-06T09:00:00Z",
+    "updated": "2026-01-06T09:00:00Z"
+  }
+]
