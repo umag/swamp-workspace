@@ -1,7 +1,8 @@
 {
   "tasks": {
-    "check": "deno check extensions/models/victoriametrics.ts",
-    "test": "deno test extensions/models/ --permit-no-files",
+    "check": "deno check extensions/models/victoriametrics.ts extensions/models/victoriametrics_test.ts extensions/models/victoriametrics_methods_test.ts extensions/models/victoriametrics_adversarial_test.ts extensions/models/victoriametrics_coverage_test.ts extensions/models/victoriametrics_property_test.ts",
+    "test": "deno test --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/victoriametrics_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
