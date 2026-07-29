@@ -38,7 +38,6 @@ musicbrainz
 observability-agent
 obsidian-vault
 obsidian-yt-archiver
-seadex
 skype
 swamp-go-brr
 telegram-import
