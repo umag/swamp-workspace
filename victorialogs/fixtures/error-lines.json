@@ -1,0 +1,46 @@
+[
+  {
+    "_time": "2026-06-01T00:00:00.000Z",
+    "_msg": "svc-alpha: panic: runtime error: nil pointer dereference",
+    "container_name": "svc-alpha"
+  },
+  {
+    "_time": "2026-06-01T00:01:00.000Z",
+    "_msg": "svc-alpha: fatal: worker crashed",
+    "container_name": "svc-alpha"
+  },
+  {
+    "_time": "2026-06-01T00:02:00.000Z",
+    "_msg": "svc-alpha: error: connection reset by db.example.test:5432",
+    "container_name": "svc-alpha"
+  },
+  {
+    "_time": "2026-06-01T00:03:00.000Z",
+    "_msg": "svc-alpha: error: timeout waiting for lock",
+    "container_name": "svc-alpha"
+  },
+  {
+    "_time": "2026-06-01T00:04:00.000Z",
+    "_msg": "svc-alpha: error: disk write failed",
+    "container_name": "svc-alpha"
+  },
+  {
+    "_time": "2026-06-01T00:05:00.000Z",
+    "_msg": "svc-alpha: error: retry limit exceeded",
+    "container_name": "svc-alpha"
+  },
+  {
+    "_time": "2026-06-01T00:06:00.000Z",
+    "_msg": "svc-beta: killed: out of memory",
+    "container_name": "svc-beta"
+  },
+  {
+    "_time": "2026-06-01T00:07:00.000Z",
+    "_msg": "svc-gamma: exception: stack trace follows",
+    "container_name": "svc-gamma"
+  },
+  {
+    "_time": "2026-06-01T00:08:00.000Z",
+    "_msg": "unlabeled: OOM killer invoked"
+  }
+]
