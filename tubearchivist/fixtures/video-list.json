@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "youtube_id": "synVid00001",
+      "title": "Introduction To Self-Hosted Archives",
+      "channel": {
+        "channel_id": "UCsynthetic0000000001",
+        "channel_name": "Example Channel"
+      },
+      "published": "2026-01-01",
+      "vid_type": "videos",
+      "active": true
+    },
+    {
+      "youtube_id": "synVid00002",
+      "title": "A Live Stream Recap",
+      "channel": {
+        "channel_id": "UCsynthetic0000000002",
+        "channel_name": "Second Example Channel"
+      },
+      "published": "2026-01-08",
+      "vid_type": "streams",
+      "active": false
+    }
+  ],
+  "paginate": {
+    "total_hits": 2,
+    "current_page": 0,
+    "max_hits": 30
+  }
+}

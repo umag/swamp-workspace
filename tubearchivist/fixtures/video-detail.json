@@ -1,0 +1,24 @@
+{
+  "youtube_id": "synVid00001",
+  "title": "Introduction To Self-Hosted Archives",
+  "description": "A synthetic, doc-derived description of a single archived video.",
+  "channel": {
+    "channel_id": "UCsynthetic0000000001",
+    "channel_name": "Example Channel",
+    "channel_subs": 4200,
+    "channel_subscribed": true
+  },
+  "published": "2026-01-01",
+  "vid_type": "videos",
+  "active": true,
+  "player": {
+    "duration": 754,
+    "duration_str": "12:34"
+  },
+  "stats": {
+    "view_count": 10245,
+    "like_count": 512,
+    "dislike_count": 0
+  },
+  "date_downloaded": 1767225600
+}

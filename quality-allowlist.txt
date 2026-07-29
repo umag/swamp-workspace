@@ -42,6 +42,5 @@ seadex
 skype
 swamp-go-brr
 telegram-import
-tubearchivist
 victorialogs
 victoriametrics
