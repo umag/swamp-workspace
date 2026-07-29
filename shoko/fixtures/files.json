@@ -1,0 +1,27 @@
+{
+  "Total": 2,
+  "List": [
+    {
+      "ID": 501,
+      "Size": 734003200,
+      "CRC32": "1A2B3C4D",
+      "Locations": [
+        {
+          "ImportFolderID": 1,
+          "RelativePath": "/Anime/Example Series One/Episode 01.mkv"
+        }
+      ]
+    },
+    {
+      "ID": 502,
+      "Size": 700000000,
+      "CRC32": "5E6F7A8B",
+      "Locations": [
+        {
+          "ImportFolderID": 1,
+          "RelativePath": "/Anime/Example Series One/Episode 02.mkv"
+        }
+      ]
+    }
+  ]
+}

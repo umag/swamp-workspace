@@ -1,0 +1,35 @@
+{
+  "Total": 2,
+  "List": [
+    {
+      "IDs": {
+        "ID": 101,
+        "AniDB": 991,
+        "TvDB": [],
+        "ParentGroup": 55,
+        "TopLevelGroup": 55
+      },
+      "Name": "Example Series One",
+      "Sizes": {
+        "FileSources": { "Unknown": 0 },
+        "Local": { "Episodes": 12, "Specials": 0 },
+        "Watched": { "Episodes": 10, "Specials": 0 }
+      }
+    },
+    {
+      "IDs": {
+        "ID": 102,
+        "AniDB": 992,
+        "TvDB": [],
+        "ParentGroup": 56,
+        "TopLevelGroup": 56
+      },
+      "Name": "Example Series Two",
+      "Sizes": {
+        "FileSources": { "Unknown": 0 },
+        "Local": { "Episodes": 24, "Specials": 1 },
+        "Watched": { "Episodes": 24, "Specials": 1 }
+      }
+    }
+  ]
+}

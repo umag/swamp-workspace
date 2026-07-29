@@ -1,0 +1,18 @@
+{
+  "paths": {
+    "/api/v3/Action/RunImport": {
+      "get": { "summary": "Scan all import folders for new files" }
+    },
+    "/api/v3/Series": {
+      "get": { "summary": "List series" }
+    },
+    "/Action/Foo": {
+      "get": {
+        "summary": "Bare-prefixed fixture action (fixture-observable match)"
+      }
+    },
+    "/Action/NoGet": {
+      "post": { "summary": "An action with no GET method — must be skipped" }
+    }
+  }
+}
