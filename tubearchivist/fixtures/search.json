@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "youtube_id": "synVid00001",
+      "title": "Introduction To Self-Hosted Archives",
+      "type": "video"
+    },
+    {
+      "channel_id": "UCsynthetic0000000001",
+      "channel_name": "Example Channel",
+      "type": "channel"
+    }
+  ]
+}
