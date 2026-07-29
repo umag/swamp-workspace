@@ -1,0 +1,16 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "matrix",
+    "result": [
+      {
+        "metric": { "job": "demo-node", "instance": "fixture-host-1:9100" },
+        "values": [
+          [1699956800, "1.1"],
+          [1699957100, "1.3"],
+          [1699957400, "1.2"]
+        ]
+      }
+    ]
+  }
+}
