@@ -1,0 +1,46 @@
+{
+  "data": {
+    "MediaListCollection": {
+      "lists": [
+        {
+          "status": "PLANNING",
+          "entries": [
+            {
+              "media": {
+                "id": 200001,
+                "status": "RELEASING",
+                "title": {
+                  "romaji": "Fixture Wanderers",
+                  "english": "Fixture Wanderers",
+                  "userPreferred": "Fixture Wanderers"
+                }
+              }
+            },
+            {
+              "media": {
+                "id": 200002,
+                "status": "NOT_YET_RELEASED",
+                "title": {
+                  "romaji": "Fixture Horizon",
+                  "english": null,
+                  "userPreferred": "Fixture Horizon"
+                }
+              }
+            },
+            {
+              "media": {
+                "id": 200003,
+                "status": "FINISHED",
+                "title": {
+                  "romaji": "Fixture Legacy",
+                  "english": "Fixture Legacy",
+                  "userPreferred": "Fixture Legacy"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

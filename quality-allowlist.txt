@@ -39,7 +39,6 @@ observability-agent
 obsidian-vault
 obsidian-yt-archiver
 seadex
-seanime
 skype
 swamp-go-brr
 telegram-import
