@@ -65,8 +65,9 @@ model `version` stays `2026.07.16.2`.
 
 ## Follow-up issues (pinned here, not fixed — seadex.ts is byte-frozen)
 
-Filed as [issue #1467](https://swamp-club.com/lab/1467) (`seadex-latent-bugs`)
-for the orchestrator to track: render-upgrades is a permanent no-op (filter args
+Tracked in the local `seadex-latent-bugs` issue-lifecycle model (these are
+latent bugs in our own extension, not swamp-product issues, so they are NOT
+filed to the swamp.club Lab): render-upgrades is a permanent no-op (filter args
 accepted but ignored); AniList GraphQL-level errors (`{errors,data:null}` at
 HTTP 200) are silently swallowed as an ordinary no-match; `lookup-many`'s
 per-item try/catch does not cover the entry-writeResource loop, so one bad write
