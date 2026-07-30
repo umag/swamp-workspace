@@ -1,0 +1,57 @@
+{
+  "page": 1,
+  "perPage": 30,
+  "totalItems": 1,
+  "totalPages": 1,
+  "items": [
+    {
+      "id": "rec_fixture_voyager",
+      "alID": 1,
+      "notes": "Fixture notes: BD encode preferred once a batch is available.",
+      "theoreticalBest": "[Fixture-Raws] Fixture Voyager (BD 1080p)",
+      "comparison": "https://slow.pics.example/c/fixtureVoyagerA, https://slow.pics.example/c/fixtureVoyagerB",
+      "incomplete": false,
+      "trs": ["tr_fixture_best", "tr_fixture_alt"],
+      "expand": {
+        "trs": [
+          {
+            "id": "tr_fixture_best",
+            "releaseGroup": "SubsPlease",
+            "tracker": "Nyaa",
+            "url": "https://nyaa.example/view/1000001",
+            "infoHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "isBest": true,
+            "dualAudio": false,
+            "tags": ["1080p", "AAC"],
+            "files": [
+              {
+                "name": "Fixture Voyager - 01 (1080p) [aaaaaaaa].mkv",
+                "length": 734003200
+              },
+              {
+                "name": "Fixture Voyager - 02 (1080p) [aaaaaaaa].mkv",
+                "length": 728400000
+              }
+            ]
+          },
+          {
+            "id": "tr_fixture_alt",
+            "releaseGroup": "Judas",
+            "tracker": "AnimeBytes",
+            "url": "https://tracker.example/torrents.php?id=2000002",
+            "infoHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "isBest": false,
+            "dualAudio": true,
+            "tags": ["720p"],
+            "files": [
+              {
+                "name": "Fixture Voyager - 01 (720p) [bbbbbbbb].mkv",
+                "length": 367000000
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
