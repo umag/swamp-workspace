@@ -43,4 +43,3 @@ skype
 swamp-go-brr
 telegram-import
 victorialogs
-victoriametrics

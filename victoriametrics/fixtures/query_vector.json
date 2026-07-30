@@ -1,0 +1,12 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": { "job": "demo-node", "instance": "fixture-host-1:9100" },
+        "value": [1700000000, "42.5"]
+      }
+    ]
+  }
+}
