@@ -1,0 +1,5 @@
+{
+  "success": false,
+  "stdout": "",
+  "stderr": "Permission denied (publickey).\r\nbash: connect to host via ssh failed\n"
+}

@@ -1,0 +1,5 @@
+{
+  "success": true,
+  "stdout": "===SERVICES===\nprometheus-node-exporter.service\nprometheus-blackbox-exporter.service\nvector.service\nssh.service\n===LISTENERS===\ntcp   LISTEN 0      4096       192.0.2.10:9100        0.0.0.0:*    users:((\"node_exporter\",pid=1234,fd=3))\ntcp   LISTEN 0      4096       192.0.2.10:9115        0.0.0.0:*    users:((\"blackbox_expo\",pid=1235,fd=3))\ntcp   LISTEN 0      128        0.0.0.0:22             0.0.0.0:*    users:((\"sshd\",pid=810,fd=3))\nudp   UNCONN 0      0          0.0.0.0:68             0.0.0.0:*    users:((\"dhclient\",pid=700,fd=6))\n===PROCS===\n      5 sshd\n      3 node_exporter\n      2 systemd\n      1 vector\n",
+  "stderr": ""
+}

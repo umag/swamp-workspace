@@ -29,7 +29,6 @@ jscad-stl-slicer
 jscad-stl-validator
 livejournal-import
 music-library
-observability-agent
 obsidian-vault
 obsidian-yt-archiver
 skype
