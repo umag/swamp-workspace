@@ -13,7 +13,6 @@ anilist-chart
 anime-cron
 arckit
 bandcamp
-cadvisor
 career-kb
 comfyui
 dawarich
