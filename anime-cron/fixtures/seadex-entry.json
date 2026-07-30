@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "expand": {
+        "trs": [
+          {
+            "releaseGroup": "SubsPlease",
+            "tracker": "nyaa",
+            "infoHash": "cccccccccccccccccccccccccccccccccccccccc",
+            "isBest": true,
+            "url": "https://nyaa.si/view/999101"
+          },
+          {
+            "releaseGroup": "Judas",
+            "tracker": "nyaa",
+            "infoHash": "dddddddddddddddddddddddddddddddddddddddd",
+            "isBest": false,
+            "url": "https://nyaa.si/view/999102"
+          }
+        ]
+      }
+    }
+  ]
+}

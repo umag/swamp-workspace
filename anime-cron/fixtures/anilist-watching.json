@@ -1,0 +1,44 @@
+{
+  "data": {
+    "MediaListCollection": {
+      "lists": [
+        {
+          "entries": [
+            {
+              "progress": 3,
+              "media": {
+                "id": 200101,
+                "title": {
+                  "romaji": "Fixture Chronicles",
+                  "english": "Fixture Chronicles: English Cut"
+                },
+                "synonyms": ["FC", "Fixture-chan"],
+                "episodes": 12,
+                "status": "RELEASING",
+                "nextAiringEpisode": {
+                  "episode": 5,
+                  "airingAt": 1751500000,
+                  "timeUntilAiring": 3600
+                }
+              }
+            },
+            {
+              "progress": 10,
+              "media": {
+                "id": 200102,
+                "title": {
+                  "romaji": "Fixture Wanderers",
+                  "english": null
+                },
+                "synonyms": [],
+                "episodes": 12,
+                "status": "FINISHED",
+                "nextAiringEpisode": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
