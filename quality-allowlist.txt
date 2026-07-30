@@ -24,7 +24,6 @@ flipper-zero
 fragrantica
 gonic
 good-planning
-homeassistant
 issue-lifecycle
 jabber
 jscad-cad
