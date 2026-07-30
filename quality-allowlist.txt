@@ -27,7 +27,6 @@ jabber
 jscad-cad
 jscad-stl-slicer
 jscad-stl-validator
-juick
 livejournal-import
 music-library
 observability-agent

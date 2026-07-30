@@ -1,0 +1,35 @@
+[
+  {
+    "mid": 4002001,
+    "body": "Fixture thread root post with two replies.",
+    "timestamp": "2026-06-03 10:00:00",
+    "user": {
+      "uid": 6003,
+      "uname": "fixture-thread-author"
+    },
+    "tags": ["thread-fixture"],
+    "likes": 1,
+    "replies": 2
+  },
+  {
+    "mid": 4002001,
+    "rid": 1,
+    "body": "Fixture first reply.",
+    "user": {
+      "uid": 6004,
+      "uname": "fixture-replier-one"
+    },
+    "timestamp": "2026-06-03 10:05:00",
+    "replyQuote": "Fixture thread root post with two replies."
+  },
+  {
+    "mid": 4002001,
+    "rid": 2,
+    "body": "Fixture second reply, no quote.",
+    "user": {
+      "uid": 6005,
+      "uname": "fixture-replier-two"
+    },
+    "timestamp": "2026-06-03 10:10:00"
+  }
+]

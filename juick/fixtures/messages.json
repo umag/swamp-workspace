@@ -1,0 +1,32 @@
+[
+  {
+    "mid": 4001001,
+    "body": "Fixture feed post about swamp extensions testing.",
+    "timestamp": "2026-06-01 08:30:00",
+    "updated": "2026-06-01 08:30:00",
+    "user": {
+      "uid": 6001,
+      "uname": "fixture-feed-user",
+      "fullname": "Fixture Feed User"
+    },
+    "tags": ["testing", "swamp"],
+    "likes": 4,
+    "replies": 2,
+    "photo": {
+      "medium": "https://i.juick.com/photos-4001001-M.jpg",
+      "small": "https://i.juick.com/photos-4001001-S.jpg",
+      "thumbnail": "https://i.juick.com/photos-4001001-T.jpg"
+    }
+  },
+  {
+    "mid": 4001002,
+    "body": "A second fixture post, no photo, no tags, zero engagement.",
+    "timestamp": "2026-06-02 09:15:00",
+    "user": {
+      "uid": 6002,
+      "uname": "fixture-feed-user-two"
+    },
+    "likes": 0,
+    "replies": 0
+  }
+]

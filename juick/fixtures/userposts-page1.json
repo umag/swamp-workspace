@@ -1,0 +1,22 @@
+[
+  {
+    "mid": 4003010,
+    "body": "Fixture userposts page-1 post one, has a photo and two replies.",
+    "timestamp": "2026-06-10 12:00:00",
+    "tags": ["diary"],
+    "likes": 5,
+    "replies": 2,
+    "photo": {
+      "medium": "https://i.juick.com/photos-4003010-M.jpg"
+    }
+  },
+  {
+    "mid": 4003009,
+    "body": "Fixture userposts page-1 post two, has an attachment, no replies.",
+    "timestamp": "2026-06-09 11:00:00",
+    "tags": [],
+    "likes": 0,
+    "replies": 0,
+    "attach": "jpg"
+  }
+]

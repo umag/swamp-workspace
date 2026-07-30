@@ -1,0 +1,5 @@
+{
+  "error": "internal server error",
+  "status": 500,
+  "message": "fixture synthetic 500 for the contract-fixture error-path pin"
+}
