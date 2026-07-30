@@ -1,0 +1,41 @@
+{
+  "data": {
+    "MediaListCollection": {
+      "lists": [
+        {
+          "entries": [
+            {
+              "progress": 4,
+              "media": {
+                "id": 90003,
+                "title": { "romaji": "Quiet Horizon", "english": null },
+                "synonyms": ["QH"],
+                "episodes": null,
+                "status": "RELEASING",
+                "nextAiringEpisode": {
+                  "episode": 5,
+                  "airingAt": 1720100000,
+                  "timeUntilAiring": 345600
+                }
+              }
+            },
+            {
+              "progress": 12,
+              "media": {
+                "id": 90001,
+                "title": {
+                  "romaji": "Nebula Drifters",
+                  "english": "Nebula Drifters"
+                },
+                "synonyms": [],
+                "episodes": 12,
+                "status": "FINISHED",
+                "nextAiringEpisode": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

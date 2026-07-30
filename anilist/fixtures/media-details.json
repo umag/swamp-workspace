@@ -1,0 +1,63 @@
+{
+  "data": {
+    "Media": {
+      "id": 90001,
+      "title": {
+        "romaji": "Nebula Drifters",
+        "english": "Nebula Drifters",
+        "native": "ネビュラドリフターズ"
+      },
+      "format": "TV",
+      "status": "FINISHED",
+      "episodes": 12,
+      "chapters": null,
+      "volumes": null,
+      "averageScore": 78,
+      "meanScore": 77,
+      "popularity": 15000,
+      "genres": ["Adventure", "Sci-Fi"],
+      "seasonYear": 2024,
+      "season": "SPRING",
+      "startDate": { "year": 2024, "month": 4, "day": 3 },
+      "endDate": { "year": 2024, "month": 6, "day": 19 },
+      "siteUrl": "https://anilist.co/anime/90001",
+      "description": "A synthetic fixture anime about drifting through nebulae.",
+      "coverImage": { "large": "https://fixtures.example/covers/90001.jpg" },
+      "bannerImage": "https://fixtures.example/banners/90001.jpg",
+      "studios": { "nodes": [{ "name": "Fixture Animation Works" }] },
+      "staff": { "nodes": [{ "name": { "full": "Aria Fixture" } }] },
+      "relations": {
+        "edges": [
+          {
+            "relationType": "SEQUEL",
+            "node": {
+              "id": 90003,
+              "title": { "romaji": "Quiet Horizon" },
+              "type": "ANIME",
+              "format": "TV"
+            }
+          }
+        ]
+      },
+      "recommendations": {
+        "nodes": [
+          {
+            "mediaRecommendation": {
+              "id": 90002,
+              "title": { "romaji": "Static Bloom" },
+              "averageScore": 81
+            }
+          }
+        ]
+      },
+      "tags": [
+        { "name": "Space", "rank": 90 },
+        { "name": "Ensemble Cast", "rank": 70 }
+      ],
+      "externalLinks": [
+        { "site": "Fixture Streaming", "url": "https://stream.example/90001" }
+      ],
+      "nextAiringEpisode": null
+    }
+  }
+}

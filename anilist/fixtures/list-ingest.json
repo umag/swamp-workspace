@@ -1,0 +1,22 @@
+{
+  "data": {
+    "MediaListCollection": {
+      "lists": [
+        {
+          "status": "COMPLETED",
+          "entries": [
+            { "mediaId": 90001, "score": 0, "status": "COMPLETED" },
+            { "mediaId": 90003, "score": 8.5, "status": "COMPLETED" }
+          ]
+        },
+        {
+          "status": "CURRENT",
+          "entries": [
+            { "mediaId": 90002, "score": null, "status": "CURRENT" }
+          ]
+        }
+      ],
+      "hasNextChunk": false
+    }
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "data": {
+    "Page": {
+      "pageInfo": {
+        "total": 2,
+        "currentPage": 1,
+        "lastPage": 1,
+        "hasNextPage": false
+      },
+      "media": [
+        {
+          "id": 90001,
+          "title": {
+            "romaji": "Nebula Drifters",
+            "english": "Nebula Drifters",
+            "native": "ネビュラドリフターズ"
+          },
+          "format": "TV",
+          "status": "FINISHED",
+          "episodes": 12,
+          "chapters": null,
+          "volumes": null,
+          "averageScore": 78,
+          "meanScore": 77,
+          "popularity": 15000,
+          "genres": ["Adventure", "Sci-Fi"],
+          "seasonYear": 2024,
+          "season": "SPRING",
+          "startDate": { "year": 2024, "month": 4, "day": 3 },
+          "siteUrl": "https://anilist.co/anime/90001",
+          "description": "A synthetic fixture anime about drifting through nebulae.",
+          "coverImage": { "large": "https://fixtures.example/covers/90001.jpg" }
+        },
+        {
+          "id": 90002,
+          "title": {
+            "romaji": "Static Bloom",
+            "english": null,
+            "native": "スタティックブルーム"
+          },
+          "format": "MANGA",
+          "status": "RELEASING",
+          "episodes": null,
+          "chapters": 40,
+          "volumes": 4,
+          "averageScore": 81,
+          "meanScore": 80,
+          "popularity": 4200,
+          "genres": ["Drama", "Slice of Life"],
+          "seasonYear": null,
+          "season": null,
+          "startDate": { "year": 2022, "month": 1, "day": 10 },
+          "siteUrl": "https://anilist.co/manga/90002",
+          "description": "A synthetic fixture manga about a bloom that never fades.",
+          "coverImage": { "large": "https://fixtures.example/covers/90002.jpg" }
+        }
+      ]
+    }
+  }
+}
