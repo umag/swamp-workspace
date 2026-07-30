@@ -20,7 +20,6 @@ fidonet-msgbase
 firecracker
 flipper-zero
 fragrantica
-gonic
 good-planning
 homeassistant
 issue-lifecycle

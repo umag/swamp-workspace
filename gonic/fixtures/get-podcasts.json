@@ -1,0 +1,43 @@
+{
+  "subsonic-response": {
+    "status": "ok",
+    "version": "1.16.1",
+    "podcasts": {
+      "channel": [
+        {
+          "id": "pd-1",
+          "url": "https://feeds.example.com/podcast-one.xml",
+          "title": "Example Podcast One",
+          "description": "A synthetic example podcast channel for fixture purposes.",
+          "status": "completed",
+          "episode": [
+            {
+              "id": "pe-1",
+              "channelId": "pd-1",
+              "title": "Episode One: Getting Started",
+              "description": "Synthetic episode description.",
+              "status": "completed",
+              "publishDate": "2026-01-05T00:00:00.000Z",
+              "size": 15728640,
+              "duration": 1830,
+              "path": "podcasts/Example Podcast One/Episode One.mp3"
+            },
+            {
+              "id": "pe-2",
+              "channelId": "pd-1",
+              "title": "Episode Two: Deep Dive",
+              "status": "downloading"
+            }
+          ]
+        },
+        {
+          "id": "pd-2",
+          "url": "https://feeds.example.com/podcast-two.xml",
+          "title": "Example Podcast Two",
+          "status": "error",
+          "errorMessage": "feed unreachable (synthetic)"
+        }
+      ]
+    }
+  }
+}
