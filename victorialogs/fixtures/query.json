@@ -1,0 +1,14 @@
+[
+  {
+    "_time": "2026-06-01T00:00:00.100Z",
+    "_msg": "svc-alpha: request from 203.0.113.5 completed in 42ms",
+    "container_name": "svc-alpha",
+    "_stream": "{container_name=\"svc-alpha\"}"
+  },
+  {
+    "_time": "2026-06-01T00:00:01.250Z",
+    "_msg": "svc-beta: cache miss for session token",
+    "container_name": "svc-beta",
+    "_stream": "{container_name=\"svc-beta\"}"
+  }
+]

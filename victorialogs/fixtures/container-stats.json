@@ -1,0 +1,4 @@
+[
+  { "container_name": "svc-alpha", "total": "1024" },
+  { "container_name": "svc-beta", "total": "56" }
+]
