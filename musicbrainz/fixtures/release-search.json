@@ -1,0 +1,18 @@
+{
+  "created": "2026-01-15T10:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "releases": [
+    {
+      "id": "00000000-0000-0000-0000-000000000201",
+      "title": "Fixture Nightfall Static",
+      "status": "Official",
+      "date": "2021-05-14",
+      "country": "US",
+      "barcode": "0000000000012",
+      "release-group": {
+        "id": "00000000-0000-0000-0000-000000000101"
+      }
+    }
+  ]
+}

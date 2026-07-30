@@ -33,7 +33,6 @@ jscad-stl-validator
 juick
 livejournal-import
 music-library
-musicbrainz
 observability-agent
 obsidian-vault
 obsidian-yt-archiver

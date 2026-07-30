@@ -1,0 +1,16 @@
+{
+  "created": "2026-01-15T10:00:00.000Z",
+  "count": 1,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "00000000-0000-0000-0000-000000000301",
+      "title": "Fixture Static Interference",
+      "length": 227000,
+      "first-release-date": "2021-05-14",
+      "artist-credit": [
+        { "name": "Fixture Aurora Static" }
+      ]
+    }
+  ]
+}
