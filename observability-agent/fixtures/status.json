@@ -1,0 +1,5 @@
+{
+  "success": true,
+  "stdout": "svc.node=active\nsvc.blackbox=active\nsvc.vector=active\nlst.node=ok\nlst.blackbox=ok\n",
+  "stderr": ""
+}
