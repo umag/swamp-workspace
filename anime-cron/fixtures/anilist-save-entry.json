@@ -1,0 +1,11 @@
+{
+  "data": {
+    "SaveMediaListEntry": {
+      "id": 900001,
+      "mediaId": 200301,
+      "status": "CURRENT",
+      "progress": 5,
+      "updatedAt": 1751500000
+    }
+  }
+}

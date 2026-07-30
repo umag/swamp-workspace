@@ -1,0 +1,29 @@
+{
+  "result": "success",
+  "arguments": {
+    "torrents": [
+      {
+        "id": 11,
+        "name": "[SubsPlease] Fixture Chronicles - 04 [1080p].mkv",
+        "status": 6,
+        "percentDone": 1,
+        "isFinished": true,
+        "doneDate": 1751490000,
+        "downloadDir": "/anime/tv/Fixture Chronicles",
+        "totalSize": 734003200,
+        "hashString": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "id": 12,
+        "name": "[Erai-raws] Fixture Wanderers - 11 [1080p].mkv",
+        "status": 4,
+        "percentDone": 0.42,
+        "isFinished": false,
+        "doneDate": 0,
+        "downloadDir": "/anime/tv/Fixture Wanderers",
+        "totalSize": 900000000,
+        "hashString": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  }
+}

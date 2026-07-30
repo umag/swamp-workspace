@@ -1,0 +1,38 @@
+{
+  "data": {
+    "MediaListCollection": {
+      "lists": [
+        {
+          "entries": [
+            {
+              "progress": 24,
+              "media": {
+                "id": 200201,
+                "title": {
+                  "romaji": "Fixture Legacy",
+                  "english": "Fixture Legacy: Remastered"
+                },
+                "episodes": 24,
+                "status": "FINISHED",
+                "averageScore": 82
+              }
+            },
+            {
+              "progress": 13,
+              "media": {
+                "id": 200202,
+                "title": {
+                  "romaji": "Fixture Horizon",
+                  "english": null
+                },
+                "episodes": 13,
+                "status": "FINISHED",
+                "averageScore": 55
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
