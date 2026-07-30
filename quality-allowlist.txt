@@ -24,7 +24,6 @@ flipper-zero
 fragrantica
 gonic
 good-planning
-headphones
 homeassistant
 issue-lifecycle
 jabber

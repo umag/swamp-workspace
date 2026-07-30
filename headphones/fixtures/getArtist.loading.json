@@ -1,0 +1,20 @@
+{
+  "artist": [
+    {
+      "ArtistID": "f59c5520-5f92-4d33-b271-c0b45741e0aa",
+      "ArtistName": "Boards of Canada",
+      "ArtistSortName": "Boards of Canada",
+      "Status": "Loading",
+      "DateAdded": "2026-07-19",
+      "IncludeExtras": 1,
+      "LatestAlbum": null,
+      "ReleaseDate": null,
+      "AlbumID": null,
+      "LastUpdated": "2026-07-19 12:00:00",
+      "ArtworkURL": null,
+      "ThumbURL": null
+    }
+  ],
+  "albums": [],
+  "description": []
+}

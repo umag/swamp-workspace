@@ -1,0 +1,49 @@
+{
+  "album": [
+    {
+      "AlbumID": "1c2419b3-6303-3489-9f38-1a9c2c9f6f5a",
+      "AlbumTitle": "Tomorrow's Harvest",
+      "ArtistName": "Boards of Canada",
+      "ArtistID": "f59c5520-5f92-4d33-b271-c0b45741e0aa",
+      "ReleaseDate": "2013-06-10",
+      "Status": "Downloaded",
+      "Type": "Album",
+      "AlbumASIN": "B00CM0V8Q2",
+      "DateAdded": "2024-01-15",
+      "ArtworkURL": "http://coverartarchive.example/release-group/1c2419b3-6303-3489-9f38-1a9c2c9f6f5a/front"
+    }
+  ],
+  "tracks": [
+    {
+      "AlbumASIN": "B00CM0V8Q2",
+      "AlbumTitle": "Tomorrow's Harvest",
+      "TrackID": "1",
+      "Format": "FLAC",
+      "TrackDuration": 302000,
+      "ArtistName": "Boards of Canada",
+      "TrackTitle": "Gemini",
+      "AlbumID": "1c2419b3-6303-3489-9f38-1a9c2c9f6f5a",
+      "ArtistID": "f59c5520-5f92-4d33-b271-c0b45741e0aa",
+      "Location": "/music/Boards of Canada/Tomorrow's Harvest/01 Gemini.flac",
+      "TrackNumber": 1,
+      "CleanName": "gemini",
+      "BitRate": 973
+    },
+    {
+      "AlbumASIN": "B00CM0V8Q2",
+      "AlbumTitle": "Tomorrow's Harvest",
+      "TrackID": "2",
+      "Format": "FLAC",
+      "TrackDuration": 258000,
+      "ArtistName": "Boards of Canada",
+      "TrackTitle": "Reach for the Dead",
+      "AlbumID": "1c2419b3-6303-3489-9f38-1a9c2c9f6f5a",
+      "ArtistID": "f59c5520-5f92-4d33-b271-c0b45741e0aa",
+      "Location": "/music/Boards of Canada/Tomorrow's Harvest/02 Reach for the Dead.flac",
+      "TrackNumber": 2,
+      "CleanName": "reachforthedead",
+      "BitRate": 981
+    }
+  ],
+  "description": []
+}

@@ -1,0 +1,16 @@
+[
+  {
+    "url": "http://musicbrainz.example/artist/f59c5520-5f92-4d33-b271-c0b45741e0aa",
+    "score": "100",
+    "name": "Boards of Canada",
+    "uniquename": "Boards of Canada",
+    "id": "f59c5520-5f92-4d33-b271-c0b45741e0aa"
+  },
+  {
+    "url": "http://musicbrainz.example/artist/8db8bb0e-0f0e-4a6c-8be3-9c8a4e3f2f11",
+    "score": "72",
+    "name": "Boards of Canada Tribute",
+    "uniquename": "Boards of Canada Tribute (tribute act)",
+    "id": "8db8bb0e-0f0e-4a6c-8be3-9c8a4e3f2f11"
+  }
+]
