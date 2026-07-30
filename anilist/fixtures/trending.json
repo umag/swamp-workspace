@@ -1,0 +1,37 @@
+{
+  "data": {
+    "Page": {
+      "pageInfo": {
+        "total": 1,
+        "currentPage": 1,
+        "lastPage": 1,
+        "hasNextPage": false
+      },
+      "media": [
+        {
+          "id": 90003,
+          "title": {
+            "romaji": "Quiet Horizon",
+            "english": null,
+            "native": "クワイエットホライズン"
+          },
+          "format": "TV",
+          "status": "RELEASING",
+          "episodes": null,
+          "chapters": null,
+          "volumes": null,
+          "averageScore": 85,
+          "meanScore": 84,
+          "popularity": 20000,
+          "genres": ["Mystery"],
+          "seasonYear": 2026,
+          "season": "SUMMER",
+          "startDate": { "year": 2026, "month": 7, "day": 1 },
+          "siteUrl": "https://anilist.co/anime/90003",
+          "description": "A synthetic fixture anime about a horizon that never speaks.",
+          "coverImage": { "large": "https://fixtures.example/covers/90003.jpg" }
+        }
+      ]
+    }
+  }
+}

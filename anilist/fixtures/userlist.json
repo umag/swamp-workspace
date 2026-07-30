@@ -1,0 +1,84 @@
+{
+  "data": {
+    "MediaListCollection": {
+      "lists": [
+        {
+          "name": "Completed",
+          "status": "COMPLETED",
+          "entries": [
+            {
+              "id": 501,
+              "status": "COMPLETED",
+              "score": 8,
+              "progress": 12,
+              "updatedAt": 1700000000,
+              "media": {
+                "id": 90001,
+                "title": {
+                  "romaji": "Nebula Drifters",
+                  "english": "Nebula Drifters",
+                  "native": "ネビュラドリフターズ"
+                },
+                "format": "TV",
+                "status": "FINISHED",
+                "episodes": 12,
+                "chapters": null,
+                "volumes": null,
+                "averageScore": 78,
+                "meanScore": 77,
+                "popularity": 15000,
+                "genres": ["Adventure", "Sci-Fi"],
+                "seasonYear": 2024,
+                "season": "SPRING",
+                "startDate": { "year": 2024, "month": 4, "day": 3 },
+                "siteUrl": "https://anilist.co/anime/90001",
+                "description": "A synthetic fixture anime about drifting through nebulae.",
+                "coverImage": {
+                  "large": "https://fixtures.example/covers/90001.jpg"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Planning",
+          "status": "PLANNING",
+          "entries": [
+            {
+              "id": 502,
+              "status": "PLANNING",
+              "score": null,
+              "progress": 0,
+              "updatedAt": 1700100000,
+              "media": {
+                "id": 90003,
+                "title": {
+                  "romaji": "Quiet Horizon",
+                  "english": null,
+                  "native": "クワイエットホライズン"
+                },
+                "format": "TV",
+                "status": "RELEASING",
+                "episodes": null,
+                "chapters": null,
+                "volumes": null,
+                "averageScore": null,
+                "meanScore": null,
+                "popularity": 900,
+                "genres": ["Mystery"],
+                "seasonYear": 2026,
+                "season": "SUMMER",
+                "startDate": { "year": 2026, "month": 7, "day": 1 },
+                "siteUrl": "https://anilist.co/anime/90003",
+                "description": "A synthetic fixture anime about a horizon that never speaks.",
+                "coverImage": {
+                  "large": "https://fixtures.example/covers/90003.jpg"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

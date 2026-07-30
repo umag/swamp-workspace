@@ -1,0 +1,10 @@
+{
+  "errors": [
+    {
+      "message": "Something went wrong. Please contact support for more information.",
+      "status": 500,
+      "locations": [{ "line": 1, "column": 44 }]
+    }
+  ],
+  "data": null
+}

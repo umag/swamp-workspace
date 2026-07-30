@@ -1,0 +1,52 @@
+{
+  "data": {
+    "Page": {
+      "pageInfo": { "hasNextPage": false },
+      "media": [
+        {
+          "id": 90001,
+          "title": {
+            "romaji": "Nebula Drifters",
+            "english": "Nebula Drifters",
+            "native": "ネビュラドリフターズ"
+          },
+          "genres": ["Adventure", "Sci-Fi"],
+          "tags": [
+            { "name": "Space", "rank": 90, "isMediaSpoiler": false },
+            { "name": "Ensemble Cast", "rank": 70, "isMediaSpoiler": true }
+          ],
+          "startDate": { "year": 2024, "month": 4, "day": 3 },
+          "endDate": { "year": 2024, "month": 6, "day": 19 },
+          "format": "TV",
+          "status": "FINISHED",
+          "episodes": 12,
+          "duration": 24,
+          "averageScore": 78,
+          "popularity": 15000,
+          "studios": { "nodes": [{ "name": "Fixture Animation Works" }] },
+          "coverImage": { "large": "https://fixtures.example/covers/90001.jpg" }
+        },
+        {
+          "id": 90003,
+          "title": {
+            "romaji": "Quiet Horizon",
+            "english": null,
+            "native": "クワイエットホライズン"
+          },
+          "genres": ["Mystery"],
+          "tags": [],
+          "startDate": { "year": 2026, "month": 13, "day": 40 },
+          "endDate": null,
+          "format": "TV",
+          "status": "RELEASING",
+          "episodes": null,
+          "duration": 23,
+          "averageScore": 85,
+          "popularity": 20000,
+          "studios": { "nodes": [] },
+          "coverImage": { "large": null }
+        }
+      ]
+    }
+  }
+}

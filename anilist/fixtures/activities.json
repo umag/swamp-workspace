@@ -1,0 +1,48 @@
+{
+  "data": {
+    "Page": {
+      "pageInfo": { "hasNextPage": false },
+      "activities": [
+        {
+          "id": 700003,
+          "createdAt": 1700003000,
+          "status": "watched episode",
+          "progress": "5",
+          "user": { "id": 4001, "name": "fixture_watcher" },
+          "media": {
+            "id": 90001,
+            "siteUrl": "https://anilist.co/anime/90001",
+            "title": {
+              "romaji": "Nebula Drifters",
+              "english": "Nebula Drifters"
+            }
+          }
+        },
+        {
+          "id": 700002,
+          "createdAt": 1700002000,
+          "status": "plans to watch",
+          "progress": null,
+          "user": { "id": 4001, "name": "fixture_watcher" },
+          "media": {
+            "id": 90003,
+            "siteUrl": "https://anilist.co/anime/90003",
+            "title": { "romaji": "Quiet Horizon", "english": null }
+          }
+        },
+        {
+          "id": 700001,
+          "createdAt": 1700001000,
+          "status": "completed",
+          "progress": null,
+          "user": { "id": 4001, "name": "fixture_watcher" },
+          "media": {
+            "id": 90002,
+            "siteUrl": "https://anilist.co/manga/90002",
+            "title": { "romaji": "Static Bloom", "english": null }
+          }
+        }
+      ]
+    }
+  }
+}
