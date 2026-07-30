@@ -1,0 +1,21 @@
+{
+  "settings": {
+    "timezone": "Europe/Amsterdam",
+    "live_map_enabled": true,
+    "route_color": "#3388ff",
+    "track_color": "#ff3333",
+    "maps_maplibre_tiles_url": "https://tiles.example.com/{z}/{x}/{y}.png",
+    "transportation_thresholds": {
+      "walking_max_speed_kmh": 7,
+      "cycling_max_speed_kmh": 25
+    },
+    "enabled_map_layers": ["Points", "Routes"],
+    "enabled_transportation_modes": ["walking", "cycling", "driving"],
+    "maps": {
+      "distance_unit": "km",
+      "hidden_tile_categories": [],
+      "disabled_poi_groups": []
+    }
+  },
+  "status": "success"
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "id": 501,
+    "latitude": -22.9519,
+    "longitude": -43.2105,
+    "started_at": "2026-02-01T08:00:00Z",
+    "ended_at": "2026-02-01T18:00:00Z",
+    "duration": 36000,
+    "place_id": 77,
+    "place_name": "Synthetic Landmark Visit"
+  },
+  {
+    "id": 502,
+    "latitude": -54.8019,
+    "longitude": -68.3030,
+    "started_at": "2026-02-05T10:00:00Z",
+    "ended_at": "2026-02-05T16:00:00Z",
+    "duration": 21600,
+    "place_id": 78,
+    "place_name": "Synthetic Southern Waypoint"
+  }
+]

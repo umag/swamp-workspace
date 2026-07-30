@@ -1,0 +1,28 @@
+[
+  {
+    "id": "synphoto-0001",
+    "latitude": -33.8568,
+    "longitude": 151.2153,
+    "localDateTime": "2026-01-15T09:05:00Z",
+    "originalFileName": "IMG_syn0001.jpg",
+    "city": "Sydney",
+    "state": "NSW",
+    "country": "Australia",
+    "type": "image",
+    "orientation": "landscape",
+    "source": "immich"
+  },
+  {
+    "id": "synphoto-0002",
+    "latitude": -22.9519,
+    "longitude": -43.2105,
+    "localDateTime": "2026-02-01T12:00:00Z",
+    "originalFileName": "IMG_syn0002.jpg",
+    "city": "Rio de Janeiro",
+    "state": "RJ",
+    "country": "Brazil",
+    "type": "image",
+    "orientation": "portrait",
+    "source": "immich"
+  }
+]

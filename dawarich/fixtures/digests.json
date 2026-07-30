@@ -1,0 +1,19 @@
+{
+  "digests": [
+    {
+      "year": 2025,
+      "distance": 18234,
+      "countriesCount": 4,
+      "citiesCount": 11,
+      "createdAt": "2025-12-31T23:59:59Z"
+    },
+    {
+      "year": 2026,
+      "distance": 6210,
+      "countriesCount": 2,
+      "citiesCount": 5,
+      "createdAt": "2026-06-30T23:59:59Z"
+    }
+  ],
+  "availableYears": [2024, 2025, 2026]
+}

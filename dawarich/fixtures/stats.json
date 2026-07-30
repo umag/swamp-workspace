@@ -1,0 +1,29 @@
+{
+  "totalDistanceKm": 12345.6,
+  "totalPointsTracked": 98765,
+  "totalReverseGeocodedPoints": 87654,
+  "totalCountriesVisited": 12,
+  "totalCitiesVisited": 34,
+  "yearlyStats": [
+    {
+      "year": 2026,
+      "totalDistanceKm": 5000.1,
+      "totalCountriesVisited": 6,
+      "totalCitiesVisited": 15,
+      "monthlyDistanceKm": {
+        "january": 300.5,
+        "february": 250.0,
+        "march": 400.2,
+        "april": 380.0,
+        "may": 420.7,
+        "june": 500.3,
+        "july": 600.9,
+        "august": 450.1,
+        "september": 300.0,
+        "october": 280.4,
+        "november": 350.2,
+        "december": 368.8
+      }
+    }
+  ]
+}
