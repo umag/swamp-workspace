@@ -1,0 +1,24 @@
+[
+  {
+    "id": 1001,
+    "latitude": -33.8568,
+    "longitude": 151.2153,
+    "accuracy": 5,
+    "altitude": 41,
+    "speed": 0,
+    "course": 0,
+    "timestamp": "2026-01-15T09:00:00Z",
+    "created_at": "2026-01-15T09:00:05Z"
+  },
+  {
+    "id": 1002,
+    "latitude": -25.3444,
+    "longitude": 131.0369,
+    "accuracy": 8,
+    "altitude": 863,
+    "speed": 1.2,
+    "course": 270,
+    "timestamp": "2026-01-16T14:30:00Z",
+    "created_at": "2026-01-16T14:30:05Z"
+  }
+]

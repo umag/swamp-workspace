@@ -12,7 +12,6 @@ anilist-chart
 arckit
 bandcamp
 career-kb
-dawarich
 fc-task-server
 fidonet-msgbase
 firecracker

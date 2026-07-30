@@ -1,0 +1,22 @@
+[
+  {
+    "id": 9001,
+    "name": "Track 1",
+    "distance": 15234,
+    "duration": 5400,
+    "latitude": 27.9881,
+    "longitude": 86.9250,
+    "started_at": "2026-03-01T06:00:00Z",
+    "ended_at": "2026-03-01T07:30:00Z"
+  },
+  {
+    "id": 9002,
+    "name": "Track 2",
+    "distance": 8420,
+    "duration": 3600,
+    "latitude": -25.3444,
+    "longitude": 131.0369,
+    "started_at": "2026-03-02T09:00:00Z",
+    "ended_at": "2026-03-02T10:00:00Z"
+  }
+]
