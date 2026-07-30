@@ -1,0 +1,24 @@
+{
+  "synthetic-prompt-0001": {
+    "prompt_id": "synthetic-prompt-0001",
+    "status": {
+      "completed": true,
+      "status_str": "success",
+      "messages": [
+        ["execution_start", { "prompt_id": "synthetic-prompt-0001" }],
+        ["execution_success", { "prompt_id": "synthetic-prompt-0001" }]
+      ]
+    },
+    "outputs": {
+      "158": {
+        "images": [
+          {
+            "filename": "sample.png",
+            "subfolder": "",
+            "type": "output"
+          }
+        ]
+      }
+    }
+  }
+}

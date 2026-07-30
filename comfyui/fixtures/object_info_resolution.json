@@ -1,0 +1,24 @@
+{
+  "ResolutionSelector": {
+    "input": {
+      "required": {
+        "aspect_ratio": [
+          [
+            "1:1 (Square)",
+            "3:2 (Photo)",
+            "4:5 (Portrait)",
+            "16:9 (Widescreen)",
+            "9:16 (Portrait Widescreen)"
+          ]
+        ],
+        "megapixels": ["FLOAT", { "default": 1, "min": 0.1, "max": 4 }],
+        "multiple": ["INT", { "default": 8, "min": 1, "max": 64 }]
+      }
+    },
+    "output": ["INT", "INT"],
+    "output_name": ["width", "height"],
+    "name": "ResolutionSelector",
+    "display_name": "Resolution Selector",
+    "category": "synthetic/testing"
+  }
+}

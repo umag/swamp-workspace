@@ -1,0 +1,19 @@
+{
+  "system": {
+    "os": "posix",
+    "comfyui_version": "0.0.0-synthetic",
+    "python_version": "3.11.0 (synthetic build, not a real interpreter)",
+    "pytorch_version": "0.0.0+synthetic"
+  },
+  "devices": [
+    {
+      "name": "synthetic-gpu-0",
+      "type": "cuda",
+      "index": 0,
+      "vram_total": 0,
+      "vram_free": 0,
+      "torch_vram_total": 0,
+      "torch_vram_free": 0
+    }
+  ]
+}

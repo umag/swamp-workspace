@@ -1,0 +1,22 @@
+{
+  "error": {
+    "type": "prompt_outputs_failed_validation",
+    "message": "Prompt outputs failed validation",
+    "details": "",
+    "extra_info": {}
+  },
+  "node_errors": {
+    "98:24": {
+      "errors": [
+        {
+          "type": "required_input_missing",
+          "message": "Required input is missing",
+          "details": "clip",
+          "extra_info": { "input_name": "clip" }
+        }
+      ],
+      "dependent_outputs": ["158"],
+      "class_type": "CLIPTextEncode"
+    }
+  }
+}
