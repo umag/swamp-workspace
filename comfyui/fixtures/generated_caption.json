@@ -1,0 +1,24 @@
+{
+  "aspect_ratio": "9:16",
+  "high_level_description": "A retro travel poster of a mountain cabin at dusk with the title SWAMP in bold lettering, on a transparent background.",
+  "compositional_deconstruction": {
+    "background": "transparent background",
+    "elements": [
+      {
+        "type": "obj",
+        "bbox": [380, 250, 760, 720],
+        "desc": "A wooden A-frame cabin with warm lit windows and a stone chimney."
+      },
+      {
+        "type": "obj",
+        "desc": "A dense pine forest silhouette along the ridge behind the cabin."
+      },
+      {
+        "type": "text",
+        "bbox": [800, 200, 920, 800],
+        "text": "SWAMP",
+        "desc": "Bold condensed display lettering in cream white, centered near the bottom."
+      }
+    ]
+  }
+}
