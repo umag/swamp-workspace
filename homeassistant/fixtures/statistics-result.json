@@ -1,0 +1,29 @@
+{
+  "id": 1,
+  "type": "result",
+  "success": true,
+  "result": {
+    "sensor.example_temperature": [
+      {
+        "start": 1735689600000,
+        "end": 1735693200000,
+        "mean": 21.2,
+        "min": 20.1,
+        "max": 22.3,
+        "last_reset": null,
+        "state": 21.5,
+        "sum": null
+      },
+      {
+        "start": 1735693200000,
+        "end": 1735696800000,
+        "mean": 21.8,
+        "min": 21.0,
+        "max": 22.9,
+        "last_reset": null,
+        "state": 22.0,
+        "sum": null
+      }
+    ]
+  }
+}

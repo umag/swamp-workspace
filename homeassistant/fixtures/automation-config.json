@@ -1,0 +1,22 @@
+{
+  "id": "1700000000000",
+  "alias": "Example Alarm Automation",
+  "description": "",
+  "trigger": [
+    {
+      "platform": "state",
+      "entity_id": "binary_sensor.example_motion",
+      "to": "on"
+    }
+  ],
+  "condition": [],
+  "action": [
+    {
+      "service": "light.turn_on",
+      "target": {
+        "entity_id": "light.example_lamp"
+      }
+    }
+  ],
+  "mode": "single"
+}

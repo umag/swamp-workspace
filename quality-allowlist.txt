@@ -21,7 +21,6 @@ firecracker
 flipper-zero
 fragrantica
 good-planning
-homeassistant
 issue-lifecycle
 jabber
 jscad-cad

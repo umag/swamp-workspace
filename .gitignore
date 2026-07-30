@@ -19,6 +19,9 @@
 # OS
 .DS_Store
 
+# Agent scratch workspace (never commit)
+/.scratch/
+
 # BEGIN swamp managed section - DO NOT EDIT
 
 # Runtime data (not needed in version control)
