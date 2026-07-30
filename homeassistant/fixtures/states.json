@@ -1,0 +1,54 @@
+[
+  {
+    "entity_id": "light.example_lamp",
+    "state": "on",
+    "attributes": {
+      "friendly_name": "Example Lamp",
+      "brightness": 180,
+      "color_temp_kelvin": 3000
+    },
+    "last_changed": "2026-01-01T10:00:00+00:00",
+    "last_updated": "2026-01-01T10:00:00+00:00"
+  },
+  {
+    "entity_id": "switch.example_switch",
+    "state": "off",
+    "attributes": {
+      "friendly_name": "Example Switch"
+    },
+    "last_changed": "2026-01-01T09:00:00+00:00",
+    "last_updated": "2026-01-01T09:00:00+00:00"
+  },
+  {
+    "entity_id": "sensor.example_temperature",
+    "state": "21.5",
+    "attributes": {
+      "friendly_name": "Example Temperature",
+      "unit_of_measurement": "°C",
+      "device_class": "temperature"
+    },
+    "last_changed": "2026-01-01T10:05:00+00:00",
+    "last_updated": "2026-01-01T10:05:00+00:00"
+  },
+  {
+    "entity_id": "binary_sensor.example_motion",
+    "state": "off",
+    "attributes": {
+      "friendly_name": "Example Motion",
+      "device_class": "motion"
+    },
+    "last_changed": "2026-01-01T08:00:00+00:00",
+    "last_updated": "2026-01-01T08:00:00+00:00"
+  },
+  {
+    "entity_id": "automation.example_alarm",
+    "state": "on",
+    "attributes": {
+      "friendly_name": "Example Alarm Automation",
+      "id": "1700000000000",
+      "last_triggered": "2026-01-01T07:00:00+00:00"
+    },
+    "last_changed": "2025-12-01T00:00:00+00:00",
+    "last_updated": "2025-12-01T00:00:00+00:00"
+  }
+]

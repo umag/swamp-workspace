@@ -1,0 +1,53 @@
+[
+  {
+    "domain": "light",
+    "services": {
+      "turn_on": {
+        "name": "Turn on",
+        "description": "Turn on one or more lights and adjust properties."
+      },
+      "turn_off": {
+        "name": "Turn off",
+        "description": "Turn off one or more lights."
+      },
+      "toggle": {
+        "name": "Toggle",
+        "description": "Toggle a light on/off."
+      }
+    }
+  },
+  {
+    "domain": "switch",
+    "services": {
+      "turn_on": {
+        "name": "Turn on",
+        "description": "Turn on a switch."
+      },
+      "turn_off": {
+        "name": "Turn off",
+        "description": "Turn off a switch."
+      },
+      "toggle": {
+        "name": "Toggle",
+        "description": "Toggle a switch."
+      }
+    }
+  },
+  {
+    "domain": "automation",
+    "services": {
+      "trigger": {
+        "name": "Trigger",
+        "description": "Trigger the actions of an automation."
+      },
+      "turn_on": {
+        "name": "Turn on",
+        "description": "Enable an automation."
+      },
+      "turn_off": {
+        "name": "Turn off",
+        "description": "Disable an automation."
+      }
+    }
+  }
+]
