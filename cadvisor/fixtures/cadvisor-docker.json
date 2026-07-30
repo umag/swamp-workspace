@@ -1,0 +1,94 @@
+{
+  "/docker/1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa": {
+    "aliases": ["web-frontend"],
+    "spec": {
+      "memory": { "limit": 536870912 },
+      "cpu": { "limit": 2 }
+    },
+    "stats": [
+      {
+        "timestamp": "2026-07-01T12:00:00.000000000Z",
+        "memory": { "usage": 104857600 },
+        "cpu": {
+          "usage": {
+            "total": 100000000000,
+            "per_cpu_usage": [50000000000, 50000000000]
+          }
+        },
+        "network": { "rx_bytes": 0, "tx_bytes": 0 }
+      },
+      {
+        "timestamp": "2026-07-01T12:00:30.000000000Z",
+        "memory": { "usage": 157286400 },
+        "cpu": {
+          "usage": {
+            "total": 130000000000,
+            "per_cpu_usage": [65000000000, 65000000000]
+          }
+        },
+        "network": { "rx_bytes": 31457280, "tx_bytes": 15728640 }
+      }
+    ]
+  },
+  "/docker/2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb": {
+    "aliases": ["postgres-db"],
+    "spec": {
+      "memory": { "limit": 9223372036854771712 },
+      "cpu": { "limit": 1 }
+    },
+    "stats": [
+      {
+        "timestamp": "2026-07-01T12:00:00.000000000Z",
+        "memory": { "usage": 209715200 },
+        "cpu": { "usage": { "total": 50000000000 } },
+        "network": { "rx_bytes": 0, "tx_bytes": 0 }
+      },
+      {
+        "timestamp": "2026-07-01T12:00:30.000000000Z",
+        "memory": { "usage": 262144000 },
+        "cpu": { "usage": { "total": 65000000000 } },
+        "network": { "rx_bytes": 3145728, "tx_bytes": 1048576 }
+      }
+    ]
+  },
+  "/docker/3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc": {
+    "aliases": [],
+    "spec": {
+      "memory": { "limit": 268435456 }
+    },
+    "stats": [
+      {
+        "timestamp": "2026-07-01T12:00:30.000000000Z",
+        "memory": { "usage": 134217728 },
+        "cpu": { "usage": { "total": 20000000000 } },
+        "network": { "rx_bytes": 524288, "tx_bytes": 262144 }
+      }
+    ]
+  },
+  "/docker/4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd": {
+    "spec": {
+      "memory": { "limit": 134217728 }
+    },
+    "stats": [
+      {
+        "timestamp": "2026-07-01T12:00:30.000000000Z",
+        "memory": { "usage": 67108864 },
+        "cpu": { "usage": { "total": 10000000000 } },
+        "network": { "rx_bytes": 0, "tx_bytes": 0 }
+      }
+    ]
+  },
+  "/docker/5555eeee5555eeee5555eeee5555eeee5555eeee5555eeee5555eeee5555eeee": {
+    "aliases": ["idle-empty-stats"],
+    "spec": {
+      "memory": { "limit": 67108864 }
+    },
+    "stats": []
+  },
+  "/docker/6666ffff6666ffff6666ffff6666ffff6666ffff6666ffff6666ffff6666ffff": {
+    "aliases": ["missing-stats-field"],
+    "spec": {
+      "memory": { "limit": 33554432 }
+    }
+  }
+}

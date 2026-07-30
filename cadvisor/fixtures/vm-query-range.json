@@ -1,0 +1,28 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "matrix",
+    "result": [
+      {
+        "metric": { "name": "web-frontend" },
+        "values": [
+          [1751370000, "104857600"],
+          [1751370300, "157286400"],
+          [1751370600, "188743680"]
+        ]
+      },
+      {
+        "metric": { "name": "postgres-db" },
+        "values": [
+          [1751370000, "209715200"],
+          [1751370300, "262144000"],
+          [1751370600, "235929600"]
+        ]
+      },
+      {
+        "metric": { "name": "idle-scraped-once" },
+        "values": []
+      }
+    ]
+  }
+}
