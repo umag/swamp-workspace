@@ -7,9 +7,11 @@
  * and `globalThis.fetch` (via the porkbun fetch-stub pattern) — plus a
  * neutralized `setTimeout` for deploy's 5-second verify delay.
  *
- * cadvisor.ts is UNMODIFIED by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * cadvisor.ts now wraps vmComposeDir/vmComposeFile/vmScrapeConfig-derived
+ * remote command strings in `shellEsc` (2026.08.01.1, closing the HIGH
+ * remote-shell command-injection finding in `cadvisor-latent-bugs`) — every
+ * exact-string assertion and `cat`-equality stub matcher below is
+ * re-baselined to the single-quote-wrapped, legit metacharacter-free form.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./cadvisor.ts";
@@ -231,7 +233,7 @@ Deno.test("deploy: happy path (not running, scrape not yet configured) — full 
         const cmd = sshCommandOf(call);
         if (i === 0) return FAIL("Error: No such container: cadvisor");
         if (cmd === DOCKER_RUN_CMD) return OK();
-        if (cmd === "cat /opt/victoriametrics/prometheus-vl-single.yml") {
+        if (cmd === "cat '/opt/victoriametrics/prometheus-vl-single.yml'") {
           // First cat (before append) then second cat (final verify) —
           // routed by call order via the shared counter.
           return i === 2 ? OK(SCRAPE_CONFIG_BEFORE) : OK(SCRAPE_CONFIG_AFTER);
@@ -257,17 +259,17 @@ Deno.test("deploy: happy path (not running, scrape not yet configured) — full 
         assertEquals(sshCommandOf(calls[1]), DOCKER_RUN_CMD);
         assertEquals(
           sshCommandOf(calls[2]),
-          "cat /opt/victoriametrics/prometheus-vl-single.yml",
+          "cat '/opt/victoriametrics/prometheus-vl-single.yml'",
         );
         assertEquals(
           sshCommandOf(calls[3]),
-          "cat >> /opt/victoriametrics/prometheus-vl-single.yml << 'HEREDOC'\n" +
+          "cat >> '/opt/victoriametrics/prometheus-vl-single.yml' << 'HEREDOC'\n" +
             "\n- job_name: cadvisor\n  scrape_interval: 30s\n  static_configs:\n" +
             "  - targets:\n    - host.example.com:8080\nHEREDOC",
         );
         assertEquals(
           sshCommandOf(calls[4]),
-          "cd /opt/victoriametrics && docker compose -f compose-vl-single.yml restart victoriametrics",
+          "cd '/opt/victoriametrics' && docker compose -f 'compose-vl-single.yml' restart victoriametrics",
         );
         assertEquals(
           sshCommandOf(calls[5]),
@@ -275,7 +277,7 @@ Deno.test("deploy: happy path (not running, scrape not yet configured) — full 
         );
         assertEquals(
           sshCommandOf(calls[6]),
-          "cat /opt/victoriametrics/prometheus-vl-single.yml",
+          "cat '/opt/victoriametrics/prometheus-vl-single.yml'",
         );
       },
     )
@@ -295,7 +297,7 @@ Deno.test("deploy: idempotent short-circuit — already running + already scrape
       (call, i) => {
         const cmd = sshCommandOf(call);
         if (i === 0) return OK("true\n"); // docker inspect Running
-        if (cmd === "cat /opt/victoriametrics/prometheus-vl-single.yml") {
+        if (cmd === "cat '/opt/victoriametrics/prometheus-vl-single.yml'") {
           return OK(SCRAPE_CONFIG_AFTER); // already configured
         }
         if (cmd === "docker inspect cadvisor --format '{{.State.Status}}'") {
@@ -346,7 +348,7 @@ Deno.test("deploy: stopped-container cleanup — Running check succeeds with 'fa
           return OK();
         }
         if (cmd === DOCKER_RUN_CMD) return OK();
-        if (cmd === "cat /opt/victoriametrics/prometheus-vl-single.yml") {
+        if (cmd === "cat '/opt/victoriametrics/prometheus-vl-single.yml'") {
           return OK(SCRAPE_CONFIG_AFTER);
         }
         if (cmd === "docker inspect cadvisor --format '{{.State.Status}}'") {
@@ -395,7 +397,7 @@ Deno.test("status: happy path — running + scrape configured", async () => {
       if (cmd === "docker inspect cadvisor --format '{{.State.Status}}'") {
         return OK("running\n");
       }
-      if (cmd === "cat /opt/victoriametrics/prometheus-vl-single.yml") {
+      if (cmd === "cat '/opt/victoriametrics/prometheus-vl-single.yml'") {
         return OK(SCRAPE_CONFIG_AFTER);
       }
       throw new Error(`unrouted: ${cmd}`);
@@ -610,13 +612,13 @@ Deno.test("remove: happy path — exactly 3 unconditional SSH calls (stop/rm, se
       );
       assertEquals(
         sshCommandOf(calls[1]),
-        "sed -i '/cadvisor/,/- .*:8080/{//d;d}' /opt/victoriametrics/prometheus-vl-single.yml 2>/dev/null; " +
-          "sed -i '/cadvisor/d' /opt/victoriametrics/prometheus-vl-single.yml 2>/dev/null; " +
-          "sed -i '/^$/N;/^\\n$/d' /opt/victoriametrics/prometheus-vl-single.yml 2>/dev/null || true",
+        "sed -i '/cadvisor/,/- .*:8080/{//d;d}' '/opt/victoriametrics/prometheus-vl-single.yml' 2>/dev/null; " +
+          "sed -i '/cadvisor/d' '/opt/victoriametrics/prometheus-vl-single.yml' 2>/dev/null; " +
+          "sed -i '/^$/N;/^\\n$/d' '/opt/victoriametrics/prometheus-vl-single.yml' 2>/dev/null || true",
       );
       assertEquals(
         sshCommandOf(calls[2]),
-        "cd /opt/victoriametrics && docker compose -f compose-vl-single.yml restart victoriametrics",
+        "cd '/opt/victoriametrics' && docker compose -f 'compose-vl-single.yml' restart victoriametrics",
       );
     },
   );

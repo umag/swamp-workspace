@@ -1,5 +1,9 @@
 import { z } from "npm:zod@4";
 
+function shellEsc(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
 const GlobalArgsSchema = z.object({
   host: z.string().describe("Docker host (IP or hostname)"),
   username: z.string().default("root").describe("SSH username"),
@@ -127,7 +131,7 @@ async function vmQuery(host, port, path) {
 /** Swamp model that deploys cAdvisor and queries container resource metrics from cAdvisor and VictoriaMetrics. */
 export const model = {
   type: "@magistr/cadvisor",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     "status": {
@@ -215,7 +219,7 @@ export const model = {
         const currentConfig = await runSsh(
           host,
           username,
-          `cat ${scrapeConfigPath}`,
+          `cat ${shellEsc(scrapeConfigPath)}`,
         );
 
         if (!currentConfig.includes("cadvisor")) {
@@ -231,7 +235,9 @@ export const model = {
           await runSsh(
             host,
             username,
-            `cat >> ${scrapeConfigPath} << 'HEREDOC'\n${cadvisorJob}\nHEREDOC`,
+            `cat >> ${
+              shellEsc(scrapeConfigPath)
+            } << 'HEREDOC'\n${cadvisorJob}\nHEREDOC`,
           );
           context.logger.info("Added cadvisor scrape target to config");
 
@@ -239,7 +245,9 @@ export const model = {
           await runSsh(
             host,
             username,
-            `cd ${vmComposeDir} && docker compose -f ${vmComposeFile} restart victoriametrics`,
+            `cd ${shellEsc(vmComposeDir)} && docker compose -f ${
+              shellEsc(vmComposeFile)
+            } restart victoriametrics`,
           );
           context.logger.info(
             "Restarted VictoriaMetrics to pick up new config",
@@ -265,7 +273,7 @@ export const model = {
         const finalConfig = await runSsh(
           host,
           username,
-          `cat ${scrapeConfigPath}`,
+          `cat ${shellEsc(scrapeConfigPath)}`,
         );
         const scrapeConfigured = finalConfig.includes("cadvisor");
 
@@ -307,7 +315,7 @@ export const model = {
           const config = await runSsh(
             host,
             username,
-            `cat ${scrapeConfigPath}`,
+            `cat ${shellEsc(scrapeConfigPath)}`,
           );
           scrapeConfigured = config.includes("cadvisor");
         } catch {
@@ -479,14 +487,22 @@ export const model = {
         await runSsh(
           host,
           username,
-          `sed -i '/cadvisor/,/- .*:8080/{//d;d}' ${scrapeConfigPath} 2>/dev/null; sed -i '/cadvisor/d' ${scrapeConfigPath} 2>/dev/null; sed -i '/^$/N;/^\\n$/d' ${scrapeConfigPath} 2>/dev/null || true`,
+          `sed -i '/cadvisor/,/- .*:8080/{//d;d}' ${
+            shellEsc(scrapeConfigPath)
+          } 2>/dev/null; sed -i '/cadvisor/d' ${
+            shellEsc(scrapeConfigPath)
+          } 2>/dev/null; sed -i '/^$/N;/^\\n$/d' ${
+            shellEsc(scrapeConfigPath)
+          } 2>/dev/null || true`,
         );
 
         // Restart VM
         await runSsh(
           host,
           username,
-          `cd ${vmComposeDir} && docker compose -f ${vmComposeFile} restart victoriametrics`,
+          `cd ${shellEsc(vmComposeDir)} && docker compose -f ${
+            shellEsc(vmComposeFile)
+          } restart victoriametrics`,
         );
 
         const handle = await context.writeResource("status", "current", {
