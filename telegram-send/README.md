@@ -156,10 +156,11 @@ surfaces as a thrown error from the method.
 
 **Security note:** the bot token is embedded in the Bot API request URL
 (`.../bot<token>/<method>`), not the request body. A well-formed API error
-response never echoes the token back, but a network-layer failure (DNS, TLS) can
-surface the token via the underlying HTTP client's own error message, since no
-redaction wrapper exists around the request calls today. See `CHANGELOG.md` for
-the tracked follow-up.
+response never echoes the token back. A network-layer failure (DNS, TLS,
+connection reset) is caught and its message redacted before it reaches the
+caller — the `/bot<token>/` URL segment is replaced with `/bot<redacted>/` (a
+generic backstop also scrubs any `/bot.../` path segment that reaches the
+message reformatted). See `CHANGELOG.md` for details.
 
 ## License
 

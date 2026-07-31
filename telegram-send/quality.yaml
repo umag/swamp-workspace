@@ -3,13 +3,15 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-telegram-send,
-# wave-2a gap-check of the Phase D extension-quality backfill).
-# telegram_send.ts is unmodified — every suite drives
-# model.methods.<m>.execute() against a stubbed fetch (+ a stubbed
-# Deno.readFile for the multipart branch) and a fake context, characterizing
-# already-shipped behavior. The token-in-URL fetch-rejection redaction gap
-# (source is byte-frozen here) is tracked by the follow-up hardening issue
-# telegram-send-hardening-richmessage-port — see CHANGELOG.md.
+# wave-2a gap-check of the Phase D extension-quality backfill), then hardened
+# in 2026.08.01.1 (telegram-send-hardening-richmessage-port): every suite
+# drives model.methods.<m>.execute() against a stubbed fetch (+ a stubbed
+# Deno.readFile for the multipart branch) and a fake context. The
+# token-in-URL fetch-rejection redaction gap tracked below in prior
+# revisions of this comment is RESOLVED as of 2026.08.01.1 — telegramJson
+# and telegramMultipart now wrap fetch() and redact via redactToken before
+# rethrowing; see CHANGELOG.md and the local issue-lifecycle model
+# telegram-send-hardening-richmessage-port for the fix history.
 schemaVersion: 1
 extension: telegram-send
 tests:

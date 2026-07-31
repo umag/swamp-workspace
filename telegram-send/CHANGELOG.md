@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026.08.01.1
+
+Security hardening: closes the HIGH bot-token credential-leak tracked below as a
+"Known gap" in the `Unreleased` entry (filed and planned as the issue-lifecycle
+model `telegram-send-hardening-richmessage-port`).
+
+- Added a module-private `redactToken(message, token)` pure helper to
+  `telegram_send.ts`. It replaces the live `/bot<token>/` URL segment with
+  `/bot<redacted>/`, then applies a generic `/bot[^/]+/` regex backstop so any
+  `/bot.../` path segment is scrubbed even if the token reaches the message
+  reformatted (re-cased, percent-encoded, or otherwise transformed) rather than
+  byte-for-byte. `message` is accepted as `unknown` and safely coerced to a
+  string — a fetch rejection is not guaranteed to be an `Error` with a string
+  `.message` (it may be a `DOMException`, a thrown string, or an arbitrary
+  non-Error value) — so no unsanitized shape can pass through unredacted.
+- `telegramJson` and `telegramMultipart` now wrap their `fetch()` call in
+  try/catch: a network-layer rejection (DNS failure, TLS error, connection
+  reset) is caught and rethrown with its message redacted via `redactToken`,
+  preserving the original rejection as `cause` for downstream diagnostics. Only
+  the `fetch()` call itself is wrapped — the `ok:false` API-error throw (never
+  carries the token, pinned GREEN and covered by property test c) is untouched.
+- Behavior-preserving otherwise: legitimate sends and the `ok:false` API-error
+  path are unchanged.
+- Tests: flipped the two adversarial suite's former "HONEST GAP pin" tests
+  (`telegram_send_adversarial_test.ts`, `telegramJson`/`getMe` and
+  `telegramMultipart`/`sendPhoto`) to assert the fetch-rejection message is now
+  redacted (contains `/bot<redacted>/`, excludes the raw token, preserves
+  `.cause`) instead of asserting verbatim propagation. Added direct
+  `redactToken` unit tests: exact-token redaction, token-free passthrough, the
+  generic backstop for a reformatted token, and non-Error/`DOMException`/
+  thrown-string/plain-object coercion (including a case where a non-Error
+  value's own string form embeds the token). All 72 suite tests green; property
+  suite green at `FC_NUM_RUNS=5000`.
+- `README.md`: updated the Security note — the token-in-URL fetch-rejection gap
+  is now redacted rather than an open gap.
+- `quality.yaml`: the byte-frozen-source justification no longer applies (source
+  is modified); ratchet re-measured live.
+- **Deferred, tracked separately**: porting `sendRichMessage` from the homelab
+  dev copy is OUT OF SCOPE for this security fix (its homelab source-of-truth is
+  not in this read-only snapshot, so folding it in would be a blind,
+  unverifiable port). It remains tracked by the issue-lifecycle model
+  `telegram-send-hardening-richmessage-port` as a follow-up.
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-2a gap-check of
@@ -31,7 +74,8 @@ behavior change — `telegram_send.ts` is unmodified and the model `version` sta
   `sendRichMessage` from the homelab dev copy into this workspace's source is
   tracked separately by the follow-up issue
   `telegram-send-hardening-richmessage-port`.
-- **Known gap, tracked, not fixed here** (source is byte-frozen by this change):
+- **Known gap, tracked, not fixed here at the time** (source was byte-frozen by
+  this backfill change) — **RESOLVED in `2026.08.01.1` above**:
   `telegramJson`/`telegramMultipart` build the Bot API request URL as
   `${API_BASE}/bot<token>/<method>` — the bot token lives in the request URL
   path — and neither helper wraps its `fetch()` call in a try/catch. A
