@@ -14,7 +14,6 @@ career-kb
 fc-task-server
 firecracker
 flipper-zero
-good-planning
 issue-lifecycle
 jscad-cad
 jscad-stl-slicer
