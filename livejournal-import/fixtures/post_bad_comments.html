@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><title>Fixture Bad Comments Post</title></head>
+<body>
+<div class="aentry-head__date"><time>June 11 2013, 08:45</time></div>
+<div class="aentry-post__title-text">Fixture Bad Comments Post Title</div>
+<div class="aentry-post__text">
+<p>Fixture body for a post whose embedded Site.page comments blob is corrupt
+JSON (an unterminated array), so the comments extraction must swallow the
+parse failure and yield zero comments, not throw.</p>
+</div>
+<script type="text/javascript">
+Site.page = {"comments":[{"uname":"fixture_broken","ctime":"2013-06-11 09:00:00","article":"unterminated fixture comment}; window.somethingElse = {};
+</script>
+</body>
+</html>

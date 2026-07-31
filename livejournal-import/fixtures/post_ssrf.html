@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+  <head><title>Fixture SSRF Post</title></head>
+  <body>
+    <div class="aentry-head__date"><time>January 5 2011, 09:30</time></div>
+    <div class="aentry-post__title-text">Fixture SSRF Post Title</div>
+    <div class="aentry-post__text">
+      <p>
+        A fixture post whose body embeds attacker-controlled image URLs pointing
+        at link-local and loopback administrative endpoints (RFC 5737-adjacent
+        documentation targets, never a real reachable host).
+      </p>
+      <img
+        src="http://169.254.169.254/latest/meta-data/iam/security-credentials/fixture-role"
+        alt="fixture cloud metadata target"
+      >
+      <img
+        src="http://127.0.0.1:8200/v1/secret/fixture-internal-vault"
+        alt="fixture loopback admin target"
+      >
+    </div>
+  </body>
+</html>
