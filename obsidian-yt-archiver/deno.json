@@ -1,7 +1,8 @@
 {
   "tasks": {
     "check": "deno check extensions/models/obsidian_yt_archiver.ts",
-    "test": "deno test extensions/models/ --permit-no-files",
+    "test": "deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/obsidian_yt_archiver_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
@@ -12,7 +13,12 @@
     "lineWidth": 80,
     "indentWidth": 2,
     "semiColons": true,
-    "singleQuote": false
+    "singleQuote": false,
+    "exclude": [
+      "fixtures/vault/notes/video-note.md",
+      "fixtures/vault/Clippings/clipped-video.md",
+      "fixtures/outside/escape-note.md"
+    ]
   },
   "lint": { "rules": { "tags": ["recommended"] } }
 }

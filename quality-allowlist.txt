@@ -21,5 +21,4 @@ jscad-stl-slicer
 jscad-stl-validator
 music-library
 obsidian-vault
-obsidian-yt-archiver
 swamp-go-brr
