@@ -3,6 +3,71 @@
 All notable changes to `@magistr/issue-lifecycle`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## Unreleased — five-suite quality backfill (ext-quality-bf-issue-lifecycle)
+
+Test + docs backfill only. **No model schema/method changes — model type version
+stays `2026.07.16.2`.** `issue_lifecycle.ts` and `manifest.yaml` are BYTE-FROZEN
+by this change (wave-4 batch-4d, final batch of the extension quality program).
+
+- New `extensions/models/issue_lifecycle_methods_test.ts` — success + exact
+  guardState-throw-message regression for each of the 20 model methods, a sweep
+  pinning "No issue state found — run 'start' first" on every method but
+  `start`, and a sweep pinning the REAL (not assumed) unknown-key behavior of
+  every method's zod arguments schema: `swamp model type describe --json`
+  renders `additionalProperties: false` (its own JSON-Schema view), but none of
+  the 20 methods call `.strict()`, so a bare `.parse()` silently strips an
+  unrecognized key rather than throwing.
+- New `extensions/models/issue_lifecycle_adversarial_test.ts` — illegal
+  out-of-order transitions from varied source states, malformed reviewer input
+  (bad severity/verdict enums rejected by zod), hostile approve_plan gate
+  combinations (missing-matrix-reviewer, combined CRITICAL+HIGH counts),
+  corrupted-stored-state pins for the "no plan found" branches in
+  `approve_plan`/`tests_approved`, whitespace `override_reason` still gated, and
+  pins for the locally-triaged latent bugs IL-1 (`start` overwrites an in-flight
+  issue with no guard or confirmation), IL-2 (the approve gate ignores reviewer
+  `verdict` — a FAIL verdict with zero open findings still approves), IL-3 (no
+  model-enforced iteration cap), IL-4 (`resolutions` keyed by finding
+  description text collides across reviewers), IL-5 (`close` is guardless and
+  terminal-agnostic), and IL-7 (recording the same reviewer twice in one round
+  double-counts its open findings in the blocking gate — tightens the gate,
+  never loosens it).
+- New `extensions/models/issue_lifecycle_coverage_test.ts` — branch fill for
+  `allMatrixReviewersRecorded` across the security/ux/skill matrix dimensions,
+  `hasBlockingFindings`'s full status filter (open / resolved / accepted /
+  wontfix), both branches of `iterate`'s double-snapshot guard, the zod `source`
+  default (`"human"`) on `reject_plan`/`iterate`/ `iterate_tests`,
+  `record_reproduction`'s create-vs-merge branches, `plan`'s planVersion-bump
+  predicate (keyed on `data.plan` presence, not on which of the two guarded
+  states the call came from), and `complete`'s silently discarded `summary`
+  argument.
+- New `extensions/models/issue_lifecycle_property_test.ts` —
+  `npm:fast-check@4.8.0` gated by `FC_NUM_RUNS` (`--allow-env=FC_NUM_RUNS`, new
+  `test:soak` task at 10000 runs): P1 no illegal (state, method) pair ever
+  succeeds, P2 `hasBlockingFindings` totals are monotone non-decreasing under
+  additional findings, P3 a randomized-but-legal walk (reject-then-replan /
+  iterate_tests-then-retry / iterate-then-retry / harvest-or-skip, each an
+  independent branch) always ends in `complete` with matching reviewHistory
+  phase counts, P4 `hydrate` never mutates `current` (IL-6's
+  `summary.snapshotAt` is excluded from being a flakiness source by freezing
+  `now()` with `@std/testing` `FakeTime` for the whole property, not by
+  hand-excluding a field), P5 the `approve_plan` gate holds in both directions
+  under full matrix coverage.
+- `issue-lifecycle/quality.yaml` — all five suites now `present`; `docs.readme`,
+  `docs.changelog`, and `docs.skill` (`.claude/skills/issue-lifecycle/SKILL.md`,
+  already bundled) `present`; `watch`/`canary` stay `backlog` (justification:
+  seeded offender at CI-gate rollout — backfill tracked in
+  `ext-quality-test-backfill`); ratchet
+  `{rubricVersion: 3, baselinePercentage:
+  100, label: "Grade A"}`.
+- `deno.json` — `test` task gains `--allow-env=FC_NUM_RUNS`; new `test:soak`
+  task; `check` task now globs `extensions/models/*.ts`.
+- Removed `issue-lifecycle` from the repo-root `quality-allowlist.txt`
+  (`quality-offenders.baseline.txt` is immutable and unchanged).
+
+Latent bugs found while characterizing the source (IL-1 through IL-7) are PINNED
+as-is — never fixed here — and filed to the LOCAL issue-lifecycle model
+`issue-lifecycle-latent-bugs`, never the swamp.club Lab.
+
 ## 2026.06.12.3 — eval scenario-9: resume-dispatch from the TDD sub-cycle
 
 Evals only. **No model schema/method changes — model type version stays
