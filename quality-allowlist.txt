@@ -12,7 +12,6 @@ anilist-chart
 arckit
 firecracker
 issue-lifecycle
-jscad-cad
 jscad-stl-slicer
 obsidian-vault
 swamp-go-brr
