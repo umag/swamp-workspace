@@ -1,20 +1,21 @@
 /**
  * Adversarial suite: attacker's-perspective tests for @magistr/telegram/send
- * — token-in-URL non-leak GREEN pins, an HONEST no-redaction
- * sentinel-propagation test for the fetch-rejection gap (round-1 adversarial
- * HIGH fix — see the test below for why the naive version would have been
- * tautological), verbatim MarkdownV2/HTML pass-through, attachment
- * mis-routing (Windows path, ftp://, path traversal), no client-side 50MB
- * guard, and a mechanical fixtures-secret-scan over
- * telegram-send/fixtures/*.json.
+ * — token-in-URL non-leak GREEN pins, redaction tests for the fetch-rejection
+ * gap fixed by `telegram-send-hardening-richmessage-port` (both
+ * `telegramJson` and `telegramMultipart` now wrap their `fetch()` call in
+ * try/catch and route any rejection's message through `redactToken` before
+ * rethrowing — see the tests below and `redactToken`'s own unit tests),
+ * verbatim MarkdownV2/HTML pass-through, attachment mis-routing (Windows
+ * path, ftp://, path traversal), no client-side 50MB guard, and a mechanical
+ * fixtures-secret-scan over telegram-send/fixtures/*.json.
  *
- * telegram_send.ts is UNMODIFIED — every test here PINS current behavior
- * (including behavior that is arguably risky) rather than proposing a fix.
- * Where a test documents a real gap, it is labeled "pin" and says so
+ * Everything except the two fetch-rejection tests and the new `redactToken`
+ * unit tests PINS pre-existing behavior (including behavior that is arguably
+ * risky) rather than proposing a fix — those are labeled "pin" and say so
  * explicitly. See fixtures/PROVENANCE.md for fixture provenance.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { model } from "./telegram_send.ts";
+import { model, redactToken } from "./telegram_send.ts";
 import getMeFixture from "../../fixtures/getMe.json" with { type: "json" };
 import sendMessageFixture from "../../fixtures/sendMessage.json" with {
   type: "json",
@@ -36,6 +37,11 @@ import errorFixture from "../../fixtures/error.json" with { type: "json" };
 // asserts this constant cannot match the real-token regex.
 const TOKEN = "FAKE-BOT-TOKEN-SENTINEL-DO-NOT-LOG-0000";
 const DEFAULT_CHAT_ID = "555000111";
+
+// Mirrors telegram_send.ts's own API_BASE literal — kept local rather than
+// imported so this suite pins the redacted-URL SHAPE independently of the
+// source's internal constant.
+const API_BASE = "https://api.telegram.org";
 
 const GLOBAL_ARGS = { botToken: TOKEN, defaultChatId: DEFAULT_CHAT_ID };
 
@@ -161,67 +167,184 @@ const OK_MESSAGE = (overrides: Record<string, unknown> = {}) => ({
 // THE headline surface: token-in-URL
 // ---------------------------------------------------------------------------
 
-Deno.test("HONEST GAP pin: a fetch-layer rejection propagates VERBATIM with no redaction wrapper", async () => {
-  // telegramJson/telegramMultipart call `await fetch(...)` with no
-  // surrounding try/catch — ANY rejection (DNS failure, TLS error, connection
-  // reset) propagates completely unchanged, all the way to the caller. This
-  // test proves that mechanism using a NEUTRAL sentinel error object, never
-  // the bot token itself — self-feeding the token into a thrown string here
-  // would be a tautology (the test controls the stub; asserting "the token I
-  // just typed into the stub appears in the output" proves nothing about
-  // production). This is the round-1 adversarial HIGH fix: split the
-  // tautological claim into (1) this mechanism test, and (2) the documented
-  // fact below.
-  //
-  // DOCUMENTED FACT (not asserted here — this is Deno's fetch behavior, not
-  // this model's code, so it cannot be pinned by a stubbed-fetch unit test):
-  // a REAL Deno fetch rejection for a network-layer failure typically embeds
-  // the request URL in its error message (e.g. something shaped like "error
+Deno.test("FIXED: a fetch-layer rejection is redacted before it propagates (telegramJson)", async () => {
+  // telegramJson now wraps `await fetch(...)` in try/catch and rethrows the
+  // rejection's message through redactToken before it reaches the caller.
+  // Previously (see git history) this was an HONEST GAP pin proving the
+  // opposite — that a rejection propagated verbatim, carrying the bot token
+  // embedded in Deno's own fetch-error text (a real Deno fetch rejection for
+  // a network-layer failure typically embeds the request URL, e.g. "error
   // sending request for url (https://api.telegram.org/bot<TOKEN>/getMe)").
-  // Because telegram_send.ts builds its URL as
-  // `${API_BASE}/bot${token}/${method}`, that URL carries the bot token
-  // verbatim. Since this test proves telegramJson/telegramMultipart add NO
-  // redaction layer around fetch, a real network failure in production would
-  // surface the token via Deno's own error formatting — a genuine, currently
-  // -unfixed gap given telegram_send.ts is byte-frozen by this change. The
-  // follow-up hardening issue `telegram-send-hardening-richmessage-port`
-  // (see ../../CHANGELOG.md and ../../quality.yaml) tracks adding a redacting error
-  // mapper that strips `/bot<token>/` from every thrown message in both
-  // telegramJson and telegramMultipart.
-  const SENTINEL = new Error("NEUTRAL_FETCH_REJECTION_SENTINEL_NOT_A_TOKEN");
+  // This test now drives that exact shape — a synthetic Error whose message
+  // embeds the live token in the Bot API URL path — and asserts the redacted
+  // form is what the caller actually sees: the raw token is gone and the
+  // path segment reads `/bot<redacted>/`.
+  const rejection = new Error(
+    `error sending request for url (${API_BASE}/bot${TOKEN}/getMe): connection reset`,
+  );
   const { ctx } = makeCtx();
-  await withRejectingFetch(SENTINEL, async () => {
+  await withRejectingFetch(rejection, async () => {
     const thrown = await assertRejects(() => run("getMe", {}, ctx));
+    const message = (thrown as Error).message;
     assert(
-      thrown === SENTINEL,
-      "the exact same rejection object must propagate unchanged — no wrapping, no redaction, no substitution",
+      message.includes(`${API_BASE}/bot<redacted>/getMe`),
+      `expected the redacted URL segment in the thrown message, got: ${message}`,
+    );
+    assert(
+      !message.includes(TOKEN),
+      `raw token must never appear in the thrown message, got: ${message}`,
+    );
+    // round-2 self-review (code-review phase): `cause` must NEVER be the raw
+    // rejection object — Deno.inspect()/console.log()/the uncaught-error
+    // printer all walk and print `cause` (including its `.stack`, whose
+    // first line embeds the message), so attaching the original error
+    // as-is would silently reopen the exact leak this mapper exists to
+    // close. Assert both that `cause` is redacted AND that the full
+    // Deno.inspect() rendering of the thrown error never contains the raw
+    // token — an end-to-end guard against exactly the vulnerability found
+    // during this suite's own code review.
+    const cause = (thrown as Error).cause;
+    assert(cause !== rejection, "cause must not be the raw rejection object");
+    assert(cause instanceof Error, "cause should still be Error-shaped");
+    assert(
+      !(cause as Error).message.includes(TOKEN),
+      `raw token must never appear in cause.message, got: ${
+        (cause as Error).message
+      }`,
+    );
+    const inspected = Deno.inspect(thrown);
+    assert(
+      !inspected.includes(TOKEN),
+      `raw token must never appear anywhere in Deno.inspect(thrown), got: ${inspected}`,
     );
   });
 });
 
-Deno.test("HONEST GAP pin: the SAME no-redaction propagation holds through the multipart branch (telegramMultipart), not just telegramJson", async () => {
+Deno.test("FIXED: the SAME redaction holds through the multipart branch (telegramMultipart), not just telegramJson", async () => {
   // The test above only drives getMe (telegramJson). telegramMultipart has
-  // its OWN independent `await fetch(...)` call with no try/catch, so the
-  // no-redaction claim must be pinned there too, not just asserted in a
-  // comment — round-1 adversarial follow-up. Deno.readFile is stubbed to
-  // succeed (the multipart branch must reach its fetch call at all), then
-  // fetch itself is stubbed to reject with a fresh neutral sentinel.
-  const SENTINEL = new Error(
-    "NEUTRAL_MULTIPART_FETCH_REJECTION_SENTINEL_NOT_A_TOKEN",
+  // its OWN independent `await fetch(...)` call, now wrapped with the same
+  // try/catch redact-rethrow, so the fix must be pinned there too, not just
+  // asserted in a comment. Deno.readFile is stubbed to succeed (the
+  // multipart branch must reach its fetch call at all), then fetch itself is
+  // stubbed to reject with a fresh token-bearing rejection.
+  const rejection = new Error(
+    `error sending request for url (${API_BASE}/bot${TOKEN}/sendPhoto): connection reset`,
   );
   const { ctx } = makeCtx();
   const bytes = new Uint8Array([1, 2, 3]);
   await withReadFileStub(bytes, async () => {
-    await withRejectingFetch(SENTINEL, async () => {
+    await withRejectingFetch(rejection, async () => {
       const thrown = await assertRejects(
         () => run("sendPhoto", { photo: "/tmp/local/cat.png" }, ctx),
       );
+      const message = (thrown as Error).message;
       assert(
-        thrown === SENTINEL,
-        "telegramMultipart must also propagate a fetch rejection unchanged — no wrapping, no redaction",
+        message.includes(`${API_BASE}/bot<redacted>/sendPhoto`),
+        `expected the redacted URL segment in the thrown message, got: ${message}`,
+      );
+      assert(
+        !message.includes(TOKEN),
+        `raw token must never appear in the thrown message, got: ${message}`,
+      );
+      // Same code-review-found guard as the telegramJson test above: cause
+      // must not be the raw rejection, and nothing reachable from the
+      // thrown error (including via Deno.inspect, which the uncaught-error
+      // printer and console.log both use) may carry the raw token.
+      const cause = (thrown as Error).cause;
+      assert(
+        cause !== rejection,
+        "cause must not be the raw rejection object",
+      );
+      assert(cause instanceof Error, "cause should still be Error-shaped");
+      assert(
+        !(cause as Error).message.includes(TOKEN),
+        `raw token must never appear in cause.message, got: ${
+          (cause as Error).message
+        }`,
+      );
+      const inspected = Deno.inspect(thrown);
+      assert(
+        !inspected.includes(TOKEN),
+        `raw token must never appear anywhere in Deno.inspect(thrown), got: ${inspected}`,
       );
     });
   });
+});
+
+// ---------------------------------------------------------------------------
+// redactToken unit tests
+// ---------------------------------------------------------------------------
+
+Deno.test("redactToken: replaces the live /bot<token>/ URL segment with /bot<redacted>/", () => {
+  const message =
+    `error sending request for url (${API_BASE}/bot${TOKEN}/getMe): connection reset`;
+  const result = redactToken(message, TOKEN);
+  assert(result.includes(`${API_BASE}/bot<redacted>/getMe`));
+  assert(!result.includes(TOKEN));
+});
+
+Deno.test("redactToken: a token-free message passes through unchanged (no-op)", () => {
+  const message = "Telegram API error (sendMessage): 400 Bad Request";
+  assertEquals(redactToken(message, TOKEN), message);
+});
+
+Deno.test("redactToken: a generic /bot[^/]+/ backstop scrubs a reformatted token even when it no longer matches the literal token string", () => {
+  // Defense-in-depth per round-1 adversarial review: a network stack that
+  // percent-encodes, case-folds, or otherwise reformats the token in its
+  // error text would slip past an exact-match replace. This TOKEN sentinel
+  // is deliberately alnum+hyphen-only (see the "provably non-token-shaped"
+  // test below), so percent-encoding it is a no-op — encodeURIComponent
+  // cannot itself produce a divergent string here. Lower-casing it instead
+  // gives a reformatted variant that (a) still fails the exact-token
+  // replaceAll (case-sensitive) and (b) still sits inside a /bot.../ path
+  // segment, which is exactly the shape the generic backstop must catch
+  // regardless of WHY the exact match missed it.
+  const reformattedToken = TOKEN.toLowerCase();
+  const message =
+    `error sending request for url (${API_BASE}/bot${reformattedToken}/getMe)`;
+  const result = redactToken(message, TOKEN);
+  assert(
+    result.includes(`${API_BASE}/bot<redacted>/getMe`),
+    `expected the generic backstop to scrub the reformatted token, got: ${result}`,
+  );
+  assert(!result.includes(reformattedToken));
+});
+
+Deno.test("redactToken: a non-Error/non-string rejection (e.g. DOMException, thrown string, undefined) is coerced safely before redaction", () => {
+  assert(
+    redactToken(new DOMException("aborted", "AbortError"), TOKEN).length > 0,
+  );
+  assertEquals(
+    redactToken(`network failed for /bot${TOKEN}/getMe`, TOKEN),
+    `network failed for /bot<redacted>/getMe`,
+  );
+  // A thrown non-Error value (e.g. a plain object or undefined) must coerce
+  // to a string without throwing a secondary error.
+  assert(typeof redactToken(undefined, TOKEN) === "string");
+  assert(typeof redactToken({ some: "object" }, TOKEN) === "string");
+});
+
+Deno.test("redactToken: a non-Error object whose own string form embeds the token is still redacted, not just coerced without exploding", () => {
+  // round-2 self-review (security lens): the test above only proves the
+  // non-Error coercion path returns SOME string without throwing — it never
+  // proves redaction actually still fires when that coerced string carries
+  // the token. A thrown value doesn't have to be `instanceof Error` to leak
+  // a token: some fetch/runtime shims reject with a plain object exposing a
+  // custom `toString()`. Coercion must happen BEFORE (or as part of)
+  // redaction, not instead of it.
+  const tokenBearingNonError = {
+    toString: () =>
+      `error sending request for url (${API_BASE}/bot${TOKEN}/getMe)`,
+  };
+  const result = redactToken(tokenBearingNonError, TOKEN);
+  assert(
+    result.includes(`${API_BASE}/bot<redacted>/getMe`),
+    `expected the non-Error coercion path to still redact the token, got: ${result}`,
+  );
+  assert(
+    !result.includes(TOKEN),
+    `raw token must not survive coercion of a non-Error value, got: ${result}`,
+  );
 });
 
 Deno.test("GREEN pin: an API error message (ok:false path) contains ONLY the method name, code, and description — never the token", async () => {

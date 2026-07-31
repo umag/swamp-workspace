@@ -38,15 +38,76 @@ const BotInfoSchema = z.object({
 });
 
 /**
+ * Redact the bot token from an error message. Replaces the exact
+ * `/bot<token>/` URL segment with `/bot<redacted>/`, then applies a generic
+ * `/bot[^/]+/` backstop so any `/bot.../ ` path segment is scrubbed even if
+ * the token reaches the message reformatted (re-cased, percent-encoded, or
+ * otherwise transformed) rather than byte-for-byte. `message` is `unknown`
+ * because a fetch rejection is not guaranteed to be an `Error` with a string
+ * `.message` — it may be a `DOMException`, a thrown string, or an arbitrary
+ * non-Error value (e.g. one with a custom `toString()`); every shape is
+ * coerced to a string before redaction, so no unsanitized value can pass
+ * through untouched.
+ */
+export function redactToken(message: unknown, token: string): string {
+  const text = typeof message === "string"
+    ? message
+    : message instanceof Error
+    ? message.message
+    : String(message);
+  const exactRedacted = token
+    ? text.split(`/bot${token}/`).join(
+      "/bot<redacted>/",
+    )
+    : text;
+  return exactRedacted.replace(/\/bot[^/]+\//g, "/bot<redacted>/");
+}
+
+/**
+ * Build a redacted stand-in for `cause`. `cause` must NEVER be the raw
+ * rejection: `Deno.inspect()`, `console.log`, and Deno's own uncaught-error
+ * printer all walk and print the `cause` chain (including its `.stack`,
+ * whose first line embeds the message), so attaching the original error
+ * as-is would silently reopen the exact token leak this mapper exists to
+ * close. This preserves the error's `name` (and a redacted `.stack`, when
+ * present) for downstream diagnostics without ever exposing the raw token.
+ */
+function redactedCause(err: unknown, token: string): unknown {
+  if (err instanceof Error) {
+    const redacted = new Error(redactToken(err, token));
+    redacted.name = err.name;
+    if (typeof err.stack === "string") {
+      redacted.stack = redactToken(err.stack, token);
+    }
+    return redacted;
+  }
+  return redactToken(err, token);
+}
+
+/**
  * POST a JSON-bodied request to the Bot API and unwrap the `result` envelope.
  * Throws on non-`ok` responses with the API's `error_code` + `description`.
+ * A network-layer fetch rejection (DNS failure, TLS error, connection reset)
+ * is caught and rethrown with its message redacted via `redactToken` —
+ * Deno's own fetch-rejection error text typically embeds the request URL,
+ * which carries the bot token in its `/bot<token>/` path segment. The
+ * original rejection's shape (name, redacted stack) is preserved as `cause`
+ * for downstream diagnostics — never the raw rejection itself, since that
+ * would carry the token right back through `cause`.
  */
 async function telegramJson(token, method, body) {
-  const res = await fetch(`${API_BASE}/bot${token}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/bot${token}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new Error(redactToken(err, token), {
+      cause: redactedCause(err, token),
+    });
+  }
   const data = await res.json();
   if (!data.ok) {
     throw new Error(
@@ -61,7 +122,10 @@ async function telegramJson(token, method, body) {
 /**
  * POST a multipart/form-data request uploading `filePath` under `fileField`.
  * Used by `sendPhoto` / `sendDocument` when given a local path rather than a
- * URL or `file_id`.
+ * URL or `file_id`. Its `fetch()` call is wrapped the same way as
+ * `telegramJson`'s: a rejection is caught and rethrown with its message
+ * redacted via `redactToken`, preserving a redacted `cause` (never the raw
+ * rejection — see `redactedCause`).
  */
 async function telegramMultipart(token, method, fields, fileField, filePath) {
   const fileBytes = await Deno.readFile(filePath);
@@ -72,10 +136,17 @@ async function telegramMultipart(token, method, fields, fileField, filePath) {
   }
   form.append(fileField, new Blob([fileBytes]), fileName);
 
-  const res = await fetch(`${API_BASE}/bot${token}/${method}`, {
-    method: "POST",
-    body: form,
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/bot${token}/${method}`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (err) {
+    throw new Error(redactToken(err, token), {
+      cause: redactedCause(err, token),
+    });
+  }
   const data = await res.json();
   if (!data.ok) {
     throw new Error(
@@ -133,7 +204,7 @@ export function isLocalPath(s: string): boolean {
  */
 export const model = {
   type: "@magistr/telegram/send",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     botInfo: {
