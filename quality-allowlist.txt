@@ -10,7 +10,6 @@
 # tracked in the Phase D issue: ext-quality-test-backfill.
 anilist-chart
 arckit
-career-kb
 fc-task-server
 firecracker
 flipper-zero
