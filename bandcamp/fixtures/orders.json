@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "sale_item_id": "si_fixture_001",
+      "payment_id": 500001,
+      "order_date": "2024-03-07T09:15:00Z",
+      "buyer_name": "Fixture Buyer One",
+      "payment_state": "paid",
+      "sku": "FIX-LP-001"
+    },
+    {
+      "sale_item_id": "si_fixture_002",
+      "payment_id": 500002,
+      "order_date": "2024-03-08T11:45:00Z",
+      "buyer_name": "Fixture Buyer Two",
+      "payment_state": "refunded",
+      "sku": "FIX-LP-001"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "package_id": 9001,
+      "title": "Fixture Vinyl LP",
+      "album_title": "Fixture Static Dreams",
+      "quantity_available": 50,
+      "quantity_sold": 12,
+      "price": 25,
+      "currency": "USD",
+      "sku": "FIX-LP-001"
+    }
+  ]
+}

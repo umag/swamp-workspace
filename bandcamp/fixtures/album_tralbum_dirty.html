@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<title>Fixture Dirty Tralbum Album | Fixture Corrupt Artist</title>
+<!-- No JSON-LD at all on this page -- title / artist / releaseDate / artUrl
+     / about must all come from the (absent-in-this-fixture) DOM fallback
+     selectors, i.e. resolve to empty strings, so this fixture isolates the
+     TralbumData-corruption behavior cleanly. -->
+</head>
+<body>
+<!--
+  Pins the "TralbumData `//`-strip corruption" bug (bandcamp-latent-bugs
+  #3): the source's cleanup regex `.replace(/\/\/.*/g, "")` strips from the
+  FIRST "//" occurrence through the end of the (single) line -- intended to
+  remove `//`-style JS comments, but Bandcamp's real TralbumData is emitted
+  as ONE long minified line, so this also nukes the "//" inside any
+  "https://" value it contains, deleting everything after it (including the
+  JSON's own closing brackets). The line below ALSO carries an early
+  trailing comma (`"Fixture Dirty Current",}`) to show the source's
+  trailing-comma cleanup (`.replace(/,\s*}/g, "}")`) is exercised on the
+  surviving prefix -- but it cannot save the object, because the tail
+  carrying the matching closing brackets was already deleted by the
+  `//`-strip. JSON.parse throws on the truncated remainder; the catch block
+  swallows it silently, leaving `tralbum = {}` and therefore `tracks = []`.
+  Regenerating this fixture with a JSON pretty-printer (multi-line) would
+  dodge the bug entirely -- it must stay single-line. THIS FILE IS LISTED IN
+  deno.json's fmt.exclude so `deno fmt` never reformats/multi-lines it.
+-->
+<script>
+var TralbumData = {"current":{"title":"Fixture Dirty Current",},"trackinfo":[{"track_num":1,"title":"Fixture Corrupt Track","duration":180,"url":"https://forceclosed.example.com/track/fixture-corrupt-track"}]};
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "bands": [
+    {
+      "band_id": 1000001,
+      "name": "Fixture Aurora Label",
+      "subdomain": "fixtureauroralabel",
+      "member_bands": [
+        {
+          "band_id": 1000002,
+          "name": "Fixture Aurora Sub Act",
+          "subdomain": "fixtureaurorasubact"
+        }
+      ]
+    },
+    {
+      "band_id": 1000003,
+      "name": "Fixture Nightfall Solo",
+      "subdomain": "fixturenightfallsolo"
+    }
+  ]
+}

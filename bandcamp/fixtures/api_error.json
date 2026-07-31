@@ -1,0 +1,5 @@
+{
+  "ok": false,
+  "error": "invalid_client",
+  "error_description": "Fixture invalid client credentials error."
+}

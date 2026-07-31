@@ -1,0 +1,6 @@
+{
+  "ok": true,
+  "access_token": "fixture-access-token-alpha",
+  "expires_in": 3600,
+  "refresh_token": "fixture-refresh-token-alpha"
+}
