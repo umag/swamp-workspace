@@ -10,15 +10,11 @@
 # tracked in the Phase D issue: ext-quality-test-backfill.
 anilist-chart
 arckit
-career-kb
 firecracker
 flipper-zero
-good-planning
 issue-lifecycle
 jscad-cad
 jscad-stl-slicer
 jscad-stl-validator
-music-library
 obsidian-vault
-obsidian-yt-archiver
 swamp-go-brr

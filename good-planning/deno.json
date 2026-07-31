@@ -1,7 +1,8 @@
 {
   "tasks": {
-    "test": "deno test extensions/models/good_planning.test.ts",
-    "check": "deno check extensions/models/good_planning.ts extensions/models/good_planning.test.ts",
+    "test": "deno test --allow-env=FC_NUM_RUNS extensions/models/",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/good_planning_property_test.ts",
+    "check": "deno check extensions/models/*.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
