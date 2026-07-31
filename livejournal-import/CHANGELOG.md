@@ -1,5 +1,91 @@
 # Changelog
 
+## 2026.07.31.1
+
+Fix for latent bug LB1 (SSRF via image `src`, HIGH) tracked in the LOCAL
+`livejournal-import-latent-bugs` issue-lifecycle model (NEVER filed to the
+swamp.club Lab -- see CLAUDE.md's anti-bypass rule), plus a model upgrade-chain
+repair and a quality-ratchet un-freeze. `model.version` and `manifest.yaml` both
+bump `2026.07.16.2` -> `2026.07.31.1`.
+
+- **SSRF fix**: added `isAllowedImageHost(imageUrl, journalUrl)`, a pure
+  allowlist predicate replacing the old denylist-only filtering. An image URL is
+  fetched only if it uses `http(s)`, is NOT an IP-literal host
+  (dotted-decimal/decimal/hex IPv4, and any IPv6 form including compressed and
+  IPv4-mapped -- `new URL().hostname` normalization is relied on, not substring
+  matching), and its host is either a known LiveJournal media CDN
+  (`*.livejournal.com`/`*.livejournal.net`, suffix-anchored) or shares the
+  configured journal's registrable domain (a conservative last-two-labels
+  approximation, not full public-suffix-list parsing -- the journal host is
+  operator-supplied trusted input). Applied to BOTH image-collection paths in
+  `parsePost`: the `<img src>` path (the existing chrome denylist for
+  `userpic`/`pixel`/`spacer`/`stat.livejournal` is kept as a secondary
+  exclusion) and the wrapped `<a href>` path, which was previously UNGUARDED by
+  any check at all -- a second SSRF entry point.
+- **Redirect hardening**: the image-download fetch now passes
+  `redirect: "manual"` and re-validates the allowlist at every hop (bounded to
+  5), closing the pivot where an allowlisted host 30x-redirects to an internal
+  target. Reuses the same `isAllowedImageHost` for redirect targets as for the
+  initial URL -- no separate/weaker check.
+- **Behavior change**: an image whose host neither shares the journal's
+  registrable domain nor is a known LiveJournal media CDN is no longer imported
+  (silently dropped, matching the prior denylist's silent-drop semantics --
+  `result.errors` stays empty). A journal that embeds off-domain images (e.g.
+  Photobucket/Imgur/a personal server) will lose those images from imported
+  notes. This is the intended SSRF hardening.
+- **Accepted residual**: DNS-rebinding and allowlisted-suffix-collision at
+  connect time are not closed by hostname allowlisting alone -- Deno's `fetch`
+  offers no connect-time IP validation hook. `fetchWithRetry` (index/post crawl)
+  also keeps default redirect-follow, since `journalUrl` is
+  operator-supplied/trusted input, narrower and out of scope here.
+- **Accepted residual, elevated for operator awareness**: `journalApex`'s
+  last-two-labels registrable-domain approximation (not a full
+  public-suffix-list algorithm -- see the code comment above `journalApex` in
+  `livejournal_import.ts`) misclassifies journals hosted on a multi-label public
+  suffix or a shared/wildcard-DNS hosting platform (e.g. `co.uk`, `github.io`,
+  `s3.amazonaws.com`, `sslip.io`/`nip.io`-style services that resolve an
+  IP-encoded hostname to that literal IP via a normal A record). For such a
+  `journalUrl`, the derived apex (e.g. `sslip.io`) is shared with every other
+  tenant on that platform, so a post-body image pointing at another host under
+  the same apex is incorrectly allowed. **Operators importing a journal hosted
+  on such a platform should verify no unexpected image hosts appear in imported
+  notes.** A full fix requires a real public-suffix-list dependency, which is
+  out of scope for this minimal SSRF-hardening pass (this exact tradeoff, and
+  the conservative endsWith-apex alternative to PSL-parsing, was reviewed and
+  accepted during planning; the trailing-dot FQDN-notation variant of this issue
+  -- which was a genuine bug, not an accepted tradeoff -- is fixed, not merely
+  documented, and pinned in the adversarial suite).
+- **Upgrade-chain repair**: `model.upgrades[]` previously ended at
+  `2026.03.29.1` while `model.version` was already `2026.07.16.2`, so
+  `swamp extension quality` errored on the broken chain instead of scoring the
+  extension. Added two identity lineage-repair bridge entries
+  (`2026.03.29.1 -> 2026.05.25.1 -> 2026.07.16.2`,
+  `upgradeAttributes:
+  (old) => old`, no resource schema change) plus the new
+  `2026.07.16.2 -> 2026.07.31.1` entry, so the chain is continuous and its final
+  `toVersion` equals `model.version`.
+- **Quality ratchet un-frozen**: with the chain repaired,
+  `swamp extension
+  quality manifest.yaml --json` now emits a real score (14/14
+  points, 100%, `allPassed: true`) instead of erroring. `quality.yaml`'s
+  `ratchet` is restamped from that tool output: `baselinePercentage: 0` /
+  `UNSCORABLE` -> `baselinePercentage: 100` / Grade A.
+- **Tests**: the LB1 pins in `livejournal_import_adversarial_test.ts` are
+  flipped from "an internal target IS fetched with no allowlist" to "internal
+  targets are NEVER fetched, `imageCount` is 0", plus new tests for the
+  allowlist predicate (registrable-domain match, static LJ suffixes, IP-literal
+  rejection in multiple encodings, suffix-confusion rejection, non-http(s)
+  scheme rejection), the previously-unguarded wrapped-`<a href>` path, and
+  redirect hardening (rejected internal target, positive follow-through to
+  another allowed host, and multi-hop chains). `fixtures/post_ssrf.html` gained
+  a third image: an allowlisted host that 30x-redirects to an RFC 5737
+  (TEST-NET-3) documentation-only target, exercising the redirect-rejection
+  path. All other latent-bug pins (LB2-LB8) are unchanged and stay green;
+  contract-fixture, coverage, methods, and property suites stay green because
+  every legitimate fixture image is on a host sharing the synthetic journal's
+  registrable domain. Property suite re-verified at `FC_NUM_RUNS=5000` -- no
+  idempotence flake recurrence.
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4a child
