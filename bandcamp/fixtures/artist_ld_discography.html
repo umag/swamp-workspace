@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Fixture LD Artist | Bandcamp</title>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "MusicGroup",
+      "name": "Fixture LD Artist",
+      "@id": "https://fixture-ld-artist.example.com",
+      "album": [
+        {
+          "@type": "MusicAlbum",
+          "name": "Fixture LD Album One",
+          "@id": "https://fixture-ld-artist.example.com/album/fixture-ld-album-one",
+          "datePublished": "2022-05-01",
+          "numTracks": 8
+        },
+        {
+          "@type": "MusicAlbum",
+          "name": "Fixture LD Album Two",
+          "@id": "https://fixture-ld-artist.example.com/album/fixture-ld-album-two",
+          "datePublished": "2023-09-15",
+          "track": { "numberOfItems": 5 }
+        }
+      ]
+    }
+    </script>
+  </head>
+  <body>
+    <!--
+  Deliberately NO #band-name-location / .bio-text / .band-photo /
+  .popupImage DOM elements on this page -- parseArtistPage's `name` falls
+  back to `ld.name` only when the DOM selector is empty (unlike
+  parseAlbumPage, which prefers JSON-LD FIRST); location/bio/imageUrl have
+  NO ld-fallback at all in the source and must resolve to "" here. This
+  isolates the ld-vs-DOM discography precedence this fixture exists to pin:
+  a DOM #music-grid IS present below with a DIFFERENT album, and
+  discographyFromLd (non-empty) must win over it.
+-->
+    <ol id="music-grid">
+      <li class="music-grid-item">
+        <a href="https://fixture-ld-artist.example.com/album/dom-should-lose"><p
+            class="title"
+          >
+            DOM Album Should Lose
+          </p></a>
+      </li>
+    </ol>
+  </body>
+</html>

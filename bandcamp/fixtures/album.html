@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Fixture Static Dreams | Fixture Aurora Band</title>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "MusicAlbum",
+      "name": "Fixture Static Dreams",
+      "byArtist": { "@type": "MusicGroup", "name": "Fixture Aurora Band" },
+      "datePublished": "2024-03-02",
+      "image": "https://f4.bcbits.example.com/img/a0000000005_10.jpg",
+      "description": "A synthetic fixture description of a fictional album, used only for characterization testing of the JSON-LD extraction path.",
+      "track": {
+        "@type": "ItemList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "item": {
+              "@type": "MusicRecording",
+              "name": "Fixture Opening Track",
+              "@id": "https://fixture-aurora-band.example.com/track/fixture-opening-track",
+              "duration": "PT3M45S",
+              "recordingOf": { "name": "Fixture Opening Track" }
+            }
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "item": {
+              "@type": "MusicRecording",
+              "name": "Fixture Closing Track",
+              "@id": "https://fixture-aurora-band.example.com/track/fixture-closing-track",
+              "duration": "PT4M02S",
+              "recordingOf": { "name": "Fixture Closing Track" }
+            }
+          }
+        ]
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <!--
+  Deliberate DOM-fallback content that must NOT win: parseAlbumPage prefers
+  JSON-LD (ld.name / ld.byArtist.name / ld.datePublished / ld.image /
+  ld.description) over every one of these DOM selectors whenever the ld
+  script parses successfully. This fixture pins that precedence.
+-->
+    <div id="name-section">
+      <h2 class="trackTitle">DOM Fallback Title Must Not Win</h2>
+    </div>
+    <div id="band-name-location">
+      <span class="title">DOM Fallback Artist Must Not Win</span>
+    </div>
+    <div class="tralbumData tralbum-credits">
+      <meta itemprop="datePublished" content="2020-01-01">
+    </div>
+    <div class="popupImage">
+      <a href="#"><img
+          src="https://f4.bcbits.example.com/img/dom-fallback-should-not-win.jpg"
+        ></a>
+    </div>
+    <div class="tralbumData tralbum-about">
+      DOM fallback about text must not win.
+    </div>
+    <div class="tralbumData tralbum-tags">
+      <a class="tag" href="/tag/ambient">ambient</a>
+      <a class="tag" href="/tag/drone">drone</a>
+    </div>
+  </body>
+</html>

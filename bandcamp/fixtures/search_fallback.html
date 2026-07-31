@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Fixture Bandcamp search results (legacy .result-items markup)</title>
+  </head>
+  <body>
+    <!--
+  No `.searchresult.data-search` items at all -- this page uses the older
+  `.result-items li` markup with `.itemurl a` (not `.heading a`) anchors, so
+  parseSearchResults must fall through to its
+  `doc.querySelectorAll(".result-items li")` branch and its
+  `item.querySelector(".itemurl a")` OR-fallback for the anchor.
+  "of 3 results" is present in the page text even though only 2 <li> items
+  are actually rendered here -- a real Bandcamp result-count/rendered-count
+  mismatch this fixture deliberately preserves.
+-->
+    <p class="messecondary">Showing page 1 of 1, of 3 results</p>
+    <ul class="result-items">
+      <li>
+        <div class="itemurl">
+          <a
+            href="https://fixture-legacy-artist.example.com/track/fixture-legacy-track-one"
+          >Fixture Legacy Track One</a>
+        </div>
+        <div class="subhead">by Fixture Legacy Artist</div>
+      </li>
+      <li>
+        <div class="itemurl">
+          <a
+            href="https://fixture-legacy-artist.example.com/track/fixture-legacy-track-two"
+          >Fixture Legacy Track Two</a>
+        </div>
+        <div class="subhead">by Fixture Legacy Artist</div>
+      </li>
+    </ul>
+  </body>
+</html>

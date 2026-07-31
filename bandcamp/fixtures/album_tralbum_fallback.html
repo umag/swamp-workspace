@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- TralbumData below is single-line, matching real Bandcamp output (see
+     PROVENANCE.md). This file is listed in deno.json's fmt.exclude so
+     `deno fmt` never pretty-prints it across multiple lines. -->
+<html>
+<head>
+<title>Fixture Tralbum Fallback Album | Fixture Nightfall</title>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "MusicAlbum",
+  "name": "Fixture Tralbum Fallback Album",
+  "byArtist": { "@type": "MusicGroup", "name": "Fixture Nightfall" },
+  "datePublished": "2023-11-11",
+  "image": "https://f4.bcbits.example.com/img/a0000000006_10.jpg",
+  "description": "A synthetic fixture album whose JSON-LD carries no track list at all, exercising the TralbumData trackinfo fallback path."
+}
+</script>
+</head>
+<body>
+<div class="tralbumData tralbum-tags">
+  <a class="tag" href="/tag/synthwave">synthwave</a>
+</div>
+<script>
+var TralbumData = {"current":{"title":"Fixture Tralbum Fallback Album"},"trackinfo":[{"track_num":1,"title":"Fixture Track One","duration":225},{"track_num":2,"title":"Fixture Track Two","duration":63}]};
+</script>
+</body>
+</html>

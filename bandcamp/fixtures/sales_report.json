@@ -1,0 +1,20 @@
+{
+  "report": [
+    {
+      "item_type": "a",
+      "item_name": "Fixture Static Dreams",
+      "artist": "Fixture Aurora Band",
+      "currency": "USD",
+      "amount_paid": 7,
+      "date": "2024-03-05T10:00:00Z"
+    },
+    {
+      "item_type": "p",
+      "item_name": "Fixture Aurora Band",
+      "artist": "Fixture Aurora Band",
+      "currency": "EUR",
+      "amount_paid": 5,
+      "date": "2024-03-06T14:30:00Z"
+    }
+  ]
+}

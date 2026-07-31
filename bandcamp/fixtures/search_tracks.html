@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+  <head><title>Fixture Bandcamp search results (tracks)</title></head>
+  <body>
+    <div class="pagination">Showing 1-1 of 1 results</div>
+    <ul class="results">
+      <li class="searchresult data-search">
+        <div class="art">
+          <img src="https://f4.bcbits.example.com/img/a0000000004_2.jpg">
+        </div>
+        <div class="heading">
+          <a
+            href="https://fixture-aurora-band.example.com/track/fixture-opening-track"
+          >Fixture Opening Track</a>
+        </div>
+        <!--
+      Deliberate characterization, not one of the 7 tracked bugs: the
+      byMatch regex `/^by\s+(.+)/i` is not anchored to stop before "from",
+      so for a track subhead of the form "by X from Y" the parsed `artist`
+      field captures the ENTIRE remainder "X from Y", not just "X". A
+      separate `fromMatch` regex correctly extracts "Y" into `album`. Both
+      quirky facts are pinned in the contract-fixture suite.
+    -->
+        <div class="subhead">
+          by Fixture Aurora Band from Fixture Static Dreams
+        </div>
+        <div class="length">4:12</div>
+      </li>
+    </ul>
+  </body>
+</html>
