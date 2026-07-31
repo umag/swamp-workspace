@@ -3,6 +3,34 @@
 All notable changes to `@magistr/firecracker`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## Unreleased — test/docs-only: five-suite quality backfill (Grade A)
+
+### Added
+
+- `extensions/models/firecracker_methods_test.ts`,
+  `firecracker_adversarial_test.ts`, `firecracker_coverage_test.ts`, and
+  `firecracker_property_test.ts` — the model now has full five-suite coverage
+  (contract-fixture, methods, adversarial, coverage, property-invariant-flow),
+  characterizing all 27 methods + both pre-flight checks against a stubbed
+  `Deno.Command` (SSH boundary). No behavior change — `firecracker.ts` and
+  `lib/ssh.ts` are byte-identical (frozen source; ext-quality-bf-firecracker).
+- Six known-but-unfixed issues pinned as characterization tests, tracked in the
+  LOCAL `firecracker-latent-bugs` issue-lifecycle bug model (never the Lab):
+  BUG-1 (HIGH) — unvalidated `arch` in `install_firecracker` reaches a
+  double-quoted `python3 -c` block where bash still expands `$(...)` before
+  python ever runs; BUG-2 (MED) — the fabric OAuth token appears in cleartext in
+  the local `ssh` subprocess's argv (`buildDeployFabricCmd`); BUG-3 (MED) — the
+  two internet-facing binary downloads (`install_firecracker`,
+  `install_guest_kernel`) carry no `--max-time`/`--connect-timeout`; BUG-4 (LOW)
+  — `install_guest_kernel`'s `sed "s|@@ARCH@@|$ARCH|g"` corrupts on a
+  pipe-containing `arch`; BUG-5 (LOW/info) — only `stop` prechecks VM state
+  before acting, unlike `start`/`pause`/`resume`/`send_ctrl_alt_del`; BUG-6
+  (CRITICAL, newly found by this backfill) — `build_ubuntu_rootfs` and
+  `update_agent_script` call plain `btoa(AGENT_SCRIPT)` and AGENT_SCRIPT's own
+  source contains a non-Latin1 em-dash, so BOTH methods throw unconditionally,
+  before any ssh call — a total, unconditional loss of function for 2 of the 27
+  methods.
+
 ## 2026.06.19.2 — maintenance: CI republish
 
 No code change. `2026.06.19.1` was published manually, which collided with the
