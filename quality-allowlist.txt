@@ -10,4 +10,3 @@
 # tracked in the Phase D issue: ext-quality-test-backfill.
 arckit
 obsidian-vault
-swamp-go-brr
