@@ -148,7 +148,7 @@ Deno.test("property: get-album never throws for ANY string HTML body, and its re
         try {
           await run(
             "get-album",
-            { url: "https://fixture.example.com/album/x" },
+            { url: "https://fixture.bandcamp.com/album/x" },
             ctx,
           );
         } catch {
@@ -170,7 +170,7 @@ Deno.test("property: get-artist never throws for ANY string HTML body, and its r
       let threw = false;
       await withHtmlBody(body, async () => {
         try {
-          await run("get-artist", { url: "https://fixture.example.com" }, ctx);
+          await run("get-artist", { url: "https://fixture.bandcamp.com" }, ctx);
         } catch {
           threw = true;
         }
@@ -245,7 +245,11 @@ async function aboutFor(text: string): Promise<string> {
   const html =
     `<html><body><div class="tralbumData tralbum-about">${text}</div></body></html>`;
   await withHtmlBody(html, async () => {
-    await run("get-album", { url: "https://fixture.example.com/album/x" }, ctx);
+    await run(
+      "get-album",
+      { url: "https://fixture.bandcamp.com/album/x" },
+      ctx,
+    );
   });
   return written[0].payload.about as string;
 }
@@ -281,7 +285,7 @@ Deno.test("property: a search-artist result's url, fed into get-artist, always y
       arbSafeText,
       fc.stringMatching(/^fixture-[a-z0-9-]{1,20}$/),
       async (title, subdomainSlug) => {
-        const url = `https://${subdomainSlug}.example.com`;
+        const url = `https://${subdomainSlug}.bandcamp.com`;
         const searchHtml = renderSearchHtml([{ title, href: url }]);
         const artistHtml =
           `<html><body><p id="band-name-location"><span class="title">${title}</span></p></body></html>`;

@@ -20,23 +20,42 @@ const API_BASE = "https://bandcamp.com/api";
 const TOKEN_URL = "https://bandcamp.com/oauth_token";
 
 // --- token cache ---
-let cachedToken:
-  | { token: string; expiresAt: number; refreshToken: string }
-  | null = null;
+// Keyed on credential identity (clientId + clientSecret) so that two swamp
+// instances of @magistr/bandcamp configured with DIFFERENT OAuth credentials
+// but sharing one running process (one extension bundle load) never bleed a
+// bearer/refresh token across identities (bandcamp-latent-bugs #2). A single
+// credential always maps to the same key, so the time-based validity check,
+// the refresh_token branch, and the write-back are all unchanged for the
+// common single-instance case.
+const tokenCache = new Map<
+  string,
+  { token: string; expiresAt: number; refreshToken: string }
+>();
+
+function tokenCacheKey(clientId: string, clientSecret: string): string {
+  // JSON-array serialization is collision-proof for any pair of strings
+  // (unlike a raw "::"-joined separator, which a clientId/clientSecret
+  // containing colons could exploit to collide with a DIFFERENT pair --
+  // e.g. ("a::", "b") and ("a:", ":b") would otherwise both key to
+  // "a::::b").
+  return JSON.stringify([clientId, clientSecret]);
+}
 
 async function getToken(clientId: string, clientSecret: string) {
   const now = Date.now();
-  if (cachedToken && cachedToken.expiresAt > now + 60000) {
-    return cachedToken.token;
+  const key = tokenCacheKey(clientId, clientSecret);
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresAt > now + 60000) {
+    return cached.token;
   }
 
   const body = new URLSearchParams();
   body.set("client_id", clientId);
   body.set("client_secret", clientSecret);
 
-  if (cachedToken?.refreshToken) {
+  if (cached?.refreshToken) {
     body.set("grant_type", "refresh_token");
-    body.set("refresh_token", cachedToken.refreshToken);
+    body.set("refresh_token", cached.refreshToken);
   } else {
     body.set("grant_type", "client_credentials");
   }
@@ -61,12 +80,13 @@ async function getToken(clientId: string, clientSecret: string) {
     );
   }
 
-  cachedToken = {
+  const entry = {
     token: data.access_token,
     expiresAt: now + (data.expires_in || 3600) * 1000,
-    refreshToken: data.refresh_token || cachedToken?.refreshToken || "",
+    refreshToken: data.refresh_token || cached?.refreshToken || "",
   };
-  return cachedToken.token;
+  tokenCache.set(key, entry);
+  return entry.token;
 }
 
 async function bcPost(
@@ -100,17 +120,77 @@ async function bcPost(
 
 // --- HTML scraping helpers ---
 
-async function fetchPage(url: string) {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; SwampBot/1.0)",
-      Accept: "text/html",
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${url}: ${response.status}`);
+const MAX_REDIRECT_HOPS = 5;
+
+/**
+ * SSRF guard (bandcamp-latent-bugs #1): only bandcamp.com or a
+ * *.bandcamp.com subdomain may ever be fetched. Rejects unparseable URLs,
+ * non-http(s) protocols, and any other host outright -- including
+ * link-local/loopback targets and userinfo tricks (new URL().hostname
+ * already normalizes "bandcamp.com@169.254.169.254" to the real internal
+ * host, which is then rejected).
+ */
+function assertAllowedHost(rawUrl: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Refusing to fetch: invalid URL "${rawUrl}"`);
   }
-  return response.text();
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `Refusing to fetch ${rawUrl}: unsupported protocol "${parsed.protocol}"`,
+    );
+  }
+  let hostname = parsed.hostname.toLowerCase();
+  if (hostname.endsWith(".")) {
+    hostname = hostname.slice(0, -1);
+  }
+  const allowed = hostname === "bandcamp.com" ||
+    hostname.endsWith(".bandcamp.com");
+  if (!allowed) {
+    throw new Error(
+      `Refusing to fetch ${rawUrl}: host "${hostname}" is not bandcamp.com or a *.bandcamp.com subdomain`,
+    );
+  }
+  return parsed;
+}
+
+async function fetchPage(url: string) {
+  let current = assertAllowedHost(url).toString();
+  for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+    const response = await fetch(current, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; SwampBot/1.0)",
+        Accept: "text/html",
+      },
+      redirect: "manual",
+    });
+    if (response.status >= 300 && response.status < 400) {
+      if (hop === MAX_REDIRECT_HOPS) {
+        throw new Error(
+          `Failed to fetch ${current}: too many redirects (>${MAX_REDIRECT_HOPS})`,
+        );
+      }
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new Error(
+          `Failed to fetch ${current}: ${response.status} redirect with no Location header`,
+        );
+      }
+      // Re-validate the redirect target's host on EVERY hop -- a 3xx bounce
+      // to a link-local/loopback target must be rejected exactly like a
+      // direct request to it.
+      current = assertAllowedHost(new URL(location, current).toString())
+        .toString();
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${current}: ${response.status}`);
+    }
+    return response.text();
+  }
+  throw new Error(`Failed to fetch ${current}: too many redirects`);
 }
 
 function parseSearchResults(html: string, itemType: string) {
@@ -450,7 +530,7 @@ const TaskResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/bandcamp",
-  version: "2026.07.16.2",
+  version: "2026.07.31.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     search: {
