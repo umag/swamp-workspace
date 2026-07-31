@@ -264,7 +264,7 @@ Deno.test("contract: album.html -- JSON-LD wins over DOM for title/artist/releas
     () =>
       run("get-album", {
         url:
-          "https://fixture-aurora-band.example.com/album/fixture-static-dreams",
+          "https://fixture-aurora-band.bandcamp.com/album/fixture-static-dreams",
       }, ctx) as Promise<void>,
   );
   const res = written.find((w) => w.spec === "albumDetail")!;
@@ -312,7 +312,7 @@ Deno.test("contract: album_tralbum_fallback.html -- no ld.track -> falls back to
     () =>
       run("get-album", {
         url:
-          "https://fixture-nightfall.example.com/album/fixture-tralbum-fallback",
+          "https://fixture-nightfall.bandcamp.com/album/fixture-tralbum-fallback",
       }, ctx) as Promise<void>,
   );
   const res = written.find((w) => w.spec === "albumDetail")!;
@@ -341,7 +341,7 @@ Deno.test("contract: album_tralbum_dirty.html -- a //-corrupted TralbumData blob
     () =>
       run("get-album", {
         url:
-          "https://fixture-corrupt-artist.example.com/album/fixture-dirty-tralbum",
+          "https://fixture-corrupt-artist.bandcamp.com/album/fixture-dirty-tralbum",
       }, ctx) as Promise<void>,
   );
   const res = written.find((w) => w.spec === "albumDetail")!;
@@ -363,7 +363,7 @@ Deno.test("contract: artist_grid.html -- no JSON-LD -> name/location/bio/imageUr
     () =>
       run(
         "get-artist",
-        { url: "https://fixture-grid-artist.example.com" },
+        { url: "https://fixture-grid-artist.bandcamp.com" },
         ctx,
       ) as Promise<
         void
@@ -413,7 +413,7 @@ Deno.test("contract: artist_ld_discography.html -- ld.album (non-empty) wins ove
     () =>
       run(
         "get-artist",
-        { url: "https://fixture-ld-artist.example.com" },
+        { url: "https://fixture-ld-artist.bandcamp.com" },
         ctx,
       ) as Promise<
         void
@@ -453,13 +453,13 @@ Deno.test("contract: get-track reuses parseAlbumPage and writes to the albumDeta
     () =>
       run("get-track", {
         url:
-          "https://fixture-aurora-band.example.com/track/fixture-opening-track",
+          "https://fixture-aurora-band.bandcamp.com/track/fixture-opening-track",
       }, ctx) as Promise<void>,
   );
   const res = written.find((w) => w.spec === "albumDetail")!;
   assertEquals(
     res.name,
-    "fixture-aurora-band-example-com-track-fixture-opening-track",
+    "fixture-aurora-band-bandcamp-com-track-fixture-opening-track",
   );
   assertEquals(res.payload.title, "Fixture Static Dreams");
   assertEquals(res.payload.trackCount, 2);

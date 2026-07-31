@@ -3,25 +3,33 @@
  * HTML, non-200 vs wrong-content-type responses, control bytes, and a
  * mechanical fixtures-secret-scan over bandcamp/fixtures/*.
  *
- * bandcamp.ts is UNMODIFIED -- every test here PINS current behavior
- * (including behavior that is a documented latent bug) rather than
- * proposing a fix. This suite is also where the 7 latent bugs tracked in the
- * LOCAL `bandcamp-latent-bugs` issue-lifecycle model (NEVER filed to the
- * swamp.club Lab -- see CLAUDE.md's anti-bypass rule) are characterized as
- * failing-would-be-red-if-"fixed" pins:
- *   #1 SSRF via url arg (CRITICAL), #2 cross-instance token-cache bleed
- *   (HIGH), #3 TralbumData //-strip corruption (MEDIUM), #4 silent all-clear
- *   on parse failure (MEDIUM), #5 no fetch timeout/backoff (MEDIUM),
- *   #6 instanceName 60-char truncation collision (LOW), #7 slice() surrogate
- *   split (LOW).
+ * As of 2026.07.31.1, bandcamp.ts is FIXED for two of the 7 latent bugs
+ * tracked in the LOCAL `bandcamp-latent-bugs` issue-lifecycle model (NEVER
+ * filed to the swamp.club Lab -- see CLAUDE.md's anti-bypass rule):
+ *   #1 SSRF via url arg (CRITICAL) -- NOW FIXED: fetchPage enforces a
+ *   bandcamp.com/*.bandcamp.com host allowlist before every fetch, including
+ *   re-validation on every redirect hop.
+ *   #2 cross-instance token-cache bleed (HIGH) -- NOW FIXED: the token
+ *   cache is keyed on credential identity, so distinct clientId/clientSecret
+ *   pairs never share a cached bearer.
+ * The remaining 5 are still characterized as failing-would-be-red-if-
+ * "fixed" pins, deferred/accepted per the fix plan: #3 TralbumData //-strip
+ * corruption (MEDIUM), #4 silent all-clear on parse failure (MEDIUM), #5 no
+ * fetch timeout/backoff (MEDIUM), #6 instanceName 60-char truncation
+ * collision (LOW), #7 slice() surrogate split (LOW).
+ *
+ * Every get-artist/get-album/get-track fetch target in this file uses a
+ * *.bandcamp.com host (the new allowlist rejects *.example.com); fixture
+ * FILE content is untouched (fixtures are parsed data, never a fetch
+ * target).
  *
  * IMPORTANT -- module-global token cache: Deno isolates module state PER
- * TEST FILE (verified empirically), so `cachedToken` starts null at the top
+ * TEST FILE (verified empirically), so `tokenCache` starts empty at the top
  * of THIS file. The cross-instance-bleed test below is deliberately the
  * FIRST OAuth-touching test in this file so it observes a clean first-fetch
  * -> cache -> reuse sequence without needing FakeTime.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./bandcamp.ts";
 
 // ---------------------------------------------------------------------------
@@ -116,7 +124,7 @@ async function readHtml(name: string): Promise<string> {
 // #1 SSRF via url arg -- CRITICAL
 // ===========================================================================
 
-Deno.test("pin (bandcamp-latent-bugs #1, CRITICAL): get-artist's url arg reaches an internal/link-local target with NO host allowlist", async () => {
+Deno.test("FIXED (bandcamp-latent-bugs #1, CRITICAL): get-artist's url arg is REJECTED for an internal/link-local target -- the host allowlist blocks it before any fetch", async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [() =>
@@ -125,24 +133,28 @@ Deno.test("pin (bandcamp-latent-bugs #1, CRITICAL): get-artist's url arg reaches
         headers: { "Content-Type": "text/html" },
       })],
     async (calls) => {
-      await run(
-        "get-artist",
-        {
-          url:
-            "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
-        },
-        ctx,
+      await assertRejects(
+        () =>
+          run(
+            "get-artist",
+            {
+              url:
+                "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+            },
+            ctx,
+          ),
+        Error,
       );
-      // get-artist appends "/music" -- the SSRF target host itself is what
-      // matters, not the exact path.
-      const reached = new URL(calls[0].url);
-      assertEquals(reached.hostname, "169.254.169.254");
-      assertEquals(reached.protocol, "http:");
+      assertEquals(
+        calls.length,
+        0,
+        "the internal/link-local host must never be fetched",
+      );
     },
   );
 });
 
-Deno.test("pin (bandcamp-latent-bugs #1): get-album and get-track pass url straight to fetch, no host validation either", async () => {
+Deno.test("FIXED (bandcamp-latent-bugs #1): get-album and get-track also reject an internal/link-local url before any fetch", async () => {
   for (const methodName of ["get-album", "get-track"]) {
     const { ctx } = makeCtx();
     await withFetchStub(
@@ -152,17 +164,82 @@ Deno.test("pin (bandcamp-latent-bugs #1): get-album and get-track pass url strai
           headers: { "Content-Type": "text/html" },
         })],
       async (calls) => {
-        await run(methodName, {
-          url: "http://169.254.169.254/latest/meta-data/",
-        }, ctx);
-        assertEquals(new URL(calls[0].url).hostname, "169.254.169.254");
+        await assertRejects(
+          () =>
+            run(methodName, {
+              url: "http://169.254.169.254/latest/meta-data/",
+            }, ctx),
+          Error,
+        );
+        assertEquals(calls.length, 0);
       },
     );
   }
 });
 
-Deno.test("pin (bandcamp-latent-bugs #1): a localhost/loopback target is equally unrestricted", async () => {
+Deno.test("FIXED (bandcamp-latent-bugs #1): a localhost/loopback target is rejected the same way", async () => {
   const { ctx } = makeCtx();
+  await withFetchStub(
+    [() =>
+      new Response("<html></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      })],
+    async (calls) => {
+      await assertRejects(
+        () =>
+          run(
+            "get-album",
+            { url: "http://127.0.0.1:8080/internal-admin" },
+            ctx,
+          ),
+        Error,
+      );
+      assertEquals(calls.length, 0);
+    },
+  );
+});
+
+Deno.test("FIXED (bandcamp-latent-bugs #1): a *.bandcamp.com URL that 3xx-redirects to an internal/link-local Location is rejected on the redirect hop -- the internal host is never fetched", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [(req) => {
+      const url = new URL(req.url);
+      if (url.hostname === "fixture-artist.bandcamp.com") {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "http://169.254.169.254/latest/meta-data/",
+          },
+        });
+      }
+      return undefined;
+    }],
+    async (calls) => {
+      await assertRejects(
+        () =>
+          run(
+            "get-album",
+            { url: "https://fixture-artist.bandcamp.com/album/x" },
+            ctx,
+          ),
+        Error,
+      );
+      assertEquals(
+        calls.length,
+        1,
+        "only the initial bandcamp.com request happens -- the redirect target is never fetched",
+      );
+    },
+  );
+});
+
+Deno.test("FIXED (bandcamp-latent-bugs #1): an RFC 2606 example.com URL is rejected by get-*, while a real *.bandcamp.com URL still succeeds", async () => {
+  const { ctx } = makeCtx();
+  await assertRejects(
+    () => run("get-album", { url: "https://fixture.example.com/album/x" }, ctx),
+    Error,
+  );
   await withFetchStub(
     [() =>
       new Response("<html></html>", {
@@ -172,10 +249,10 @@ Deno.test("pin (bandcamp-latent-bugs #1): a localhost/loopback target is equally
     async (calls) => {
       await run(
         "get-album",
-        { url: "http://127.0.0.1:8080/internal-admin" },
+        { url: "https://fixture-artist.bandcamp.com/album/x" },
         ctx,
       );
-      assertEquals(new URL(calls[0].url).hostname, "127.0.0.1");
+      assertEquals(calls.length, 1);
     },
   );
 });
@@ -184,12 +261,12 @@ Deno.test("pin (bandcamp-latent-bugs #1): a localhost/loopback target is equally
 // #2 Cross-instance token-cache bleed -- HIGH (first OAuth test in this file)
 // ===========================================================================
 
-Deno.test("pin (bandcamp-latent-bugs #2, HIGH): a SECOND bandcamp instance with DIFFERENT OAuth credentials reuses the FIRST instance's cached bearer token", async () => {
-  // `cachedToken` is a bare module-level `let`, keyed ONLY on time
-  // (`cachedToken.expiresAt > now + 60000`), never on which clientId/
-  // clientSecret produced it. Two swamp model instances of @magistr/bandcamp
-  // pointed at different Bandcamp accounts, if they share one running swamp
-  // process (one extension bundle load), share this exact module state.
+Deno.test("FIXED (bandcamp-latent-bugs #2, HIGH): a SECOND bandcamp instance with DIFFERENT OAuth credentials gets its OWN token fetch and its OWN bearer -- no cross-instance bleed", async () => {
+  // `tokenCache` is now a Map keyed on credential identity (clientId +
+  // clientSecret). Two swamp model instances of @magistr/bandcamp pointed at
+  // different Bandcamp accounts, even sharing one running swamp process (one
+  // extension bundle load), each miss the other's cache entry and fetch
+  // their own token.
   const { ctx: instanceA } = makeCtx({
     clientId: "client-A",
     clientSecret: "secret-A",
@@ -205,11 +282,16 @@ Deno.test("pin (bandcamp-latent-bugs #2, HIGH): a SECOND bandcamp instance with 
       const url = new URL(req.url);
       if (url.pathname === "/oauth_token") {
         tokenFetches++;
-        return json({
-          ok: true,
-          access_token: "instance-A-bearer-token",
-          expires_in: 3600,
-          refresh_token: "instance-A-refresh-token",
+        // Echo a token DERIVED from the request's client_id, so each
+        // identity's bearer is independently distinguishable.
+        return req.clone().text().then((body) => {
+          const clientId = new URLSearchParams(body).get("client_id");
+          return json({
+            ok: true,
+            access_token: `${clientId}-bearer-token`,
+            expires_in: 3600,
+            refresh_token: `${clientId}-refresh-token`,
+          });
         });
       }
       if (url.pathname === "/api/account/1/my_bands") {
@@ -229,16 +311,16 @@ Deno.test("pin (bandcamp-latent-bugs #2, HIGH): a SECOND bandcamp instance with 
   );
   assertEquals(
     tokenFetches,
-    1,
-    "only ONE token fetch happened for TWO distinct identities",
+    2,
+    "TWO distinct identities each cause their OWN token fetch",
   );
   assertEquals(bearers.length, 2);
-  assertEquals(
-    bearers[0],
-    bearers[1],
-    "instance B's call carries instance A's bearer token -- the bleed",
+  assertEquals(bearers[0], "Bearer client-A-bearer-token");
+  assertEquals(bearers[1], "Bearer client-B-bearer-token");
+  assert(
+    bearers[0] !== bearers[1],
+    "each instance carries its OWN credential-scoped bearer token -- no bleed",
   );
-  assertEquals(bearers[1], "Bearer instance-A-bearer-token");
 });
 
 // ===========================================================================
@@ -254,7 +336,7 @@ Deno.test("pin (bandcamp-latent-bugs #3, MEDIUM): a TralbumData blob containing 
       "get-album",
       {
         url:
-          "https://fixture-corrupt-artist.example.com/album/fixture-dirty-tralbum",
+          "https://fixture-corrupt-artist.bandcamp.com/album/fixture-dirty-tralbum",
       },
       ctx,
     );
@@ -275,7 +357,7 @@ Deno.test("pin (bandcamp-latent-bugs #3): the SAME //-corruption pin holds for g
       "get-track",
       {
         url:
-          "https://fixture-corrupt-artist.example.com/track/fixture-corrupt-track",
+          "https://fixture-corrupt-artist.bandcamp.com/track/fixture-corrupt-track",
       },
       ctx,
     );
@@ -298,7 +380,7 @@ Deno.test("pin (bandcamp-latent-bugs #4, MEDIUM): malformed JSON-LD (unbalanced 
     try {
       await run(
         "get-album",
-        { url: "https://fixture.example.com/album/x" },
+        { url: "https://fixture.bandcamp.com/album/x" },
         ctx,
       );
     } catch (e) {
@@ -323,7 +405,7 @@ Deno.test("pin (bandcamp-latent-bugs #4): control bytes inside the JSON-LD scrip
     try {
       await run(
         "get-album",
-        { url: "https://fixture.example.com/album/x" },
+        { url: "https://fixture.bandcamp.com/album/x" },
         ctx,
       );
     } catch (e) {
@@ -344,7 +426,11 @@ Deno.test("script-injection inside a title element is inert (linkedom parses it 
   const html =
     `<html><body><div id="name-section"><h2 class="trackTitle">Fixture <script>alert(1)</script> Injected</h2></div></body></html>`;
   await withResponse(html, 200, "text/html", async () => {
-    await run("get-album", { url: "https://fixture.example.com/album/x" }, ctx);
+    await run(
+      "get-album",
+      { url: "https://fixture.bandcamp.com/album/x" },
+      ctx,
+    );
   });
   const res = written.find((w) => w.spec === "albumDetail")!;
   assertEquals(res.payload.title, "Fixture alert(1) Injected");
@@ -409,8 +495,8 @@ Deno.test("pin (bandcamp-latent-bugs #5): getToken's POST also carries no AbortS
 
 Deno.test("pin (bandcamp-latent-bugs #6, LOW): two distinct album URLs sharing the first 60 sanitized characters collide on the SAME albumDetail resource name", async () => {
   const sharedPrefix = "a".repeat(70); // comfortably over the 60-char slice boundary
-  const urlOne = `https://${sharedPrefix}-one.example.com`;
-  const urlTwo = `https://${sharedPrefix}-two.example.com`;
+  const urlOne = `https://${sharedPrefix}-one.bandcamp.com`;
+  const urlTwo = `https://${sharedPrefix}-two.bandcamp.com`;
   const names: string[] = [];
   for (const url of [urlOne, urlTwo]) {
     const { ctx, written } = makeCtx();
@@ -441,7 +527,11 @@ Deno.test("pin (bandcamp-latent-bugs #7, LOW): about.slice(0,500) can split a UT
     `<html><body><div class="tralbumData tralbum-about">${text}</div></body></html>`;
   const { ctx, written } = makeCtx();
   await withResponse(html, 200, "text/html", async () => {
-    await run("get-album", { url: "https://fixture.example.com/album/x" }, ctx);
+    await run(
+      "get-album",
+      { url: "https://fixture.bandcamp.com/album/x" },
+      ctx,
+    );
   });
   const about = written.find((w) => w.spec === "albumDetail")!.payload
     .about as string;
@@ -458,7 +548,7 @@ Deno.test("pin (bandcamp-latent-bugs #7): the SAME surrogate-split risk applies 
   const html = `<html><body><div class="bio-text">${text}</div></body></html>`;
   const { ctx, written } = makeCtx();
   await withResponse(html, 200, "text/html", async () => {
-    await run("get-artist", { url: "https://fixture.example.com" }, ctx);
+    await run("get-artist", { url: "https://fixture.bandcamp.com" }, ctx);
   });
   const bio = written.find((w) => w.spec === "artistDetail")!.payload
     .bio as string;
@@ -481,7 +571,7 @@ Deno.test("a non-200 response throws with status + URL (correct behavior, contra
       try {
         await run(
           "get-album",
-          { url: "https://fixture.example.com/album/x" },
+          { url: "https://fixture.bandcamp.com/album/x" },
           ctx,
         );
       } catch (e) {
@@ -491,7 +581,7 @@ Deno.test("a non-200 response throws with status + URL (correct behavior, contra
   );
   assertEquals(
     (threw as Error).message,
-    "Failed to fetch https://fixture.example.com/album/x: 504",
+    "Failed to fetch https://fixture.bandcamp.com/album/x: 504",
   );
 });
 
@@ -503,7 +593,7 @@ Deno.test("wrong content-type (a JSON body served as if it were HTML) does NOT t
     try {
       await run(
         "get-album",
-        { url: "https://fixture.example.com/album/x" },
+        { url: "https://fixture.bandcamp.com/album/x" },
         ctx,
       );
     } catch (e) {
@@ -519,7 +609,7 @@ Deno.test("wrong content-type (a JSON body served as if it were HTML) does NOT t
 Deno.test("an empty-string response body does not throw either -- every field resolves to its empty default", async () => {
   const { ctx, written } = makeCtx();
   await withResponse("", 200, "text/html", async () => {
-    await run("get-artist", { url: "https://fixture.example.com" }, ctx);
+    await run("get-artist", { url: "https://fixture.bandcamp.com" }, ctx);
   });
   const res = written.find((w) => w.spec === "artistDetail")!;
   assertEquals(res.payload.name, "");

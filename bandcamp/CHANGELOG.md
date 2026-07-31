@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026.07.31.1
+
+Fixes the CRITICAL SSRF and HIGH cross-instance OAuth token-cache bleed tracked
+in the local `bandcamp-latent-bugs` issue-lifecycle model (bugs #1 and #2 of the
+7 characterized in the wave-3 test backfill below; NEVER filed to the swamp.club
+Lab -- see CLAUDE.md's anti-bypass rule).
+
+- **SSRF (CRITICAL, bandcamp-latent-bugs #1)**: `get-artist`/`get-album`/
+  `get-track` used to pass the caller-supplied `url` straight to `fetch()` with
+  no host allowlist, so a link-local (`169.254.169.254`) or loopback
+  (`127.0.0.1`) target was reached exactly like a real Bandcamp URL. Added
+  `assertAllowedHost()`, enforced inside `fetchPage` before every fetch: only
+  `bandcamp.com` or a `*.bandcamp.com` subdomain is allowed (case-insensitive,
+  one trailing dot stripped, http/https only). `fetchPage` now fetches with
+  `redirect: "manual"` and manually follows up to 5 redirect hops, re-validating
+  the `Location` host against the same allowlist on every hop, so a 3xx bounce
+  to an internal host is rejected exactly like a direct request to it.
+  Custom-domain Bandcamp artist pages are no longer fetched -- a deliberate,
+  accepted scope narrowing.
+- **Cross-instance OAuth token-cache bleed (HIGH, bandcamp-latent-bugs #2)**:
+  the module-level `cachedToken` singleton was keyed only on `Date.now()`, never
+  on which `clientId`/`clientSecret` produced it, so two swamp instances of
+  `@magistr/bandcamp` configured with DIFFERENT OAuth credentials but sharing
+  one running swamp process silently reused each other's bearer/refresh token
+  for up to an hour. Replaced it with `tokenCache`, a `Map` keyed on credential
+  identity (`clientId` + `clientSecret`); a different identity now misses the
+  cache and fetches its own token. Behavior for a single credential (the common
+  case) is unchanged -- same key, same time-based validity check, same
+  `refresh_token` branch, same write-back.
+- No method contract, resource schema, or wire body changes. Latent bugs #3-#7
+  (TralbumData `//`-strip corruption, silent parse-failure all-clear, no fetch
+  timeout/backoff, `instanceName` truncation collision, `slice()` surrogate
+  split) remain deferred/accepted and are unaffected by this change; in
+  particular no `AbortSignal`/timeout was added anywhere (#5's pins still assert
+  `init.signal === undefined`).
+- Tests: flipped the three `bandcamp-latent-bugs #1` SSRF pins and the `#2`
+  token-bleed pin in `bandcamp_adversarial_test.ts` to assert the FIXED behavior
+  (rejection + zero fetches for internal targets; two distinct per-credential
+  token fetches); added a redirect-revalidation SSRF test and a positive
+  allowlist test (`example.com` rejected, real `*.bandcamp.com` still succeeds).
+  Migrated every get-artist/get-album/get-track fetch target from a
+  `*.example.com` host to `*.bandcamp.com` across the
+  adversarial/contract/methods/coverage/property suites (the allowlist now
+  rejects `example.com`); fixture files themselves stay byte-frozen since their
+  embedded `example.com` content is parsed data, never a fetch target.
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-3 scraper child of

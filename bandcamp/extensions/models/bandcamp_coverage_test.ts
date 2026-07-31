@@ -213,7 +213,7 @@ Deno.test("get-artist: ld.album present but an EXPLICIT empty array still falls 
   const { ctx, written } = makeCtx();
   await withHtml(
     html,
-    () => run("get-artist", { url: "https://fixture.example.com" }, ctx),
+    () => run("get-artist", { url: "https://fixture.bandcamp.com" }, ctx),
   );
   const res = written.find((w) => w.spec === "artistDetail")!;
   assertEquals(res.payload.discography, [
@@ -337,7 +337,8 @@ Deno.test("get-album: both ld.track AND TralbumData absent -> tracks resolves to
   const { ctx, written } = makeCtx();
   await withHtml(
     html,
-    () => run("get-album", { url: "https://fixture.example.com/album/x" }, ctx),
+    () =>
+      run("get-album", { url: "https://fixture.bandcamp.com/album/x" }, ctx),
   );
   const res = written.find((w) => w.spec === "albumDetail")!;
   assertEquals(res.payload.tracks, []);

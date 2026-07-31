@@ -217,16 +217,16 @@ Deno.test("search-track: happy path -- item_type=t", async () => {
 Deno.test("get-artist: bare artist URL gets '/music' appended", async () => {
   const { ctx } = makeCtx();
   await withOneHtmlResponse(`<html></html>`, 200, async (calls) => {
-    await run("get-artist", { url: "https://fixture.example.com" }, ctx);
-    assertEquals(calls[0].url, "https://fixture.example.com/music");
+    await run("get-artist", { url: "https://fixture.bandcamp.com" }, ctx);
+    assertEquals(calls[0].url, "https://fixture.bandcamp.com/music");
   });
 });
 
 Deno.test("get-artist: URL already ending in '/music' is left unchanged", async () => {
   const { ctx } = makeCtx();
   await withOneHtmlResponse(`<html></html>`, 200, async (calls) => {
-    await run("get-artist", { url: "https://fixture.example.com/music" }, ctx);
-    assertEquals(calls[0].url, "https://fixture.example.com/music");
+    await run("get-artist", { url: "https://fixture.bandcamp.com/music" }, ctx);
+    assertEquals(calls[0].url, "https://fixture.bandcamp.com/music");
   });
 });
 
@@ -235,18 +235,18 @@ Deno.test("get-artist: URL containing '/music?' (already a music-page query) is 
   await withOneHtmlResponse(`<html></html>`, 200, async (calls) => {
     await run(
       "get-artist",
-      { url: "https://fixture.example.com/music?tab=all" },
+      { url: "https://fixture.bandcamp.com/music?tab=all" },
       ctx,
     );
-    assertEquals(calls[0].url, "https://fixture.example.com/music?tab=all");
+    assertEquals(calls[0].url, "https://fixture.bandcamp.com/music?tab=all");
   });
 });
 
 Deno.test("get-artist: a trailing slash is stripped before '/music' is appended", async () => {
   const { ctx } = makeCtx();
   await withOneHtmlResponse(`<html></html>`, 200, async (calls) => {
-    await run("get-artist", { url: "https://fixture.example.com/" }, ctx);
-    assertEquals(calls[0].url, "https://fixture.example.com/music");
+    await run("get-artist", { url: "https://fixture.bandcamp.com/" }, ctx);
+    assertEquals(calls[0].url, "https://fixture.bandcamp.com/music");
   });
 });
 
@@ -262,12 +262,12 @@ Deno.test("get-album: happy path -- URL fetched verbatim, no normalization", asy
     async (calls) => {
       await run(
         "get-album",
-        { url: "https://fixture.example.com/album/x?ref=search" },
+        { url: "https://fixture.bandcamp.com/album/x?ref=search" },
         ctx,
       );
       assertEquals(
         calls[0].url,
-        "https://fixture.example.com/album/x?ref=search",
+        "https://fixture.bandcamp.com/album/x?ref=search",
       );
     },
   );
@@ -287,10 +287,10 @@ Deno.test("get-track: happy path -- URL fetched verbatim, writes to albumDetail 
     async (calls) => {
       await run(
         "get-track",
-        { url: "https://fixture.example.com/track/y" },
+        { url: "https://fixture.bandcamp.com/track/y" },
         ctx,
       );
-      assertEquals(calls[0].url, "https://fixture.example.com/track/y");
+      assertEquals(calls[0].url, "https://fixture.bandcamp.com/track/y");
     },
   );
   const res = written.find((w) => w.spec === "albumDetail")!;
