@@ -3,17 +3,22 @@
  * script-injection text, huge/nested input, TralbumData //-strip URL
  * corruption), raw MBID path-interpolation injection (concrete captured-URL
  * assertions — a `new URL()` normalization spike showed an UNENCODED `../`
- * actually COLLAPSES the path, escaping even the `/ws/2/` prefix), bandcampUrl
- * SSRF (fetchPage has no host allowlist — any URL, including an internal
- * address, is fetched verbatim), no-AbortSignal on either fetch site,
- * 503-throws-without-honoring-Retry-After, unvalidated-response
- * type-confusion (no safeParse — a truthy non-array `data.<key>` sails
- * through unchanged, mirroring porkbun's `records || []` pin), and a
- * fixtures-secret-scan backstop over both the JSON and Bandcamp HTML corpus.
+ * actually COLLAPSES the path, escaping even the `/ws/2/` prefix),
+ * no-AbortSignal on either fetch site, 503-throws-without-honoring-Retry-After,
+ * unvalidated-response type-confusion (no safeParse — a truthy non-array
+ * `data.<key>` sails through unchanged, mirroring porkbun's `records || []`
+ * pin), and a fixtures-secret-scan backstop over both the JSON and Bandcamp
+ * HTML corpus.
  *
- * musicbrainz.ts is UNMODIFIED — every test here PINS current behavior
+ * musicbrainz.ts is UNMODIFIED except for the bandcampUrl SSRF fix
+ * (musicbrainz-ssrf-and-latent-bugs): fetchPage now requires an https
+ * bandcamp.com/*.bandcamp.com URL via assertBandcampUrl, applied before any
+ * network call and re-applied on every manual redirect hop. The two SSRF
+ * tests below assert the FIX (rejection + zero egress), not the vulnerable
+ * behavior; the positive allowlist/redirect/scheme tests that follow them
+ * are new. Every other test in this file still PINS current behavior
  * (including behavior that is a real, documented gap) rather than proposing
- * a fix. Each pinned gap is reported for separate filing under
+ * a fix — those remaining pinned gaps are reported for separate filing under
  * musicbrainz-ssrf-and-latent-bugs, never fixed here.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
@@ -505,38 +510,41 @@ Deno.test("seed-URL injection: album title/artist with '&' and '=' are safely pe
 });
 
 // ---------------------------------------------------------------------------
-// bandcampUrl SSRF — no host allowlist on either Bandcamp fetch site
+// bandcampUrl SSRF — assertBandcampUrl host/scheme allowlist inside fetchPage
+// (musicbrainz-ssrf-and-latent-bugs fix). These two tests used to PIN the
+// vulnerable behavior (internal address fetched verbatim); they now assert
+// the fix: rejection BEFORE any network call, with zero fetch egress.
 // ---------------------------------------------------------------------------
 
-Deno.test("SSRF: fetchPage(bandcampUrl) has NO host allowlist — an internal/metadata-service address is fetched VERBATIM", async () => {
+Deno.test("SSRF FIX: fetchPage(bandcampUrl) rejects a non-Bandcamp host (internal/metadata-service address) BEFORE any fetch — zero network egress", async () => {
   const { ctx } = makeCtx();
   const internalUrl =
     "http://169.254.169.254/latest/meta-data/iam/security-credentials/";
   await withFetchStub(
     [() => html("<html><body>internal</body></html>")],
     async (calls) => {
-      await run("seed-from-bandcamp", { bandcampUrl: internalUrl }, ctx);
+      await assertRejects(
+        () => run("seed-from-bandcamp", { bandcampUrl: internalUrl }, ctx),
+      );
       assertEquals(
-        calls[0].url,
-        internalUrl,
-        "no scheme/host validation — the exact SSRF target string is what gets fetched",
+        calls.length,
+        0,
+        "the host allowlist must reject BEFORE any fetch call — no egress to the internal target",
       );
     },
   );
 });
 
-Deno.test("SSRF: find-missing's artist-discography fetch also has no host allowlist — an internal address is fetched verbatim (network-less test task is the actual escape backstop, not this model)", async () => {
+Deno.test("SSRF FIX: find-missing's artist-discography fetch rejects a non-Bandcamp bandcampUrl (internal address) BEFORE any fetch — zero network egress", async () => {
   using time = new FakeTime();
   const { ctx } = makeCtx();
   const internalUrl = "http://internal.corp.local:8080/admin";
-  // Host-routed by exclusion: musicbrainz.org gets a valid empty
-  // release-group page; EVERYTHING ELSE (including the attacker-controlled
-  // "internal.corp.local" bandcampUrl — deliberately NOT a *.bandcamp.com
-  // host, since fetchPage has no host allowlist at all) gets the internal
-  // HTML stub. This way the call completes cleanly with nothing swallowed —
-  // a bare `.catch(() => {})` here would hide the fact that mbFetch's
-  // `response.json()` throws a SyntaxError on an HTML body, muddying what
-  // this pin actually proves (round-2 review finding).
+  // Host-routed by exclusion: musicbrainz.org would get a valid empty
+  // release-group page if reached; EVERYTHING ELSE (including the
+  // attacker-controlled "internal.corp.local" bandcampUrl) gets the internal
+  // HTML stub. With the fix, the bcUrl allowlist check rejects before the
+  // bandcamp fetch even happens, so no MusicBrainz call is ever reached
+  // either — assert zero calls of ANY kind.
   await withFetchStub(
     [
       (req) =>
@@ -551,13 +559,189 @@ Deno.test("SSRF: find-missing's artist-discography fetch also has no host allowl
     (calls) =>
       drainAndAwait(
         time,
-        run("find-missing", {
-          bandcampUrl: internalUrl,
-          artistMbid: "00000000-0000-0000-0000-000000000001",
-        }, ctx).then(() => {
-          assertEquals(calls[0].url, `${internalUrl}/music`);
+        assertRejects(
+          () =>
+            run("find-missing", {
+              bandcampUrl: internalUrl,
+              artistMbid: "00000000-0000-0000-0000-000000000001",
+            }, ctx),
+        ).then(() => {
+          assertEquals(
+            calls.length,
+            0,
+            "the host allowlist must reject the internal bcUrl BEFORE any fetch — no egress at all, not even to musicbrainz.org",
+          );
         }),
       ),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Positive guard tests — the allowlist must not regress any legit Bandcamp
+// fetch, must re-validate redirect hops, and must reject on scheme alone.
+// ---------------------------------------------------------------------------
+
+Deno.test("SSRF FIX (positive): a legit https://*.bandcamp.com URL still fetches (200) unchanged", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [(req) => (isBcHost(req) ? html(ALBUM_JSONLD_HTML) : undefined)],
+    async (calls) => {
+      await run("seed-from-bandcamp", {
+        bandcampUrl: "https://fixture.bandcamp.com/album/allowed",
+      }, ctx);
+      assertEquals(
+        calls.length,
+        1,
+        "exactly one legit fetch, unblocked by the allowlist",
+      );
+      assertEquals(calls[0].url, "https://fixture.bandcamp.com/album/allowed");
+    },
+  );
+});
+
+Deno.test("SSRF FIX (positive): a bandcamp -> bandcamp redirect (302) is followed across hosts, re-validating the Location on each hop", async () => {
+  const { ctx } = makeCtx();
+  let firstHopServed = false;
+  await withFetchStub(
+    [
+      (req) => {
+        const hostname = new URL(req.url).hostname;
+        if (hostname === "fixture.bandcamp.com" && !firstHopServed) {
+          firstHopServed = true;
+          return new Response(null, {
+            status: 302,
+            headers: {
+              Location: "https://redirected.bandcamp.com/album/target",
+            },
+          });
+        }
+        if (hostname === "redirected.bandcamp.com") {
+          return html(ALBUM_JSONLD_HTML);
+        }
+        return undefined;
+      },
+    ],
+    async (calls) => {
+      await run("seed-from-bandcamp", {
+        bandcampUrl: "https://fixture.bandcamp.com/album/redirect-me",
+      }, ctx);
+      assertEquals(
+        calls.length,
+        2,
+        "one redirect hop: initial 302 + final 200",
+      );
+      assertEquals(
+        calls[0].url,
+        "https://fixture.bandcamp.com/album/redirect-me",
+      );
+      assertEquals(
+        calls[1].url,
+        "https://redirected.bandcamp.com/album/target",
+      );
+    },
+  );
+});
+
+Deno.test("SSRF FIX: a bandcamp -> internal-address redirect (302) is rejected via manual-redirect re-validation — under real fetch auto-follow semantics this would otherwise leak to the internal host", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => {
+        const hostname = new URL(req.url).hostname;
+        if (hostname !== "fixture.bandcamp.com") return undefined;
+        if (req.redirect === "manual") {
+          // Fixed code: passes redirect: "manual", so it receives the raw
+          // 302 + Location and must re-validate the Location itself before
+          // ever following it.
+          return new Response(null, {
+            status: 302,
+            headers: { Location: "http://169.254.169.254/latest/meta-data/" },
+          });
+        }
+        // Unfixed code passes no redirect option at all — fetch's default
+        // is "follow", so a real HTTP client would transparently chase this
+        // redirect straight to the internal target and hand back ITS
+        // response, never even exposing the 302 to fetchPage. This branch
+        // simulates that auto-follow to prove the pre-fix code actually
+        // leaks here (not merely fails on the raw 3xx status).
+        return html(
+          "<html><body>internal (leaked via auto-follow)</body></html>",
+        );
+      },
+    ],
+    async (calls) => {
+      await assertRejects(
+        () =>
+          run("seed-from-bandcamp", {
+            bandcampUrl: "https://fixture.bandcamp.com/album/evil-redirect",
+          }, ctx),
+      );
+      assertEquals(
+        calls.length,
+        1,
+        "only the initial bandcamp fetch happens; the redirect target is rejected before a second fetch",
+      );
+    },
+  );
+});
+
+Deno.test("SSRF FIX: file:// and http:// (non-https) bandcampUrl inputs are rejected on scheme before any fetch", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [() => html("<html></html>")],
+    async (calls) => {
+      await assertRejects(() =>
+        run("seed-from-bandcamp", {
+          bandcampUrl: "file:///etc/passwd",
+        }, ctx)
+      );
+      await assertRejects(() =>
+        run("seed-from-bandcamp", {
+          bandcampUrl: "http://fixture.bandcamp.com/album/insecure",
+        }, ctx)
+      );
+      assertEquals(calls.length, 0, "neither non-https scheme reaches fetch()");
+    },
+  );
+});
+
+Deno.test("SSRF FIX: hostname allowlist is anchored on the dot — evil.bandcamp.com.attacker.com and notbandcamp.com are rejected, bare bandcamp.com is allowed", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => {
+        const hostname = new URL(req.url).hostname;
+        return (isBcHost(req) || hostname === "bandcamp.com")
+          ? html(ALBUM_JSONLD_HTML)
+          : undefined;
+      },
+    ],
+    async (calls) => {
+      await assertRejects(() =>
+        run("seed-from-bandcamp", {
+          bandcampUrl: "https://evil.bandcamp.com.attacker.com/album/x",
+        }, ctx)
+      );
+      await assertRejects(() =>
+        run("seed-from-bandcamp", {
+          bandcampUrl: "https://notbandcamp.com/album/x",
+        }, ctx)
+      );
+      assertEquals(
+        calls.length,
+        0,
+        "both spoofed hostnames are rejected before any fetch",
+      );
+
+      await run("seed-from-bandcamp", {
+        bandcampUrl: "https://bandcamp.com/album/bare-host-allowed",
+      }, ctx);
+      assertEquals(
+        calls.length,
+        1,
+        "bare bandcamp.com (no subdomain) is explicitly allowed",
+      );
+    },
   );
 });
 
