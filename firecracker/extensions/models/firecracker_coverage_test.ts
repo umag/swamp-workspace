@@ -34,14 +34,12 @@
  *    idempotency: only `stop` prechecks VM state before acting; `start`,
  *    `pause`, `resume`, `send_ctrl_alt_del` issue their action unconditionally
  *    regardless of current VM state.
- *  - BUG-6 (CRITICAL, firecracker-latent-bugs) — `build_ubuntu_rootfs`'s
- *    `force=true` vs marker-already-present branches are BOTH unreachable:
- *    the method's first statement is plain `btoa(AGENT_SCRIPT)`, and
- *    AGENT_SCRIPT's source contains a non-Latin1 em-dash, so the method
- *    throws unconditionally before the marker-check/force branch is ever
- *    reached (a previously-undocumented total-breakage finding — see
- *    firecracker_methods_test.ts for the primary BUG-6 pin, since there is no
- *    happy path to separate it from there either).
+ *  - BUG-6 (CRITICAL, firecracker-latent-bugs, FIXED) — `build_ubuntu_rootfs`'s
+ *    `force=true` vs marker-already-present branches: now that AGENT_SCRIPT is
+ *    routed through utf8ToBase64 instead of the raw btoa primitive, the
+ *    marker-check/force branch is reachable again — the real truth-table is
+ *    pinned here (see firecracker_methods_test.ts for the primary BUG-6 fix
+ *    pin, the happy path itself).
  *
  * firecracker.ts / lib/ssh.ts are UNMODIFIED — every test here PINS existing
  * behavior.
@@ -509,38 +507,61 @@ Deno.test("fabric_up: degraded — a worker that never wires (3 failed verify at
 });
 
 // ---------------------------------------------------------------------------
-// build_ubuntu_rootfs: force=true vs marker-already-present — BUT there is no
-// reachable happy path (BUG-6, pinned in firecracker_methods_test.ts):
-// `btoa(AGENT_SCRIPT)` is the FIRST statement in execute(), and AGENT_SCRIPT's
-// source contains a non-Latin1 em-dash, so the method throws unconditionally
-// BEFORE the marker-check/force branch is ever reached. `force` is therefore
-// currently unreachable code — pin that both values fail identically at the
-// same point, rather than a "truth table" that can't actually be observed.
+// build_ubuntu_rootfs: force=true vs marker-already-present real truth-table
+// (BUG-6 fixed — the marker-check/force branch is reachable now that
+// AGENT_SCRIPT no longer throws on encode).
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: KNOWN BUG (CRITICAL, firecracker-latent-bugs BUG-6) — build_ubuntu_rootfs throws identically for force=false AND force=true: the AGENT_SCRIPT btoa() throw precedes the marker-check branch, making `force` unreachable", async () => {
-  for (const force of [false, true]) {
-    const { ctx, written } = makeCtx();
-    await withCommandStub(
-      { code: 0, stdout: "unreachable", stderr: "" },
-      async (calls) => {
-        let threw: Error | undefined;
-        try {
-          await run("build_ubuntu_rootfs", { force }, ctx);
-        } catch (e) {
-          threw = e as Error;
-        }
-        assert(threw, `force=${force}: must throw`);
-        assert(threw!.message.includes("Latin1"));
-        assertEquals(
-          calls.length,
-          0,
-          `force=${force}: no ssh call is ever reached`,
-        );
-      },
-    );
-    assertEquals(written.length, 0, `force=${force}: nothing written`);
-  }
+Deno.test("build_ubuntu_rootfs: force=false emits the marker-check skip guard; a stubbed already-built stdout is reported as an idempotent skip (BUG-6 fixed, force branch reachable)", async () => {
+  const { ctx, written } = makeCtx();
+  await withCommandStub(
+    { code: 0, stdout: "already-built", stderr: "" },
+    async (calls) => {
+      await run("build_ubuntu_rootfs", { force: false }, ctx);
+      assertEquals(calls.length, 1);
+      assert(
+        calls[0].args[7].includes(
+          "if test -f /opt/firecracker/.ubuntu-rootfs-ready; then echo already-built; exit 0; fi",
+        ),
+      );
+    },
+  );
+  const res = written.find((w) =>
+    w.spec === "action" && w.name === "build_ubuntu_rootfs"
+  )!;
+  assertEquals(res.payload.success, true);
+  assert(
+    (res.payload.message as string).includes("already built"),
+    "force=false + already-built stdout: message reports the idempotent skip",
+  );
+});
+
+Deno.test("build_ubuntu_rootfs: force=true emits an unconditional marker removal, never the skip guard, and reports the build as started (BUG-6 fixed, force branch reachable)", async () => {
+  const { ctx, written } = makeCtx();
+  await withCommandStub(
+    { code: 0, stdout: "build started ver=v1.12.0 pid=99", stderr: "" },
+    async (calls) => {
+      await run("build_ubuntu_rootfs", { force: true }, ctx);
+      assertEquals(calls.length, 1);
+      assert(
+        calls[0].args[7].includes(
+          "rm -f /opt/firecracker/.ubuntu-rootfs-ready",
+        ),
+      );
+      assert(
+        !calls[0].args[7].includes("if test -f"),
+        "force=true must not emit the marker-check guard",
+      );
+    },
+  );
+  const res = written.find((w) =>
+    w.spec === "action" && w.name === "build_ubuntu_rootfs"
+  )!;
+  assertEquals(res.payload.success, true);
+  assert(
+    (res.payload.message as string).includes("background"),
+    "force=true: message reports the build started in background",
+  );
 });
 
 // ---------------------------------------------------------------------------
