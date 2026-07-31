@@ -12,4 +12,3 @@ anilist-chart
 arckit
 issue-lifecycle
 obsidian-vault
-swamp-go-brr

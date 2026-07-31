@@ -3,6 +3,57 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## Unreleased — test/docs-only: five-suite quality backfill (Grade A)
+
+### Added
+
+- `extensions/models/swamp_go_brr_methods_test.ts`,
+  `swamp_go_brr_adversarial_test.ts`, `swamp_go_brr_coverage_test.ts`, and
+  `swamp_go_brr_property_test.ts` — the model now has full five-suite coverage
+  (contract-fixture, methods, adversarial, coverage, property-invariant-flow),
+  closing the gap left by the pre-existing 12 tests: gobrr's
+  start/seed_tasks/next/report/complete/emit_otlp/hydrate/abort, and
+  source-integration's build_workorder/apply, docker-verify's verify, and
+  preflight's pin_image/scaffold/config, are now driven at the
+  `model.methods.<m>.execute()` level (through `arguments.parse()`, so the zod
+  arg schema is pinned too) against real fake contexts, a real temp repo, and a
+  stubbed `Deno.Command` — BOTH shapes used in production: the "direct output"
+  seam (`new Deno.Command(cmd,{args}).output()`, used by lib/ssh.ts and
+  source-integration's local `jjRun`) and preflight's "spawn+stdin" seam
+  (`new Deno.Command(...).spawn()` + `child.stdin.getWriter()` +
+  `child.output()`). No behavior change — `gobrr.ts`, `docker_verify.ts`,
+  `otlp_export.ts`, `preflight.ts`, `source_integration.ts`, and
+  `lib/{acl,otlp,scrub,ssh}.ts` are byte-identical (frozen source;
+  ext-quality-bf-swamp-go-brr). Property suite added `npm:fast-check@4.8.0`
+  (`FC_NUM_RUNS` override, verified manually at `FC_NUM_RUNS=5000`); a new
+  `deno task test:soak` runs it at that iteration count.
+- Eight known-but-unfixed issues pinned as characterization tests, tracked in
+  the LOCAL `swamp-go-brr-latent-bugs` issue-lifecycle bug model (never the Lab,
+  per this repo's convention): B1 (MED) — docker-verify's ssh transport has no
+  client-side timeout on the remote verify command's runtime (only ssh's own
+  `ConnectTimeout=10` bounds the handshake); B2 (MED, within-temp) —
+  `preflight.scaffoldRepo` joins `ScaffoldFile.path` into `repoPath` with no
+  traversal guard; B3 (MED) — `lib/ssh.ts` hardcodes
+  `StrictHostKeyChecking=no` + `UserKnownHostsFile=/dev/null` (MITM-
+  susceptible); B4 (LOW) — `lib/scrub.ts`'s generic `key=value` pattern is a
+  documented, deliberately over-eager false-positive-prone approximation, and
+  `scrubSecrets` imposes no input-size cap of its own (callers tail-bound after
+  scrubbing, not before); B5 (LOW) — a bare high-entropy secret with no
+  recognizable key word is not redacted (an accepted, already-documented gap);
+  B6 (LOW) — source-integration's local `jjRun` carries no timeout and never
+  passes `--no-pager`; B7 (LOW) — `parseGitDiffPaths`'s `a/(.+?) b/` regex
+  mis-splits a path containing a literal `" b/"` substring, but this is
+  UNREACHABLE via the real `apply()` flow because `pathEscapes` already rejects
+  any whitespace-containing path upstream; B8 (LOW) — `apply()`'s per-file write
+  is resolve-then-write, not atomic — a symlink swapped into place between
+  `resolveWithinRepo`'s check and the actual write escapes the repo (TOCTOU).
+- Rewrites `quality.yaml`: corrects the honest per-file role map (the scaffolder
+  had dumped all 12 pre-existing tests under contract-fixture), all five suites
+  `present`, `docs.skill: present` (`.claude/skills/swamp-go-brr/SKILL.md`),
+  ratchet `baselinePercentage: 100`, `label: "Grade A"`, `rubricVersion: 3`.
+- Adds a `deno task test:soak` and removes `swamp-go-brr` from the repo-root
+  `quality-allowlist.txt`.
+
 ## 2026.06.19.3 — docs: expanded manifest description
 
 ### Changed
