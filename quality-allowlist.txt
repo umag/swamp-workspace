@@ -15,6 +15,5 @@ flipper-zero
 issue-lifecycle
 jscad-cad
 jscad-stl-slicer
-jscad-stl-validator
 obsidian-vault
 swamp-go-brr
