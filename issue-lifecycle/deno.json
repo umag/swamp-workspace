@@ -1,7 +1,8 @@
 {
   "tasks": {
-    "test": "deno test --allow-read=. extensions/models/",
-    "check": "deno check extensions/models/issue_lifecycle.ts extensions/models/issue_lifecycle.test.ts extensions/models/issue_lifecycle_docs.test.ts",
+    "test": "deno test --allow-read=. --allow-env=FC_NUM_RUNS extensions/models/",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read=. --allow-env=FC_NUM_RUNS extensions/models/issue_lifecycle_property_test.ts",
+    "check": "deno check extensions/models/*.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

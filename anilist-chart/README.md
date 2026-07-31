@@ -52,3 +52,61 @@ Python's `list.sort()` is stable, so the **last** sort key is primary:
 
 `age_penalty.py:258`'s "primarily by votes" comment is false — the code inverts
 it. See `lib/chart_rank.ts`.
+
+## Architecture — data flow through the three methods
+
+The model exposes exactly three methods, always run in this order (a swamp
+workflow, not something this model schedules itself):
+
+```
+settings  — echo resolved config (topK, bayesMinVotes, penaltyRate, whether
+            ClickHouse is configured); makes no external calls.
+
+render    — ClickHouseClient.query() x11 (one fetch, POST, SQL-in-body,
+            FORMAT JSONEachRow) reads board rows, chart scores, distinct
+            media_ids, chart metadata, and six landing aggregates, THEN a
+            freshness-gate check, THEN buildRenderTasks -> runFanOut renders
+            all 7 artifacts (board, landing, chart, fresh, bayes, bayes-json,
+            current) and passes each through the publish_gate backstop before
+            writing it as a `renderedPage` resource. One failing/refused page
+            never suppresses the rest.
+
+publish   — reads back the `renderedPage` artifacts by key and writes them to
+            the serving node: a REAL filesystem write (Deno.stat sees a local
+            directory -> atomic temp-file + rename) when the output dir is on
+            this host, else one `ssh` subprocess per page (Deno.Command,
+            stdin-piped). One failing page never suppresses the rest, but the
+            method as a whole throws if ANY page failed to write, or if zero
+            pages published — a partial publish must surface as a failed
+            workflow step, never a silent success.
+```
+
+The **only** two IO seams in the whole model: `fetch` once (ClickHouse HTTP,
+`lib/clickhouse.ts` — param-bound, `AbortSignal.timeout(30_000)`) and
+`Deno.Command` once (the ssh publish fallback, `anilist_chart.ts`). Everything
+else — the awards/pairs/bayesian/age-penalty math and all four render templates
+— is pure, dependency-injected, and unit-tested without network or filesystem
+access (`deno task test`).
+
+Example: driving a render manually against a configured instance —
+
+```bash
+swamp model method run render my-anilist-chart --input topK=13 --json
+swamp data get my-anilist-chart render-run --json
+```
+
+## Known latent bugs (accepted, tracked locally)
+
+Seven LOW/MEDIUM-severity gaps are characterized by the test suite and recorded
+in the LOCAL `anilist-chart-latent-bugs` issue-lifecycle model (never the
+swamp.club Lab — this is a `@magistr/*` extension, not a swamp-product issue): a
+read-phase ClickHouse failure aborts `render()` with no diagnostic marker; the
+ssh publish spawn has no timeout; the ClickHouse client buffers an unbounded
+response with no row cap; a malformed freshness timestamp silently disables the
+staleness anomaly; a non-numeric `media_id` poisons the metadata read and aborts
+the whole render; a ClickHouse error's response body is echoed verbatim into the
+thrown error (never the credential); and `arrayStringParam`'s hand-rolled
+escaping leaves an embedded NUL byte unescaped. None require a source change to
+be safe in production — see `CHANGELOG.md` for the full writeup of each, and the
+defended-negative behavior (HTML/CSS/SQL injection resistance) that the same
+suite pins as already correct.
