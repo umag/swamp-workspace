@@ -8,7 +8,6 @@
 # Removing a name here means: bring that extension to full compliance
 # first (all five suites + docs present or explicitly na). Backfill work is
 # tracked in the Phase D issue: ext-quality-test-backfill.
-anilist-chart
 arckit
 issue-lifecycle
 obsidian-vault
