@@ -55,9 +55,13 @@ behavior change — `gonic.ts` is BYTE-FROZEN and the model `version` stays
   - README's instance example pins a stale `typeVersion` (doc drift, not a
     runtime bug) — noted but not fixed here.
   - Full detail: local `gonic-latent-bugs` issue-lifecycle model.
-- Auth reality check: gonic uses the Subsonic `enc:<hex>` scheme (hex-encoded
-  password in the URL query), NOT `md5(password+salt)+salt` — the security pins
-  target the actual URL-query leak class, not a nonexistent salt scheme.
+- Auth reality check — **CORRECTED** by `2026.08.01.1` below: gonic's server
+  DOES support Subsonic TOKEN auth (`t=md5(password+salt)`, `s=salt`) — verified
+  against `ctrlsubsonic/ctrl.go`'s `checkCredsToken`. The note originally here
+  wrongly called `md5(password+salt)+salt` "a nonexistent salt scheme"; it is
+  real, and the URL-query leak this backfill pinned (the `enc:<hex>` scheme
+  gonic.ts SENT at the time) is exactly what `2026.08.01.1` replaces with that
+  real token scheme.
 - The auth-encoding property is split into (1) an ALWAYS-TRUE relation — the
   captured URL's `p` param always equals
   `"enc:" + lowercase-hex(
@@ -80,6 +84,56 @@ behavior change — `gonic.ts` is BYTE-FROZEN and the model `version` stays
   flip from `backlog` to `present`; `docs.skill` recorded `na` (gonic bundles no
   Claude skill); a measured ratchet score recorded. Removed from
   `quality-allowlist.txt` in the same change.
+
+## 2026.08.01.1
+
+Fixes the two HIGH-severity findings tracked by the local `gonic-latent-bugs`
+issue-lifecycle model (never filed against the Lab — see that model for full
+detail and the deferred MED/LOW findings, which are unchanged and stay pinned).
+
+- **HIGH — command injection, FIXED.** `ensure-podcast-dirs` now quotes the
+  DB-sourced `root_dir`/host-mount path with a `shellEsc` helper (copied
+  verbatim from `firecracker/extensions/models/firecracker.ts`: wrap in single
+  quotes, escape each embedded `'` as `'\''`) before interpolating it into
+  `mkdir -p <hostDir>`. Applied to `sshExecSql`'s `dbPath` interpolation in the
+  same change (smaller blast radius — operator-controlled config, not live DB
+  content — but trivially shared hardening). `mkdir` runs on the REMOTE gonic
+  host over SSH, so `Deno.mkdir` is not a substitute for this fix.
+- **HIGH — URL-query credential leak, FIXED.** `buildAuthParams` no longer sends
+  `p=enc:<hex(password)>` (a trivially-reversible encoding) as a URL query
+  parameter. It now generates a random per-request salt
+  (`crypto.getRandomValues`), computes a Subsonic TOKEN
+  `t = md5hex(password + salt)` via `jsr:@std/crypto` (MD5 is absent from Deno's
+  native `WebCrypto subtle.digest`), and emits `u, t, s, v, c, f` — `p` is
+  dropped entirely. gonic's server fully supports this scheme
+  (`ctrlsubsonic/ctrl.go`'s `checkCredsToken`); see the corrected auth-reality
+  note in Unreleased above. `buildAuthParams` is now `async`; `gonicApi` awaits
+  it.
+- Added `jsr:@std/crypto@1` to `deno.json` imports; regenerated `deno.lock`
+  under deno 2.8.3.
+- Model `version` and `manifest.yaml` bumped to `2026.08.01.1` (kept in sync).
+- Test flips (characterization → fix-verification), all in `extensions/models/`:
+  the enc-hex recovery pin and the mkdir-injection pin in
+  `gonic_adversarial_test.ts` now assert the FIX (no `p` param / password not
+  recoverable; the injected `'` is neutralized rather than breaking out); the
+  `u`/`p` assertion in `gonic_methods_test.ts` now asserts `t`/`s` (the
+  `u`/`v`/`c`/`f` assertions are unchanged); the three enc-hex
+  relation/recovery/collapse properties in `gonic_property_test.ts` collapse
+  into one token-auth invariant (`p` absent, `s` hex-shaped, `t` recomputed as
+  `md5hex(password + the emitted per-request salt)` — necessarily derived from
+  the captured salt, since the salt is random). Every other pinned
+  characterization test (db-query not-read-only, db-exec change-count,
+  fetch-rejection honest gap, domain-error non-leak, `dbResult` name clobber,
+  `sshExecSql` warning-swallow, fixtures-secret-scan, and every quote-free
+  happy-path `mkdir`/`sqlite3` command-line assertion) is unchanged and stays
+  green — `shellEsc` on a quote-free input is byte-identical to the old bare
+  single-quoting.
+- Out of scope, deferred as before: `db-query`'s missing read-only guard,
+  `db-exec`'s structurally-disconnected change-count, the fetch-rejection honest
+  gap, the `dbResult` name clobber, `sshExecSql`'s warning-swallow, and the
+  stale README `typeVersion`. Token auth over `http://` still permits passive
+  replay of a captured `t`+`s` pair for that one salt — it does not expose the
+  password; forcing `https://` is out of scope.
 
 ## 2026.07.16.2
 

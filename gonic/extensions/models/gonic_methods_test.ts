@@ -6,9 +6,12 @@
  * `Deno.Command` (the 3 SSH methods: `db-query`, `db-exec`,
  * `ensure-podcast-dirs`).
  *
- * gonic.ts is BYTE-FROZEN by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * gonic.ts is no longer wholly byte-frozen: this change fixes the two HIGH
+ * findings tracked by the local `gonic-latent-bugs` issue-lifecycle model
+ * (URL-query credential leak → Subsonic TOKEN auth; command injection in
+ * `ensure-podcast-dirs` → shellEsc quoting). Every other method's behavior
+ * here is an unchanged characterization test that PINS the model's
+ * already-shipped behavior.
  *
  * Toolchain rules (deno 2.8.3 in CI):
  *  - fetch seam: `as unknown as typeof globalThis.fetch` (double-bridge,
@@ -27,6 +30,7 @@
  * payload, and the logger must never be called by any method.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { crypto as stdCrypto } from "jsr:@std/crypto@1";
 import { model } from "./gonic.ts";
 import errorFixture from "../../fixtures/error.json" with { type: "json" };
 
@@ -53,6 +57,16 @@ function hexEncode(s: string): string {
     .join("");
 }
 const PASSWORD_HEX = hexEncode(PASSWORD);
+
+/** Independent md5hex(input) — used to recompute the expected Subsonic
+ * token from a captured (random) per-request salt, never a fixed constant. */
+async function md5Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const digest = await stdCrypto.subtle.digest("MD5", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 type Written = { spec: string; name: string; payload: Record<string, unknown> };
 type LogCall = { level: "info" | "warning"; args: unknown[] };
@@ -109,9 +123,21 @@ function assertNoCredentialLeak(written: Written[], logs: LogCall[]) {
   assertEquals(logs.length, 0, "logger must never be called by any method");
 }
 
-function assertAuthParams(url: URL, extra: Record<string, string> = {}) {
+async function assertAuthParams(url: URL, extra: Record<string, string> = {}) {
   assertEquals(url.searchParams.get("u"), USERNAME);
-  assertEquals(url.searchParams.get("p"), `enc:${PASSWORD_HEX}`);
+  assertEquals(
+    url.searchParams.get("p"),
+    null,
+    "no p param — TOKEN auth never sends the raw or reversibly-encoded password",
+  );
+  const s = url.searchParams.get("s")!;
+  const t = url.searchParams.get("t")!;
+  assert(/^[0-9a-f]+$/i.test(s), "salt s must be hex-shaped");
+  assertEquals(
+    t,
+    await md5Hex(PASSWORD + s),
+    "t must equal md5hex(password + the emitted per-request salt)",
+  );
   assertEquals(url.searchParams.get("v"), "1.15.0");
   assertEquals(url.searchParams.get("c"), "swamp");
   assertEquals(url.searchParams.get("f"), "json");
@@ -268,14 +294,14 @@ async function withCommandStub(
 // ping
 // ---------------------------------------------------------------------------
 
-Deno.test("ping: happy path — GETs /rest/ping with the enc-hex auth params, writes serverStatus", async () => {
+Deno.test("ping: happy path — GETs /rest/ping with the token auth params, writes serverStatus", async () => {
   const { ctx, written, logs } = makeCtx();
   await withOneEndpoint(
     "ping",
     okEnvelope({ type: "gonic", serverVersion: "v0.16.2", openSubsonic: true }),
     async (calls) => {
       await run("ping", {}, ctx);
-      assertAuthParams(new URL(calls[0].url));
+      await assertAuthParams(new URL(calls[0].url));
     },
   );
   const res = written.find((w) => w.spec === "serverStatus")!;
@@ -332,7 +358,9 @@ Deno.test("get-podcasts: happy path (default includeEpisodes=true) — sends inc
     }),
     async (calls) => {
       await run("get-podcasts", {}, ctx);
-      assertAuthParams(new URL(calls[0].url), { includeEpisodes: "true" });
+      await assertAuthParams(new URL(calls[0].url), {
+        includeEpisodes: "true",
+      });
     },
   );
   const res = written.find((w) => w.spec === "podcasts")!;
@@ -347,7 +375,9 @@ Deno.test("get-podcasts: includeEpisodes=false is forwarded verbatim", async () 
     okEnvelope({ podcasts: { channel: [] } }),
     async (calls) => {
       await run("get-podcasts", { includeEpisodes: false }, ctx);
-      assertAuthParams(new URL(calls[0].url), { includeEpisodes: "false" });
+      await assertAuthParams(new URL(calls[0].url), {
+        includeEpisodes: "false",
+      });
     },
   );
 });
@@ -374,7 +404,7 @@ Deno.test("refresh-podcasts: happy path — GETs /rest/refreshPodcasts, writes n
       dataHandles: unknown[];
     };
     assertEquals(result.dataHandles, []);
-    assertAuthParams(new URL(calls[0].url));
+    await assertAuthParams(new URL(calls[0].url));
   });
   assertEquals(written.length, 0);
   assertNoCredentialLeak(written, logs);
@@ -398,7 +428,7 @@ Deno.test("delete-podcast-channel: happy path — sends id, writes nothing", asy
     okEnvelope(),
     async (calls) => {
       await run("delete-podcast-channel", { id: "pd-5" }, ctx);
-      assertAuthParams(new URL(calls[0].url), { id: "pd-5" });
+      await assertAuthParams(new URL(calls[0].url), { id: "pd-5" });
     },
   );
   assertEquals(written.length, 0);
@@ -426,7 +456,7 @@ Deno.test("delete-podcast-episode: happy path — sends id, writes nothing", asy
     okEnvelope(),
     async (calls) => {
       await run("delete-podcast-episode", { id: "pe-42" }, ctx);
-      assertAuthParams(new URL(calls[0].url), { id: "pe-42" });
+      await assertAuthParams(new URL(calls[0].url), { id: "pe-42" });
     },
   );
   assertEquals(written.length, 0);
@@ -454,7 +484,7 @@ Deno.test("download-podcast-episode: happy path — sends id, writes nothing", a
     okEnvelope(),
     async (calls) => {
       await run("download-podcast-episode", { id: "pe-42" }, ctx);
-      assertAuthParams(new URL(calls[0].url), { id: "pe-42" });
+      await assertAuthParams(new URL(calls[0].url), { id: "pe-42" });
     },
   );
   assertEquals(written.length, 0);
@@ -482,7 +512,7 @@ Deno.test("scan-status: happy path — GETs /rest/getScanStatus, writes scanStat
     okEnvelope({ scanStatus: { scanning: false, count: 10 } }),
     async (calls) => {
       await run("scan-status", {}, ctx);
-      assertAuthParams(new URL(calls[0].url));
+      await assertAuthParams(new URL(calls[0].url));
     },
   );
   const res = written.find((w) => w.spec === "scanStatus")!;
@@ -509,7 +539,7 @@ Deno.test("start-scan: happy path — GETs /rest/startScan, writes scanStatus", 
     okEnvelope({ scanStatus: { scanning: true, count: 1 } }),
     async (calls) => {
       await run("start-scan", {}, ctx);
-      assertAuthParams(new URL(calls[0].url));
+      await assertAuthParams(new URL(calls[0].url));
     },
   );
   const res = written.find((w) => w.spec === "scanStatus")!;
@@ -544,7 +574,7 @@ Deno.test("get-playlists: happy path — GETs /rest/getPlaylists, writes playlis
     }),
     async (calls) => {
       await run("get-playlists", {}, ctx);
-      assertAuthParams(new URL(calls[0].url));
+      await assertAuthParams(new URL(calls[0].url));
     },
   );
   const res = written.find((w) => w.spec === "playlists")!;

@@ -1,16 +1,21 @@
 /**
- * Adversarial suite: attacker's-perspective tests for @magistr/gonic —
- * URL-query credential-leak pins, an HONEST-GAP fetch-rejection propagation
- * pin, command injection via a DB-sourced `root_dir`, the unenforced
- * db-query "read-only" guard, the db-exec change-count structural bug,
- * hostile Subsonic responses, a second-granular `dbResult` name clobber, and
- * a mechanical fixtures-secret-scan over gonic/fixtures/*.
+ * Adversarial suite: attacker's-perspective tests for @magistr/gonic — the
+ * two HIGH findings tracked by the local `gonic-latent-bugs` issue-lifecycle
+ * model are now FIXED and verified below: TOKEN-auth (no more URL-query
+ * credential leak) and shellEsc-quoted command injection via a DB-sourced
+ * `root_dir`. The remaining findings (unenforced db-query "read-only" guard,
+ * the db-exec change-count structural bug, hostile Subsonic responses, an
+ * HONEST-GAP fetch-rejection propagation pin, a second-granular `dbResult`
+ * name clobber) are out of scope for this change and stay PINNED as
+ * characterized (buggy) behavior.
  *
- * gonic.ts is BYTE-FROZEN — every test here PINS current behavior (including
- * behavior that is arguably risky/buggy). Where a test documents a real gap,
- * it is labeled "pin"/"HONEST GAP" and says so explicitly. Every finding here
- * is filed against the LOCAL `gonic-latent-bugs` issue-lifecycle model, never
- * the Lab. See fixtures/PROVENANCE.md for fixture provenance.
+ * gonic.ts is no longer wholly byte-frozen — this change edits it to close
+ * the two HIGH findings above; every OTHER test here still PINS current
+ * behavior (including behavior that is arguably risky/buggy). Where a test
+ * documents a real gap, it is labeled "pin"/"HONEST GAP" and says so
+ * explicitly. Every finding here is filed against the LOCAL
+ * `gonic-latent-bugs` issue-lifecycle model, never the Lab. See
+ * fixtures/PROVENANCE.md for fixture provenance.
  *
  * Pagination: NOT APPLICABLE. Every Subsonic endpoint gonic.ts wraps
  * (getPodcasts, getPlaylists, getScanStatus, ping) returns a full set with no
@@ -23,6 +28,7 @@
  * Deno.Command`.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { crypto as stdCrypto } from "jsr:@std/crypto@1";
 import { model } from "./gonic.ts";
 import pingFixture from "../../fixtures/ping.json" with { type: "json" };
 import getPodcastsFixture from "../../fixtures/get-podcasts.json" with {
@@ -61,14 +67,45 @@ function hexEncode(s: string): string {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
-function hexDecodeToString(hex: string): string {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return new TextDecoder().decode(bytes);
-}
 const PASSWORD_HEX = hexEncode(PASSWORD);
+
+/** Independent md5hex(input) — used to recompute the expected Subsonic
+ * token from a captured (random) per-request salt, never a fixed constant. */
+async function md5Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const digest = await stdCrypto.subtle.digest("MD5", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Reverse of `shellEsc` (gonic.ts) via the actual POSIX single-quote
+ * quoting grammar: `'<verbatim>'` segments concatenate with backslash-escaped
+ * literal quotes (`\'`) between them into ONE shell word, exactly like
+ * `'foo'\''bar'` => `foo'bar`. Used to PROVE a captured shellEsc'd argument
+ * parses as exactly one inert word — not to execute a real shell. */
+function posixUnquoteSingleArg(shellEscaped: string): string {
+  let result = "";
+  let i = 0;
+  while (i < shellEscaped.length) {
+    if (shellEscaped[i] === "'") {
+      const end = shellEscaped.indexOf("'", i + 1);
+      assert(end !== -1, `unterminated single quote at ${i}`);
+      result += shellEscaped.slice(i + 1, end);
+      i = end + 1;
+    } else if (shellEscaped[i] === "\\" && shellEscaped[i + 1] === "'") {
+      result += "'";
+      i += 2;
+    } else {
+      throw new Error(
+        `unexpected character outside single/backslash-quoting at ${i}: ${
+          JSON.stringify(shellEscaped.slice(i, i + 5))
+        }`,
+      );
+    }
+  }
+  return result;
+}
 
 type Written = { spec: string; name: string; payload: Record<string, unknown> };
 
@@ -229,11 +266,13 @@ async function withCommandStub(
 }
 
 // ---------------------------------------------------------------------------
-// (a) URL-QUERY CREDENTIAL LEAK — p=enc:<hex(pw)> travels in the URL over
-// plaintext http://; hex-decoding recovers the password.
+// (a) FIXED — Subsonic TOKEN auth: t=md5hex(password+salt), s=salt, NO p
+// param. The password is never sent (nor a reversible encoding of it) over
+// the wire; token+salt for one request cannot be inverted back to the
+// password.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: the Subsonic auth password travels as enc:<hex> IN THE URL QUERY over plaintext http://, and is fully recoverable by hex-decoding", async () => {
+Deno.test("fixed: the Subsonic auth uses TOKEN auth (t=md5hex(password+salt), s=salt) — NO p param, password NOT recoverable from the URL", async () => {
   const { ctx } = makeCtx();
   await withOneEndpoint("ping", pingFixture, async (calls) => {
     await run("ping", {}, ctx);
@@ -241,15 +280,30 @@ Deno.test("pin: the Subsonic auth password travels as enc:<hex> IN THE URL QUERY
     assertEquals(
       url.protocol,
       "http:",
-      "gonic.ts hardcodes plaintext http://, never https://",
+      "gonic.ts hardcodes plaintext http:// (transport hardening is a separate, deferred concern)",
     );
-    const p = url.searchParams.get("p")!;
-    assertEquals(p, `enc:${PASSWORD_HEX}`);
-    const recovered = hexDecodeToString(p.slice("enc:".length));
     assertEquals(
-      recovered,
-      PASSWORD,
-      "hex is trivially reversible — 'enc:' is obfuscation, not encryption",
+      url.searchParams.get("p"),
+      null,
+      "no p param — the raw or reversibly-encoded password must never travel in the URL",
+    );
+    const s = url.searchParams.get("s")!;
+    const t = url.searchParams.get("t")!;
+    assert(/^[0-9a-f]+$/i.test(s), "salt s must be hex-shaped");
+    const expectedToken = await md5Hex(PASSWORD + s);
+    assertEquals(
+      t,
+      expectedToken,
+      "t must equal md5hex(password + the emitted per-request salt)",
+    );
+    const raw = url.toString();
+    assert(
+      !raw.includes(PASSWORD),
+      "the raw password must never appear anywhere in the URL",
+    );
+    assert(
+      !raw.toLowerCase().includes(PASSWORD_HEX),
+      "the hex-encoded password must not appear anywhere in the URL either",
     );
   });
 });
@@ -305,11 +359,12 @@ Deno.test("a failed Subsonic envelope's error message never carries the password
 });
 
 // ---------------------------------------------------------------------------
-// (d) COMMAND INJECTION — ensure-podcast-dirs interpolates a DB-sourced
-// root_dir UNESCAPED into `mkdir -p '<hostDir>'`.
+// (d) FIXED — ensure-podcast-dirs shellEsc-quotes a DB-sourced root_dir
+// before interpolating it into `mkdir -p <hostDir>`; an embedded single
+// quote is neutralized (escaped) rather than breaking out of the quoting.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: ensure-podcast-dirs interpolates a DB-sourced root_dir UNESCAPED into mkdir -p '<dir>' — a single quote breaks out of the quoting", async () => {
+Deno.test("fixed: ensure-podcast-dirs shellEsc-quotes a DB-sourced root_dir — an embedded single quote is NEUTRALIZED, the payload does NOT break out", async () => {
   const { ctx } = makeCtx();
   const maliciousRootDir = "/podcasts/Foo' && touch /tmp/pwned && echo '";
   const hostBase = "/mnt/user/podcasts";
@@ -337,14 +392,63 @@ Deno.test("pin: ensure-podcast-dirs interpolates a DB-sourced root_dir UNESCAPED
     () => run("ensure-podcast-dirs", {}, ctx),
   );
   const subdir = "Foo' && touch /tmp/pwned && echo '";
+  const hostDir = `${hostBase}/${subdir}`;
+  // shellEsc: wrap in single quotes, each embedded `'` becomes `'\''`.
+  const expectedEscaped = `'${hostDir.replace(/'/g, "'\\''")}'`;
   assertEquals(
     capturedMkdir,
-    `mkdir -p '${hostBase}/${subdir}'`,
-    "root_dir is embedded raw with no escaping of the single quote",
+    `mkdir -p ${expectedEscaped}`,
+    "root_dir is shellEsc-quoted — every embedded single quote is escaped as '\\''",
   );
-  assert(
-    capturedMkdir.includes("' && touch /tmp/pwned && echo '"),
-    "the shell metacharacters survive unescaped — a real, DB-sourced (semi-trusted) shell-injection surface",
+  // Ground truth via the actual POSIX single-quote quoting grammar (not a
+  // fragile substring check — a naive "the raw substring doesn't appear"
+  // assertion is WRONG here: shellEsc's own `'\''` escape sequences
+  // necessarily contain adjacent quote characters, so raw substrings of the
+  // payload can innocuously reappear inside a CORRECTLY escaped string).
+  // posixUnquoteSingleArg parses `'<content>'` / `'\''`-escaped segments per
+  // POSIX shell quoting rules and reconstructs the single word a real shell
+  // would see. Reconstructing the EXACT original hostDir proves the whole
+  // thing parses as ONE inert argument — `&&`, `touch`, `echo` are all just
+  // DATA, never live shell syntax.
+  const arg = capturedMkdir.slice("mkdir -p ".length);
+  assertEquals(
+    posixUnquoteSingleArg(arg),
+    hostDir,
+    "a real POSIX shell must parse the mkdir argument as exactly ONE word " +
+      "equal to hostDir — metacharacters neutralized as data, not syntax",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// (d2) FIXED — sshExecSql shellEsc-quotes dbPath (operator-controlled
+// config — smaller blast radius than root_dir, but the same shellEsc
+// mechanism, so it gets the same rigor here).
+// ---------------------------------------------------------------------------
+
+Deno.test("fixed: sshExecSql shellEsc-quotes dbPath — an embedded single quote is NEUTRALIZED, a real shell parses it as ONE word", async () => {
+  const maliciousDbPath =
+    "/data/gonic's-backup' && touch /tmp/pwned && echo '.db";
+  const { ctx } = makeCtx({ ...GLOBAL_ARGS, dbPath: maliciousDbPath });
+  let capturedCommandLine = "";
+  await withCommandStub(
+    (inv) => {
+      capturedCommandLine = inv.commandLine;
+      return { success: true, stdout: "", stderr: "" };
+    },
+    () => run("db-query", { sql: "SELECT 1" }, ctx),
+  );
+  const expectedEscaped = `'${maliciousDbPath.replace(/'/g, "'\\''")}'`;
+  assertEquals(
+    capturedCommandLine,
+    `sqlite3 -json ${expectedEscaped}`,
+    "dbPath is shellEsc-quoted — every embedded single quote is escaped as '\\''",
+  );
+  const arg = capturedCommandLine.slice("sqlite3 -json ".length);
+  assertEquals(
+    posixUnquoteSingleArg(arg),
+    maliciousDbPath,
+    "a real POSIX shell must parse the sqlite3 dbPath argument as exactly " +
+      "ONE word equal to dbPath — metacharacters neutralized as data",
   );
 });
 

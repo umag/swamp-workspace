@@ -7,7 +7,10 @@
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
   },
-  "imports": { "zod": "npm:zod@4" },
+  "imports": {
+    "zod": "npm:zod@4",
+    "@std/crypto": "jsr:@std/crypto@1"
+  },
   "compilerOptions": { "noImplicitAny": false },
   "fmt": {
     "lineWidth": 80,

@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@std/assert@1": "1.0.19",
+    "jsr:@std/crypto@1": "1.1.0",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:fast-check@4.8.0": "4.8.0",
     "npm:zod@4": "4.4.3"
@@ -12,6 +13,9 @@
       "dependencies": [
         "jsr:@std/internal"
       ]
+    },
+    "@std/crypto@1.1.0": {
+      "integrity": "b8d6d0a6377a32b213af2661ed7bf1062d94feac0c57def5526a8e74a95c3ec8"
     },
     "@std/internal@1.0.14": {
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
@@ -68,6 +72,7 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@std/crypto@1",
       "npm:zod@4"
     ]
   }

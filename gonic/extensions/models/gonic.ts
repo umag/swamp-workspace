@@ -1,4 +1,5 @@
 import { z } from "npm:zod@4";
+import { crypto as stdCrypto } from "jsr:@std/crypto@1";
 
 const GlobalArgsSchema = z.object({
   host: z.string().describe("Gonic host (IP or hostname)"),
@@ -15,15 +16,35 @@ const GlobalArgsSchema = z.object({
 
 // --- Shared helpers ---
 
-function buildAuthParams(username: string, password: string) {
-  const encoder = new TextEncoder();
-  // Use hex-encoded password approach (simpler, avoids async crypto)
-  const hexPass = Array.from(encoder.encode(password))
+function shellEsc(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+async function md5Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const digest = await stdCrypto.subtle.digest("MD5", data);
+  return bytesToHex(new Uint8Array(digest));
+}
+
+async function buildAuthParams(username: string, password: string) {
+  // Subsonic TOKEN auth: t = md5hex(password + salt), s = salt. Never send
+  // the password itself (or a trivially-reversible encoding of it) over the
+  // wire — gonic's server (ctrlsubsonic/ctrl.go, checkCredsToken) supports
+  // this scheme.
+  const saltBytes = new Uint8Array(16);
+  crypto.getRandomValues(saltBytes);
+  const salt = bytesToHex(saltBytes);
+  const token = await md5Hex(password + salt);
   return new URLSearchParams({
     u: username,
-    p: `enc:${hexPass}`,
+    t: token,
+    s: salt,
     v: "1.15.0",
     c: "swamp",
     f: "json",
@@ -38,7 +59,7 @@ async function gonicApi(
   endpoint: string,
   extraParams?: Record<string, string | string[]>,
 ) {
-  const params = buildAuthParams(username, password);
+  const params = await buildAuthParams(username, password);
   if (extraParams) {
     for (const [k, v] of Object.entries(extraParams)) {
       if (Array.isArray(v)) {
@@ -182,7 +203,7 @@ async function sshExecSql(
       "-o",
       "BatchMode=yes",
       `${sshUser}@${host}`,
-      `sqlite3 ${flags} '${dbPath}'`,
+      `sqlite3 ${flags} ${shellEsc(dbPath)}`,
     ],
     stdin: "piped",
     stdout: "piped",
@@ -214,7 +235,7 @@ async function sshExecSql(
  */
 export const model = {
   type: "@magistr/gonic",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     podcasts: {
@@ -473,7 +494,7 @@ export const model = {
           const subdir = String(p.root_dir).replace(/^\/podcasts\/?/, "");
           if (!subdir) continue;
           const hostDir = `${hostBase}/${subdir}`;
-          await sshCommand(host, sshUser, `mkdir -p '${hostDir}'`);
+          await sshCommand(host, sshUser, `mkdir -p ${shellEsc(hostDir)}`);
           created.push({ id: p.id, title: p.title, dir: hostDir });
         }
 
