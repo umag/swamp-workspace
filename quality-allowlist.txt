@@ -11,6 +11,5 @@
 anilist-chart
 arckit
 issue-lifecycle
-jscad-stl-slicer
 obsidian-vault
 swamp-go-brr
