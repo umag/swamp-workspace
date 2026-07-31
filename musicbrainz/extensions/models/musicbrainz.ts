@@ -43,17 +43,67 @@ async function mbFetch(
 
 // --- bandcamp scraping helpers ---
 
-async function fetchPage(url: string) {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; SwampBot/1.0)",
-      Accept: "text/html",
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${url}: ${response.status}`);
+/**
+ * SSRF guard (musicbrainz-ssrf-and-latent-bugs): require an https URL whose
+ * host is exactly `bandcamp.com` or a `*.bandcamp.com` subdomain. Applied by
+ * fetchPage before the initial request AND before following every redirect
+ * hop, so neither a caller-supplied bandcampUrl nor a scraped second-order
+ * albumUrl can reach an internal/loopback/metadata target — directly or via
+ * a bandcamp-hosted redirect to one.
+ */
+function assertBandcampUrl(raw: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`Invalid Bandcamp URL: ${raw}`);
   }
-  return response.text();
+  if (parsed.protocol !== "https:") {
+    throw new Error(`Refusing to fetch non-Bandcamp host: ${raw}`);
+  }
+  if (
+    parsed.hostname !== "bandcamp.com" &&
+    !parsed.hostname.endsWith(".bandcamp.com")
+  ) {
+    throw new Error(`Refusing to fetch non-Bandcamp host: ${raw}`);
+  }
+  return parsed;
+}
+
+const MAX_BANDCAMP_REDIRECTS = 5;
+
+async function fetchPage(url: string) {
+  let current = assertBandcampUrl(url);
+  let redirects = 0;
+  while (true) {
+    const response = await fetch(current.toString(), {
+      redirect: "manual",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; SwampBot/1.0)",
+        Accept: "text/html",
+      },
+    });
+    if (response.status >= 300 && response.status < 400) {
+      redirects++;
+      if (redirects > MAX_BANDCAMP_REDIRECTS) {
+        throw new Error(`Too many redirects fetching ${url}`);
+      }
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new Error(
+          `Failed to fetch ${current.toString()}: ${response.status} (redirect with no Location header)`,
+        );
+      }
+      current = assertBandcampUrl(new URL(location, current).toString());
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch ${current.toString()}: ${response.status}`,
+      );
+    }
+    return response.text();
+  }
 }
 
 function parseBandcampAlbumPage(html: string) {
@@ -327,7 +377,7 @@ const BrowseResultsSchema = z.object({
  */
 export const model = {
   type: "@magistr/musicbrainz",
-  version: "2026.07.16.2",
+  version: "2026.07.31.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     search: {
