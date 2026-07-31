@@ -11,7 +11,6 @@
 anilist-chart
 arckit
 career-kb
-fc-task-server
 firecracker
 flipper-zero
 good-planning
