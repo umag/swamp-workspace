@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<!--
+  SYNTHETIC fixture — hand-authored, never captured from fragrantica.com.
+  See ../PROVENANCE.md. Deliberately contains a MALFORMED percent-encoded
+  path segment ("%zz" is not a valid hex escape) to pin
+  slugToText/decodeURIComponent's URIError behavior (see the adversarial
+  suite). RFC-flavored placeholder brand/perfume names only.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Malformed percent-encoding (synthetic fixture)</title>
+  </head>
+  <body>
+    <div class="listing">
+      <a href="/perfume/Bad%zzBrand/Broken-Name-201.html"
+      >Broken percent-encoded link</a>
+    </div>
+  </body>
+</html>

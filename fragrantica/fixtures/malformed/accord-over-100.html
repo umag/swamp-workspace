@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<!--
+  SYNTHETIC fixture — hand-authored, never captured from fragrantica.com.
+  See ../PROVENANCE.md. An accord bar whose inline width exceeds 100% —
+  pins parseAccords's unclamped-strength behavior (see the adversarial
+  suite: bug is that strength is never Math.min(100, ...)'d).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Unclamped accord width (synthetic fixture)</title>
+  </head>
+  <body>
+    <div style="background: #ff00ff; width: 120%">overdriven</div>
+  </body>
+</html>
