@@ -1,11 +1,59 @@
 # Changelog
 
+## 2026.08.01.1
+
+Fixes two HIGH latent bugs characterized (pinned, not fixed) by the wave-2b test
+backfill below, tracked and resolved via the local `headphones-apikey-hardening`
+issue-lifecycle model:
+
+- **Credential leak (apikey-in-URL-query through an unwrapped fetch
+  rejection)**: `api()` and `webUi()` called `fetch()` with no surrounding
+  try/catch, so a network-layer rejection (DNS/TLS/reset, or the
+  `AbortSignal.timeout`) threw a Deno error embedding the full request URL —
+  which carries `?apikey=<KEY>` on 27/29 methods — verbatim into the thrown
+  message. A hostile/misconfigured server echoing the request URL in its error
+  body leaked the same way through the `!response.ok` path. Added a pure
+  `redactSecrets(message)` mapper (strips `apikey=`/`api_key=<value>`,
+  case-insensitive, up to the next `&`/whitespace/quote/paren, replacing only
+  the value with `REDACTED`) and wrapped both `api()`'s and `webUi()`'s
+  `fetch()` calls in try/catch, rethrowing `redactSecrets(message)` with the
+  original error preserved via `cause`; routed both `!response.ok` throw
+  messages through the same redactor. Strict no-op on messages without
+  `apikey=`/`api_key=`, so the existing `429 - quota exceeded` behavior is
+  unchanged.
+- **get-artist/get-album array non-unwrap**: `get-artist` wrote
+  `artist: data.artist || data` with no array unwrap, but the real Headphones
+  wire returns `artist` as a single-element **array** (confirmed against
+  `rembo10/headphones`'s `api.py` `_dic_from_query`) — the same shape
+  `onboard-artists` already unwraps via
+  `Array.isArray(data.artist) ?
+  data.artist[0] : data.artist`. Applied the
+  identical unwrap to `get-artist` (preserving the `|| data` whole-envelope
+  fallback), and to `get-album`'s `album: data.album || data` (same defect
+  class, same `_dic_from_query` mechanism, same fix — a free-rider fixed
+  alongside the two named HIGHs).
+- Bumped `manifest.yaml` and `model.version` to CalVer `2026.08.01.1`.
+- Flipped the corresponding characterization pins across
+  `headphones_adversarial_test.ts` (the two HONEST-GAP sentinel-propagation pins
+  and the RESIDUAL reflected-body pin — all three now assert redaction),
+  `headphones_test.ts`, `headphones_methods_test.ts`, and
+  `headphones_coverage_test.ts` (the get-artist/get-album unwrap pins) to assert
+  the corrected behavior. The GREEN `429 - quota exceeded` pin and the
+  `artist`/`album`-key-ABSENT whole-envelope-fallback pins stay green unchanged,
+  as does the property suite (including the apiKey-sentinel-never- leaks
+  invariant).
+- Out of scope, deferred (unchanged by this fix): the `unqueue-album` →
+  `onboard-artists` Skipped-requeue clobber, `audit-library`'s unvalidated
+  `maxDepth`/`musicDir`/`dbPath` trusted-config-boundary gaps, and `apiKey`'s
+  missing `.meta({ sensitive: true })` annotation — all still tracked by the
+  local `headphones-apikey-hardening` issue-lifecycle model.
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-2b full build of
 the extension-quality backfill program, `ext-quality-test-backfill`). No
-behavior change — `headphones.ts` is unmodified and the model `version` stays
-`2026.07.27.1`.
+behavior change at the time — `headphones.ts` was unmodified and the model
+`version` stayed `2026.07.27.1` (later fixed above in `2026.08.01.1`).
 
 - Added `extensions/models/headphones_test.ts` (contract-fixture, 12 tests),
   `extensions/models/headphones_methods_test.ts` (methods, 69 tests),

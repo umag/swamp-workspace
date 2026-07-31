@@ -4,7 +4,10 @@
  * so deleting any one of these guards turns a test red (STANDARD.md's
  * coverage role — a behavioral regression guard, not a numeric percentage).
  *
- * headphones.ts is UNMODIFIED; every test PINS existing behavior.
+ * get-artist's array-unwrap was FIXED by this change (see
+ * `headphones-apikey-hardening`); the "artist key PRESENT" test below
+ * asserts the corrected, unwrapped shape. Every other test PINS existing
+ * behavior.
  *
  * Toolchain rule: no `as typeof <global-builtin>` casts — the fetch/
  * Deno.Command seams use `(globalThis|Deno as unknown as Record<string,
@@ -240,14 +243,14 @@ Deno.test("get-artist: `artist` key ABSENT from the response -> falls back to th
   );
 });
 
-Deno.test("get-artist: `artist` key PRESENT (truthy) -> used directly, envelope NOT used as fallback", async () => {
+Deno.test("get-artist: `artist` key PRESENT (truthy) -> unwrapped and used directly, envelope NOT used as fallback", async () => {
   const { ctx, written } = makeCtx();
   await withOneJson(
     getArtistFixture,
     () => run("get-artist", { id: getArtistFixture.artist[0].ArtistID }, ctx),
   );
   const res = written.find((w) => w.spec === "artist")!;
-  assertEquals(res.payload.artist, getArtistFixture.artist);
+  assertEquals(res.payload.artist, getArtistFixture.artist[0]);
 });
 
 Deno.test("get-artist: `albums` key ABSENT -> collapses to []", async () => {
@@ -742,11 +745,12 @@ Deno.test("audit-library: ArtistName normalizing to EXACTLY 2 chars does NOT byp
 Deno.test("pin: apiKey is NOT marked `.meta({ sensitive: true })` today — documented security-hardening gap", () => {
   // Unlike telegram-send's botToken, headphones.ts's globalArguments schema
   // never calls `.meta({ sensitive: true })` on apiKey. Real gap surfaced
-  // during the test-backfill security review; headphones.ts is deliberately
-  // UNMODIFIED by this change (no manifest version bump). This pins the
-  // CURRENT (regrettable) state so a future fix flips it from failing to
-  // passing rather than silently slipping by. Tracked by
-  // `headphones-apikey-hardening`.
+  // during the test-backfill security review; this specific annotation is
+  // intentionally deferred and OUT OF SCOPE for the `headphones-apikey-
+  // hardening` redaction + array-unwrap fix (which does bump the manifest
+  // version to 2026.08.01.1). This pins the CURRENT (regrettable) state so a
+  // future fix flips it from failing to passing rather than silently
+  // slipping by.
   const shape = (model.globalArguments as z.ZodObject<z.ZodRawShape>).shape;
   const meta = z.globalRegistry.get(shape.apiKey) as
     | { sensitive?: boolean }

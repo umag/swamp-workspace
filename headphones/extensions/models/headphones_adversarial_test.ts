@@ -1,17 +1,20 @@
 /**
  * Adversarial suite: attacker's-perspective tests for @magistr/headphones —
- * apikey-in-URL non-leak GREEN pins, an HONEST no-redaction
- * sentinel-propagation test for the fetch-rejection gap (mirrors the
- * telegram-send precedent), hostile HTML-200 swallow pins, a safe-encoding
- * injection pin, the maxDepth/dbPath/musicDir trusted-config-boundary pins,
- * and a mechanical fixtures-secret-scan over headphones/fixtures/*.
+ * apikey-in-URL non-leak GREEN pins, redaction tests proving api()/webUi()
+ * now wrap and redact fetch-rejection and reflected-body messages (closing
+ * the former credential leak — see `headphones-apikey-hardening`), hostile
+ * HTML-200 swallow pins, a safe-encoding injection pin, the
+ * maxDepth/dbPath/musicDir trusted-config-boundary pins, and a mechanical
+ * fixtures-secret-scan over headphones/fixtures/*.
  *
- * headphones.ts is UNMODIFIED — every test here PINS current behavior
- * (including behavior that is arguably risky). Where a test documents a
- * real gap, it is labeled "pin"/"HONEST GAP"/"RESIDUAL" and says so
- * explicitly, tracking the real fix via the filed hardening issue
- * `headphones-apikey-hardening`. See fixtures/PROVENANCE.md for fixture
- * provenance.
+ * headphones.ts's api()/webUi() request builders and get-artist/get-album
+ * were FIXED by this change (redactSecrets wrapper + array unwrap); every
+ * other test here still PINS current, unmodified behavior (including
+ * behavior that is arguably risky, e.g. the maxDepth/dbPath/musicDir
+ * trusted-config-boundary tests below, which remain real, deferred gaps).
+ * Where a test documents a real remaining gap, it is labeled "pin" and says
+ * so explicitly, tracking it via the local `headphones-apikey-hardening`
+ * issue-lifecycle model. See fixtures/PROVENANCE.md for fixture provenance.
  *
  * Toolchain rule: no `as typeof <global-builtin>` casts — the fetch seam is
  * installed via `(globalThis as unknown as Record<string, unknown>).fetch`.
@@ -173,48 +176,56 @@ const ERROR_HTML = `<!DOCTYPE html>
 // THE headline surface: apikey-in-URL-query
 // ---------------------------------------------------------------------------
 
-Deno.test("HONEST GAP pin: a fetch-layer rejection through api() propagates VERBATIM with no redaction wrapper", async () => {
-  // api() calls `await fetch(url.toString(), { signal: ... })` with NO
-  // surrounding try/catch — ANY rejection (DNS failure, TLS error,
-  // connection reset) propagates completely unchanged, all the way to the
-  // caller. This test proves that mechanism using a NEUTRAL sentinel error
-  // object, never the apiKey itself — self-feeding the key into a thrown
-  // string here would be a tautology (the test controls the stub; asserting
-  // "the key I just typed into the stub appears in the output" proves
-  // nothing about production).
-  //
-  // DOCUMENTED FACT (not asserted here — this is Deno's fetch behavior, not
-  // this model's code, so it cannot be pinned by a stubbed-fetch unit test):
-  // a REAL Deno fetch rejection for a network-layer failure typically embeds
-  // the request URL in its error message (e.g. something shaped like "error
-  // sending request for url (http://host:8181/api?apikey=<KEY>&cmd=...)").
-  // Because api() builds its URL via
-  // `url.searchParams.set("apikey", apiKey)`, that URL carries the apiKey
-  // verbatim. Since this test proves api() adds NO redaction layer around
-  // fetch, a real network failure in production would surface the apiKey
-  // via Deno's own error formatting — a genuine, currently-unfixed gap given
-  // headphones.ts is byte-frozen by this change. The follow-up hardening
-  // issue `headphones-apikey-hardening` (see ../../CHANGELOG.md and
-  // ../../quality.yaml) tracks adding a redacting error mapper that strips
-  // `apikey=...` from every thrown message in both api() and webUi().
-  const SENTINEL = new Error("NEUTRAL_FETCH_REJECTION_SENTINEL_NOT_AN_APIKEY");
+Deno.test("FIXED: a fetch-layer rejection through api() is wrapped and its message redacted, closing the former apikey-in-URL leak", async () => {
+  // Prior to this fix, api() called `await fetch(url.toString(), { signal:
+  // ... })` with NO surrounding try/catch — ANY rejection (DNS failure, TLS
+  // error, connection reset) propagated completely unchanged, all the way to
+  // the caller. A REAL Deno fetch rejection for a network-layer failure
+  // typically embeds the request URL in its error message (e.g. something
+  // shaped like "error sending request for url
+  // (http://host:8181/api?apikey=<KEY>&cmd=...)"); because api() builds its
+  // URL via `url.searchParams.set("apikey", apiKey)`, that URL carries the
+  // apiKey verbatim. This test simulates that exact shape directly
+  // (embedding the sentinel apikey in the rejection's own message, as a real
+  // Deno fetch failure would) and proves api() now wraps the rejection in a
+  // NEW Error whose message has been redacted, with the original preserved
+  // via `cause` for diagnostics. Tracked by the local
+  // `headphones-apikey-hardening` issue-lifecycle model.
+  const leakedUrl =
+    `http://headphones.example:8181/api?apikey=${GLOBAL_ARGS.apiKey}&cmd=getVersion`;
+  const SENTINEL = new Error(`error sending request for url (${leakedUrl})`);
   const { ctx } = makeCtx();
   await withRejectingFetch(SENTINEL, async () => {
     const thrown = await assertRejects(() => run("get-version", {}, ctx));
     assert(
-      thrown === SENTINEL,
-      "the exact same rejection object must propagate unchanged — no wrapping, no redaction, no substitution",
+      thrown !== SENTINEL,
+      "api() must wrap the rejection in a new redacted Error, not propagate the original object unchanged",
+    );
+    assert(
+      (thrown as Error).message.includes("apikey=REDACTED"),
+      "the redacted message must show apikey=REDACTED",
+    );
+    assert(
+      !(thrown as Error).message.includes(GLOBAL_ARGS.apiKey),
+      "the real apiKey value must be absent from the redacted message",
+    );
+    assertEquals(
+      (thrown as Error).cause,
+      SENTINEL,
+      "the original rejection must be preserved via Error.cause so diagnostics aren't lost",
     );
   });
 });
 
-Deno.test("HONEST GAP pin: the SAME no-redaction propagation holds through webUi() (set-extras), not just api()", async () => {
-  // webUi() has its OWN independent `await fetch(...)` call with no
-  // try/catch. Although webUi()'s URL does not itself carry the apiKey
-  // (getExtras is the unauthenticated web-UI form — see
-  // reference_headphones_extension.md), the mechanism (bare fetch, no
-  // redaction wrapper at all) must still be pinned here independently, not
-  // just asserted in a comment.
+Deno.test("FIXED: the SAME wrap-and-redact behavior holds through webUi() (set-extras), not just api()", async () => {
+  // webUi() has its OWN independent `await fetch(...)` call. Although
+  // webUi()'s URL does not itself carry the apiKey (getExtras is the
+  // unauthenticated web-UI form — see reference_headphones_extension.md),
+  // the wrap-and-redact mechanism must still cover it for defense-in-depth,
+  // not just api(). redactSecrets() is a no-op on this message (no
+  // apikey= substring), so only the wrapping (new Error + cause chain) is
+  // observable here — that's the point: the SAME mechanism runs
+  // unconditionally regardless of whether a given message needs redaction.
   const SENTINEL = new Error(
     "NEUTRAL_WEBUI_FETCH_REJECTION_SENTINEL_NOT_AN_APIKEY",
   );
@@ -224,8 +235,18 @@ Deno.test("HONEST GAP pin: the SAME no-redaction propagation holds through webUi
       () => run("set-extras", { id: "artist-1" }, ctx),
     );
     assert(
-      thrown === SENTINEL,
-      "webUi() must also propagate a fetch rejection unchanged — no wrapping, no redaction",
+      thrown !== SENTINEL,
+      "webUi() must also wrap the rejection in a new Error, not propagate the original object unchanged",
+    );
+    assertEquals(
+      (thrown as Error).message,
+      SENTINEL.message,
+      "redactSecrets is a no-op here (no apikey= substring), so the message text itself is unchanged",
+    );
+    assertEquals(
+      (thrown as Error).cause,
+      SENTINEL,
+      "the original rejection must be preserved via Error.cause",
     );
   });
 });
@@ -242,20 +263,25 @@ Deno.test("GREEN pin: a well-formed !response.ok error contains ONLY cmd, status
   });
 });
 
-Deno.test("RESIDUAL pin: if a hostile/misconfigured server ECHOES the request URL (incl. apikey) in its error body, api() forwards up to 200 chars of it verbatim — no server-side redaction either", async () => {
-  // Documents the residual noted in plan v2: `body.slice(0, 200)` is a
-  // truncation, not a redaction. A server that reflects the request
-  // (a common failure-page pattern: "Bad request: <url>") leaks the apikey
-  // through the SAME code path that the GREEN pin above shows is otherwise
-  // safe against a well-behaved server's own error text.
+Deno.test("FIXED: a hostile/misconfigured server that ECHOES the request URL (incl. apikey) in its error body no longer leaks it — the !response.ok message is redacted too", async () => {
+  // Closes the residual noted in plan v2: `body.slice(0, 200)` is a
+  // truncation, not a redaction on its own — a server that reflects the
+  // request (a common failure-page pattern: "Bad request: <url>") used to
+  // leak the apikey through this exact code path, the reflected-body vector
+  // that a fetch-rejection-only fix would have missed. api()'s !response.ok
+  // throw is now routed through redactSecrets() too.
   const { ctx } = makeCtx();
   const reflectedBody =
     `Bad request: url was http://headphones.example:8181/api?apikey=${GLOBAL_ARGS.apiKey}&cmd=getVersion`;
   await withOneJson(reflectedBody, 400, async () => {
     const thrown = await assertRejects(() => run("get-version", {}, ctx));
     assert(
-      (thrown as Error).message.includes(GLOBAL_ARGS.apiKey),
-      "documents the residual: a server that reflects the apikey in its error body is forwarded verbatim (sliced to 200 chars) — not fixed here (source byte-frozen), tracked by headphones-apikey-hardening",
+      (thrown as Error).message.includes("apikey=REDACTED"),
+      "the !response.ok message must show apikey=REDACTED",
+    );
+    assert(
+      !(thrown as Error).message.includes(GLOBAL_ARGS.apiKey),
+      "the real apikey value must be absent from the !response.ok message",
     );
   });
 });
@@ -423,8 +449,9 @@ Deno.test("pin: maxDepth has no .int()/.min() constraint — a non-integer, nega
 Deno.test("pin: musicDir is interpolated into sshCommand's `find` invocation with single-quote wrapping and NO escaping — a value containing a quote breaks out (trusted-config boundary)", async () => {
   // musicDir/dbPath/sshHost/sshUser all come from globalArguments — operator
   // config, not per-call method arguments — but headphones.ts applies no
-  // escaping regardless of source. Documented gap, not fixed here (source
-  // byte-frozen); tracked by headphones-apikey-hardening.
+  // escaping regardless of source. Documented gap, explicitly out of scope
+  // for the `headphones-apikey-hardening` redaction + array-unwrap fix
+  // (audit-library's sshCommand/sshExecSql are untouched by that change).
   const hostileMusicDir = "/music' ; touch /tmp/pwned ; echo '";
   const { ctx } = makeCtx({
     ...GLOBAL_ARGS,

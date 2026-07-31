@@ -8,9 +8,10 @@
  * `cmd.spawn().stdin.getWriter()` + `.output()` (sshExecSql's `sqlite3
  * -json`).
  *
- * headphones.ts is UNMODIFIED by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * get-artist/get-album's array-unwrap was FIXED by this change (see
+ * `headphones-apikey-hardening`); their happy-path tests below assert the
+ * corrected, unwrapped shape. Every other test here is a characterization
+ * test that PINS the model's current, already-shipped behavior.
  *
  * Toolchain rule: no `as typeof <global-builtin>` casts anywhere in this
  * file — the fetch/Deno.Command seams are installed via
@@ -277,7 +278,7 @@ Deno.test("get-index: error path — non-2xx status throws with cmd+status+body"
 // get-artist
 // ---------------------------------------------------------------------------
 
-Deno.test("get-artist: happy path — sends id, writes artist (real array shape) + albums", async () => {
+Deno.test("get-artist: happy path — sends id, writes the unwrapped artist object + albums", async () => {
   const { ctx, written } = makeCtx();
   const id = getArtistFixture.artist[0].ArtistID;
   await withFetchStub(
@@ -288,7 +289,7 @@ Deno.test("get-artist: happy path — sends id, writes artist (real array shape)
     },
   );
   const res = written.find((w) => w.spec === "artist")!;
-  assertEquals(res.payload.artist, getArtistFixture.artist);
+  assertEquals(res.payload.artist, getArtistFixture.artist[0]);
   assertEquals(res.payload.albums, getArtistFixture.albums);
 });
 
@@ -820,7 +821,7 @@ Deno.test("add-artist: error path — non-2xx status throws", async () => {
 // get-album
 // ---------------------------------------------------------------------------
 
-Deno.test("get-album: happy path — sends id, writes album (real array shape) + tracks", async () => {
+Deno.test("get-album: happy path — sends id, writes the unwrapped album object + tracks", async () => {
   const { ctx, written } = makeCtx();
   const id = getAlbumFixture.album[0].AlbumID;
   await withFetchStub(
@@ -831,7 +832,7 @@ Deno.test("get-album: happy path — sends id, writes album (real array shape) +
     },
   );
   const res = written.find((w) => w.spec === "album")!;
-  assertEquals(res.payload.album, getAlbumFixture.album);
+  assertEquals(res.payload.album, getAlbumFixture.album[0]);
   assertEquals(res.payload.tracks, getAlbumFixture.tracks);
 });
 

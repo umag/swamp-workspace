@@ -15,9 +15,10 @@
  * `as typeof <global-builtin>` casts — the fetch seam is installed via
  * `(globalThis as unknown as Record<string, unknown>).fetch`.
  *
- * headphones.ts is UNMODIFIED by this change — every test here is a
- * characterization test pinning the model's current, already-shipped
- * behavior.
+ * get-artist/get-album's array-unwrap was FIXED by this change (see
+ * `headphones-apikey-hardening`); the two tests below assert the corrected,
+ * unwrapped shape. Every other test here is a characterization test pinning
+ * the model's current, already-shipped behavior.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { model } from "./headphones.ts";
@@ -170,8 +171,8 @@ Deno.test("contract: getIndex.json — bare array of artist rows, total == lengt
 
 // ---------------------------------------------------------------------------
 // getArtist.json contract — the REAL wire shape: `artist` is a
-// single-element ARRAY, resolved from upstream source (see PROVENANCE.md),
-// and get-artist's non-unwrapping latent bug
+// single-element ARRAY, resolved from upstream source (see PROVENANCE.md);
+// get-artist's non-unwrapping defect was fixed to unwrap it
 // ---------------------------------------------------------------------------
 
 Deno.test("contract: getArtist.json — the REAL Headphones wire shape has `artist` as a single-element ARRAY (not an object)", () => {
@@ -187,15 +188,15 @@ Deno.test("contract: getArtist.json — the REAL Headphones wire shape has `arti
   assertEquals(getArtistFixture.artist.length, 1);
 });
 
-Deno.test("PIN (latent bug, not fixed — source byte-frozen): get-artist writes the wire ARRAY straight into the `artist` resource field, with no unwrap", async () => {
-  // `execute` does `artist: data.artist || data` with NO array unwrap. Given
-  // the REAL wire response, data.artist is a truthy one-element array, so
-  // this expression evaluates to that ARRAY — not the single artist object
-  // ArtistSchema conceptually expects. onboard-artists (elsewhere in this
-  // same file) DOES unwrap via `Array.isArray(data.artist) ? data.artist[0]
-  // : data.artist`, proving the author already knew the shape could be an
-  // array — get-artist alone omits the same guard. Tracked by the filed
-  // hardening issue `headphones-apikey-hardening` (see ../../CHANGELOG.md).
+Deno.test("FIXED: get-artist unwraps the wire ARRAY into the single artist object, matching onboard-artists' existing precedent", async () => {
+  // `execute` now does `(Array.isArray(data.artist) ? data.artist[0] :
+  // data.artist) || data`. Given the REAL wire response, data.artist is a
+  // truthy one-element array, so this now evaluates to that array's single
+  // element — the artist object ArtistSchema expects. onboard-artists
+  // (elsewhere in this same file) already unwrapped via `Array.isArray(data
+  // .artist) ? data.artist[0] : data.artist`; get-artist now mirrors that
+  // same guard. Fixed via the local `headphones-apikey-hardening`
+  // issue-lifecycle model (see ../../CHANGELOG.md).
   const { ctx, written } = makeCtx();
   await withOneJson(
     getArtistFixture,
@@ -203,10 +204,10 @@ Deno.test("PIN (latent bug, not fixed — source byte-frozen): get-artist writes
   );
   const res = written.find((w) => w.spec === "artist")!;
   assert(
-    Array.isArray(res.payload.artist),
-    "documented latent bug: the `artist` resource field holds an ARRAY today, diverging from ArtistSchema's single-object expectation",
+    !Array.isArray(res.payload.artist),
+    "fixed: the `artist` resource field now holds the unwrapped single object, matching ArtistSchema's expectation",
   );
-  assertEquals(res.payload.artist, getArtistFixture.artist);
+  assertEquals(res.payload.artist, getArtistFixture.artist[0]);
   assertEquals(res.payload.albums, getArtistFixture.albums);
 });
 
@@ -220,8 +221,8 @@ Deno.test("contract: getArtist.loading.json — Status Loading, albums not yet p
       }, ctx),
   );
   const res = written.find((w) => w.spec === "artist")!;
-  const artistArr = res.payload.artist as Array<Record<string, unknown>>;
-  assertEquals(artistArr[0].Status, "Loading");
+  const artist = res.payload.artist as Record<string, unknown>;
+  assertEquals(artist.Status, "Loading");
   assertEquals(res.payload.albums, []);
 });
 
@@ -247,8 +248,8 @@ Deno.test("contract: findArtist.json — bare array, every row keeps its documen
 // ---------------------------------------------------------------------------
 // getAlbum.json contract — object envelope {album, tracks}; `album` is ALSO
 // a single-element ARRAY on the real wire (same _dic_from_query mechanism as
-// getArtist — see PROVENANCE.md), and get-album shares the same non-unwrap
-// latent bug
+// getArtist — see PROVENANCE.md); get-album shared the same non-unwrap
+// defect and was fixed identically (free-rider, same fix path as get-artist)
 // ---------------------------------------------------------------------------
 
 Deno.test("contract: getAlbum.json — object envelope {album, tracks}; `album` is a single-element ARRAY on the real wire (same mechanism as getArtist)", () => {
@@ -260,14 +261,14 @@ Deno.test("contract: getAlbum.json — object envelope {album, tracks}; `album` 
   assert(Array.isArray(getAlbumFixture.tracks));
 });
 
-Deno.test("PIN (latent bug, not fixed — source byte-frozen): get-album ALSO writes the wire ARRAY straight into the `album` resource field, with no unwrap (same defect class as get-artist)", async () => {
+Deno.test("FIXED: get-album ALSO unwraps the wire ARRAY into the single album object (same defect class and fix as get-artist)", async () => {
   // Discovered as a direct, same-evidence-quality extension of plan v2's
   // Step 2 diligence: _getAlbum in headphones/api.py builds
   // `{'album': album, 'tracks': tracks, ...}` where `album` comes from the
   // exact same `_dic_from_query` helper as `_getArtist`'s `artist`, with no
-  // `[0]` indexing. get-album's `album: data.album || data` has the
-  // identical non-unwrap shape as get-artist. Also tracked by
-  // `headphones-apikey-hardening`.
+  // `[0]` indexing. get-album's `album: data.album || data` had the
+  // identical non-unwrap shape as get-artist and got the identical fix.
+  // Fixed via the local `headphones-apikey-hardening` issue-lifecycle model.
   const { ctx, written } = makeCtx();
   await withOneJson(
     getAlbumFixture,
@@ -275,10 +276,10 @@ Deno.test("PIN (latent bug, not fixed — source byte-frozen): get-album ALSO wr
   );
   const res = written.find((w) => w.spec === "album")!;
   assert(
-    Array.isArray(res.payload.album),
-    "documented latent bug: the `album` resource field holds an ARRAY today, diverging from AlbumSchema's single-object expectation",
+    !Array.isArray(res.payload.album),
+    "fixed: the `album` resource field now holds the unwrapped single object, matching AlbumSchema's expectation",
   );
-  assertEquals(res.payload.album, getAlbumFixture.album);
+  assertEquals(res.payload.album, getAlbumFixture.album[0]);
   assertEquals(res.payload.tracks, getAlbumFixture.tracks);
 });
 
