@@ -1,7 +1,8 @@
 {
   "tasks": {
     "check": "deno check extensions/models/fragrantica.ts",
-    "test": "deno test extensions/models/ --permit-no-files",
+    "test": "deno test --allow-read=fixtures --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read=fixtures --allow-env=FC_NUM_RUNS extensions/models/fragrantica_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
@@ -16,7 +17,8 @@
     "lineWidth": 80,
     "indentWidth": 2,
     "semiColons": true,
-    "singleQuote": false
+    "singleQuote": false,
+    "exclude": ["fixtures/"]
   },
   "lint": {
     "rules": {

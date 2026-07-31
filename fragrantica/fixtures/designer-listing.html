@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<!--
+  SYNTHETIC fixture — hand-authored, never captured from fragrantica.com.
+  See ./PROVENANCE.md. Invented house ("Testhouse") and invented perfumes.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Testhouse (synthetic designer listing fixture)</title>
+  </head>
+  <body>
+    <h1>Testhouse Perfumes</h1>
+    <div class="designer-grid">
+      <div class="card">
+        <a href="/perfume/Testhouse/Fakebloom-Nova-101.html">
+          <img src="thumb1.jpg" />
+          Fakebloom Nova 1234
+        </a>
+      </div>
+      <div class="card">
+        <a href="/perfume/Testhouse/Nova-Extreme-102.html">
+          <img src="thumb2.jpg" />
+          Nova Extreme 567
+        </a>
+      </div>
+      <div class="card">
+        <a href="/perfume/Testhouse/Fakebloom-Nova-101.html">
+          <!-- duplicate href for the same perfume: must be deduped -->
+          <img src="thumb1-dup.jpg" />
+          Fakebloom Nova (duplicate card) 1234
+        </a>
+      </div>
+      <div class="card not-a-perfume-link">
+        <a href="/designers/Otherhouse.html"
+        >Otherhouse (not a perfume link, must be skipped)</a>
+      </div>
+    </div>
+  </body>
+</html>

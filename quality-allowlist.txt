@@ -16,7 +16,6 @@ fc-task-server
 fidonet-msgbase
 firecracker
 flipper-zero
-fragrantica
 good-planning
 issue-lifecycle
 jabber

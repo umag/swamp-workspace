@@ -1,0 +1,1 @@
+{"error": "this is a JSON body served with a 200 status and no real HTML markup, used to pin fetchPage/parsePerfume's silent-empty-success behavior on structural drift (see PROVENANCE.md and the adversarial suite) — SYNTHETIC, never captured from a live response"}

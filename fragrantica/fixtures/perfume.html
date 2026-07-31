@@ -1,0 +1,68 @@
+<!doctype html>
+<!--
+  SYNTHETIC fixture — hand-authored, never captured from fragrantica.com.
+  See ./PROVENANCE.md. Invented house/perfume ("Testhouse" / "Fakebloom Nova"),
+  invented note names, RFC-flavored placeholder values only. Excluded from
+  `deno fmt` (see deno.json's fmt.exclude) because the also-like anchors'
+  literal newline between brand and name is semantically significant to the
+  parser under test (preferLinkName splits on "\n") and must not be
+  reformatted onto one line.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Testhouse Fakebloom Nova (synthetic fixture)</title>
+<meta property="og:title" content="Fakebloom Nova Testhouse for women and men"/>
+<meta property="og:description" content="Fakebloom Nova by Testhouse is a Woody Floral fragrance for women and men. Fakebloom Nova was launched in 2021. The nose behind this fragrance is Jane Testperfumer."/>
+<meta property="og:image" content="https://fragrantica.example/mdimg/perfume/fallback-og-image.jpg"/>
+</head>
+<body>
+<article itemscope>
+  <div itemprop="brand"><span itemprop="name">Testhouse</span></div>
+  <h1><span itemprop="name">Fakebloom Nova</span></h1>
+
+  <div class="rating-box">
+    <span itemprop="ratingValue">4.2</span>
+    <span itemprop="ratingCount">1,234</span>
+  </div>
+
+  <section class="accord-bars">
+    <div style="background:#83C928;width:100%;">fresh spicy</div>
+    <div style="background:#bc4d10;opacity:75%;width:70.888%;">amber</div>
+    <div style="width:50%;">no-background-ignored</div>
+    <div style="background:#556B2F;width:22%;">green</div>
+  </section>
+
+  <div id="pyramid">
+    <h4>Top Notes</h4>
+    <div class="pyramid-level-container">
+      <a href="/notes/Bergamot-75.html">Bergamot</a>
+      <a href="/notes/Pink-Pepper-88.html">Pink Pepper</a>
+    </div>
+    <h4>Middle Notes</h4>
+    <div class="pyramid-level-container">
+      <a href="/notes/Rose-3.html">Rose</a>
+    </div>
+    <h4>Base Notes</h4>
+    <div class="pyramid-level-container">
+      <a href="/notes/Musk-99.html">Musk</a>
+    </div>
+  </div>
+
+  <div class="perfumers">
+    <a href="/noses/Jane-Testperfumer.html">Jane Testperfumer</a>
+    <a href="/noses/">empty-noses-link-must-be-filtered-out</a>
+  </div>
+
+  <div class="also-like-wrapper">
+    <h3>People who like this also like</h3>
+    <div class="also-like-container">
+      <a href="/perfume/Fakebloom/Nova-Extreme-102.html"><img src="thumb.jpg"/>Testhouse
+Nova Extreme</a>
+      <a href="/perfume/Otherhouse/Second-Bloom-103.html"><img src="thumb.jpg"/>Otherhouse
+Second Bloom</a>
+    </div>
+  </div>
+</article>
+</body>
+</html>
