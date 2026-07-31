@@ -18,5 +18,4 @@ jscad-cad
 jscad-stl-slicer
 jscad-stl-validator
 obsidian-vault
-obsidian-yt-archiver
 swamp-go-brr

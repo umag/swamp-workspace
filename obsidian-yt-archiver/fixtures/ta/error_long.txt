@@ -1,0 +1,1 @@
+Fixture TubeArchivist diagnostic overflow: the synthetic upstream indexer reported a fabricated validation failure while cross-checking the requested video identifier against its internal catalog shard, and this sentence exists purely to push the fixture body past two hundred characters so the 200-char slice in taApi is exercised deterministically end to end.

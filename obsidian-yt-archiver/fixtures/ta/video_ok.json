@@ -1,0 +1,10 @@
+{
+  "youtube_id": "fixtureAAA1",
+  "title": "Fixture Archived Video Title",
+  "channel": {
+    "channel_id": "fixtureChannelID1",
+    "channel_name": "Fixture Channel One"
+  },
+  "published": "2024-01-15",
+  "vid_type": "videos"
+}
