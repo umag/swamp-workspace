@@ -1,7 +1,8 @@
 {
   "tasks": {
-    "check": "deno check extensions/models/arckit_workspace.ts extensions/models/arckit_workspace_test.ts",
-    "test": "deno test --allow-read --allow-write extensions/models/",
+    "check": "deno check extensions/models/*.ts",
+    "test": "deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/arckit_workspace_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
