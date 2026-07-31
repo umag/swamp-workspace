@@ -34,6 +34,58 @@ const GlobalArgsSchema = z.object({
     .describe("Override the HTTP User-Agent used for requests."),
 });
 
+// --- host allowlist (SSRF guard) --------------------------------------------
+//
+// Every caller-supplied URL/path argument is checked against this allowlist
+// before it is ever fetched: the configured base host (globalArgs.baseUrl,
+// so a locale-domain override like fragrantica.ru still works), OR
+// fragrantica.com itself, OR any *.fragrantica.com subdomain. The check is
+// exact-match / dot-suffixed — never a naive substring or endsWith without a
+// dot boundary, which would wrongly allow lookalikes like
+// "evilfragrantica.com" or "fragrantica.com.attacker.example".
+//
+// This guard lives ONLY at the caller-input normalizers (normalizePerfumeUrl,
+// resolveNoteUrl's direct-URL branch, list-by-designer's direct-URL branch) —
+// deliberately NOT inside fetchPage, and deliberately NOT applied to the
+// DuckDuckGo-resolved branches of resolveNoteUrl/list-by-designer, which stay
+// a documented, deferred second-order-SSRF risk (fragrantica-latent-bugs #5).
+
+function hostAllowed(
+  url: string,
+  context: { globalArgs?: { baseUrl?: string } },
+): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  const configuredBase = context.globalArgs?.baseUrl || DEFAULT_BASE;
+  let configuredHost = "";
+  try {
+    configuredHost = new URL(configuredBase).hostname.toLowerCase();
+  } catch {
+    // Malformed configured base — fall through to the fragrantica.com check.
+  }
+  if (configuredHost && host === configuredHost) return true;
+  if (host === "fragrantica.com" || host.endsWith(".fragrantica.com")) {
+    return true;
+  }
+  return false;
+}
+
+function assertHostAllowed(
+  url: string,
+  context: { globalArgs?: { baseUrl?: string } },
+): void {
+  if (!hostAllowed(url, context)) {
+    throw new Error(
+      `Refusing to fetch disallowed host for "${url}" — only the ` +
+        "configured base host or fragrantica.com/*.fragrantica.com are allowed.",
+    );
+  }
+}
+
 // --- HTML helpers ----------------------------------------------------------
 
 // deno-lint-ignore no-explicit-any
@@ -45,7 +97,7 @@ function parse(html: string): Doc {
 
 async function fetchPage(
   url: string,
-  context: { globalArgs?: { userAgent?: string } },
+  context: { globalArgs?: { userAgent?: string; baseUrl?: string } },
 ): Promise<string> {
   const ua = context.globalArgs?.userAgent || DEFAULT_UA;
   const response = await fetch(url, {
@@ -69,6 +121,28 @@ async function fetchPage(
           : ""),
     );
   }
+  // Post-redirect final-URL re-validation: only applied when the REQUESTED
+  // url itself was already allowlisted (allowedOrigin) — this keeps the
+  // deferred DuckDuckGo-resolved second-order-SSRF pin (#5) inert, since that
+  // path calls fetchPage on a url that was never allowlisted to begin with.
+  // Deliberately NOT `redirect: "manual"` (that would flip the deferred
+  // redirect-follow pin, #4) — this is a post-fetch guard, not a preventive
+  // one. Constructed Response objects (unit test stubs) have response.url
+  // === "" and never trip this check.
+  const allowedOrigin = hostAllowed(url, context);
+  if (allowedOrigin && response.url && !hostAllowed(response.url, context)) {
+    throw new Error(
+      `Refusing response from a disallowed host after redirect: ${response.url}`,
+    );
+  }
+  const contentType = response.headers.get("content-type") ?? "";
+  if (
+    contentType && !/text\/html|application\/xhtml\+xml/i.test(contentType)
+  ) {
+    throw new Error(
+      `Unexpected Content-Type "${contentType}" for ${url} — expected an HTML page.`,
+    );
+  }
   return response.text();
 }
 
@@ -84,8 +158,18 @@ function perfumeIdFromUrl(url: string): number | undefined {
 }
 
 function slugToText(slug: string): string {
-  return decodeURIComponent(slug).replace(/-/g, " ").replace(/\s+/g, " ")
-    .trim();
+  // fragrantica-latent-bugs #2, closed: a malformed %-escape (e.g. "%zz")
+  // used to make decodeURIComponent throw an unmapped URIError, aborting the
+  // whole caller (get-perfume, or every link in a collectPerfumeRefs pass).
+  // Falling back to the raw (still percent-encoded) slug text keeps this
+  // function — and refFromPerfumeUrl, its sole caller's caller — total.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(slug);
+  } catch {
+    decoded = slug;
+  }
+  return decoded.replace(/-/g, " ").replace(/\s+/g, " ").trim();
 }
 
 const PERFUME_HREF = /\/perfume\/([^/]+)\/(.+?)-(\d+)\.html/;
@@ -268,10 +352,15 @@ function parsePerfume(html: string, url: string, base: string) {
       "";
 
   const ref = refFromPerfumeUrl(url, base);
-  const brand = doc.querySelector('[itemprop="brand"] [itemprop="name"]')
+  // pageBrand is PAGE-derived only (itemprop selectors) — kept separate from
+  // the final `brand` field (which falls back to the URL-derived ref.brand)
+  // so the min-field substance guard below can't be satisfied by URL shape
+  // alone (fragrantica-latent-bugs #3, closed).
+  const pageBrand = doc.querySelector('[itemprop="brand"] [itemprop="name"]')
     ?.textContent?.trim() ||
     doc.querySelector('span[itemprop="name"]')?.textContent?.trim() ||
-    ref.brand;
+    "";
+  const brand = pageBrand || ref.brand;
 
   const ogTitle = og("og:title");
   const gender = /for women and men/i.test(ogTitle)
@@ -304,6 +393,30 @@ function parsePerfume(html: string, url: string, base: string) {
   );
 
   const id = ref.id;
+  const description = og("og:description") || undefined;
+  const accords = parseAccords(doc);
+  const notes = parseNotes(doc.querySelector("#pyramid"));
+
+  // fragrantica-latent-bugs #3, closed: page-derived substance check. Only
+  // PAGE-derived signals count (pageBrand, not the URL-derived ref.brand/
+  // ref.name/ref.id fallback) — a non-HTML 200 body or a redesigned page
+  // with none of these must be rejected by the caller (get-perfume) instead
+  // of "succeeding" with an empty-ish record. An itemprop-brand-only page
+  // (no accords/notes/etc.) still counts as substance.
+  const hasPageSubstance = Boolean(
+    pageBrand ||
+      accords.length > 0 ||
+      perfumers.length > 0 ||
+      Number.isFinite(ratingValue) ||
+      gender !== undefined ||
+      year !== undefined ||
+      description ||
+      notes.top.length > 0 ||
+      notes.middle.length > 0 ||
+      notes.base.length > 0 ||
+      notes.general.length > 0,
+  );
+
   return {
     url,
     id,
@@ -315,15 +428,16 @@ function parsePerfume(html: string, url: string, base: string) {
     ratingCount: Number.isFinite(ratingCount) && ratingCount > 0
       ? ratingCount
       : undefined,
-    description: og("og:description") || undefined,
+    description,
     thumbnail: id
       ? `https://fimgs.net/mdimg/perfume-thumbs/375x500.${id}.jpg`
       : (og("og:image") || undefined),
     perfumers,
-    accords: parseAccords(doc),
-    notes: parseNotes(doc.querySelector("#pyramid")),
+    accords,
+    notes,
     similar: parseAlsoLike(doc, base, url),
     timestamp: new Date().toISOString(),
+    hasPageSubstance,
   };
 }
 
@@ -375,8 +489,11 @@ async function resolveNoteUrl(
 ): Promise<string> {
   const v = input.trim();
   if (/^https?:\/\//i.test(v) || v.includes("/notes/")) {
-    return absUrl(v.replace(/^\/+/, "/"), base);
+    const url = absUrl(v.replace(/^\/+/, "/"), base);
+    assertHostAllowed(url, context);
+    return url;
   }
+  // Base-derived — inherently safe, no allowlist check needed.
   if (/-\d+$/.test(v)) return `${base.replace(/\/$/, "")}/notes/${v}.html`;
   const hits = await duckDuckGo(`fragrantica notes ${v}`, context);
   const found = hits.find((u) => /\/notes\/[^/]+-\d+\.html/.test(u)) ??
@@ -386,6 +503,8 @@ async function resolveNoteUrl(
       `Could not resolve note "${v}" to a /notes/ page. Pass the exact slug (e.g. Vetiver-4) or the full URL.`,
     );
   }
+  // Deliberately NOT host-allowlisted: fragrantica-latent-bugs #5 (second-
+  // order SSRF via DuckDuckGo poisoning) is a documented, deferred risk.
   return found.split("#")[0].split("?")[0];
 }
 
@@ -479,9 +598,18 @@ function instanceSlug(input: string): string {
     .slice(0, 80) || "result";
 }
 
-function normalizePerfumeUrl(input: string, base: string): string {
+function normalizePerfumeUrl(
+  input: string,
+  base: string,
+  context: { globalArgs?: { baseUrl?: string } },
+): string {
   const v = input.trim();
-  if (/^https?:\/\//i.test(v)) return v;
+  if (/^https?:\/\//i.test(v)) {
+    assertHostAllowed(v, context);
+    return v;
+  }
+  // The two relative-path branches below always resolve against the
+  // configured `base`, so they can never reach an unallowlisted host.
   if (v.includes("/perfume/")) return absUrl(v.replace(/^\/+/, "/"), base);
   return absUrl("/" + v.replace(/^\/+/, ""), base);
 }
@@ -502,7 +630,7 @@ function normalizePerfumeUrl(input: string, base: string): string {
  */
 export const model = {
   type: "@magistr/fragrantica",
-  version: "2026.07.16.2",
+  version: "2026.07.31.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     search: {
@@ -607,9 +735,18 @@ export const model = {
         context: any,
       ) => {
         const base = context.globalArgs?.baseUrl || DEFAULT_BASE;
-        const url = normalizePerfumeUrl(args.url, base);
+        const url = normalizePerfumeUrl(args.url, base, context);
         const html = await fetchPage(url, context);
-        const perfume = parsePerfume(html, url, base);
+        const { hasPageSubstance, ...perfume } = parsePerfume(html, url, base);
+        if (!hasPageSubstance) {
+          // fragrantica-latent-bugs #3, closed: reject before writeResource
+          // instead of silently "succeeding" with an empty-ish record built
+          // only from the requested URL's own shape.
+          throw new Error(
+            `No recognizable perfume content found at ${url} — the page ` +
+              "may be non-HTML, a redesigned layout, or an error page.",
+          );
+        }
         const handle = await context.writeResource(
           "perfume",
           instanceSlug(url),
@@ -636,7 +773,7 @@ export const model = {
         context: any,
       ) => {
         const base = context.globalArgs?.baseUrl || DEFAULT_BASE;
-        const url = normalizePerfumeUrl(args.url, base);
+        const url = normalizePerfumeUrl(args.url, base, context);
         const html = await fetchPage(url, context);
         const doc = parse(html);
         const results = parseAlsoLike(doc, base, url);
@@ -676,7 +813,9 @@ export const model = {
         let url: string;
         if (/^https?:\/\//i.test(v) || v.includes("/designers/")) {
           url = absUrl(v.replace(/^\/+/, "/"), base);
+          assertHostAllowed(url, context);
         } else if (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(v)) {
+          // Base-derived — inherently safe, no allowlist check needed.
           url = `${base.replace(/\/$/, "")}/designers/${v}.html`;
         } else {
           const hits = await duckDuckGo(`fragrantica designers ${v}`, context);
@@ -686,6 +825,9 @@ export const model = {
               `Could not resolve designer "${v}" to a /designers/ page. Pass the exact slug (e.g. Yves-Saint-Laurent) or the full URL.`,
             );
           }
+          // Deliberately NOT host-allowlisted: fragrantica-latent-bugs #5
+          // (second-order SSRF via DuckDuckGo poisoning) is a documented,
+          // deferred risk.
           url = found.split("#")[0].split("?")[0];
         }
         const html = await fetchPage(url, context);

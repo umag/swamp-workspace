@@ -117,41 +117,65 @@ function ddgPage(urls: string[]): string {
 
 const MINIMAL = "<html><body></body></html>";
 
+// get-perfume now requires page-derived substance before it will write a
+// perfume resource (fragrantica-latent-bugs #3, closed) — the three
+// normalizePerfumeUrl branch fixtures below route through get-perfume, so
+// they need a substance-bearing body (an empty MINIMAL body would now throw
+// regardless of which normalizePerfumeUrl branch is under test).
+const MINIMAL_PERFUME =
+  `<!doctype html><html><body><div itemprop="brand"><span itemprop="name">Testhouse</span></div></body></html>`;
+
 // ---------------------------------------------------------------------------
 // normalizePerfumeUrl (via get-perfume) — 3 branches
 // ---------------------------------------------------------------------------
 
-Deno.test("normalizePerfumeUrl branch 1: absolute http(s) URL passed through unchanged", async () => {
-  const url = "https://other.example/perfume/Testhouse/Fakebloom-Nova-101.html";
+Deno.test("normalizePerfumeUrl branch 1: absolute http(s) URL passed through unchanged (still subject to the host allowlist: *.fragrantica.com)", async () => {
+  // fragrantica-latent-bugs #1, closed: absolute URLs on a foreign host
+  // (e.g. other.example) are now rejected before fetch by the SSRF
+  // allowlist — see fragrantica_adversarial_test.ts's SSRF pins. This
+  // fixture switches to an allowlisted *.fragrantica.com subdomain so it
+  // keeps pinning "absolute URLs are never rewritten onto baseUrl" without
+  // tripping the (correct, intentional) new guard.
+  const url =
+    "https://de.fragrantica.com/perfume/Testhouse/Fakebloom-Nova-101.html";
   const { ctx } = makeCtx();
-  await withFetchStub([pageRoute({ [url]: MINIMAL })], async (calls) => {
-    await run("get-perfume", { url }, ctx);
-    assertEquals(
-      calls[0].url,
-      url,
-      "absolute URLs are never rewritten onto baseUrl",
-    );
-  });
+  await withFetchStub(
+    [pageRoute({ [url]: MINIMAL_PERFUME })],
+    async (calls) => {
+      await run("get-perfume", { url }, ctx);
+      assertEquals(
+        calls[0].url,
+        url,
+        "absolute URLs on an allowlisted host are never rewritten onto baseUrl",
+      );
+    },
+  );
 });
 
 Deno.test("normalizePerfumeUrl branch 2: a relative path containing /perfume/ is resolved against baseUrl", async () => {
   const { ctx } = makeCtx();
   const expected = `${BASE}/perfume/Testhouse/Fakebloom-Nova-101.html`;
-  await withFetchStub([pageRoute({ [expected]: MINIMAL })], async (calls) => {
-    await run("get-perfume", {
-      url: "perfume/Testhouse/Fakebloom-Nova-101.html",
-    }, ctx);
-    assertEquals(calls[0].url, expected);
-  });
+  await withFetchStub(
+    [pageRoute({ [expected]: MINIMAL_PERFUME })],
+    async (calls) => {
+      await run("get-perfume", {
+        url: "perfume/Testhouse/Fakebloom-Nova-101.html",
+      }, ctx);
+      assertEquals(calls[0].url, expected);
+    },
+  );
 });
 
 Deno.test("normalizePerfumeUrl branch 3: a bare slug with no /perfume/ marker is still forced under baseUrl with a leading slash", async () => {
   const { ctx } = makeCtx();
   const expected = `${BASE}/some-bare-path`;
-  await withFetchStub([pageRoute({ [expected]: MINIMAL })], async (calls) => {
-    await run("get-perfume", { url: "some-bare-path" }, ctx);
-    assertEquals(calls[0].url, expected);
-  });
+  await withFetchStub(
+    [pageRoute({ [expected]: MINIMAL_PERFUME })],
+    async (calls) => {
+      await run("get-perfume", { url: "some-bare-path" }, ctx);
+      assertEquals(calls[0].url, expected);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@
  * already-shipped, current behavior. All fixtures are pure hand-authored
  * synthetic data — see fixtures/PROVENANCE.md. No network call is made.
  */
-import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { DOMParser } from "npm:linkedom@0.16.11";
 import {
   parseAccords,
@@ -166,12 +166,19 @@ Deno.test("contract: ddg-results.html — every result__a with a uddg= param dec
 // malformed/bad-percent.html — refFromPerfumeUrl THROWS on malformed % escape
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: malformed/bad-percent.html — refFromPerfumeUrl throws URIError on a malformed percent-escape (exported-function pin)", async () => {
+Deno.test("contract: malformed/bad-percent.html — refFromPerfumeUrl now falls back to the raw slug on a malformed percent-escape instead of throwing (exported-function pin, fixed)", async () => {
   const d = doc(await readFixture("malformed/bad-percent.html"));
   const href = d.querySelector('a[href*="/perfume/"]')?.getAttribute("href") ??
     "";
   assertEquals(href, "/perfume/Bad%zzBrand/Broken-Name-201.html");
-  assertThrows(() => refFromPerfumeUrl(href, BASE), URIError);
+  const ref = refFromPerfumeUrl(href, BASE);
+  assertEquals(
+    ref.brand,
+    "Bad%zzBrand",
+    "brand falls back to the raw, undecoded slug rather than throwing",
+  );
+  assertEquals(ref.name, "Broken Name");
+  assertEquals(ref.id, 201);
 });
 
 // ---------------------------------------------------------------------------
