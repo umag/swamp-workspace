@@ -358,7 +358,14 @@ Deno.test("property: RECOVERY — over the BMP-safe canonical subset (no lone su
         pParam = new URL(calls[0].url).searchParams.get("p")!;
       });
       const hex = pParam.slice("enc:".length);
-      const recovered = new TextDecoder().decode(hexDecode(hex));
+      // ignoreBOM:true is REQUIRED to make decode a true inverse of encode: a
+      // default TextDecoder silently STRIPS a leading BOM (U+FEFF), so a
+      // password beginning with U+FEFF would otherwise fail to round-trip even
+      // though it is a valid, non-surrogate BMP scalar (this bit the RECOVERY
+      // property with fast-check seed -832237103 — a U+FEFF-leading password).
+      const recovered = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+        hexDecode(hex),
+      );
       return recovered === password;
     }),
     FC_RUNS,
