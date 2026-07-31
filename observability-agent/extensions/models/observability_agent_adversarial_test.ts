@@ -5,11 +5,17 @@
  * `--allow-read`, matching this extension's network-less/fs-less default
  * test task; see the scan's own doc comment below).
  *
- * observability_agent.ts is UNMODIFIED — every "pin: KNOWN INJECTION" test
- * here characterizes a REAL, already-shipped bug rather than proposing a
- * fix (a fix is out of scope for this test-only backfill; see CHANGELOG.md
- * and the LOCAL `observability-agent-rce` issue-lifecycle bug model — NEVER
- * the Lab, per this repo's tracking convention).
+ * Two HIGH remote-RCE bugs (#1, #2) and the MEDIUM bindAddress-newline
+ * config injection (#4a) found during the prior test-only backfill are
+ * FIXED as of this change — see CHANGELOG.md and the LOCAL
+ * `observability-agent-rce` issue-lifecycle bug model (never the Lab, per
+ * this repo's tracking convention). Their tests below now assert the
+ * schema-boundary REJECTION of the hostile input ("fixed:" tests) plus
+ * positive acceptance of legit values, rather than characterizing the
+ * injection. The remaining lower-severity findings (#3, #4b-d, #5, #6) are
+ * still open and remain "pin: KNOWN INJECTION"/"pin: KNOWN BUG" tests below
+ * — deferred by scope, different fields or fix paths (config-integrity via
+ * YAML/VRL/base64, not shell RCE).
  *
  * THE CORE TRAP THIS SUITE EXISTS TO AVOID: the real injection surface is
  * the generated REMOTE bash script fed over stdin, NOT the local `ssh` argv
@@ -19,26 +25,37 @@
  * script (raw for install/status's inline curl calls; base64-DECODED for
  * configure's `writeRemoteFile`-written blobs), never on argv alone.
  *
- * Six bugs found during this backfill, filed in the LOCAL
- * `observability-agent-rce` bug model (all PINNED here, none fixed):
- *   1. HIGH  — vectorVersion -> unescaped into install's curl URL -> RCE.
- *   2. HIGH  — bindAddress -> unescaped into status's curl URLs -> RCE (the
- *      nominally read-only status method is a code-exec vector).
+ * Six bugs found during the original backfill, filed in the LOCAL
+ * `observability-agent-rce` bug model:
+ *   1. HIGH — FIXED. vectorVersion -> unescaped into install's curl URL ->
+ *      RCE. Closed by a semver allowlist regex (`^\d+\.\d+\.\d+$`) on
+ *      vectorVersion at the schema boundary, plus a `shellEsc` single-quote
+ *      wrap at the curl site (defense in depth).
+ *   2. HIGH — FIXED. bindAddress -> unescaped into status's curl URLs ->
+ *      RCE (the nominally read-only status method was a code-exec vector).
+ *      Closed by a host allowlist regex (`^[A-Za-z0-9.-]{1,253}$`) on
+ *      bindAddress at the schema boundary, plus a `shellEsc` wrap at both
+ *      curl sites.
  *   3. MEDIUM — bindWaitUnit newlines survive base64 into 10-boot.conf ->
- *      arbitrary systemd [Unit]/[Service] directive injection.
+ *      arbitrary systemd [Unit]/[Service] directive injection. STILL OPEN
+ *      (different field, deferred).
  *   4. MEDIUM — bindAddress/hostLabel/logsEndpoint/logFiles -> exporter-flag
  *      / VRL / YAML config injection (NOT code-exec — never escapes the
- *      base64 envelope to a shell).
+ *      base64 envelope to a shell). The bindAddress-newline variant (4a) is
+ *      FIXED for free by the same strict host regex as #2; hostLabel (4b),
+ *      logFiles (4c) and logsEndpoint (4d) are STILL OPEN (deferred,
+ *      different fix path).
  *   5. LOW — btoa() throws on non-Latin1 config content (writeRemoteFile),
  *      crashing configure with an unhandled exception instead of a clean
- *      validation error.
+ *      validation error. STILL OPEN.
  *   6. LOW — doc drift (inventory undocumented) — see
- *      observability_agent_methods_test.ts's model-shape sanity test.
+ *      observability_agent_methods_test.ts's model-shape sanity test. STILL
+ *      OPEN.
  *
  * nodePort/blackboxPort are `z.number().int()` — schema-constrained, and
  * therefore NOT part of the injectable surface (see the "safe:" schema
- * pin below). Only bindAddress and vectorVersion (both `z.string()`) are
- * the reachable RCE vectors.
+ * pin below). bindAddress and vectorVersion (both `z.string()`) are now
+ * ALSO schema-constrained by the new regexes above.
  *
  * See fixtures/PROVENANCE.md for the fixture corpus's provenance and the
  * secret-scan's scope/rationale.
@@ -191,71 +208,93 @@ function extractRemoteFile(script: string, path: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// 1. HIGH — vectorVersion RCE via install's curl URL
+// 1. HIGH — FIXED. vectorVersion RCE via install's curl URL
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: KNOWN INJECTION (HIGH, observability-agent-rce #1) — vectorVersion is unescaped into install's double-quoted curl URL", async () => {
+Deno.test("fixed: (HIGH, observability-agent-rce #1) — vectorVersion is validated by a semver allowlist regex at the schema boundary; a command-injection payload is rejected before install ever builds a script", () => {
   const injection = '0.46.1"; touch /tmp/pwned-install; echo "';
-  const { ctx } = makeCtx({ vectorVersion: injection });
-  await withCommandStub(
-    {
-      success: true,
-      stdout: "NODE=1.7.0\nBLACKBOX=0.25.0\nVECTOR=0.46.1\n",
-      stderr: "",
-    },
-    async (calls) => {
-      await run("install", {}, ctx);
-      const script = calls[0].stdin;
-      assert(
-        script.includes(
-          `curl -fsSL -o "$tmp/vector.deb" "https://packages.timber.io/vector/${injection}/vector_${injection}-1_amd64.deb"`,
-        ),
-        "vectorVersion is interpolated verbatim into the curl line with no escaping",
-      );
-      assert(
-        script.includes("touch /tmp/pwned-install"),
-        "the injected payload appears UNESCAPED — a hostile vectorVersion " +
-          'breaks out of the double-quoted URL (via its embedded `"`) and ' +
-          "chains an arbitrary command, executed as whatever user ssh logs " +
-          "in as (root by default). pin: KNOWN INJECTION, not fixed here " +
-          "(source frozen); see observability-agent-rce.",
-      );
-    },
+  assertThrows(
+    () =>
+      model.globalArguments.parse({
+        sshHost: "host.example",
+        vectorVersion: injection,
+      }),
+    Error,
+    undefined,
+    "a vectorVersion containing shell metacharacters must be rejected by " +
+      "the `^\\d+\\.\\d+\\.\\d+$` allowlist regex — this closes the " +
+      "install curl-URL RCE (observability-agent-rce #1) at the parse " +
+      "boundary, before install's execute() ever runs",
   );
 });
 
+Deno.test("fixed: (HIGH, observability-agent-rce #1) — legit vectorVersion values (default 0.46.1, and 0.47.0) are still accepted and build the correct install curl URL", async () => {
+  for (const vv of ["0.46.1", "0.47.0"]) {
+    const { ctx } = makeCtx({ vectorVersion: vv });
+    await withCommandStub(
+      {
+        success: true,
+        stdout: `NODE=1.7.0\nBLACKBOX=0.25.0\nVECTOR=${vv}\n`,
+        stderr: "",
+      },
+      async (calls) => {
+        await run("install", {}, ctx);
+        const script = calls[0].stdin;
+        assert(
+          script.includes(
+            `https://packages.timber.io/vector/${vv}/vector_${vv}-1_amd64.deb`,
+          ),
+          `legit vectorVersion ${vv} must still build the correct .deb URL`,
+        );
+      },
+    );
+  }
+});
+
 // ---------------------------------------------------------------------------
-// 2. HIGH — bindAddress RCE via status's curl URLs (the READ-ONLY method)
+// 2. HIGH — FIXED. bindAddress RCE via status's curl URLs (the READ-ONLY
+// method)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: KNOWN INJECTION (HIGH, observability-agent-rce #2) — bindAddress is unescaped into status's curl URLs, making the read-only status method an RCE vector", async () => {
+Deno.test("fixed: (HIGH, observability-agent-rce #2) — bindAddress is validated by a host allowlist regex at the schema boundary; a command-injection payload is rejected before status ever builds a script", () => {
   const injection = '0.0.0.0"; touch /tmp/pwned-status; echo "';
-  const { ctx } = makeCtx({ bindAddress: injection });
-  await withCommandStub(
-    {
-      success: true,
-      stdout:
-        "svc.node=active\nsvc.blackbox=active\nsvc.vector=active\nlst.node=fail\nlst.blackbox=fail\n",
-      stderr: "",
-    },
-    async (calls) => {
-      await run("status", {}, ctx);
-      const script = calls[0].stdin;
-      assert(
-        script.includes(
-          `curl -sf --max-time 5 "http://${injection}:9100/metrics"`,
-        ),
-        "bindAddress is interpolated verbatim into status's curl line",
-      );
-      assert(
-        script.includes("touch /tmp/pwned-status"),
-        "the injected payload appears UNESCAPED in a method with NO write " +
-          "side effects of its own — 'status' is nominally read-only but " +
-          "this makes it a full remote-code-execution vector. pin: KNOWN " +
-          "INJECTION, not fixed here; see observability-agent-rce.",
-      );
-    },
+  assertThrows(
+    () =>
+      model.globalArguments.parse({
+        sshHost: "host.example",
+        bindAddress: injection,
+      }),
+    Error,
+    undefined,
+    "a bindAddress containing shell metacharacters must be rejected by " +
+      "the `^[A-Za-z0-9.-]{1,253}$` allowlist regex — this closes the " +
+      "status curl-URL RCE (observability-agent-rce #2) at the parse " +
+      "boundary, before status's execute() ever runs, making the " +
+      "nominally read-only method safe again",
   );
+});
+
+Deno.test("fixed: (HIGH, observability-agent-rce #2) — legit bindAddress values (default 0.0.0.0, an RFC 5737 IPv4, and a hostname) are still accepted and build the correct status curl URLs", async () => {
+  for (const ba of ["0.0.0.0", "192.0.2.10", "host.example"]) {
+    const { ctx } = makeCtx({ bindAddress: ba });
+    await withCommandStub(
+      {
+        success: true,
+        stdout:
+          "svc.node=active\nsvc.blackbox=active\nsvc.vector=active\nlst.node=ok\nlst.blackbox=ok\n",
+        stderr: "",
+      },
+      async (calls) => {
+        await run("status", {}, ctx);
+        const script = calls[0].stdin;
+        assert(
+          script.includes(`http://${ba}:9100/metrics`) &&
+            script.includes(`http://${ba}:9115/metrics`),
+          `legit bindAddress ${ba} must still build the correct metrics URLs`,
+        );
+      },
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -299,38 +338,26 @@ Deno.test("pin: KNOWN INJECTION (MEDIUM, observability-agent-rce #3) — bindWai
 // ---------------------------------------------------------------------------
 // 4. MEDIUM — config injection (NOT code-exec): bindAddress / hostLabel /
 // logsEndpoint / logFiles corrupt exporter flags / VRL / YAML, but never
-// escape the base64 envelope to a shell.
+// escape the base64 envelope to a shell. 4a (bindAddress) is FIXED, folded
+// into the #2 host-allowlist regex for free; 4b/4c/4d (hostLabel/logFiles/
+// logsEndpoint) are STILL OPEN — deferred, different fix path (YAML/VRL-safe
+// encoding).
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: KNOWN INJECTION (MEDIUM, observability-agent-rce #4a) — bindAddress newline injects a second ARGS= line into the node_exporter defaults file", async () => {
+Deno.test("fixed: (MEDIUM, observability-agent-rce #4a) — a bindAddress newline (that would have injected a second ARGS= line into the node_exporter defaults file) is rejected at the schema boundary by the same host allowlist regex that closes #2", () => {
   const injection = '0.0.0.0"\nARGS="--web.config.file=/tmp/evil';
-  const { ctx } = makeCtx({ bindAddress: injection });
-  await withCommandStub(
-    {
-      success: true,
-      stdout: "NODE=active\nBLACKBOX=active\nVECTOR=skipped\n",
-      stderr: "",
-    },
-    async (calls) => {
-      await run("configure", {}, ctx);
-      const defaults = extractRemoteFile(
-        calls[0].stdin,
-        "/etc/default/prometheus-node-exporter",
-      );
-      const argsLines = defaults.split("\n").filter((l) =>
-        l.startsWith("ARGS=")
-      );
-      assertEquals(
-        argsLines.length,
-        2,
-        "a hostile bindAddress injects a SECOND ARGS= assignment — since " +
-          "/etc/default/... is sourced as shell, the LATER assignment wins " +
-          "and silently overrides the exporter's real flags. config " +
-          "corruption, not code-exec (no shell metacharacter ever escapes " +
-          "this file). pin: KNOWN INJECTION, not fixed here; see " +
-          "observability-agent-rce.",
-      );
-    },
+  assertThrows(
+    () =>
+      model.globalArguments.parse({
+        sshHost: "host.example",
+        bindAddress: injection,
+      }),
+    Error,
+    undefined,
+    "a bindAddress containing a newline must be rejected by the " +
+      "`^[A-Za-z0-9.-]{1,253}$` allowlist regex — the same fix that closes " +
+      "#2 folds in this ARGS=-injection config-corruption bug for free " +
+      "(observability-agent-rce #4a)",
   );
 });
 
@@ -508,7 +535,11 @@ Deno.test("safe: writeRemoteFile's path argument is always a hardcoded module co
     "/etc/systemd/system/vector.service.d/override.conf",
   ];
   const { ctx } = makeCtx({
-    bindAddress: "192.0.2.10'; rm -rf / #",
+    // bindAddress is now schema-validated (observability-agent-rce #2) and
+    // can no longer carry shell metacharacters — use a benign value here
+    // and keep testing the write-target-path invariant via the fields that
+    // are still unvalidated (hostLabel/logsEndpoint/bindWaitUnit).
+    bindAddress: "192.0.2.10",
     hostLabel: "label'; rm -rf / #",
     logsEndpoint: "http://198.51.100.20:9428/'; rm -rf / #",
     bindWaitUnit: "wg0'; rm -rf / #",

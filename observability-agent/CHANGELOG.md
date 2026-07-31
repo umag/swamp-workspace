@@ -1,11 +1,56 @@
 # Changelog
 
-## Unreleased
+## 2026.08.01.1
+
+Fixes two HIGH remote-RCE bugs closed as `observability-agent-rce` (LOCAL
+`@magistr/issue-lifecycle` bug model — never the Lab, per this repo's tracking
+convention). `observability_agent.ts` is no longer byte-frozen; the model
+`version` moves from `2026.07.02.3` to `2026.08.01.1`.
+
+- **Fixed (HIGH)** — `vectorVersion` was interpolated unescaped into `install`'s
+  double-quoted curl URL, allowing remote code execution as whatever user SSH
+  logs in as (root by default). Closed with a semver allowlist regex
+  (`^\d+\.\d+\.\d+$`) on `vectorVersion` in `GlobalArgsSchema`, validated before
+  its `.default("0.46.1")`.
+- **Fixed (HIGH)** — `bindAddress` was interpolated unescaped into `status`'s
+  two curl metrics URLs, making the nominally read-only `status` method also a
+  remote code-execution vector. Closed with a host allowlist regex
+  (`^[A-Za-z0-9.-]{1,253}$`) on `bindAddress` in `GlobalArgsSchema`, validated
+  before its `.default("0.0.0.0")`. `nodePort`/`blackboxPort` were already
+  `z.number().int()` and therefore never reachable.
+- **Fixed (MEDIUM, folded in for free)** — the bindAddress-newline config
+  injection (a hostile `bindAddress` containing `\n` could inject a second
+  `ARGS=` line into the node_exporter/blackbox defaults files) is closed by the
+  same strict `bindAddress` regex above, since it also rejects newlines.
+- Added the repo-canonical `shellEsc` single-quote-wrap helper (copied verbatim
+  from `firecracker/extensions/models/firecracker.ts`) and wrapped the two
+  remaining curl interpolation sites — `install`'s vector `.deb` URL and
+  `status`'s two metrics URLs — as defense-in-depth on top of the allowlist
+  regexes.
+- Both fixes are behavior-preserving for every legit value: the existing
+  defaults (`0.46.1`, `0.0.0.0`) already satisfy their new regex, and
+  `install`/`status` still build the identical curl URLs for valid input (now
+  additionally single-quoted).
+- **Still open** (deferred, different fields/fix paths — tracked in
+  `observability-agent-rce`): MEDIUM `bindWaitUnit` systemd-directive injection
+  (#3); MEDIUM `hostLabel`/`logFiles`/`logsEndpoint` VRL/YAML config injection
+  (#4b-d); LOW `btoa()` non-Latin1 crash (#5); LOW `inventory` doc drift (#6);
+  LOW `sshUser`/`sshHost` ssh-argv option-injection note.
+- `observability_agent_adversarial_test.ts`: flipped the two HIGH
+  characterization pins (vectorVersion, bindAddress) and the MEDIUM
+  bindAddress-newline pin to assert `globalArguments.parse` now REJECTS the
+  hostile payloads, added positive-acceptance tests for legit `vectorVersion`
+  (0.46.1, 0.47.0) and `bindAddress` (0.0.0.0, 192.0.2.10, a hostname), and
+  repointed the safe write-target-path test to a benign `bindAddress` (keeping
+  the still-unvalidated `hostLabel`/`logsEndpoint`/ `bindWaitUnit` fields
+  hostile, preserving that test's intent). All five suites green: 56 tests,
+  property suite green at `FC_NUM_RUNS=5000`.
+
+## Test backfill (folded into 2026.08.01.1 above)
 
 Test backfill to the STANDARD.md five-suite quality bar (wave 2c, full build of
-the extension-quality backfill program, `ext-quality-test-backfill`). No
-behavior change — `observability_agent.ts` is byte-frozen and the model
-`version` stays `2026.07.02.3`.
+the extension-quality backfill program, `ext-quality-test-backfill`), prior to
+the fix above.
 
 - Added `extensions/models/observability_agent_test.ts` (contract-fixture),
   `observability_agent_methods_test.ts` (methods),
@@ -27,28 +72,10 @@ behavior change — `observability_agent.ts` is byte-frozen and the model
   never a direct `as typeof Deno.Command` cast. The stub CAPTURES the piped
   stdin script, because the real behavior/attack surface here is the generated
   REMOTE bash script, not the local `ssh` argv.
-- Pins several found bugs, characterized rather than fixed (source frozen).
-  Filed as a LOCAL `@magistr/issue-lifecycle` bug model,
-  `observability-agent-rce` — never the Lab:
-  1. **HIGH** — `vectorVersion` is interpolated unescaped into `install`'s
-     double-quoted curl URL -> remote code execution as whatever user SSH logs
-     in as (root by default).
-  2. **HIGH** — `bindAddress` is interpolated unescaped into `status`'s curl
-     URLs -> the nominally read-only `status` method is also a remote
-     code-execution vector. `nodePort`/`blackboxPort` are `z.number().int()` and
-     therefore NOT reachable — only the string-typed `bindAddress`/
-     `vectorVersion` fields are.
-  3. **MEDIUM** — `bindWaitUnit` newlines survive base64 verbatim into
-     `10-boot.conf` -> arbitrary systemd `[Unit]`/`[Service]` directive
-     injection.
-  4. **MEDIUM** — `bindAddress`/`hostLabel`/`logsEndpoint`/`logFiles` each
-     independently corrupt exporter flags / the VRL remap transform / the Vector
-     YAML (extra `include:` entries, a second sink `endpoint`) — never escapes
-     to a shell (config-integrity injection, not code-exec).
-  5. **LOW** — `btoa()` throws an unhandled `DOMException` on non-Latin1 config
-     content (`writeRemoteFile`) instead of a clean validation error.
-  6. **LOW** — the `inventory` method is undocumented in both README.md and
-     manifest.yaml (both list only install/configure/status).
+- Pinned several found bugs, characterized rather than fixed at the time (source
+  frozen). Filed as a LOCAL `@magistr/issue-lifecycle` bug model,
+  `observability-agent-rce` — never the Lab. Two HIGH + one MEDIUM of these are
+  now fixed above; see that entry.
 - `deno.json`: default `test` task is network-less AND run-less
   (`--allow-env=FC_NUM_RUNS` only, no `--allow-run`/`--allow-net`/
   `--allow-read`) — a mis-stubbed test that constructs a real
