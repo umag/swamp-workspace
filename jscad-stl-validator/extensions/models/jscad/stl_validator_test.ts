@@ -1,5 +1,6 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { StlValidator } from "./stl_validator.ts";
+import { encodeAsciiStl } from "../fixtures/stl_builders.ts";
 
 // Helper: build a minimal valid binary STL with N triangles
 function buildBinaryStl(triangleCount: number): Uint8Array {
@@ -124,4 +125,97 @@ Deno.test("validate file too small for binary", () => {
   assertEquals(report.valid, false);
   assertEquals(report.format, "binary");
   assertEquals(report.issues.some((i) => i.includes("too small")), true);
+});
+
+// ---------------------------------------------------------------------------
+// Exact-output (contract) pins — the FULL report object, not partial fields.
+// jscad/stl_validator.ts is BYTE-FROZEN; these characterize current output.
+// ---------------------------------------------------------------------------
+
+Deno.test("contract: exact full report for a canonical 2-triangle binary STL (pin)", () => {
+  const stl = buildBinaryStl(2);
+  const report = StlValidator.validate(stl);
+  assertEquals(report, {
+    valid: true,
+    format: "binary",
+    triangleCount: 2,
+    expectedTriangleCount: 2,
+    degenerateTriangles: 0,
+    issues: [],
+    boundingBox: { min: [0, 0, 0], max: [1, 1, 0], size: [1, 1, 0] },
+  });
+});
+
+Deno.test("contract: exact full report for a canonical ASCII STL (pin)", () => {
+  const ascii = encodeAsciiStl({
+    solidName: "test",
+    facets: [{
+      normal: [0, 0, 1],
+      v1: [0, 0, 0],
+      v2: [1, 0, 0],
+      v3: [0, 1, 0],
+    }],
+  });
+  const report = StlValidator.validate(ascii);
+  assertEquals(report, {
+    valid: true,
+    format: "ascii",
+    triangleCount: 1,
+    expectedTriangleCount: null,
+    degenerateTriangles: 0,
+    issues: [],
+    boundingBox: { min: [0, 0, 0], max: [1, 1, 0], size: [1, 1, 0] },
+  });
+});
+
+Deno.test("contract: exact full report for an empty file (pin)", () => {
+  const report = StlValidator.validate(new Uint8Array(0));
+  assertEquals(report, {
+    valid: false,
+    format: "empty",
+    triangleCount: 0,
+    expectedTriangleCount: null,
+    degenerateTriangles: 0,
+    issues: ["File is empty"],
+    boundingBox: null,
+  });
+});
+
+Deno.test("contract: exact full report for an ASCII STL missing endsolid (pin)", () => {
+  const ascii = encodeAsciiStl({
+    solidName: "test",
+    includeEndsolid: false,
+    facets: [{
+      normal: [0, 0, 1],
+      v1: [0, 0, 0],
+      v2: [1, 0, 0],
+      v3: [0, 1, 0],
+    }],
+  });
+  const report = StlValidator.validate(ascii);
+  assertEquals(report, {
+    valid: false,
+    format: "ascii",
+    triangleCount: 1,
+    expectedTriangleCount: null,
+    degenerateTriangles: 0,
+    issues: ["Missing 'endsolid' terminator"],
+    boundingBox: { min: [0, 0, 0], max: [1, 1, 0], size: [1, 1, 0] },
+  });
+});
+
+Deno.test("contract: exact full report for an all-zero binary buffer (pin)", () => {
+  const stl = new Uint8Array(184); // 84 + 2*50, every byte zero
+  const report = StlValidator.validate(stl);
+  assertEquals(report, {
+    valid: false,
+    format: "binary",
+    triangleCount: 0,
+    expectedTriangleCount: 0,
+    degenerateTriangles: 0,
+    issues: [
+      "File content is all zeros — geometry was not serialized correctly",
+    ],
+    boundingBox: null,
+  });
 });
