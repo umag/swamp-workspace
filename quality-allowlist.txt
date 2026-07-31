@@ -17,7 +17,6 @@ firecracker
 flipper-zero
 good-planning
 issue-lifecycle
-jabber
 jscad-cad
 jscad-stl-slicer
 jscad-stl-validator
