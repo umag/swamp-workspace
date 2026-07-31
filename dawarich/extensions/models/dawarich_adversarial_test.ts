@@ -1,5 +1,5 @@
 /**
- * Adversarial suite: api_key exposure (doubled — testable URL-query proof +
+ * Adversarial suite: api_key transport (testable URL-query-absence proof +
  * server-echo trust-boundary pin), hostile/malformed responses (including
  * the CONFIRMED-real GeoJSON tracks defect), coordinate/timestamp parsing
  * edges, pagination edges, raw query-param injection, update-settings
@@ -7,11 +7,14 @@
  * fixtures-secret-scan + EXACT-VALUE coordinate-allowlist scan over
  * dawarich/fixtures/*.json.
  *
- * dawarich.ts is BYTE-FROZEN — every test here PINS current behavior
- * (including behavior that is arguably risky) rather than proposing a fix.
- * Where a test documents a real gap, it is labeled "pin" and says so
- * explicitly. See fixtures/PROVENANCE.md for the doubled GPS-data-discipline
- * rationale and the local `dawarich-hardening` bug for the tracked follow-up.
+ * dawarich.ts hardened its api_key transport (dawarich-hardening,
+ * 2026.08.01.1: Authorization: Bearer header, apiKey marked sensitive) —
+ * every test here PINS current behavior (including behavior that is
+ * arguably risky) rather than proposing a fix. Where a test documents a
+ * real gap, it is labeled "pin" and says so explicitly. See
+ * fixtures/PROVENANCE.md for the doubled GPS-data-discipline rationale and
+ * the local `dawarich-hardening` model for the fix history; the 3 MED / 2 LOW
+ * findings it did not touch remain tracked follow-ups.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./dawarich.ts";
@@ -118,23 +121,19 @@ function withOneResponse(
 // api_key exposure — DOUBLED (testable proof + documented residual gap)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: the api_key is present in the captured request URL query — proves it rides on the URL, hence any URL-bearing surface (proxy log, fetch network error, CLI trace) would expose it", async () => {
-  // This is the TESTABLE half of the exposure. The other half — that a real
-  // fetch-level network rejection propagates Deno's own error message, which
-  // contains the URL and hence the key — is NOT offline-testable: every test
-  // in this suite REPLACES globalThis.fetch with our own stub, so a
-  // thrown/rejected error here would be OUR sentinel string, not Deno's real
-  // "error sending request for url (...)" message. A test that asserted the
-  // key leaks via a network-level rejection would only be asserting a leak
-  // we hand-authored into the stub — self-fulfilling and misleading. That
-  // consequence is instead documented in CHANGELOG.md and fixtures/PROVENANCE.md
-  // as a residual, non-offline-testable gap (round-1 plan-review HIGH finding
-  // ADV-1, resolved in plan v2).
+Deno.test("pin: the api_key is absent from the captured request URL query and rides only in the Authorization header — closes the URL-bearing-surface exposure (proxy log, fetch network error, CLI trace)", async () => {
+  // Prior to dawarich-hardening (2026.08.01.1) the api_key rode in the URL
+  // query, which any URL-bearing surface (proxy logs, fetch network-error
+  // messages, swamp CLI traces) could expose. apiRequest() now sends it as
+  // an `Authorization: Bearer <apiKey>` header instead, so the query string
+  // never carries the credential. See CHANGELOG.md and the local
+  // `dawarich-hardening` model for the fix history.
   const { ctx } = makeCtx();
   await withOneResponse({ status: "ok" }, 200, async (calls) => {
     await run("health", {}, ctx);
     const url = new URL(calls[0].url);
-    assertEquals(url.searchParams.get("api_key"), API_KEY);
+    assertEquals(url.searchParams.get("api_key"), null);
+    assertEquals(calls[0].headers.get("Authorization"), `Bearer ${API_KEY}`);
   });
 });
 

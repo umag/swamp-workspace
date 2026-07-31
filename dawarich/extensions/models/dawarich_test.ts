@@ -10,8 +10,9 @@
  * Every test here is offline: fixtures are fed through a stubbed fetch, no
  * network call is made.
  *
- * dawarich.ts is BYTE-FROZEN by this change — every test characterizes
- * already-shipped behavior. It is not red-green TDD.
+ * dawarich.ts hardened its api_key transport (dawarich-hardening,
+ * 2026.08.01.1) — every test characterizes already-shipped behavior. It is
+ * not red-green TDD.
  *
  * This module also defines and exports SYNTHETIC_COORDS — the single,
  * canonical set of allowed GPS coordinate values. It is enumerated exactly

@@ -4,7 +4,7 @@ const GlobalArgsSchema = z.object({
   baseUrl: z.string().describe(
     "Dawarich instance URL (e.g. https://dawarich.example.com)",
   ),
-  apiKey: z.string().describe(
+  apiKey: z.string().meta({ sensitive: true }).describe(
     "API key from Account settings - use vault: ${{ vault.get(vault-name, KEY) }}",
   ),
 });
@@ -24,12 +24,15 @@ async function apiRequest(
   method = "GET",
   body: Record<string, unknown> | null = null,
 ): Promise<ApiResult> {
-  const sep = endpoint.includes("?") ? "&" : "?";
-  const url = `${baseUrl}${endpoint}${sep}api_key=${apiKey}`;
+  const url = `${baseUrl}${endpoint}`;
 
   const options: RequestInit = {
     method,
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
   };
 
   if (body) {
@@ -65,7 +68,7 @@ async function apiRequest(
  */
 export const model = {
   type: "@magistr/dawarich",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     "health": {

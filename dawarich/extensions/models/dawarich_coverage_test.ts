@@ -4,7 +4,8 @@
  * any one of these guards turns a test red (STANDARD.md's coverage role — a
  * behavioral regression guard, not a numeric percentage).
  *
- * dawarich.ts is BYTE-FROZEN; every test PINS existing behavior.
+ * dawarich.ts hardened its api_key transport (dawarich-hardening,
+ * 2026.08.01.1); every test here PINS existing behavior.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { z } from "npm:zod@4";
@@ -293,11 +294,12 @@ Deno.test("apiRequest: status 204 -> data is null and headers object is empty, r
 });
 
 // ---------------------------------------------------------------------------
-// Guard: sep = endpoint.includes("?") ? "&" : "?" — no-existing-query vs
-// already-has-query endpoints
+// Guard: api_key transport is a header, never joined into the query —
+// no-existing-query vs already-has-query endpoints (formerly the `sep`
+// local's guard; `sep` was removed once api_key left the query entirely)
 // ---------------------------------------------------------------------------
 
-Deno.test("sep guard: an endpoint with NO existing query string gets `?api_key=` (points, no filters)", async () => {
+Deno.test("transport guard: an endpoint with NO own query params gets no query string at all — api_key rides the Authorization header instead (points, no filters)", async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [() =>
@@ -307,12 +309,16 @@ Deno.test("sep guard: an endpoint with NO existing query string gets `?api_key=`
       })],
     async (calls) => {
       await run("points", {}, ctx);
-      assertEquals(new URL(calls[0].url).search, "?api_key=dw_stub");
+      assertEquals(new URL(calls[0].url).search, "");
+      assertEquals(
+        calls[0].headers.get("Authorization"),
+        `Bearer ${GLOBAL_ARGS.apiKey}`,
+      );
     },
   );
 });
 
-Deno.test("sep guard: an endpoint that ALREADY has a query string (stats' ?year=) gets `&api_key=`", async () => {
+Deno.test("transport guard: an endpoint that already has its OWN query string (stats' ?year=) keeps it unchanged — no api_key joined in with `&`", async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [() =>
@@ -323,12 +329,16 @@ Deno.test("sep guard: an endpoint that ALREADY has a query string (stats' ?year=
     async (calls) => {
       await run("stats", { year: 2026 }, ctx);
       const search = new URL(calls[0].url).search;
-      assertEquals(search, "?year=2026&api_key=dw_stub");
+      assertEquals(search, "?year=2026");
+      assertEquals(
+        calls[0].headers.get("Authorization"),
+        `Bearer ${GLOBAL_ARGS.apiKey}`,
+      );
     },
   );
 });
 
-Deno.test("sep guard: points WITH filters already has a query string, so api_key is joined with `&` too", async () => {
+Deno.test("transport guard: points WITH filters keeps only its own query params — api_key is never joined with `&`", async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [() =>
@@ -339,7 +349,11 @@ Deno.test("sep guard: points WITH filters already has a query string, so api_key
     async (calls) => {
       await run("points", { page: 2 }, ctx);
       const search = new URL(calls[0].url).search;
-      assertEquals(search, "?page=2&api_key=dw_stub");
+      assertEquals(search, "?page=2");
+      assertEquals(
+        calls[0].headers.get("Authorization"),
+        `Bearer ${GLOBAL_ARGS.apiKey}`,
+      );
     },
   );
 });
@@ -491,27 +505,23 @@ Deno.test("health status guard: a NON-OBJECT body (plain string via non-JSON con
 // Security-review finding: apiKey is NOT marked sensitive
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: `apiKey` is NOT marked `.meta({ sensitive: true })` today — documented security-hardening gap", () => {
+Deno.test("pin: `apiKey` IS marked `.meta({ sensitive: true })` — security-hardening gap closed", () => {
   // The plan v2 security-review HIGH finding: apiKey is a Dawarich API-key
-  // credential but GlobalArgsSchema never calls `.meta({ sensitive: true })`
-  // on it, so swamp CLI/log surfaces can render it in cleartext. This is a
-  // real gap surfaced during the test-backfill security review, but
-  // dawarich.ts is deliberately BYTE-FROZEN by this change (no manifest
-  // version bump; test-authoring only) — fixing it belongs to the local
-  // `dawarich-hardening` follow-up bug. This test pins the CURRENT
-  // (regrettable) state so a future fix flips it from failing to passing,
-  // rather than silently slipping by unnoticed. Mirrors
-  // porkbun_coverage_test.ts's apiKey/secretApiKey pin and
-  // tubearchivist_coverage_test.ts's token pin.
+  // credential but GlobalArgsSchema never called `.meta({ sensitive: true })`
+  // on it, so swamp CLI/log surfaces could render it in cleartext. Fixed in
+  // dawarich-hardening (2026.08.01.1): GlobalArgsSchema now marks apiKey
+  // sensitive, routing it through the vault instead of plaintext instance
+  // YAML. Mirrors porkbun_coverage_test.ts's apiKey/secretApiKey pin and
+  // telegram_send_coverage_test.ts's POSITIVE botToken pin.
   const shape = (model.globalArguments as z.ZodObject<z.ZodRawShape>).shape;
   const meta = z.globalRegistry.get(shape.apiKey) as
     | { sensitive?: boolean }
     | undefined;
   assertEquals(
     meta?.sensitive,
-    undefined,
-    "apiKey is not yet marked sensitive — if this starts failing, " +
-      "dawarich.ts added the annotation; update this pin to assert true",
+    true,
+    "apiKey should be marked sensitive — if this starts failing, " +
+      "dawarich.ts dropped the annotation; that is a regression",
   );
 });
 
