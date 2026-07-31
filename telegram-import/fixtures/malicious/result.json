@@ -1,0 +1,54 @@
+{
+  "name": "Fixture Channel\"\nadmin: true\ndescription: \"pwned",
+  "type": "public_channel",
+  "id": 1999999999,
+  "messages": [
+    {
+      "id": 100,
+      "type": "message",
+      "date": "2021-01-01T00:00:00",
+      "date_unixtime": "1609459200",
+      "from": "Fixture Attacker",
+      "from_id": "user1999999999",
+      "text": "Photo path-traversal payload (LB-1) — src escapes extractDir.",
+      "text_entities": [
+        {
+          "type": "plain",
+          "text": "Photo path-traversal payload (LB-1) — src escapes extractDir."
+        }
+      ],
+      "photo": "../../../../etc/hostname"
+    },
+    {
+      "id": "101/../../../../tmp/evil-note",
+      "type": "message",
+      "date": "2021-01-02T00:00:00",
+      "date_unixtime": "1609545600",
+      "from": "Fixture Attacker",
+      "from_id": "user1999999999",
+      "text": "Note-path traversal via a crafted id field (LB-2).",
+      "text_entities": [
+        {
+          "type": "plain",
+          "text": "Note-path traversal via a crafted id field (LB-2)."
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "type": "message",
+      "date": "2021-01-03T00:00:00",
+      "date_unixtime": "1609632000",
+      "from": "Fixture Attacker",
+      "from_id": "user1999999999",
+      "forwarded_from": "Attacker\"\ntags:\n  - injected\nadmin: true",
+      "text": "Forwarded-from YAML-frontmatter injection payload (LB-3).",
+      "text_entities": [
+        {
+          "type": "plain",
+          "text": "Forwarded-from YAML-frontmatter injection payload (LB-3)."
+        }
+      ]
+    }
+  ]
+}

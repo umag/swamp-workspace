@@ -1,0 +1,137 @@
+{
+  "name": "Fixture Broadcast",
+  "type": "public_channel",
+  "id": 1000000001,
+  "messages": [
+    {
+      "id": 1,
+      "type": "service",
+      "date": "2020-09-15T09:00:00",
+      "date_unixtime": "1600156800",
+      "actor": "Fixture Broadcast",
+      "actor_id": "channel1000000001",
+      "action": "create_channel",
+      "title": "Fixture Broadcast",
+      "text": "",
+      "text_entities": []
+    },
+    {
+      "id": 2,
+      "type": "message",
+      "date": "2020-09-15T10:00:00",
+      "date_unixtime": "1600160400",
+      "from": "Fixture Author",
+      "from_id": "channel1000000001",
+      "text": "Hello from the fixture channel.",
+      "text_entities": [
+        { "type": "plain", "text": "Hello from the fixture channel." }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "message",
+      "date": "2020-09-15T11:30:00",
+      "date_unixtime": "1600165800",
+      "from": "Fixture Author",
+      "from_id": "channel1000000001",
+      "text": [
+        { "type": "plain", "text": "Check out " },
+        { "type": "bold", "text": "this bold claim" },
+        { "type": "plain", "text": ", some " },
+        { "type": "italic", "text": "italic emphasis" },
+        { "type": "plain", "text": ", a " },
+        { "type": "code", "text": "inline_code()" },
+        { "type": "plain", "text": ", a " },
+        {
+          "type": "text_link",
+          "text": "fixture link",
+          "href": "https://example.test/post/3"
+        },
+        { "type": "plain", "text": " and " },
+        { "type": "strikethrough", "text": "struck text" },
+        { "type": "plain", "text": "." }
+      ],
+      "text_entities": [
+        { "type": "plain", "text": "Check out " },
+        { "type": "bold", "text": "this bold claim" },
+        { "type": "plain", "text": ", some " },
+        { "type": "italic", "text": "italic emphasis" },
+        { "type": "plain", "text": ", a " },
+        { "type": "code", "text": "inline_code()" },
+        { "type": "plain", "text": ", a " },
+        {
+          "type": "text_link",
+          "text": "fixture link",
+          "href": "https://example.test/post/3"
+        },
+        { "type": "plain", "text": " and " },
+        { "type": "strikethrough", "text": "struck text" },
+        { "type": "plain", "text": "." }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "message",
+      "date": "2020-09-16T09:00:00",
+      "date_unixtime": "1600246800",
+      "from": "Fixture Author",
+      "from_id": "channel1000000001",
+      "text": "A photo update.",
+      "text_entities": [{ "type": "plain", "text": "A photo update." }],
+      "photo": "photos/photo_4@2x.jpg",
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "id": 5,
+      "type": "message",
+      "date": "2020-09-16T10:00:00",
+      "date_unixtime": "1600250400",
+      "from": "Fixture Author",
+      "from_id": "channel1000000001",
+      "text": "Document attached.",
+      "text_entities": [{ "type": "plain", "text": "Document attached." }],
+      "file": "files/fixture_report.pdf",
+      "mime_type": "application/pdf"
+    },
+    {
+      "id": 6,
+      "type": "message",
+      "date": "2020-09-16T11:00:00",
+      "date_unixtime": "1600254000",
+      "from": "Fixture Author",
+      "from_id": "channel1000000001",
+      "text": "Video update.",
+      "text_entities": [{ "type": "plain", "text": "Video update." }],
+      "file": "video_files/fixture_clip.mp4",
+      "media_type": "video_file",
+      "duration_seconds": 12
+    },
+    {
+      "id": 7,
+      "type": "message",
+      "date": "2020-09-17T08:00:00",
+      "date_unixtime": "1600329600",
+      "from": "Origin Channel",
+      "from_id": "channel2000000002",
+      "forwarded_from": "Origin Channel",
+      "text": "Reposted fixture content.",
+      "text_entities": [
+        { "type": "plain", "text": "Reposted fixture content." }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "message",
+      "date": "2020-09-17T09:00:00",
+      "date_unixtime": "1600333200",
+      "from": "Fixture Author",
+      "from_id": "channel1000000001",
+      "reply_to_message_id": 7,
+      "text": "Replying to the repost above.",
+      "text_entities": [
+        { "type": "plain", "text": "Replying to the repost above." }
+      ]
+    }
+  ]
+}

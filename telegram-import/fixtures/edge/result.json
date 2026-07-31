@@ -1,0 +1,71 @@
+{
+  "name": "Fixture Edge Channel",
+  "type": "private_channel",
+  "id": 1500000000,
+  "messages": [
+    {
+      "id": 200,
+      "type": "message",
+      "date": "2021-02-01T00:00:00",
+      "date_unixtime": "1612137600",
+      "from": "Fixture Author",
+      "from_id": "channel1500000000",
+      "text": "",
+      "text_entities": []
+    },
+    {
+      "id": 201,
+      "type": "message",
+      "date": "2021-02-02T00:00:00",
+      "date_unixtime": "1612224000",
+      "from": "Fixture Author",
+      "from_id": "channel1500000000",
+      "text": [
+        { "type": "mention", "text": "@fixture_user" },
+        { "type": "plain", "text": " said " },
+        { "type": "hashtag", "text": "#fixture" },
+        { "type": "plain", "text": " to " },
+        { "type": "email", "text": "fixture@example.test" },
+        { "type": "plain", "text": " or " },
+        { "type": "phone", "text": "+1-202-555-0101" },
+        { "type": "unknown_future_entity", "text": "fallback text" }
+      ],
+      "text_entities": [
+        { "type": "mention", "text": "@fixture_user" },
+        { "type": "plain", "text": " said " },
+        { "type": "hashtag", "text": "#fixture" },
+        { "type": "plain", "text": " to " },
+        { "type": "email", "text": "fixture@example.test" },
+        { "type": "plain", "text": " or " },
+        { "type": "phone", "text": "+1-202-555-0101" },
+        { "type": "unknown_future_entity", "text": "fallback text" }
+      ]
+    },
+    {
+      "id": 202,
+      "type": "message",
+      "date": "2021-02-03T00:00:00",
+      "date_unixtime": "1612310400",
+      "from": "Fixture Author",
+      "from_id": "channel1500000000",
+      "text": "Thumbnail should be skipped.",
+      "text_entities": [
+        { "type": "plain", "text": "Thumbnail should be skipped." }
+      ],
+      "file": "video_files/fixture_clip_thumb.jpg"
+    },
+    {
+      "id": 203,
+      "type": "message",
+      "date": "2021-02-04T00:00:00",
+      "date_unixtime": "1612396800",
+      "from": "Fixture Author",
+      "from_id": "channel1500000000",
+      "text": "Video message missing its file reference.",
+      "text_entities": [
+        { "type": "plain", "text": "Video message missing its file reference." }
+      ],
+      "media_type": "video_file"
+    }
+  ]
+}
