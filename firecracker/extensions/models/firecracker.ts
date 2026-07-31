@@ -14,6 +14,10 @@ const NETNS_RE = /^[a-zA-Z0-9_.-]{1,32}$/;
 // IPv4 dotted-quad and CIDR (a.b.c.d/prefix) — for veth/host addressing.
 const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 const CIDR_RE = /^(?:\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+// CPU architecture name — alphanumeric + underscore/hyphen only; blocks
+// shell/python metacharacters from reaching the raw-interpolated python3 -c
+// block in install_firecracker.
+const ARCH_RE = /^[A-Za-z0-9_-]+$/;
 
 /** Add `k` to the last octet of a dotted-quad IPv4 address (no carry — `k`
  * must keep the octet in range, which holds for the /30 veth convention). */
@@ -864,7 +868,7 @@ done
  */
 export const model = {
   type: "@magistr/firecracker",
-  version: "2026.07.16.2",
+  version: "2026.07.31.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {
@@ -1215,7 +1219,7 @@ export const model = {
       execute: async (args, context) => {
         const { host, user } = context.globalArgs;
 
-        const agentB64 = btoa(AGENT_SCRIPT);
+        const agentB64 = utf8ToBase64(AGENT_SCRIPT);
         const marker = "/opt/firecracker/.ubuntu-rootfs-ready";
         const buildLog = "/var/log/fc-rootfs-build.log";
         const buildScriptPath = "/opt/firecracker/build-rootfs.sh";
@@ -1305,7 +1309,7 @@ export const model = {
       execute: async (args, context) => {
         const { host, user } = context.globalArgs;
 
-        const agentScriptB64 = btoa(AGENT_SCRIPT);
+        const agentScriptB64 = utf8ToBase64(AGENT_SCRIPT);
         const agentPath = args.mountPoint + "/opt/fc-agent.sh";
 
         const cmd = [
@@ -1658,7 +1662,7 @@ export const model = {
         version: z.string().optional().describe(
           "Specific version tag to install (e.g. 'v1.12.0'). Defaults to latest GitHub release.",
         ),
-        arch: z.string().optional().describe(
+        arch: z.string().regex(ARCH_RE).optional().describe(
           "CPU architecture (e.g. 'x86_64', 'aarch64'). Auto-detected if omitted.",
         ),
         installPath: z.string().regex(PATH_RE).default(

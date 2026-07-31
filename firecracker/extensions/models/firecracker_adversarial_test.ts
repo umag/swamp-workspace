@@ -5,22 +5,24 @@
  * representative non-zero-exit sweep, and a mechanical OAuth-token
  * secret-scan.
  *
- * firecracker.ts / lib/ssh.ts are UNMODIFIED — every "pin: KNOWN <BUG-ID>"
- * test here characterizes a REAL, already-shipped behavior rather than
- * proposing a fix (a fix is out of scope for this test-only backfill; see
- * CHANGELOG.md and the LOCAL `firecracker-latent-bugs` issue-lifecycle bug
- * model — NEVER the Lab, per this repo's tracking convention).
+ * firecracker.ts / lib/ssh.ts are otherwise UNMODIFIED except for the two
+ * BUG-1/BUG-6 fixes (see the local `firecracker-realfix` issue-lifecycle
+ * model) — every remaining "pin: KNOWN <BUG-ID>" test here characterizes a
+ * REAL, already-shipped behavior rather than proposing a fix (a fix for
+ * those is out of scope for this backfill; see CHANGELOG.md and the LOCAL
+ * `firecracker-latent-bugs` issue-lifecycle bug model — NEVER the Lab, per
+ * this repo's tracking convention).
  *
  * Bugs pinned here (BUG-4/BUG-5 live in firecracker_coverage_test.ts):
- *   BUG-1 (HIGH) — `install_firecracker`'s `arch` argument (no regex on the
- *      zod schema — `z.string().optional()`) is raw-interpolated TWICE: once
- *      safely via `shellEsc` into a bash variable assignment, and once
- *      UNESCAPED directly into a Python single-quoted string literal that is
- *      itself embedded inside a bash DOUBLE-quoted `python3 -c "..."`
- *      argument spanning a `$(...)` command substitution. Because the outer
- *      context is double-quoted, bash performs `$(...)`/backtick expansion on
- *      `arch`'s raw value BEFORE python3 ever runs — full remote command
- *      injection, not merely a python-string break-out.
+ *   BUG-1 (HIGH, FIXED) — `install_firecracker`'s `arch` argument was
+ *      raw-interpolated TWICE: once safely via `shellEsc` into a bash
+ *      variable assignment, and once UNESCAPED directly into a Python
+ *      single-quoted string literal itself embedded inside a bash
+ *      DOUBLE-quoted `python3 -c "..."` argument spanning a `$(...)` command
+ *      substitution — full remote command injection, not merely a
+ *      python-string break-out. Fixed by adding a strict allowlist regex
+ *      (ARCH_RE) to the zod schema, rejecting a hostile `arch` at parse()
+ *      before it can reach either interpolation site.
  *   BUG-2 (MED) — `buildDeployFabricCmd` embeds the OAuth token in cleartext
  *      (shellEsc'd for bash-safety, but NOT redacted) directly in the
  *      generated ssh command string, which becomes a literal element of the
@@ -175,62 +177,88 @@ function run(name: string, args: Record<string, unknown>, ctx: unknown) {
 }
 
 // ---------------------------------------------------------------------------
-// BUG-1 (HIGH) — install_firecracker's `arch` is safely shellEsc'd for bash
-// in ONE place but raw-interpolated into a double-quoted python3 -c argument
-// in another, where bash still expands $(...) before python3 ever runs.
+// BUG-1 (HIGH, FIXED) — install_firecracker's `arch` now carries a strict
+// allowlist regex (ARCH_RE) on its zod schema, so a hostile value is rejected
+// at the parse() boundary before it can ever reach the raw-interpolated
+// python3 -c block. See local model firecracker-realfix.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: KNOWN INJECTION (HIGH, firecracker-latent-bugs BUG-1) — a hostile `arch`'s $(...) survives unescaped into the double-quoted python3 -c block", async () => {
+Deno.test("install_firecracker: a hostile `arch` (shell/python metacharacters) is REJECTED at the parse() boundary — never reaches execute() or any ssh call (BUG-1 fixed)", async () => {
   const injection = "$(touch /tmp/pwned-firecracker-BUG1)";
   const { ctx } = makeCtx();
   await withCommandStub(
     { code: 0, stdout: "Resolved version: v1.12.0 arch: x\nok", stderr: "" },
     async (calls) => {
-      await run("install_firecracker", { arch: injection }, ctx);
-      const cmd = calls[0].args[7];
+      let threw: Error | undefined;
+      try {
+        await run("install_firecracker", { arch: injection }, ctx);
+      } catch (e) {
+        threw = e as Error;
+      }
       assert(
-        cmd.includes(`arch = '${injection}' or __import__`),
-        "the raw, un-shellEsc'd arch value sits inside a python single-quoted " +
-          "string literal, itself inside a bash DOUBLE-quoted python3 -c " +
-          "argument — bash expands $(...) here regardless of python's own " +
-          "(later, and here irrelevant) string parsing. pin: KNOWN INJECTION, " +
-          "not fixed here (source frozen); see firecracker-latent-bugs BUG-1.",
+        threw,
+        "the ARCH_RE regex on the zod schema must reject this arch at " +
+          "parse() — run() calls arguments.parse() before execute(), so the " +
+          "hostile value never reaches the raw-interpolated python3 -c block. " +
+          "see local model firecracker-realfix.",
       );
-      assert(
-        cmd.includes("$(touch /tmp/pwned-firecracker-BUG1)"),
-        "the $(...) command substitution survives verbatim for BASH's purposes",
+      assertEquals(
+        calls.length,
+        0,
+        "rejection happens at the schema boundary, before any ssh call",
       );
     },
   );
 });
 
-Deno.test("safe: the SAME hostile `arch`, in install_firecracker's FIRST usage (`ARCH=` bash assignment), IS correctly shellEsc'd (single-quoted, no expansion)", async () => {
+Deno.test("install_firecracker: arch schema — hostile arch rejected by safeParse; a legit arch (x86_64) parses OK and flows through to the generated command (BUG-1 fixed)", async () => {
   const injection = "$(touch /tmp/pwned-firecracker-BUG1)";
+  const rejected = model.methods.install_firecracker.arguments.safeParse({
+    arch: injection,
+  });
+  assert(
+    !rejected.success,
+    "install_firecracker.arch now has ARCH_RE regex validation — a " +
+      "shell-metacharacter value must fail schema validation before it can " +
+      "reach BUG-1's former raw-interpolation site",
+  );
+
+  const accepted = model.methods.install_firecracker.arguments.safeParse({
+    arch: "x86_64",
+  });
+  assert(accepted.success, "a legit arch value must still parse OK");
+
   const { ctx } = makeCtx();
   await withCommandStub(
-    { code: 0, stdout: "Resolved version: v1.12.0 arch: x\nok", stderr: "" },
+    {
+      code: 0,
+      stdout: "Resolved version: v1.12.0 arch: x86_64\nok",
+      stderr: "",
+    },
     async (calls) => {
-      await run("install_firecracker", { arch: injection }, ctx);
+      await run("install_firecracker", { arch: "x86_64" }, ctx);
       const cmd = calls[0].args[7];
       assert(
-        cmd.includes(`ARCH='${injection}'`),
-        "in THIS line, shellEsc's single-quote wrapping IS a real, " +
-          "independent shell word — bash does not expand $(...) inside " +
-          "single quotes. The bug (BUG-1) is specifically the SECOND, " +
-          "double-quoted python3 -c embedding above, not this one.",
+        cmd.includes(`ARCH='x86_64'`),
+        "the legit arch value flows through to the shellEsc'd ARCH= assignment",
+      );
+      assert(
+        cmd.includes(`arch = 'x86_64' or __import__`),
+        "the legit arch value also flows through to the python3 -c block",
       );
     },
   );
 });
 
-Deno.test("pin: KNOWN INJECTION (HIGH, firecracker-latent-bugs BUG-1) — install_guest_kernel's `arch` is likewise unrestricted by its zod schema (no regex, unlike socketPath/tapName)", () => {
+Deno.test("install_firecracker: arch schema — a hostile value is rejected by safeParse (BUG-1 fixed)", () => {
   const r = model.methods.install_firecracker.arguments.safeParse({
     arch: "$(touch /tmp/pwned)",
   });
   assert(
-    r.success,
-    "install_firecracker.arch has NO regex validation — a shell-metacharacter " +
-      "value passes schema validation and reaches BUG-1's raw interpolation",
+    !r.success,
+    "install_firecracker.arch now has ARCH_RE regex validation — a " +
+      "shell-metacharacter value must fail schema validation, closing BUG-1's " +
+      "raw-interpolation injection path",
   );
 });
 

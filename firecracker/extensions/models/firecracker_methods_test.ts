@@ -24,7 +24,16 @@
  * sequence is exercised distinctly, never a single shared stub answering all.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { model } from "./firecracker.ts";
+import { AGENT_SCRIPT, model } from "./firecracker.ts";
+
+// Decode a base64 string produced by utf8ToBase64 (or plain btoa on an
+// ASCII-only input — the two agree byte-for-byte in that case). Duplicated
+// per this repo's suite convention (see firecracker_property_test.ts).
+function decodeBase64Utf8(b64: string): string {
+  return new TextDecoder().decode(
+    Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Harness (duplicated per this repo's suite convention — see the sibling
@@ -329,66 +338,84 @@ Deno.test("set_vsock: happy path — PUT /vsock", async () => {
   parseAgainstResourceSchema("action", res.payload);
 });
 
-// build_ubuntu_rootfs / update_agent_script have NO reachable happy path: both
-// call plain `btoa(AGENT_SCRIPT)` as their FIRST statement, and AGENT_SCRIPT's
-// source contains a non-Latin1 em-dash ("captures stdout ONLY — NO 2>&1",
-// firecracker.ts line ~833) in a comment inside the baked shell script. btoa
-// only handles Latin1, so BOTH methods throw unconditionally, before any ssh
-// call is ever attempted — a previously-undocumented finding (BUG-6,
-// CRITICAL: total, unconditional loss of function), pinned here rather than
-// in the adversarial suite since there IS no happy path to separate it from.
-// See firecracker-latent-bugs BUG-6.
+// build_ubuntu_rootfs / update_agent_script: BUG-6 (CRITICAL, total loss of
+// function) is FIXED — both now route AGENT_SCRIPT through the UTF-8-safe
+// utf8ToBase64 helper instead of the raw btoa primitive, so the non-Latin1
+// em-dash in AGENT_SCRIPT's source ("captures stdout ONLY — NO 2>&1",
+// firecracker.ts line ~833) no longer throws. Both methods now reach their
+// ssh call. See local model firecracker-realfix.
 
-Deno.test("pin: KNOWN BUG (CRITICAL, firecracker-latent-bugs BUG-6) — build_ubuntu_rootfs ALWAYS throws before any ssh call (btoa() on AGENT_SCRIPT's embedded em-dash)", async () => {
+Deno.test("build_ubuntu_rootfs: happy path — 1 ssh call, the doubly-nested base64 payload decodes to the exact AGENT_SCRIPT bytes including the em-dash (BUG-6 fixed)", async () => {
   const { ctx, written } = makeCtx();
   await withCommandStub(
-    { code: 0, stdout: "unreachable", stderr: "" },
+    { code: 0, stdout: "build started ver=v1.12.0 pid=12345", stderr: "" },
     async (calls) => {
-      let threw: Error | undefined;
-      try {
-        await run("build_ubuntu_rootfs", {}, ctx);
-      } catch (e) {
-        threw = e as Error;
-      }
+      await run("build_ubuntu_rootfs", {}, ctx);
+      assertEquals(calls.length, 1);
+      const cmd = calls[0].args[7];
+      assert(cmd.includes("debootstrap"));
+      // launchCmd embeds buildScriptB64 (btoa of the ASCII-only buildScript,
+      // itself unaffected by this fix) shellEsc'd in single quotes.
+      const outer = cmd.match(/echo '([^']*)' \| base64 -d \| sed/);
       assert(
-        threw,
-        "build_ubuntu_rootfs must currently throw — no happy path exists",
+        outer,
+        "expected the shellEsc'd buildScriptB64 echo|base64-d|sed line",
       );
-      assert(threw!.message.includes("Latin1"));
+      const buildScript = decodeBase64Utf8(outer![1]);
+      // Inside buildScript, AGENT_SCRIPT's own base64 (agentB64, the fix
+      // under test) is embedded raw and decoded a second time on the guest.
+      const inner = buildScript.match(
+        /echo (\S+) \| base64 -d > \S*\/opt\/fc-agent\.sh/,
+      );
+      assert(
+        inner,
+        "expected the fc-agent.sh echo|base64-d line inside buildScript",
+      );
       assertEquals(
-        calls.length,
-        0,
-        "the throw happens before any ssh call is attempted",
+        decodeBase64Utf8(inner![1]),
+        AGENT_SCRIPT,
+        "the doubly-encoded AGENT_SCRIPT must round-trip byte-for-byte, " +
+          "including the non-Latin1 em-dash that made plain btoa() throw",
       );
     },
   );
-  assertEquals(written.length, 0, "no action resource is ever written");
+  const res = written.find((w) =>
+    w.spec === "action" && w.name === "build_ubuntu_rootfs"
+  )!;
+  assertEquals(res.payload.success, true);
+  parseAgainstResourceSchema("action", res.payload);
 });
 
-Deno.test("pin: KNOWN BUG (CRITICAL, firecracker-latent-bugs BUG-6) — update_agent_script ALWAYS throws before any ssh call (btoa() on AGENT_SCRIPT's embedded em-dash)", async () => {
+Deno.test("update_agent_script: happy path — 1 ssh call, the base64 payload decodes to the exact AGENT_SCRIPT bytes including the em-dash (BUG-6 fixed)", async () => {
   const { ctx, written } = makeCtx();
   await withCommandStub(
-    { code: 0, stdout: "unreachable", stderr: "" },
+    { code: 0, stdout: "ok", stderr: "" },
     async (calls) => {
-      let threw: Error | undefined;
-      try {
-        await run("update_agent_script", {}, ctx);
-      } catch (e) {
-        threw = e as Error;
-      }
-      assert(
-        threw,
-        "update_agent_script must currently throw — no happy path exists",
-      );
-      assert(threw!.message.includes("Latin1"));
+      await run("update_agent_script", {
+        rootfsPath: "/opt/firecracker/rootfs.ext4",
+      }, ctx);
+      assertEquals(calls.length, 1);
+      const cmd = calls[0].args[7];
+      assert(cmd.includes("base64 -d"));
+      const m = cmd.match(/echo '([^']*)' \| base64 -d >/);
+      assert(m, "expected the shellEsc'd agentScriptB64 echo|base64-d line");
       assertEquals(
-        calls.length,
-        0,
-        "the throw happens before any ssh call is attempted",
+        decodeBase64Utf8(m![1]),
+        AGENT_SCRIPT,
+        "the encoded AGENT_SCRIPT must round-trip byte-for-byte, including " +
+          "the non-Latin1 em-dash that made plain btoa() throw",
       );
     },
   );
-  assertEquals(written.length, 0, "no action resource is ever written");
+  const res = written.find((w) =>
+    w.spec === "action" && w.name === "update_agent_script"
+  )!;
+  assertEquals(res.payload.success, true);
+  assertEquals(
+    res.payload.message,
+    "Agent script updated in /opt/firecracker/rootfs.ext4",
+  );
+  parseAgainstResourceSchema("action", res.payload);
 });
 
 Deno.test("wait_serial: happy path — 1 ssh call, polls the log for the target string", async () => {

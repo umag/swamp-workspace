@@ -14,13 +14,13 @@ All notable changes to `@magistr/firecracker`. Versions are CalVer
   characterizing all 27 methods + both pre-flight checks against a stubbed
   `Deno.Command` (SSH boundary). No behavior change — `firecracker.ts` and
   `lib/ssh.ts` are byte-identical (frozen source; ext-quality-bf-firecracker).
-- Six known-but-unfixed issues pinned as characterization tests, tracked in the
-  LOCAL `firecracker-latent-bugs` issue-lifecycle bug model (never the Lab):
-  BUG-1 (HIGH) — unvalidated `arch` in `install_firecracker` reaches a
-  double-quoted `python3 -c` block where bash still expands `$(...)` before
-  python ever runs; BUG-2 (MED) — the fabric OAuth token appears in cleartext in
-  the local `ssh` subprocess's argv (`buildDeployFabricCmd`); BUG-3 (MED) — the
-  two internet-facing binary downloads (`install_firecracker`,
+- Six known issues pinned as characterization tests, tracked in the LOCAL
+  `firecracker-latent-bugs` issue-lifecycle bug model (never the Lab): BUG-1
+  (HIGH) — unvalidated `arch` in `install_firecracker` reaches a double-quoted
+  `python3 -c` block where bash still expands `$(...)` before python ever runs;
+  BUG-2 (MED) — the fabric OAuth token appears in cleartext in the local `ssh`
+  subprocess's argv (`buildDeployFabricCmd`); BUG-3 (MED) — the two
+  internet-facing binary downloads (`install_firecracker`,
   `install_guest_kernel`) carry no `--max-time`/`--connect-timeout`; BUG-4 (LOW)
   — `install_guest_kernel`'s `sed "s|@@ARCH@@|$ARCH|g"` corrupts on a
   pipe-containing `arch`; BUG-5 (LOW/info) — only `stop` prechecks VM state
@@ -29,7 +29,38 @@ All notable changes to `@magistr/firecracker`. Versions are CalVer
   `update_agent_script` call plain `btoa(AGENT_SCRIPT)` and AGENT_SCRIPT's own
   source contains a non-Latin1 em-dash, so BOTH methods throw unconditionally,
   before any ssh call — a total, unconditional loss of function for 2 of the 27
-  methods.
+  methods. **BUG-1 and BUG-6 were real, fixable defects (not accepted latent
+  bugs) and are FIXED in `2026.07.31.1` below; BUG-2/3/4/5 remain open, tracked
+  latent bugs.**
+
+## 2026.07.31.1 — fix: UTF-8-safe AGENT_SCRIPT base64 (BUG-6, CRITICAL) + arch allowlist (BUG-1, HIGH)
+
+### Fixed
+
+- **BUG-6 (CRITICAL, total loss of function).** `build_ubuntu_rootfs` and
+  `update_agent_script` called plain `btoa(AGENT_SCRIPT)` as their first
+  statement; `AGENT_SCRIPT`'s source contains a non-Latin1 em-dash ("captures
+  stdout ONLY — NO 2>&1"), and `btoa` only handles Latin1, so both methods threw
+  unconditionally, before any ssh call was ever attempted — 2 of the 27 methods
+  were 100% broken for every caller. Both now route through the existing
+  `utf8ToBase64` helper (already used elsewhere in this module, e.g. the fabric
+  queue payload), so the guest-side `base64 -d` decode reproduces the exact
+  UTF-8 bytes. No other behavior change.
+- **BUG-1 (HIGH, command/argument injection).** `install_firecracker`'s `arch`
+  argument had no schema validation (`z.string().optional()`) and was safely
+  `shellEsc`'d in one place but raw-interpolated in another — directly into a
+  bash double-quoted `python3 -c "..."` block, where bash expands
+  `$(...)`/backticks before python ever runs, giving a hostile `arch` full
+  remote command execution. Closed by adding a strict allowlist regex
+  (`ARCH_RE = /^[A-Za-z0-9_-]+$/`) to the schema, rejecting any hostile value at
+  `parse()` before it can reach either interpolation site.
+  `install_guest_kernel`'s `arch` is intentionally left unchanged (out of scope;
+  see the still-open BUG-4 above, a separate `sed`-delimiter issue on that same
+  field).
+
+Both defects were confirmed real, fixable bugs (not accepted latent bugs) and
+are tracked end-to-end in the LOCAL `firecracker-realfix` issue-lifecycle model
+— never the swamp.club Lab, per this repo's tracking convention.
 
 ## 2026.06.19.2 — maintenance: CI republish
 
