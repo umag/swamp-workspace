@@ -1,11 +1,44 @@
 # Changelog
 
-## Unreleased
+## 2026.08.01.1
 
-Test backfill to the STANDARD.md five-suite quality bar (wave 2c full build of
-the extension-quality backfill program, `ext-quality-test-backfill`). No
-behavior change — `cadvisor.ts` is unmodified and the model `version` stays
-`2026.07.16.2`.
+Closes the HIGH remote-shell command-injection finding (bug #1) tracked in the
+local `cadvisor-latent-bugs` @magistr/issue-lifecycle model — not filed to the
+swamp.club Lab, per CLAUDE.md's Anti-Bypass rule; Lab is `@swamp/*` product
+only.
+
+- **Remote-shell command injection (HIGH), closed** — `runSsh()` hands its built
+  command string to the REMOTE shell verbatim, and `vmComposeDir`,
+  `vmScrapeConfig`, and `vmComposeFile` (admin-configured `globalArguments`)
+  were interpolated unescaped into that string at every `cat`/heredoc-append/
+  `cd && docker compose`/`sed -i` site in `deploy`, `status`, and `remove`. A
+  canonical `shellEsc` helper (copied verbatim from `firecracker`/
+  `fc-task-server`: single-quote-wrap, `'` -> `'\''`) is now applied to all
+  three values at every remote-command interpolation site. Defense-in-depth, not
+  an externally-exploitable hole: these three values are read only from
+  `context.globalArgs` (`GlobalArgsSchema`) and every method that uses them
+  takes no per-invocation caller arguments, so this closes a hostile-admin or
+  misconfiguration vector, not an external attack surface. The
+  `${username}@${host}` ssh-destination argv element was already safe (one local
+  `Deno.Command` argv slot, never remote-shell-interpreted) and is unchanged.
+  The `deploy` heredoc BODY (file data, not a shell token) is deliberately left
+  unescaped — only the heredoc TARGET path is wrapped. Behavior-preserving for
+  legitimate metacharacter-free paths.
+- The four adversarial Site-2 characterization tests, the methods-suite
+  `deploy`/`remove` exact-command assertions, and every `cat`-equality stub
+  matcher are re-baselined to the single-quote-wrapped expected strings.
+  Coverage, property-invariant-flow, and contract-fixture suites use
+  `startsWith`/`includes` matchers on metacharacter-free arguments and stay
+  green unchanged, demonstrating behavior preservation.
+- Model `version` and `manifest.yaml` bumped `2026.07.16.2` -> `2026.08.01.1`
+  (in sync). The six remaining sibling latent bugs (fragile `sed` range-delete,
+  unnormalized `cpuPercent`, empty-aliases name collapse, unclamped
+  counter-reset deltas, README `typeVersion` drift, hardcoded VM port) remain
+  deferred and pinned in `cadvisor-latent-bugs`, unchanged.
+
+This release also carries the wave-2c five-suite test backfill
+(`ext-quality-test-backfill`) that established the characterization suites the
+hardening above re-baselines:
 
 - Added `extensions/models/cadvisor_test.ts` (contract-fixture),
   `cadvisor_methods_test.ts` (methods), `cadvisor_adversarial_test.ts`
@@ -42,20 +75,20 @@ behavior change — `cadvisor.ts` is unmodified and the model `version` stays
 - The adversarial suite separates cadvisor.ts's TWO SSH interpolation sites: the
   `${username}@${host}` ssh-destination argv element (one local Deno.Command
   argv slot, not shell-interpretable) versus `vmComposeDir` / `vmScrapeConfig` /
-  `vmComposeFile`, which land UNESCAPED inside the command string ssh hands to
-  the REMOTE shell (a real, documented remote-shell command-injection gap). Also
-  pins `remove()`'s unconditional, non-idempotent teardown (no existence check;
-  identical commands issued on every call).
-- 7 latent bugs found while characterizing `cadvisor.ts` are tracked in the
+  `vmComposeFile`, which (at the time of the backfill) landed UNESCAPED inside
+  the command string ssh hands to the REMOTE shell — closed above via `shellEsc`
+  in this same release. Also pins `remove()`'s unconditional, non-idempotent
+  teardown (no existence check; identical commands issued on every call).
+- 7 latent bugs found while characterizing `cadvisor.ts` were tracked in the
   LOCAL `cadvisor-latent-bugs` issue-lifecycle model (never the Lab) — the
-  remote-shell command injection above, the fragile `sed` range-delete in
-  `remove()`, `cpuPercent` not being per-core-normalized (`_numCores` is
-  computed but unused), empty (but present) `aliases` arrays collapsing the
-  container name to the literal `"unknown"` instead of falling back to the
-  cgroup path, unclamped counter-reset deltas going negative, a `README.md`
-  `typeVersion` doc-drift, and `top-memory` hardcoding the VictoriaMetrics port
-  instead of exposing it as a global argument. All 7 are PINNED by the new
-  suites, not fixed here (`cadvisor.ts` is byte-frozen for this change).
+  remote-shell command injection (now CLOSED above), the fragile `sed`
+  range-delete in `remove()`, `cpuPercent` not being per-core-normalized
+  (`_numCores` is computed but unused), empty (but present) `aliases` arrays
+  collapsing the container name to the literal `"unknown"` instead of falling
+  back to the cgroup path, unclamped counter-reset deltas going negative, a
+  `README.md` `typeVersion` doc-drift, and `top-memory` hardcoding the
+  VictoriaMetrics port instead of exposing it as a global argument. The
+  remaining 6 are still PINNED by the suites, deliberately not fixed here.
 - `deno.json`: default `test` task stays network-less and run-less
   (`--allow-env=FC_NUM_RUNS --allow-read=extensions,fixtures` — no
   `--allow-net`, no `--allow-run`; `--allow-read` is scoped narrowly to read the

