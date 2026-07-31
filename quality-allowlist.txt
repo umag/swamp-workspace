@@ -23,4 +23,3 @@ music-library
 obsidian-vault
 obsidian-yt-archiver
 swamp-go-brr
-telegram-import
