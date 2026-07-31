@@ -1,0 +1,22 @@
+{
+  "format": {
+    "filename": "/music/Early Music Ensemble - Vespro (2001)/01 - Vespro.flac",
+    "format_name": "flac",
+    "duration": "720.000000",
+    "tags": {
+      "artist": "Êëàóäèî Ìîíòåâåðäè",
+      "album": "Vespro Della Beata Vergine",
+      "title": "Vespro"
+    }
+  },
+  "streams": [
+    {
+      "index": 0,
+      "codec_type": "audio",
+      "codec_name": "flac",
+      "sample_rate": "44100",
+      "channels": 2,
+      "tags": {}
+    }
+  ]
+}
