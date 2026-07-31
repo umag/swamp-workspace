@@ -10,7 +10,6 @@
 # tracked in the Phase D issue: ext-quality-test-backfill.
 anilist-chart
 arckit
-firecracker
 flipper-zero
 issue-lifecycle
 jscad-cad
