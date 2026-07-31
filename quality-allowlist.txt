@@ -21,7 +21,6 @@ jabber
 jscad-cad
 jscad-stl-slicer
 jscad-stl-validator
-livejournal-import
 music-library
 obsidian-vault
 obsidian-yt-archiver
