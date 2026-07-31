@@ -10,6 +10,5 @@
 # tracked in the Phase D issue: ext-quality-test-backfill.
 anilist-chart
 arckit
-issue-lifecycle
 obsidian-vault
 swamp-go-brr
