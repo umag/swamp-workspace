@@ -1,11 +1,56 @@
 # Changelog
 
-## Unreleased
+## 2026.07.31.1
 
-Test backfill to the STANDARD.md five-suite quality bar (wave-3 scrapers child
-of the extension-quality backfill program, `ext-quality-test-backfill`). No
-behavior change — `fragrantica.ts` is byte-frozen (zero source diff, no new
-exports), and the model `version` stays `2026.07.16.2`.
+Fixes the three HIGH latent bugs pinned during the wave-3 quality backfill
+(tracked in the local `fragrantica-latent-bugs` @magistr/issue-lifecycle model —
+not filed to the swamp.club Lab, per CLAUDE.md's Anti-Bypass rule; Lab is
+`@swamp/*` product only).
+
+- **SSRF (HIGH), closed** — every caller-supplied URL/path argument across the 5
+  URL-taking methods (`get-perfume`, `similar`, `list-by-designer`,
+  `list-by-note`, `find-by-notes`) is now checked against a host allowlist (the
+  configured `baseUrl` host, or `fragrantica.com`/`*.fragrantica.com`) before it
+  is ever fetched — enforced at the caller-input normalizers
+  (`normalizePerfumeUrl`, `resolveNoteUrl`'s direct-URL branch,
+  `list-by-designer`'s direct-URL branch), throwing before any network call
+  (`calls.length === 0`) for a disallowed host. The allowlist check is exact
+  -match or dot-suffixed, never a naive substring/`endsWith`, so lookalikes like
+  `evilfragrantica.com` or `fragrantica.com.example` are still rejected.
+  `fetchPage` also re-validates the post-redirect final URL (`response.url`)
+  when the original request was already allowlisted, and now enforces a lenient
+  Content-Type check (only rejects when a Content-Type header is present and
+  isn't HTML/XHTML). Deliberately deferred and left byte-frozen: the
+  DuckDuckGo-resolved branches of `resolveNoteUrl`/`list-by-designer`
+  (second-order SSRF, MEDIUM #5) and `redirect: "manual"` (MEDIUM #4) — both
+  still tracked, unchanged.
+- **URIError DoS (HIGH), closed** — `slugToText`'s `decodeURIComponent` is now
+  wrapped in try/catch, falling back to the raw (still percent-encoded) slug
+  text instead of throwing an unmapped `URIError`. A single malformed `%`-escape
+  no longer aborts an entire `get-perfume` call or an entire
+  `collectPerfumeRefs` listing pass — every other link on the page still
+  resolves.
+- **Silent-empty success (HIGH), closed** — `get-perfume` now requires
+  page-derived substance (an `itemprop` brand, or any of accords, notes,
+  perfumers, rating, gender, year, description) before writing a `perfume`
+  resource. A non-HTML 200 body (e.g. a JSON error page) or a redesigned page
+  with none of the expected selectors now throws instead of silently writing an
+  empty-ish perfume record and reporting success.
+- Model `version` and `manifest.yaml` bumped `2026.07.16.2` -> `2026.07.31.1`
+  (in sync).
+- Test flips: 6 adversarial pins (`fragrantica_adversarial_test.ts`, including a
+  new pin guarding the allowlist's dot-boundary/prefix-trick edge case) + 1
+  contract pin (`fragrantica_contract_test.ts`) flipped from pinned-broken to
+  pinned-fixed; 3 `normalizePerfumeUrl` coverage-branch fixtures
+  (`fragrantica_coverage_test.ts`) adjusted (foreign host -> allowlisted host,
+  empty body -> substance-bearing body). All deferred MED/LOW pins, the property
+  suite, `fragrantica_test.ts`, and `fragrantica_methods_test.ts` stay green,
+  unchanged.
+
+This release also folds in the previously-unreleased wave-3 test backfill
+(`ext-quality-test-backfill`), which added the five-suite quality bar ahead of
+this fix and first pinned the 12 latent bugs above (3 HIGH now closed, 9
+MEDIUM/LOW still deferred and tracked):
 
 - Added `extensions/models/fragrantica_contract_test.ts` (contract-fixture,
   second file alongside the pre-existing `fragrantica_test.ts`, which stays

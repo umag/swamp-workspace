@@ -7,14 +7,18 @@
  * and reading back the written resource.
  *
  * Arbitraries are RESTRICTED to a safe charset (letters/digits/spaces/hyphens)
- * throughout. This deliberately EXCLUDES the two documented totality
- * exceptions, each pinned separately in fragrantica_adversarial_test.ts:
- *   - malformed percent-encoding (`%zz`) makes slugToText/refFromPerfumeUrl
- *     throw a URIError — "parser never throws" is FALSE over the raw input
- *     space, so the arbitrary here never generates a `%` character.
- *   - a non-HTML / structurally-drifted body yields a silent-empty SUCCESS
- *     rather than a total, always-populated shape — the get-perfume
- *     output-shape property below only generates well-formed HTML bodies.
+ * throughout, kept even though slugToText/refFromPerfumeUrl are now total
+ * over malformed percent-encoding too (fragrantica-latent-bugs #2, closed —
+ * a `%zz` slug now falls back to its raw text instead of throwing a
+ * URIError). That fixed case stays pinned explicitly in
+ * fragrantica_adversarial_test.ts rather than being fuzzed here. One
+ * documented totality exception remains:
+ *   - a non-HTML / structurally-drifted body now THROWS in get-perfume
+ *     (fragrantica-latent-bugs #3, closed: a page-derived minimum-field
+ *     guard rejects it instead of silently writing an empty perfume) — the
+ *     get-perfume output-shape property below only generates well-formed
+ *     HTML bodies carrying itemprop-brand substance, so it never exercises
+ *     that guard.
  *
  * Properties:
  *  (a) parseAccords — strength is always a non-negative integer, every name

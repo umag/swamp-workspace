@@ -125,28 +125,28 @@ const MINIMAL_PERFUME_HTML =
 // Bug 1 — SSRF via unvalidated absolute URL / foreign-path args (HIGH)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: get-perfume fetches a caller-supplied hostile absolute URL verbatim — NO base-host allowlist (SSRF, HIGH)", async () => {
-  // fragrantica-latent-bugs #1. normalizePerfumeUrl returns any ^https?://
-  // input unchanged; get-perfume then fetches it with no check that it is
-  // on the configured baseUrl's host. Real-world equivalent target:
-  // 169.254.169.254 (cloud metadata) — never fetched here, only named.
+Deno.test("fixed: get-perfume rejects a caller-supplied hostile absolute URL BEFORE fetching (SSRF closed, HIGH)", async () => {
+  // fragrantica-latent-bugs #1, closed. normalizePerfumeUrl now enforces a
+  // host allowlist (the configured base host, or fragrantica.com/
+  // *.fragrantica.com) before get-perfume ever calls fetch. Real-world
+  // equivalent target: 169.254.169.254 (cloud metadata) — never fetched
+  // here, only named.
   const hostileUrl = "http://198.51.100.9/perfume/Anything/Name-1.html";
   const { ctx } = makeCtx();
   await withFetchStub(
     [pageRoute({ [hostileUrl]: MINIMAL_PERFUME_HTML })],
     async (calls) => {
-      await run("get-perfume", { url: hostileUrl }, ctx);
-      assertEquals(calls.length, 1);
-      assertEquals(
-        calls[0].url,
-        hostileUrl,
-        "the hostile host was fetched, unvalidated",
+      await assertRejects(
+        () => run("get-perfume", { url: hostileUrl }, ctx),
+        Error,
+        "disallowed host",
       );
+      assertEquals(calls.length, 0, "the hostile host must never be fetched");
     },
   );
 });
 
-Deno.test("pin: similar / list-by-designer / list-by-note / find-by-notes ALSO fetch a hostile absolute URL verbatim (SSRF surface spans all 5 URL-taking methods)", async () => {
+Deno.test("fixed: similar / list-by-designer / list-by-note / find-by-notes ALSO reject a hostile absolute URL before fetching (SSRF closed across all 5 URL-taking methods)", async () => {
   const hostileUrl = "http://198.51.100.9/perfume/Anything/Name-1.html";
   const hostileDesignerUrl = "http://203.0.113.7/designers/Anything.html";
   const hostileNoteUrl = "http://203.0.113.8/notes/Anything-1.html";
@@ -154,32 +154,85 @@ Deno.test("pin: similar / list-by-designer / list-by-note / find-by-notes ALSO f
   await withFetchStub(
     [pageRoute({ [hostileUrl]: MINIMAL_PERFUME_HTML })],
     async (calls) => {
-      await run("similar", { url: hostileUrl }, ctx1);
-      assertEquals(calls[0].url, hostileUrl);
+      await assertRejects(
+        () => run("similar", { url: hostileUrl }, ctx1),
+        Error,
+        "disallowed host",
+      );
+      assertEquals(calls.length, 0);
     },
   );
   const { ctx: ctx2 } = makeCtx();
   await withFetchStub(
     [pageRoute({ [hostileDesignerUrl]: "<html><body></body></html>" })],
     async (calls) => {
-      await run("list-by-designer", { designer: hostileDesignerUrl }, ctx2);
-      assertEquals(calls[0].url, hostileDesignerUrl);
+      await assertRejects(
+        () => run("list-by-designer", { designer: hostileDesignerUrl }, ctx2),
+        Error,
+        "disallowed host",
+      );
+      assertEquals(calls.length, 0);
     },
   );
   const { ctx: ctx3 } = makeCtx();
   await withFetchStub(
     [pageRoute({ [hostileNoteUrl]: "<html><body></body></html>" })],
     async (calls) => {
-      await run("list-by-note", { note: hostileNoteUrl }, ctx3);
-      assertEquals(calls[0].url, hostileNoteUrl);
+      await assertRejects(
+        () => run("list-by-note", { note: hostileNoteUrl }, ctx3),
+        Error,
+        "disallowed host",
+      );
+      assertEquals(calls.length, 0);
     },
   );
   const { ctx: ctx4 } = makeCtx();
   await withFetchStub(
     [pageRoute({ [hostileNoteUrl]: "<html><body></body></html>" })],
     async (calls) => {
-      await run("find-by-notes", { notes: [hostileNoteUrl] }, ctx4);
-      assertEquals(calls[0].url, hostileNoteUrl);
+      await assertRejects(
+        () => run("find-by-notes", { notes: [hostileNoteUrl] }, ctx4),
+        Error,
+        "disallowed host",
+      );
+      assertEquals(calls.length, 0);
+    },
+  );
+});
+
+Deno.test("fixed: a host that merely ends with 'fragrantica.com' without the dot boundary, or merely STARTS with it, is still rejected (allowlist must be exact-match or dot-suffixed, never a substring check)", async () => {
+  // Guards the allowlist IMPLEMENTATION itself against the classic
+  // suffix-check bug: `host.endsWith("fragrantica.com")` with no leading dot
+  // would wrongly allow "evilfragrantica.com"; `host.includes("fragrantica.com")`
+  // would wrongly allow "fragrantica.com.example" (fragrantica.com as a
+  // PREFIX — the attacker actually controls the real registrable domain).
+  // Both are attack literals used only as REJECTED inputs, never fetched.
+  const noDotBoundary =
+    "https://evilfragrantica.com/perfume/Anything/Name-1.html";
+  const prefixTrick =
+    "https://fragrantica.com.example/perfume/Anything/Name-1.html";
+  const { ctx: ctx1 } = makeCtx();
+  await withFetchStub(
+    [pageRoute({ [noDotBoundary]: MINIMAL_PERFUME_HTML })],
+    async (calls) => {
+      await assertRejects(
+        () => run("get-perfume", { url: noDotBoundary }, ctx1),
+        Error,
+        "disallowed host",
+      );
+      assertEquals(calls.length, 0);
+    },
+  );
+  const { ctx: ctx2 } = makeCtx();
+  await withFetchStub(
+    [pageRoute({ [prefixTrick]: MINIMAL_PERFUME_HTML })],
+    async (calls) => {
+      await assertRejects(
+        () => run("get-perfume", { url: prefixTrick }, ctx2),
+        Error,
+        "disallowed host",
+      );
+      assertEquals(calls.length, 0);
     },
   );
 });
@@ -188,59 +241,76 @@ Deno.test("pin: similar / list-by-designer / list-by-note / find-by-notes ALSO f
 // Bug 2 — URIError crash on malformed percent-encoding (HIGH)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: get-perfume with a malformed percent-escape URL throws an unmapped URIError (HIGH)", async () => {
-  // fragrantica-latent-bugs #2. slugToText calls decodeURIComponent with no
-  // try/catch; parsePerfume calls refFromPerfumeUrl(url,...) on the page's
-  // OWN url (not just parsed hrefs on the page), so a malformed %-escape in
-  // the REQUESTED url itself aborts the whole method call after a successful
-  // fetch — the page body's content is irrelevant, so any 200 body suffices.
-  const badUrl = `${BASE}/perfume/Bad%zzBrand/Broken-1.html`;
-  const { ctx } = makeCtx();
+Deno.test("fixed: get-perfume with a malformed percent-escape URL falls back to the raw slug instead of throwing (HIGH closed)", async () => {
+  // fragrantica-latent-bugs #2, closed. slugToText now wraps
+  // decodeURIComponent in try/catch and falls back to the raw (still
+  // percent-encoded) slug text instead of throwing, so a malformed
+  // %-escape in the REQUESTED url no longer aborts the whole get-perfume
+  // call. The malformed escape is placed in the NAME segment (not the
+  // brand segment) because `name` is always URL-derived and unconditional
+  // in the written payload — unlike `brand`, which a page-derived
+  // itemprop would otherwise shadow, this directly observes the
+  // raw-slug-fallback value with no ambiguity.
+  const badUrl = `${BASE}/perfume/Testhouse/Bad%zzName-1.html`;
+  const { ctx, written } = makeCtx();
   await withFetchStub(
     [pageRoute({ [badUrl]: MINIMAL_PERFUME_HTML })],
     async () => {
-      await assertRejects(
-        () =>
-          run(
-            "get-perfume",
-            { url: "/perfume/Bad%zzBrand/Broken-1.html" },
-            ctx,
-          ),
-        URIError,
+      await run(
+        "get-perfume",
+        { url: "/perfume/Testhouse/Bad%zzName-1.html" },
+        ctx,
       );
     },
   );
+  const res = written.find((w) => w.spec === "perfume")!;
+  assertEquals(
+    res.payload.name,
+    "Bad%zzName",
+    "name falls back to the raw, undecoded slug rather than throwing",
+  );
+  assertEquals(res.payload.id, 1);
 });
 
-Deno.test("pin: ONE poisoned %-href in a designer listing denies the ENTIRE page (collectPerfumeRefs has no per-link try/catch)", async () => {
-  // fragrantica-latent-bugs #2 (continued). A single malformed href among
-  // otherwise-valid perfume links throws for the whole collectPerfumeRefs
-  // call, discarding every good result too.
+Deno.test("fixed: a poisoned %-href in a designer listing no longer denies the whole page — the good link still resolves (HIGH closed)", async () => {
+  // fragrantica-latent-bugs #2 (continued, closed). A malformed href among
+  // otherwise-valid perfume links no longer throws for the whole
+  // collectPerfumeRefs call — every link resolves (the bad one via the raw-
+  // slug fallback).
   const html = `<!doctype html><html><body>
     <a href="/perfume/Testhouse/Fakebloom-Nova-101.html">Fakebloom Nova</a>
     <a href="/perfume/Bad%zzBrand/Broken-2.html">Broken link</a>
   </body></html>`;
-  const { ctx } = makeCtx();
+  const { ctx, written } = makeCtx();
   await withFetchStub(
     [pageRoute({ [`${BASE}/designers/Testhouse.html`]: html })],
     async () => {
-      await assertRejects(
-        () => run("list-by-designer", { designer: "Testhouse" }, ctx),
-        URIError,
-      );
+      await run("list-by-designer", { designer: "Testhouse" }, ctx);
     },
   );
+  const res = written.find((w) => w.spec === "listing")!;
+  const results = res.payload.results as Array<
+    { name: string; id?: number }
+  >;
+  assertEquals(
+    results.length,
+    2,
+    "both links resolve — the malformed one falls back instead of throwing",
+  );
+  assertEquals(results[0].id, 101);
+  assertEquals(results[1].id, 2);
 });
 
 // ---------------------------------------------------------------------------
 // Bug 3 — silent-empty SUCCESS on structural drift / non-HTML 200 (HIGH)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a non-HTML 200 body (e.g. a JSON error page) parses to an empty perfume and STILL writes success (HIGH)", async () => {
-  // fragrantica-latent-bugs #3. fetchPage only checks response.ok, never
-  // Content-Type; parsePerfume asserts no minimum field. A JSON body linkedom
-  // can't parse as HTML yields an (almost) empty document, so get-perfume
-  // "succeeds" with an empty-ish perfume rather than throwing.
+Deno.test("fixed: a non-HTML 200 body (e.g. a JSON error page) now throws instead of silently writing an empty perfume (HIGH closed)", async () => {
+  // fragrantica-latent-bugs #3, closed. get-perfume now requires
+  // page-derived substance (itemprop brand, accords, notes, perfumers,
+  // rating, gender, year, or description) before writeResource — a JSON
+  // body carries none of these, so the call throws instead of "succeeding"
+  // with an empty-ish perfume built only from the URL's own shape.
   const jsonBody = JSON.stringify({ error: "not html" });
   const { ctx, written } = makeCtx();
   await withFetchStub(
@@ -248,33 +318,26 @@ Deno.test("pin: a non-HTML 200 body (e.g. a JSON error page) parses to an empty 
       [`${BASE}/perfume/Testhouse/Fakebloom-Nova-101.html`]: jsonBody,
     })],
     async () => {
-      await run(
-        "get-perfume",
-        { url: "/perfume/Testhouse/Fakebloom-Nova-101.html" },
-        ctx,
+      await assertRejects(
+        () =>
+          run(
+            "get-perfume",
+            { url: "/perfume/Testhouse/Fakebloom-Nova-101.html" },
+            ctx,
+          ),
+        Error,
+        "No recognizable perfume content",
       );
     },
   );
-  const res = written.find((w) => w.spec === "perfume")!;
-  // The brand/name/id fields still populate — they come from the REQUESTED
-  // URL's own shape (refFromPerfumeUrl(url, base)), not from the page body.
-  // Only the page-CONTENT-derived fields go empty when the body is unusable.
   assertEquals(
-    res.payload.brand,
-    "Testhouse",
-    "URL-derived brand survives even a non-HTML body",
-  );
-  assertEquals(
-    res.payload.ratingValue,
+    written.find((w) => w.spec === "perfume"),
     undefined,
-    "no rating recognized in a JSON body",
+    "no perfume resource is written when the page carries no recognizable content",
   );
-  assertEquals((res.payload.accords as unknown[]).length, 0);
-  assertEquals((res.payload.perfumers as unknown[]).length, 0);
-  // no exception was thrown — this is a SILENT success, not an error.
 });
 
-Deno.test("pin: a redesigned page with none of the expected selectors also 'succeeds' with an empty perfume, not an error (HIGH)", async () => {
+Deno.test("fixed: a redesigned page with none of the expected selectors now throws instead of 'succeeding' with an empty perfume (HIGH closed)", async () => {
   const html =
     `<!doctype html><html><body><p>Page redesigned, nothing recognizable.</p></body></html>`;
   const { ctx, written } = makeCtx();
@@ -283,22 +346,19 @@ Deno.test("pin: a redesigned page with none of the expected selectors also 'succ
       [`${BASE}/perfume/Testhouse/Fakebloom-Nova-101.html`]: html,
     })],
     async () => {
-      await run(
-        "get-perfume",
-        { url: "/perfume/Testhouse/Fakebloom-Nova-101.html" },
-        ctx,
+      await assertRejects(
+        () =>
+          run(
+            "get-perfume",
+            { url: "/perfume/Testhouse/Fakebloom-Nova-101.html" },
+            ctx,
+          ),
+        Error,
+        "No recognizable perfume content",
       );
     },
   );
-  const res = written.find((w) => w.spec === "perfume")!;
-  // brand again survives from the requested URL's own shape.
-  assertEquals(res.payload.brand, "Testhouse");
-  assertEquals(res.payload.ratingValue, undefined);
-  assertEquals((res.payload.notes as { top: string[] }).top, []);
-  assert(
-    typeof res.payload.timestamp === "string",
-    "a fresh timestamp is still written on this silent-empty success",
-  );
+  assertEquals(written.find((w) => w.spec === "perfume"), undefined);
 });
 
 // ---------------------------------------------------------------------------
