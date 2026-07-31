@@ -9,21 +9,18 @@
  *  (a) get-podcasts/get-playlists preserve every generated channel/playlist,
  *      IN ORDER, with the written array's length == the generated array's
  *      length; absent/empty input both yield [].
- *  (b) AUTH-ENCODING, split per the round-1 plan-review finding (naive
- *      "always recoverable" is FALSE over the raw string space — TextEncoder
- *      replaces lone/unpaired UTF-16 surrogates with U+FFFD, which is not
- *      invertible):
- *        (b1) ALWAYS-TRUE relation — the captured URL's `p` param equals
- *             "enc:" + the lowercased hex of TextEncoder.encode(password),
- *             for ANY generated string.
- *        (b2) RECOVERY — hex-decoding `p` round-trips the ORIGINAL password,
- *             stated only over the BMP-safe canonical subset (no lone
- *             surrogates), per the porkbun canonical-subset precedent. A
- *             named collapse example documents the excluded case.
+ *  (b) AUTH-ENCODING — FIXED to Subsonic TOKEN auth: for ANY generated
+ *      password, the captured URL has NO `p` param, its `s` param is
+ *      hex-shaped, and its `t` param always equals md5hex(password + s) —
+ *      recomputed from the EMITTED (random) per-request salt, never a fixed
+ *      expected value. (Token auth is a pure hash of password+salt, so there
+ *      is no lone-surrogate/U+FFFD collapse edge case here — unlike the
+ *      retired enc-hex encoding, the invariant holds for ANY string.)
  *  (c) db-query's rows/rowCount round-trip the Command stub's JSON stdout
  *      exactly, in order; empty stdout always yields []/0.
  */
 import { assert } from "jsr:@std/assert@1";
+import { crypto as stdCrypto } from "jsr:@std/crypto@1";
 import fc from "npm:fast-check@4.8.0";
 import { model } from "./gonic.ts";
 
@@ -186,18 +183,14 @@ async function withCommandStub(
   }
 }
 
-function hexEncode(bytes: Uint8Array): string {
-  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join(
-    "",
-  );
-}
-
-function hexDecode(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
+/** Independent md5hex(input) — used to recompute the expected Subsonic
+ * token from a captured (random) per-request salt, never a fixed constant. */
+async function md5Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const digest = await stdCrypto.subtle.digest("MD5", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 // ---------------------------------------------------------------------------
@@ -312,83 +305,29 @@ Deno.test("property: get-playlists — absent and empty playlist arrays both yie
 });
 
 // ---------------------------------------------------------------------------
-// (b1) AUTH-ENCODING — ALWAYS-TRUE relation over ANY string
+// (b) AUTH-ENCODING — FIXED to Subsonic TOKEN auth: a single invariant that
+// holds for ANY generated password (no BMP-safe/surrogate carve-out needed —
+// both sides of the equality run the SAME TextEncoder-based md5Hex, so any
+// U+FFFD substitution for a lone surrogate is identical on both sides).
 // ---------------------------------------------------------------------------
 
-Deno.test("property: the URL's p param ALWAYS equals 'enc:' + lowercase-hex(TextEncoder.encode(password)), for ANY string", async () => {
+Deno.test("property: TOKEN auth — for ANY password, the URL has NO p param, an s param that is hex-shaped, and t ALWAYS equals md5hex(password + the emitted s)", async () => {
   await fc.assert(
     fc.asyncProperty(fc.string({ maxLength: 60 }), async (password) => {
       const { ctx } = makeCtx({ ...GLOBAL_ARGS, password });
-      let pParam = "";
+      let url = new URL("http://placeholder/");
       await withOneEndpoint("ping", okEnvelope(), async (calls) => {
         await run("ping", {}, ctx);
-        pParam = new URL(calls[0].url).searchParams.get("p")!;
+        url = new URL(calls[0].url);
       });
-      const expectedHex = hexEncode(new TextEncoder().encode(password));
-      return pParam === `enc:${expectedHex}`;
+      if (url.searchParams.get("p") !== null) return false;
+      const s = url.searchParams.get("s");
+      const t = url.searchParams.get("t");
+      if (!s || !t || !/^[0-9a-f]+$/i.test(s)) return false;
+      const expectedToken = await md5Hex(password + s);
+      return t === expectedToken;
     }),
     FC_RUNS,
-  );
-});
-
-// ---------------------------------------------------------------------------
-// (b2) AUTH-ENCODING — RECOVERY over the BMP-safe canonical subset
-// ---------------------------------------------------------------------------
-
-// Restricted to code points OUTSIDE the surrogate range (0xD800-0xDFFF), so
-// every generated string is composed entirely of independently-valid BMP
-// scalar values — no lone/unpaired surrogates. Within this canonical subset,
-// TextEncoder/TextDecoder round-trip exactly (no U+FFFD substitution).
-const arbBmpSafeChar = fc.oneof(
-  fc.integer({ min: 0x0000, max: 0xd7ff }),
-  fc.integer({ min: 0xe000, max: 0xffff }),
-).map((code) => String.fromCharCode(code));
-
-const arbBmpSafeString = fc.array(arbBmpSafeChar, { maxLength: 40 }).map((
-  chars,
-) => chars.join(""));
-
-Deno.test("property: RECOVERY — over the BMP-safe canonical subset (no lone surrogates), hex-decoding p round-trips the ORIGINAL password", async () => {
-  await fc.assert(
-    fc.asyncProperty(arbBmpSafeString, async (password) => {
-      const { ctx } = makeCtx({ ...GLOBAL_ARGS, password });
-      let pParam = "";
-      await withOneEndpoint("ping", okEnvelope(), async (calls) => {
-        await run("ping", {}, ctx);
-        pParam = new URL(calls[0].url).searchParams.get("p")!;
-      });
-      const hex = pParam.slice("enc:".length);
-      // ignoreBOM:true is REQUIRED to make decode a true inverse of encode: a
-      // default TextDecoder silently STRIPS a leading BOM (U+FEFF), so a
-      // password beginning with U+FEFF would otherwise fail to round-trip even
-      // though it is a valid, non-surrogate BMP scalar (this bit the RECOVERY
-      // property with fast-check seed -832237103 — a U+FEFF-leading password).
-      const recovered = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
-        hexDecode(hex),
-      );
-      return recovered === password;
-    }),
-    FC_RUNS,
-  );
-});
-
-Deno.test("collapse: a lone (unpaired) surrogate password does NOT round-trip — TextEncoder substitutes U+FFFD before hex-encoding", async () => {
-  const password = "before\uD800after"; // lone high surrogate, no matching low
-  const { ctx } = makeCtx({ ...GLOBAL_ARGS, password });
-  let pParam = "";
-  await withOneEndpoint("ping", okEnvelope(), async (calls) => {
-    await run("ping", {}, ctx);
-    pParam = new URL(calls[0].url).searchParams.get("p")!;
-  });
-  const hex = pParam.slice("enc:".length);
-  const recovered = new TextDecoder().decode(hexDecode(hex));
-  assert(
-    recovered !== password,
-    "the lone surrogate is replaced by U+FFFD — recovery is lossy here, NOT a round trip; this is exactly why (b2) is scoped to the BMP-safe canonical subset",
-  );
-  assert(
-    recovered.includes(String.fromCharCode(0xfffd)),
-    "TextEncoder's replacement character (U+FFFD) surfaces in the recovered string",
   );
 });
 
