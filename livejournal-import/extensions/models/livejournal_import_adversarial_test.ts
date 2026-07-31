@@ -2,18 +2,26 @@
  * Adversarial suite: hostile/boundary inputs and a mechanical
  * fixtures-secret-scan over livejournal-import/fixtures/*.html.
  *
- * livejournal_import.ts is UNMODIFIED -- every test here PINS current
- * behavior (including behavior that is a documented latent bug) rather than
- * proposing a fix. This suite is where the 8 latent bugs tracked in the
- * LOCAL `livejournal-import-latent-bugs` issue-lifecycle model (NEVER filed
- * to the swamp.club Lab -- see CLAUDE.md's anti-bypass rule) are
- * characterized as failing-would-be-red-if-"fixed" pins:
- *   LB1 SSRF via image src (HIGH), LB2 YAML frontmatter injection via
- *   unescaped newlines (MEDIUM), LB3 silent-empty success (MEDIUM), LB4 no
- *   fetch/subprocess timeout (MEDIUM), LB5 unbounded pagination/memory
- *   (MEDIUM), LB6 fragile comment-JSON extraction (LOW), LB7 operator
- *   `folder` path traversal on disk write (LOW), LB8 parseLjDate silent
- *   fallthrough (LOW).
+ * LB1 (SSRF via image src, HIGH) has been PROMOTED from a characterization
+ * pin to a RED fix-spec: the LB1 section below now asserts the FIXED
+ * behavior (an `isAllowedImageHost` host allowlist applied to both
+ * image-collection paths in `parsePost`, plus `redirect:"manual"` +
+ * per-hop re-validation on the download fetch) and is red against the
+ * still-UNMODIFIED `livejournal_import.ts` until that fix lands -- this is
+ * the fix's TDD RED phase, not a characterization of current behavior.
+ *
+ * LB2-LB8 remain UNMODIFIED-behavior PINS (deferred, not fixed in this
+ * change) -- every other test in this suite still PINS current behavior
+ * (including behavior that is a documented latent bug) rather than
+ * proposing a fix:
+ *   LB2 YAML frontmatter injection via unescaped newlines (MEDIUM), LB3
+ *   silent-empty success (MEDIUM), LB4 no fetch/subprocess timeout
+ *   (MEDIUM), LB5 unbounded pagination/memory (MEDIUM), LB6 fragile
+ *   comment-JSON extraction (LOW), LB7 operator `folder` path traversal on
+ *   disk write (LOW), LB8 parseLjDate silent fallthrough (LOW). All 8 bugs
+ *   are tracked in the LOCAL `livejournal-import-latent-bugs`
+ *   issue-lifecycle model (NEVER filed to the swamp.club Lab -- see
+ *   CLAUDE.md's anti-bypass rule).
  *
  * It also pins three REFUTED risk classes as covered-negatives -- explicitly
  * checked and found NOT applicable to this model, so a future change that
@@ -223,8 +231,68 @@ async function runSinglePostImport(
           if (url.pathname === "/1001.html" || url.pathname === "/1002.html") {
             return htmlResponse(postHtml);
           }
+          // Allowlisted relay host (post_ssrf.html) that 30x-redirects to a
+          // documentation-only (RFC 5737 TEST-NET-3) internal target -- used
+          // by the redirect-hop-rejection test below. redirect:"manual" on
+          // the real fetch call means this raw 3xx is returned as-is, never
+          // auto-followed.
+          if (url.pathname === "/fixture-redirect-relay.jpg") {
+            return new Response(null, {
+              status: 302,
+              headers: {
+                Location:
+                  "https://203.0.113.7/fixture-redirect-internal-target",
+              },
+            });
+          }
           return binaryResponse();
         }],
+        async (calls) => {
+          await run({}, ctx);
+          fetchCalls.push(...calls);
+        },
+      );
+      return { commands, mkdirs, writes };
+    },
+  );
+  return { written, logs, fetchCalls, ...denoResult };
+}
+
+// A single-post index (matches the property suite's convention) so the
+// isAllowedImageHost/redirect-hardening tests below process the post body
+// exactly ONCE -- no doubled fetch/write counts to account for.
+const SINGLE_POST_INDEX_HTML =
+  `<html><body><a href="https://fixture-journal.example.com/9001.html">Fixture Single Post</a></body></html>`;
+
+/** Runs `import` against ONE inline post body under a single-post index.
+ * `extraRoutes` are consulted BEFORE the generic index/post/binary fallback,
+ * so a caller can special-case an image URL (e.g. to return a redirect). */
+async function runInlinePostImport(
+  postBodyHtml: string,
+  extraRoutes: Route[] = [],
+) {
+  const postHtml = `<html><body>
+<div class="aentry-post__title-text">Fixture Inline Post</div>
+<div class="aentry-head__date"><time>June 6 2013, 09:00</time></div>
+<div class="aentry-post__text">${postBodyHtml}</div>
+</body></html>`;
+  const { ctx, written, logs } = makeCtx(GLOBAL_ARGS);
+  const fetchCalls: { req: Request; init: RequestInit | undefined }[] = [];
+  const denoResult = await withDenoStubs(
+    {},
+    async ({ commands, mkdirs, writes }) => {
+      await withFetchStub(
+        [
+          ...extraRoutes,
+          (req) => {
+            const url = new URL(req.url);
+            if (url.pathname === "/" && !url.searchParams.has("skip")) {
+              return htmlResponse(SINGLE_POST_INDEX_HTML);
+            }
+            if (url.pathname === "/9001.html") return htmlResponse(postHtml);
+            return binaryResponse();
+          },
+        ],
         async (calls) => {
           await run({}, ctx);
           fetchCalls.push(...calls);
@@ -240,8 +308,8 @@ async function runSinglePostImport(
 // LB1 SSRF via image src -- HIGH
 // ===========================================================================
 
-Deno.test("pin (livejournal-import-latent-bugs LB1, HIGH): an image src pointing at a cloud-metadata / loopback-admin target is fetched with NO host allowlist", async () => {
-  const { fetchCalls } = await runSinglePostImport(
+Deno.test("pin (livejournal-import-latent-bugs LB1, HIGH -- FIXED): an image src pointing at a cloud-metadata / loopback-admin target is REJECTED by the host allowlist and never fetched", async () => {
+  const { fetchCalls, written } = await runSinglePostImport(
     GLOBAL_ARGS,
     "post_ssrf.html",
   );
@@ -249,16 +317,357 @@ Deno.test("pin (livejournal-import-latent-bugs LB1, HIGH): an image src pointing
     .map((c) => c.req.url)
     .filter((u) => !u.includes("fixture-journal.example.com"));
   assert(
-    imageUrls.some((u) => new URL(u).hostname === "169.254.169.254"),
-    "the cloud-metadata-shaped target must have been reached exactly as given",
+    !imageUrls.some((u) => new URL(u).hostname === "169.254.169.254"),
+    "the cloud-metadata-shaped target must NEVER be fetched",
   );
   assert(
-    imageUrls.some((u) => {
+    !imageUrls.some((u) => {
       const parsed = new URL(u);
       return parsed.hostname === "127.0.0.1" && parsed.port === "8200";
     }),
-    "the loopback admin-shaped target must have been reached exactly as given",
+    "the loopback admin-shaped target must NEVER be fetched",
   );
+  const post = written.find((w) => w.spec === "post")!;
+  assertEquals(
+    post.payload.imageCount,
+    0,
+    "every image in this fixture is rejected -- the two IP-literal targets outright, the allowlisted relay via its redirect target",
+  );
+});
+
+Deno.test('isAllowedImageHost hardening: an allowlisted relay host that 30x-redirects to an RFC 5737 documentation-only internal target is fetched at the relay hop with redirect:"manual", but the internal target is NEVER fetched and no attachment is written', async () => {
+  const { fetchCalls, writes } = await runSinglePostImport(
+    GLOBAL_ARGS,
+    "post_ssrf.html",
+  );
+  // index.html links two posts (1001.html, 1002.html) and runSinglePostImport
+  // routes both to the same post_ssrf.html fixture, so the relay hop is hit
+  // once per post -- twice total, never more (no further hop is attempted
+  // past the relay since its redirect target is rejected).
+  const relayCalls = fetchCalls.filter((c) =>
+    c.req.url.includes("fixture-redirect-relay.jpg")
+  );
+  assertEquals(
+    relayCalls.length,
+    2,
+    "the allowlisted relay host IS fetched exactly once per post",
+  );
+  for (const call of relayCalls) {
+    assertEquals(
+      call.init?.redirect,
+      "manual",
+      "EVERY relay fetch must disable automatic redirect-follow so the Location can be re-validated",
+    );
+  }
+  const internalCalls = fetchCalls.filter((c) =>
+    c.req.url.includes("203.0.113.7")
+  );
+  assertEquals(
+    internalCalls.length,
+    0,
+    "the RFC 5737 redirect target must NEVER be fetched",
+  );
+  assertEquals(
+    writes.length,
+    0,
+    "no attachment is written -- every candidate image in this fixture is rejected outright or via its redirect target",
+  );
+});
+
+Deno.test("isAllowedImageHost: allows hosts sharing the journal's registrable domain and the static *.livejournal.com/*.livejournal.net media suffixes; rejects a foreign domain, a suffix-confusable host, and a non-http(s) scheme", async () => {
+  const { written, fetchCalls } = await runInlinePostImport(
+    `<img src="https://f-pics.example.com/fixture-same-apex.jpg" alt="same registrable domain as the journal">` +
+      `<img src="https://pics.livejournal.com/fixture-lj-com-cdn.jpg" alt="static .com LJ media suffix">` +
+      `<img src="https://media.livejournal.net/fixture-lj-net-cdn.jpg" alt="static .net LJ media suffix">` +
+      `<img src="https://cdn.fixture-unrelated-host.test/fixture-foreign.jpg" alt="foreign domain, must be rejected">` +
+      `<img src="https://livejournal.com.fixture-attacker.test/fixture-suffix-confusion.jpg" alt="contains livejournal.com as a PREFIX, not a suffix -- must be rejected">` +
+      `<img src="ftp://cdn.fixture-ftp-host.test/fixture-non-http-scheme.jpg" alt="non-http(s) scheme, must be rejected">`,
+  );
+  const post = written.find((w) => w.spec === "post")!;
+  assertEquals(
+    post.payload.imageCount,
+    3,
+    "the same-apex host and BOTH static LJ suffixes (.com and .net) are allowed through; the foreign domain, the suffix-confusable host, and the non-http(s) scheme are rejected before any fetch is attempted",
+  );
+  // A bare count can't catch a wrong-but-count-preserving flip (e.g.
+  // incorrectly rejecting the same-apex host while incorrectly allowing the
+  // ftp:// scheme) -- assert WHICH hosts were actually fetched, by identity.
+  assert(
+    fetchCalls.some((c) => c.req.url.includes("fixture-same-apex")),
+    "the same-apex host IS fetched",
+  );
+  assert(
+    fetchCalls.some((c) => c.req.url.includes("fixture-lj-com-cdn")),
+    "the static .com LJ media suffix host IS fetched",
+  );
+  assert(
+    fetchCalls.some((c) => c.req.url.includes("fixture-lj-net-cdn")),
+    "the static .net LJ media suffix host IS fetched",
+  );
+  assert(
+    !fetchCalls.some((c) => c.req.url.includes("fixture-foreign")),
+    "the foreign domain must NEVER be fetched",
+  );
+  assert(
+    !fetchCalls.some((c) => c.req.url.includes("fixture-suffix-confusion")),
+    "a host that merely CONTAINS 'livejournal.com' as a prefix segment (livejournal.com.fixture-attacker.test) must NEVER be fetched -- an unanchored .includes() or missing dot-boundary check would let this through",
+  );
+  assert(
+    !fetchCalls.some((c) => c.req.url.includes("fixture-non-http-scheme")),
+    "the non-http(s) scheme must NEVER be fetched",
+  );
+});
+
+Deno.test("isAllowedImageHost: rejects IP-literal hosts in decimal, hex, and bracketed IPv6/IPv4-mapped form -- not just dotted-decimal", async () => {
+  // Decimal/hex-encoded IPv4 are normalized to dotted-decimal by the WHATWG
+  // URL parser itself (new URL("http://2852039166/x").hostname ===
+  // "169.254.169.254"), so a correct implementation that parses via
+  // `new URL()` (rather than substring-matching the raw text) already closes
+  // those two for free -- included here as an explicit regression pin, not
+  // because they need separate parsing logic. The bracketed IPv6/IPv4-mapped
+  // cases exercise a genuinely distinct branch (hostname contains a colon).
+  const { written, fetchCalls } = await runInlinePostImport(
+    `<img src="http://2852039166/fixture-decimal-encoded.jpg" alt="decimal-encoded 169.254.169.254">` +
+      `<img src="http://0xA9FEA9FE/fixture-hex-encoded.jpg" alt="hex-encoded 169.254.169.254">` +
+      `<img src="http://[::1]/fixture-ipv6-loopback.jpg" alt="IPv6 loopback">` +
+      `<img src="http://[::ffff:127.0.0.1]/fixture-ipv4-mapped.jpg" alt="IPv4-mapped IPv6 loopback">`,
+  );
+  const post = written.find((w) => w.spec === "post")!;
+  assertEquals(
+    post.payload.imageCount,
+    0,
+    "decimal, hex, IPv6-loopback, and IPv4-mapped-IPv6 hosts must ALL be rejected, not just dotted-decimal IPv4",
+  );
+  // fetchCalls always contains the unavoidable index-page ("/") and
+  // post-page ("/9001.html") fetches, so it can never be empty -- scope the
+  // check to the four candidate image URLs specifically (same pattern as the
+  // wrapped-<a href> test below), not the whole call list.
+  assert(
+    !fetchCalls.some((c) =>
+      c.req.url.includes("fixture-decimal-encoded") ||
+      c.req.url.includes("fixture-hex-encoded") ||
+      c.req.url.includes("fixture-ipv6-loopback") ||
+      c.req.url.includes("fixture-ipv4-mapped")
+    ),
+    "none of these IP-literal-shaped hosts should ever be fetched -- rejected in parsePost before any download is attempted",
+  );
+});
+
+Deno.test("journalApex: a trailing-dot (FQDN-notation) journalUrl does not collapse the derived apex to a bare TLD-plus-dot -- same-apex hosts stay allowed, foreign hosts stay rejected", async () => {
+  // Regression pin: an unstripped trailing dot on the journal hostname
+  // (e.g. "fixture-journal.example.com.", a syntactically valid FQDN form)
+  // would otherwise produce an empty final label after split("."), causing
+  // journalApex's last-two-labels slice to collapse to "com." -- which
+  // EVERY *.com. host would then match, defeating the allowlist entirely.
+  const trailingDotArgs = {
+    ...GLOBAL_ARGS,
+    journalUrl: "https://fixture-journal.example.com./",
+  };
+  const indexHtml =
+    `<html><body><a href="https://fixture-journal.example.com./9001.html">Fixture Single Post</a></body></html>`;
+  const postHtml = `<html><body>
+<div class="aentry-post__title-text">Fixture Trailing-Dot Post</div>
+<div class="aentry-head__date"><time>July 7 2014, 10:00</time></div>
+<div class="aentry-post__text">
+<img src="https://f-pics.example.com/fixture-same-apex-trailing-dot.jpg" alt="same apex as the trailing-dot journal, must stay ALLOWED">
+<img src="https://cdn.fixture-unrelated-host.test/fixture-foreign-trailing-dot.jpg" alt="foreign host, must stay REJECTED -- a collapsed apex bug would over-match any .test/.com-suffixed host">
+</div>
+</body></html>`;
+  const { ctx, written } = makeCtx(trailingDotArgs);
+  await withDenoStubs({}, async () => {
+    await withFetchStub(
+      [(req) => {
+        const url = new URL(req.url);
+        if (url.pathname === "/" && !url.searchParams.has("skip")) {
+          return htmlResponse(indexHtml);
+        }
+        if (url.pathname === "/9001.html") return htmlResponse(postHtml);
+        return binaryResponse();
+      }],
+      () => run({}, ctx) as Promise<void>,
+    );
+  });
+  const post = written.find((w) => w.spec === "post")!;
+  assertEquals(
+    post.payload.imageCount,
+    1,
+    "the trailing-dot journalUrl must still derive the 'example.com' apex correctly: the same-apex host is allowed, the foreign host stays rejected",
+  );
+});
+
+Deno.test("SSRF via the wrapped <a href> image path (previously UNGUARDED): an href pointing at a cloud-metadata / loopback / foreign-domain target is rejected exactly like a bare <img src>", async () => {
+  const { written, fetchCalls } = await runInlinePostImport(
+    `<a href="http://169.254.169.254/fixture-wrapped-meta.jpg"><img src="https://f-pics.example.com/fixture-thumb-a.jpg"></a>` +
+      `<a href="https://cdn.fixture-unrelated-host.test/fixture-wrapped-foreign.jpg"><img src="https://f-pics.example.com/fixture-thumb-b.jpg"></a>`,
+  );
+  const post = written.find((w) => w.spec === "post")!;
+  assertEquals(
+    post.payload.imageCount,
+    2,
+    "only the two benign <img src> thumbs are allowed through; both malicious wrapping hrefs are rejected",
+  );
+  assert(
+    !fetchCalls.some((c) => c.req.url.includes("169.254.169.254")),
+    "the wrapped-link cloud-metadata href must NEVER be fetched",
+  );
+  assert(
+    !fetchCalls.some((c) => c.req.url.includes("fixture-unrelated-host.test")),
+    "the wrapped-link foreign-domain href must NEVER be fetched",
+  );
+});
+
+Deno.test("redirect hardening (positive case): an allowlisted relay that 30x-redirects to ANOTHER allowlisted host is followed and downloaded -- hardening re-validates per hop, it does not blanket-reject every redirect", async () => {
+  const { written, fetchCalls } = await runInlinePostImport(
+    `<img src="https://f-pics.example.com/fixture-redirect-to-allowed.jpg" alt="redirects to another allowed host">`,
+    [(req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/fixture-redirect-to-allowed.jpg") {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://pics.livejournal.com/fixture-redirect-final.jpg",
+          },
+        });
+      }
+      return undefined;
+    }],
+  );
+  const post = written.find((w) => w.spec === "post")!;
+  assertEquals(
+    post.payload.imageCount,
+    1,
+    "the redirect to an ALLOWED final host must be followed and the image downloaded",
+  );
+  const finalCalls = fetchCalls.filter((c) =>
+    c.req.url.includes("fixture-redirect-final.jpg")
+  );
+  assert(
+    finalCalls.length > 0,
+    "the final allowed target must actually be fetched -- proves per-hop re-validation runs, rather than every redirect being blanket-rejected",
+  );
+  const firstHopCalls = fetchCalls.filter((c) =>
+    c.req.url.includes("fixture-redirect-to-allowed.jpg")
+  );
+  for (const call of [...firstHopCalls, ...finalCalls]) {
+    assertEquals(
+      call.init?.redirect,
+      "manual",
+      "every hop's fetch (relay AND the final followed target) must disable automatic redirect-follow",
+    );
+  }
+});
+
+Deno.test("redirect hardening: a multi-hop chain through allowed hosts that ultimately redirects to a rejected internal target is rejected at the final hop, not silently truncated early", async () => {
+  const { written, fetchCalls } = await runInlinePostImport(
+    `<img src="https://f-pics.example.com/fixture-hop-1.jpg">`,
+    [(req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/fixture-hop-1.jpg") {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://pics.livejournal.com/fixture-hop-2.jpg",
+          },
+        });
+      }
+      if (url.pathname === "/fixture-hop-2.jpg") {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://203.0.113.9/fixture-hop-3-internal-target.jpg",
+          },
+        });
+      }
+      return undefined;
+    }],
+  );
+  const post = written.find((w) => w.spec === "post")!;
+  assertEquals(
+    post.payload.imageCount,
+    0,
+    "the chain is rejected once a hop resolves to the internal target, even though the earlier hops were allowed",
+  );
+  const hop1Calls = fetchCalls.filter((c) =>
+    c.req.url.includes("fixture-hop-1.jpg")
+  );
+  const hop2Calls = fetchCalls.filter((c) =>
+    c.req.url.includes("fixture-hop-2.jpg")
+  );
+  assert(hop1Calls.length > 0, "hop 1 (allowed) IS fetched");
+  assert(hop2Calls.length > 0, "hop 2 (allowed) IS fetched");
+  for (const call of [...hop1Calls, ...hop2Calls]) {
+    assertEquals(
+      call.init?.redirect,
+      "manual",
+      "EVERY hop's fetch must disable automatic redirect-follow, not just the first",
+    );
+  }
+  assert(
+    !fetchCalls.some((c) => c.req.url.includes("203.0.113.9")),
+    "hop 3 (the rejected internal target) is NEVER fetched",
+  );
+});
+
+Deno.test("redirect hardening (positive multi-hop case): a chain of THREE allowed-host redirects terminating at a fourth allowed host is followed all the way through -- proves per-hop revalidation is not hard-capped at a fixed small depth", async () => {
+  const { written, fetchCalls } = await runInlinePostImport(
+    `<img src="https://f-pics.example.com/fixture-multi-hop-1.jpg">`,
+    [(req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/fixture-multi-hop-1.jpg") {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://pics.livejournal.com/fixture-multi-hop-2.jpg",
+          },
+        });
+      }
+      if (url.pathname === "/fixture-multi-hop-2.jpg") {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://media.livejournal.net/fixture-multi-hop-3.jpg",
+          },
+        });
+      }
+      if (url.pathname === "/fixture-multi-hop-3.jpg") {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location:
+              "https://images2.example.com/fixture-multi-hop-4-final.jpg",
+          },
+        });
+      }
+      return undefined;
+    }],
+  );
+  const post = written.find((w) => w.spec === "post")!;
+  assertEquals(
+    post.payload.imageCount,
+    1,
+    "a chain through THREE allowed hosts terminating at a fourth allowed host must be followed to completion and downloaded -- rules out a hardcoded 1- or 2-redirect cap",
+  );
+  // Includes the TERMINAL (4th, non-redirecting) hop -- an implementation
+  // that manually re-validates hops 1-3 but then issues one final unguarded
+  // fetch() for the actual download would otherwise pass every assertion
+  // here unnoticed.
+  const hopUrlFragments = [
+    "fixture-multi-hop-1.jpg",
+    "fixture-multi-hop-2.jpg",
+    "fixture-multi-hop-3.jpg",
+    "fixture-multi-hop-4-final.jpg",
+  ];
+  for (const fragment of hopUrlFragments) {
+    const hopCalls = fetchCalls.filter((c) => c.req.url.includes(fragment));
+    assert(hopCalls.length > 0, `${fragment} (allowed) IS fetched`);
+    for (const call of hopCalls) {
+      assertEquals(
+        call.init?.redirect,
+        "manual",
+        `the fetch for ${fragment} must disable automatic redirect-follow, not just the first hop's`,
+      );
+    }
+  }
 });
 
 // ===========================================================================

@@ -243,10 +243,111 @@ async function collectPostUrls(
   return urls;
 }
 
+// Known LiveJournal media CDN suffixes, always allowed regardless of which
+// journal is being imported.
+const LJ_MEDIA_HOST_SUFFIXES = [".livejournal.com", ".livejournal.net"];
+
+// Conservative registrable-domain approximation: the last two labels of a
+// hostname (e.g. "fixture-journal.example.com" -> "example.com"). This is
+// deliberately NOT a full public-suffix-list algorithm (a multi-label
+// public suffix like "co.uk", or a shared wildcard-DNS/hosting platform
+// like "github.io"/"sslip.io", would misclassify -- see CHANGELOG.md
+// 2026.07.31.1 for the accepted residual and mitigation guidance) -- the
+// journal host is operator-supplied trusted input, not attacker-supplied,
+// so the simpler exact-host-or-suffix-of-apex match is the more auditable
+// choice than a PSL dependency. Trailing-dot FQDN notation (e.g.
+// "x.livejournal.com.") is normalized away first -- an unstripped trailing
+// dot would otherwise collapse the derived apex to the bare TLD plus a dot
+// (e.g. "com."), which every other "*.com."-suffixed host would match.
+function journalApex(journalOrPostUrl: string): string | undefined {
+  try {
+    const host = new URL(journalOrPostUrl).hostname.toLowerCase();
+    const labels = host.split(".").filter((label) => label.length > 0);
+    if (labels.length === 0) return undefined;
+    if (labels.length < 2) return labels[0];
+    return labels.slice(-2).join(".");
+  } catch {
+    return undefined;
+  }
+}
+
+// True if `hostname` is any IP-literal shape: dotted-decimal IPv4, decimal
+// or hex IPv4, or any IPv6 form (bracketed or not, including compressed and
+// IPv4-mapped forms like ::ffff:127.0.0.1). Relies on the WHATWG URL
+// parser's own hostname normalization (decimal/hex/octal IPv4 are already
+// canonicalized to dotted-decimal by `new URL()`) rather than substring
+// matching against the raw, pre-normalization text.
+function isIpLiteralHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "");
+  if (h === "" || h.includes(":")) return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true;
+  if (/^0x[0-9a-f]+$/i.test(h)) return true;
+  if (/^\d+$/.test(h)) return true;
+  return false;
+}
+
+// SSRF allowlist: an image URL is only fetched if it uses http(s), is not
+// an IP-literal host (link-local/loopback/private ranges included), and its
+// host is either a known LiveJournal media CDN (suffix-anchored, so a host
+// merely containing "livejournal.com" as a prefix segment does not match)
+// or shares the registrable domain of `originUrl` (conservatively derived).
+// `originUrl` is whatever URL establishes the trusted host for this
+// call -- the journal's post URL when called from `parsePost` (its host is
+// always the journal's host, by construction of `collectPostUrls`), or the
+// journal's own configured URL when called from `fetchImageSafely`. Named
+// generically rather than "journalUrl" since it is not always literally
+// the raw `journalUrl` global argument, only always the same HOST as it.
+function isAllowedImageHost(imageUrl: string, originUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(imageUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return false;
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (isIpLiteralHost(hostname)) return false;
+  if (LJ_MEDIA_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))) {
+    return true;
+  }
+  const apex = journalApex(originUrl);
+  return apex !== undefined &&
+    (hostname === apex || hostname.endsWith(`.${apex}`));
+}
+
+const MAX_IMAGE_REDIRECT_HOPS = 5;
+
+// Fetch an image with automatic redirect-following disabled, re-validating
+// the host allowlist at EVERY hop (not just the initial URL) -- closes the
+// SSRF pivot where an allowlisted host 30x-redirects to an internal target.
+// Reuses isAllowedImageHost for redirect targets too, so there is no
+// separate/weaker validation path for Location headers to slip through.
+async function fetchImageSafely(
+  imageUrl: string,
+  originUrl: string,
+): Promise<Response | undefined> {
+  let currentUrl = imageUrl;
+  for (let hop = 0; hop <= MAX_IMAGE_REDIRECT_HOPS; hop++) {
+    if (!isAllowedImageHost(currentUrl, originUrl)) return undefined;
+    const resp = await fetch(currentUrl, { redirect: "manual" });
+    if (resp.status >= 300 && resp.status < 400) {
+      await resp.body?.cancel();
+      const location = resp.headers.get("location");
+      if (!location) return undefined;
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
+    return resp;
+  }
+  return undefined;
+}
+
 // Parse a single post page
 function parsePost(
   html: string,
-  _url: string,
+  url: string,
 ): {
   title: string;
   date: string;
@@ -293,7 +394,11 @@ function parsePost(
   const bodyEl = $(".aentry-post__text");
   const bodyHtml = bodyEl.html() || "";
 
-  // Extract image URLs from body
+  // Extract image URLs from body. The chrome denylist (userpic/pixel/
+  // spacer/stat.livejournal.net) is kept as a secondary exclusion on top of
+  // the SSRF host allowlist -- those assets are LJ chrome, not content, and
+  // stay dropped even though l-stat.livejournal.net itself matches the
+  // static LJ media suffix allowlist.
   const images: string[] = [];
   bodyEl.find("img").each((_i: number, el: Element) => {
     const src = $(el).attr("src") || "";
@@ -303,13 +408,15 @@ function parsePost(
       !src.includes("userpic") &&
       !src.includes("stat.livejournal") &&
       !src.includes("pixel") &&
-      !src.includes("spacer")
+      !src.includes("spacer") &&
+      isAllowedImageHost(src, url)
     ) {
       images.push(src);
     }
   });
 
-  // Also check for images wrapped in links (common LJ pattern)
+  // Also check for images wrapped in links (common LJ pattern) -- this path
+  // was previously UNGUARDED by any denylist, a second SSRF entry point.
   bodyEl.find("a img").each((_i: number, el: Element) => {
     const parentHref = $(el).parent("a").attr("href") || "";
     if (
@@ -317,7 +424,8 @@ function parsePost(
       (parentHref.endsWith(".jpg") ||
         parentHref.endsWith(".jpeg") ||
         parentHref.endsWith(".png") ||
-        parentHref.endsWith(".gif"))
+        parentHref.endsWith(".gif")) &&
+      isAllowedImageHost(parentHref, url)
     ) {
       if (!images.includes(parentHref)) {
         images.push(parentHref);
@@ -399,7 +507,7 @@ function sanitize(name: string): string {
 /** Swamp model that imports LiveJournal entries (images, tags, mood, now playing, comments) into an Obsidian vault. */
 export const model = {
   type: "@magistr/livejournal/import",
-  version: "2026.07.16.2",
+  version: "2026.07.31.1",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",
@@ -411,6 +519,27 @@ export const model = {
       fromVersion: "2026.03.28.2",
       toVersion: "2026.03.29.1",
       description: "Add comments extraction",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.03.29.1",
+      toVersion: "2026.05.25.1",
+      description:
+        "Lineage-repair bridge (no resource schema change) -- closes the gap between the upgrades[] tail (2026.03.29.1) and the shipped 2026.07.16.2 initial release; see CHANGELOG.md 2026.07.31.1.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.05.25.1",
+      toVersion: "2026.07.16.2",
+      description:
+        "Lineage-repair bridge (no resource schema change) -- see CHANGELOG.md 2026.07.31.1.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.07.31.1",
+      description:
+        'SSRF hardening: image-src host allowlist (isAllowedImageHost) applied to both image-collection paths, plus redirect:"manual" + per-hop host re-validation on the image download fetch. No resource schema change.',
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -492,12 +621,14 @@ export const model = {
               const imgName = `lj-${postId}-${j + 1}.${ext}`;
 
               try {
-                const resp = await fetch(imgUrl);
-                if (resp.ok) {
+                const resp = await fetchImageSafely(imgUrl, journalUrl);
+                if (resp && resp.ok) {
                   const data = new Uint8Array(await resp.arrayBuffer());
                   await Deno.writeFile(`${attachDiskPath}/${imgName}`, data);
                   imageNames.push(imgName);
                   imagesCopied++;
+                } else {
+                  await resp?.body?.cancel();
                 }
               } catch (e) {
                 errors.push(

@@ -52,7 +52,20 @@ plus never running a live call in the first place.
   `127.0.0.1:8200`) are well-known documentation/reserved examples for
   cloud-metadata and loopback-service scenarios (the same convention the
   `bandcamp` fixture corpus uses), never a real reachable host this repo's
-  author controls.
+  author controls. `post_ssrf.html` also embeds a third image
+  (`f-pics.example.com/fixture-redirect-relay.jpg`) whose sole purpose is to be
+  stubbed, in the adversarial test suite, to a 30x `Location` pointing at
+  `203.0.113.7` — an [RFC 5737](https://www.rfc-editor.org/rfc/rfc5737)
+  TEST-NET-3 address, IANA-reserved for documentation and never publicly routed.
+  This exercises the redirect-hop-rejection hardening (an allowlisted host's
+  redirect target must be re-validated, not blindly followed). The adversarial
+  suite's inline (non-fixture-file) rejected-multi-hop-chain test uses the
+  adjacent `203.0.113.9` for the same reason. Those same inline tests also embed
+  decimal-, hex-, and bracketed-IPv6/IPv4-mapped-encoded forms of the
+  already-documented `169.254.169.254`/`127.0.0.1` loopback addresses (e.g.
+  `2852039166`, `0xA9FEA9FE`, `[::1]`, `[::ffff:127.0.0.1]`) — these are
+  alternate WHATWG-URL-parser-normalized spellings of the same two reserved
+  addresses, not novel undocumented hosts.
 - Names: `Fixture Full Post Title`, `Fixture Aurora`-style post titles,
   `fixture_alice`, `Fixture Bob`, `fixture_top`, `fixture_reply`,
   `Fixture
@@ -68,16 +81,16 @@ plus never running a live call in the first place.
 
 ## Per-file mapping to the documented page / blob shape
 
-| File                     | Documented shape / endpoint                                                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `index.html`             | `GET <journal>/?format=light` index page, two entries, no further pages — the un-paginated `collectPostUrls` path                |
-| `index_paginated.html`   | The same index page but WITH a `skip=10` pagination marker — exercises the `skip += 10` loop and its "no new ids" termination    |
-| `index_empty.html`       | An index page with zero `href="<base>/<id>.html"` matches — pins the silent-empty-success path (latent bug LB3)                  |
-| `post_full.html`         | A full entry page: title, date, mood, now-playing, tags, rich body (formatting/images/embeds), and a `Site.page` comments blob   |
-| `post_ssrf.html`         | An entry whose body embeds `<img>` src values pointing at link-local/loopback administrative endpoints (latent bug LB1)          |
-| `post_injection.html`    | An entry whose title/mood/now-playing/tags embed raw newlines — exercises the unescaped-newline YAML frontmatter risk (LB2)      |
-| `post_bad_date.html`     | An entry whose date text does not match the `"Month D YYYY, HH:MM"` shape at all — pins `parseLjDate`'s silent fallthrough (LB8) |
-| `post_bad_comments.html` | An entry whose `Site.page` comments blob is corrupted (an unterminated JSON value) — pins the swallowed-parse-failure path (LB6) |
+| File                     | Documented shape / endpoint                                                                                                                                                                                                                   |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.html`             | `GET <journal>/?format=light` index page, two entries, no further pages — the un-paginated `collectPostUrls` path                                                                                                                             |
+| `index_paginated.html`   | The same index page but WITH a `skip=10` pagination marker — exercises the `skip += 10` loop and its "no new ids" termination                                                                                                                 |
+| `index_empty.html`       | An index page with zero `href="<base>/<id>.html"` matches — pins the silent-empty-success path (latent bug LB3)                                                                                                                               |
+| `post_full.html`         | A full entry page: title, date, mood, now-playing, tags, rich body (formatting/images/embeds), and a `Site.page` comments blob                                                                                                                |
+| `post_ssrf.html`         | An entry whose body embeds `<img>` src values pointing at link-local/loopback administrative endpoints (latent bug LB1), plus an allowlisted relay host that 30x-redirects to an RFC 5737 documentation-only target (redirect-hardening test) |
+| `post_injection.html`    | An entry whose title/mood/now-playing/tags embed raw newlines — exercises the unescaped-newline YAML frontmatter risk (LB2)                                                                                                                   |
+| `post_bad_date.html`     | An entry whose date text does not match the `"Month D YYYY, HH:MM"` shape at all — pins `parseLjDate`'s silent fallthrough (LB8)                                                                                                              |
+| `post_bad_comments.html` | An entry whose `Site.page` comments blob is corrupted (an unterminated JSON value) — pins the swallowed-parse-failure path (LB6)                                                                                                              |
 
 ## A documented quirk this corpus deliberately preserves
 
