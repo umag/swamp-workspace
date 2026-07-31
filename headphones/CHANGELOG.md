@@ -16,11 +16,14 @@ issue-lifecycle model:
   `redactSecrets(message)` mapper (strips `apikey=`/`api_key=<value>`,
   case-insensitive, up to the next `&`/whitespace/quote/paren, replacing only
   the value with `REDACTED`) and wrapped both `api()`'s and `webUi()`'s
-  `fetch()` calls in try/catch, rethrowing `redactSecrets(message)` with the
-  original error preserved via `cause`; routed both `!response.ok` throw
-  messages through the same redactor. Strict no-op on messages without
-  `apikey=`/`api_key=`, so the existing `429 - quota exceeded` behavior is
-  unchanged.
+  `fetch()` calls in try/catch via a shared `rethrowRedacted()` helper,
+  rethrowing `redactSecrets(message)` with diagnostics preserved through a
+  **REDACTED single-level `cause`** — never the raw original error — so the
+  secret cannot resurface via a default Error/cause-chain inspection (e.g.
+  Deno's own console formatting, which recurses into `.cause`) either; routed
+  both `!response.ok` throw messages through the same redactor. Strict no-op on
+  messages without `apikey=`/`api_key=`, so the existing `429 - quota exceeded`
+  behavior is unchanged.
 - **get-artist/get-album array non-unwrap**: `get-artist` wrote
   `artist: data.artist || data` with no array unwrap, but the real Headphones
   wire returns `artist` as a single-element **array** (confirmed against
@@ -35,13 +38,15 @@ issue-lifecycle model:
 - Bumped `manifest.yaml` and `model.version` to CalVer `2026.08.01.1`.
 - Flipped the corresponding characterization pins across
   `headphones_adversarial_test.ts` (the two HONEST-GAP sentinel-propagation pins
-  and the RESIDUAL reflected-body pin — all three now assert redaction),
-  `headphones_test.ts`, `headphones_methods_test.ts`, and
-  `headphones_coverage_test.ts` (the get-artist/get-album unwrap pins) to assert
-  the corrected behavior. The GREEN `429 - quota exceeded` pin and the
-  `artist`/`album`-key-ABSENT whole-envelope-fallback pins stay green unchanged,
-  as does the property suite (including the apiKey-sentinel-never- leaks
-  invariant).
+  and the RESIDUAL reflected-body pin — all three now assert redaction, and the
+  two sentinel-propagation tests walk the full `.cause` chain via a
+  `fullErrorChainText()` helper to prove the redacted apikey never resurfaces
+  through `cause`, not just `.message`), `headphones_test.ts`,
+  `headphones_methods_test.ts`, and `headphones_coverage_test.ts` (the
+  get-artist/get-album unwrap pins) to assert the corrected behavior. The GREEN
+  `429 - quota exceeded` pin and the `artist`/`album`-key-ABSENT
+  whole-envelope-fallback pins stay green unchanged, as does the property suite
+  (including the apiKey-sentinel-never-leaks invariant).
 - Out of scope, deferred (unchanged by this fix): the `unqueue-album` →
   `onboard-artists` Skipped-requeue clobber, `audit-library`'s unvalidated
   `maxDepth`/`musicDir`/`dbPath` trusted-config-boundary gaps, and `apiKey`'s

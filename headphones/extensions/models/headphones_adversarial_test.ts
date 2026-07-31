@@ -1,11 +1,13 @@
 /**
  * Adversarial suite: attacker's-perspective tests for @magistr/headphones —
  * apikey-in-URL non-leak GREEN pins, redaction tests proving api()/webUi()
- * now wrap and redact fetch-rejection and reflected-body messages (closing
- * the former credential leak — see `headphones-apikey-hardening`), hostile
- * HTML-200 swallow pins, a safe-encoding injection pin, the
- * maxDepth/dbPath/musicDir trusted-config-boundary pins, and a mechanical
- * fixtures-secret-scan over headphones/fixtures/*.
+ * now wrap and redact fetch-rejection and reflected-body messages AND cause
+ * chains (closing the former credential leak, including the residual
+ * cause-chain vector where a naive fix would preserve the raw original error
+ * as `cause` — see `headphones-apikey-hardening`), hostile HTML-200 swallow
+ * pins, a safe-encoding injection pin, the maxDepth/dbPath/musicDir
+ * trusted-config-boundary pins, and a mechanical fixtures-secret-scan over
+ * headphones/fixtures/*.
  *
  * headphones.ts's api()/webUi() request builders and get-artist/get-album
  * were FIXED by this change (redactSecrets wrapper + array unwrap); every
@@ -154,6 +156,30 @@ function withRejectingFetch(error: unknown, fn: () => Promise<unknown>) {
   });
 }
 
+/**
+ * Walk an error's `.cause` chain (bounded depth) and concatenate every
+ * level's message text. A secret-absence assertion against JUST
+ * `err.message` would miss a leak relocated to `.cause` — this proves the
+ * ENTIRE chain (what a default Error/cause inspection, e.g. Deno's own
+ * console formatting, would print) is clean, not only the top level.
+ */
+function fullErrorChainText(err: unknown, maxDepth = 5): string {
+  const parts: string[] = [];
+  let current: unknown = err;
+  let depth = 0;
+  while (current !== undefined && current !== null && depth < maxDepth) {
+    if (current instanceof Error) {
+      parts.push(current.message);
+      current = current.cause;
+    } else {
+      parts.push(String(current));
+      current = undefined;
+    }
+    depth++;
+  }
+  return parts.join(" | ");
+}
+
 // Deno's `with { type: "json" }` import attribute needs no runtime
 // permission, but there is no equivalent for plain text without
 // `--unstable-raw-imports` — the network-less/run-less/file-permission-less
@@ -176,7 +202,7 @@ const ERROR_HTML = `<!DOCTYPE html>
 // THE headline surface: apikey-in-URL-query
 // ---------------------------------------------------------------------------
 
-Deno.test("FIXED: a fetch-layer rejection through api() is wrapped and its message redacted, closing the former apikey-in-URL leak", async () => {
+Deno.test("FIXED: a fetch-layer rejection through api() is wrapped and redacted end-to-end — message AND cause chain, closing the former apikey-in-URL leak", async () => {
   // Prior to this fix, api() called `await fetch(url.toString(), { signal:
   // ... })` with NO surrounding try/catch — ANY rejection (DNS failure, TLS
   // error, connection reset) propagated completely unchanged, all the way to
@@ -188,9 +214,12 @@ Deno.test("FIXED: a fetch-layer rejection through api() is wrapped and its messa
   // apiKey verbatim. This test simulates that exact shape directly
   // (embedding the sentinel apikey in the rejection's own message, as a real
   // Deno fetch failure would) and proves api() now wraps the rejection in a
-  // NEW Error whose message has been redacted, with the original preserved
-  // via `cause` for diagnostics. Tracked by the local
-  // `headphones-apikey-hardening` issue-lifecycle model.
+  // NEW Error whose message has been redacted, with diagnostics preserved
+  // via a REDACTED single-level `cause` — never the raw original error — so
+  // the secret cannot resurface via a default cause-chain inspection either
+  // (e.g. Deno's own console formatting, which recurses into `.cause`).
+  // Tracked by the local `headphones-apikey-hardening` issue-lifecycle
+  // model.
   const leakedUrl =
     `http://headphones.example:8181/api?apikey=${GLOBAL_ARGS.apiKey}&cmd=getVersion`;
   const SENTINEL = new Error(`error sending request for url (${leakedUrl})`);
@@ -205,14 +234,27 @@ Deno.test("FIXED: a fetch-layer rejection through api() is wrapped and its messa
       (thrown as Error).message.includes("apikey=REDACTED"),
       "the redacted message must show apikey=REDACTED",
     );
+    const chainText = fullErrorChainText(thrown);
     assert(
-      !(thrown as Error).message.includes(GLOBAL_ARGS.apiKey),
-      "the real apiKey value must be absent from the redacted message",
+      chainText.includes("apikey=REDACTED"),
+      "apikey=REDACTED must appear somewhere in the full error chain",
+    );
+    assert(
+      !chainText.includes(GLOBAL_ARGS.apiKey),
+      "the real apiKey value must be absent from the ENTIRE error chain (message AND every cause level), not just the top-level message",
+    );
+    assert(
+      (thrown as Error).cause !== SENTINEL,
+      "cause must NOT be the raw original error object — that would relocate the leak from .message to .cause",
+    );
+    assert(
+      (thrown as Error).cause instanceof Error,
+      "cause must be a redacted Error, preserving diagnostic shape without the raw secret",
     );
     assertEquals(
-      (thrown as Error).cause,
-      SENTINEL,
-      "the original rejection must be preserved via Error.cause so diagnostics aren't lost",
+      ((thrown as Error).cause as Error).message,
+      "error sending request for url (http://headphones.example:8181/api?apikey=REDACTED&cmd=getVersion)",
+      "the cause's own message must be redacted too, not just the top-level message",
     );
   });
 });
@@ -223,9 +265,10 @@ Deno.test("FIXED: the SAME wrap-and-redact behavior holds through webUi() (set-e
   // unauthenticated web-UI form — see reference_headphones_extension.md),
   // the wrap-and-redact mechanism must still cover it for defense-in-depth,
   // not just api(). redactSecrets() is a no-op on this message (no
-  // apikey= substring), so only the wrapping (new Error + cause chain) is
-  // observable here — that's the point: the SAME mechanism runs
-  // unconditionally regardless of whether a given message needs redaction.
+  // apikey= substring), so the message text itself is unchanged — but the
+  // wrapping (new Error, REDACTED single-level cause, never the raw
+  // original) must still apply unconditionally, regardless of whether a
+  // given message needs redaction.
   const SENTINEL = new Error(
     "NEUTRAL_WEBUI_FETCH_REJECTION_SENTINEL_NOT_AN_APIKEY",
   );
@@ -243,10 +286,18 @@ Deno.test("FIXED: the SAME wrap-and-redact behavior holds through webUi() (set-e
       SENTINEL.message,
       "redactSecrets is a no-op here (no apikey= substring), so the message text itself is unchanged",
     );
+    assert(
+      (thrown as Error).cause !== SENTINEL,
+      "cause must NOT be the raw original error object, even when redaction is a no-op — the wrapping mechanism applies unconditionally",
+    );
+    assert(
+      (thrown as Error).cause instanceof Error,
+      "cause must be a (here: no-op-redacted) Error, not the raw original",
+    );
     assertEquals(
-      (thrown as Error).cause,
-      SENTINEL,
-      "the original rejection must be preserved via Error.cause",
+      ((thrown as Error).cause as Error).message,
+      SENTINEL.message,
+      "redactSecrets is a no-op on this message, so the cause's message text is unchanged even though it's a new object",
     );
   });
 });

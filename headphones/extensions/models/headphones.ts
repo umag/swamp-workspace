@@ -72,6 +72,25 @@ function redactSecrets(message: string): string {
   });
 }
 
+/**
+ * Rethrow a caught fetch-rejection error with its message redacted via
+ * redactSecrets(). Diagnostics are preserved through a REDACTED single-level
+ * `cause` — never the raw original error — so the secret can't resurface
+ * through a default Error/cause-chain inspection (e.g. Deno's default
+ * console formatting, which recurses into `.cause`) even though the
+ * top-level `.message` is clean. Any deeper nested cause on the original
+ * error is intentionally dropped: a redacted single-level cause is enough
+ * for diagnostics, and carrying the raw chain through would just relocate
+ * the leak from `.message` to `.cause`.
+ */
+function rethrowRedacted(e: unknown): never {
+  const message = e instanceof Error ? e.message : String(e);
+  const cause = e instanceof Error
+    ? new Error(redactSecrets(e.message))
+    : undefined;
+  throw new Error(redactSecrets(message), cause ? { cause } : {});
+}
+
 async function api(
   host: string,
   apiKey: string,
@@ -95,10 +114,9 @@ async function api(
     // A network-layer failure (DNS, TLS, connection reset, or the
     // AbortSignal.timeout above firing) throws a Deno error that typically
     // embeds the request URL — which carries ?apikey=<KEY> — verbatim.
-    // Redact before rethrow so the credential never reaches logs/callers;
-    // the original is preserved via `cause` for diagnostics.
-    const message = e instanceof Error ? e.message : String(e);
-    throw new Error(redactSecrets(message), { cause: e });
+    // Redact before rethrow (message AND cause) so the credential never
+    // reaches logs/callers through either.
+    rethrowRedacted(e);
   }
   if (!response.ok) {
     const body = await response.text();
@@ -137,8 +155,7 @@ async function webUi(
     // Same wrap-and-redact treatment as api(), for defense-in-depth — this
     // URL never carries the apiKey (getExtras is the unauthenticated web-UI
     // form), but the mechanism must still apply unconditionally.
-    const message = e instanceof Error ? e.message : String(e);
-    throw new Error(redactSecrets(message), { cause: e });
+    rethrowRedacted(e);
   }
   if (!response.ok) {
     const body = await response.text();
