@@ -24,6 +24,10 @@ const GlobalArgsSchema = z.object({
   sshPort: z.number().int().default(22).describe("SSH port (default 22)"),
   bindAddress: z
     .string()
+    .regex(
+      /^[A-Za-z0-9.-]{1,253}$/,
+      "bindAddress must be a hostname or IPv4 address (alphanumeric, dot, hyphen only)",
+    )
     .default("0.0.0.0")
     .describe(
       "Address the exporters listen on. Set to a WireGuard tunnel IP to keep them off the public interface.",
@@ -42,6 +46,7 @@ const GlobalArgsSchema = z.object({
     .describe("host label attached to shipped logs (defaults to sshHost)"),
   vectorVersion: z
     .string()
+    .regex(/^\d+\.\d+\.\d+$/, "vectorVersion must be a semver like 0.46.1")
     .default("0.46.1")
     .describe("Vector .deb version to install from packages.timber.io"),
   bindWaitUnit: z
@@ -88,6 +93,10 @@ const InventorySchema = z.object({
   listenerCount: z.number(),
   timestamp: z.string(),
 });
+
+function shellEsc(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
 
 /** Run a bash script on the remote host over SSH, feeding it via stdin. */
 async function sshScript(g, script) {
@@ -258,7 +267,7 @@ sinks:
 
 export const model = {
   type: "@magistr/observability/agent",
-  version: "2026.07.02.3",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     install: {
@@ -303,7 +312,7 @@ apt-get update -qq
 apt-get install -y -qq prometheus-node-exporter prometheus-blackbox-exporter >/dev/null
 if ! command -v vector >/dev/null 2>&1; then
   tmp="$(mktemp -d)"
-  curl -fsSL -o "$tmp/vector.deb" "${deb}"
+  curl -fsSL -o "$tmp/vector.deb" ${shellEsc(deb)}
   apt-get install -y -qq "$tmp/vector.deb" >/dev/null 2>&1 || { dpkg -i "$tmp/vector.deb" >/dev/null 2>&1 || true; apt-get -f install -y -qq >/dev/null; }
   rm -rf "$tmp"
 fi
@@ -439,8 +448,12 @@ echo "VECTOR=$(vector --version 2>&1 | head -1 | awk '{print $2}')"
 echo "svc.node=$(systemctl is-active prometheus-node-exporter 2>/dev/null)"
 echo "svc.blackbox=$(systemctl is-active prometheus-blackbox-exporter 2>/dev/null)"
 echo "svc.vector=$(systemctl is-active vector 2>/dev/null)"
-curl -sf --max-time 5 "http://${g.bindAddress}:${g.nodePort}/metrics" >/dev/null 2>&1 && echo "lst.node=ok" || echo "lst.node=fail"
-curl -sf --max-time 5 "http://${g.bindAddress}:${g.blackboxPort}/metrics" >/dev/null 2>&1 && echo "lst.blackbox=ok" || echo "lst.blackbox=fail"
+curl -sf --max-time 5 ${
+          shellEsc(`http://${g.bindAddress}:${g.nodePort}/metrics`)
+        } >/dev/null 2>&1 && echo "lst.node=ok" || echo "lst.node=fail"
+curl -sf --max-time 5 ${
+          shellEsc(`http://${g.bindAddress}:${g.blackboxPort}/metrics`)
+        } >/dev/null 2>&1 && echo "lst.blackbox=ok" || echo "lst.blackbox=fail"
 `;
         const { stdout } = await sshScript(g, script);
         const kv = parseKv(stdout);
