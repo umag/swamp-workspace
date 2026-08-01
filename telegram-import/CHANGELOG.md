@@ -1,11 +1,92 @@
 # Changelog
 
-## Unreleased
+## 2026.08.01.1
+
+Fix for latent bug **LB-1 (path-traversal via export photo/file/video path,
+HIGH)** plus a model upgrade-chain repair (**LB-0**), both tracked in the LOCAL
+`telegram-import-latent-bugs` issue-lifecycle model (NEVER filed to the
+swamp.club Lab — see CLAUDE.md's anti-bypass rule). `model.version` and
+`manifest.yaml` both bump `2026.07.16.2` -> `2026.08.01.1`.
+
+- **Path-traversal fix (LB-1, HIGH)**: added
+  `isPathContained(base,
+  candidate)`, a posix-normalize path-containment guard
+  — both `base` (`extractDir`) and `candidate` (a computed media source path)
+  are normalized with `jsr:@std/path@1/posix`'s `normalize` (collapsing `..`/`.`
+  segments and redundant slashes) BEFORE the containment check runs, and the
+  prefix compare requires a trailing separator (or exact equality) so a sibling
+  directory that merely shares `base` as a string prefix (e.g. base `/tmp/x`
+  wrongly accepting candidate `/tmp/xy/evil`) can never be mistaken for
+  containment. Wired into a new `safeCopyMedia` helper applied IDENTICALLY at
+  all three `Deno.copyFile` sites (photo, file, video) — extracting one shared
+  helper (rather than inlining the check three times) avoids the drift risk of
+  three near-identical copies, and in particular keeps the file branch's
+  `_thumb.jpg` skip running BEFORE the containment check, so thumbnails still
+  stay silently skipped and only true escapes record an error. On an escaping
+  source, the copy is skipped and an `errors[]` entry is recorded (same shape as
+  the pre-existing per-item copy-failure catch) — the note for that message is
+  still created either way; import continues to the next message.
+- **Accepted residual**: this is lexical normalization only, not a `realpath` —
+  a symlink created INSIDE `extractDir` that points outside it would still let
+  `copyFile` read outside even after the containment check passes. Low risk here
+  since extraction uses `unzip`, which does not create symlinks by default, and
+  the attacker controls only the zip contents.
+- **Accepted incidental behavior, pinned by a test**: an absolute-looking
+  `msg.photo` (e.g. `/etc/passwd`) is joined as
+  `extractDir + "/" +
+  msg.photo`, a plain string concatenation, so it
+  normalizes to a path INSIDE `extractDir` rather than jumping to a real
+  filesystem root — safe, and now pinned so it stays intentional rather than
+  incidental.
+- **Upgrade-chain repair (LB-0)**: `model.upgrades[]` previously ended at
+  `2026.03.28.2` while `model.version` was already `2026.07.16.2`, so
+  `swamp extension quality` errored on the broken chain instead of scoring the
+  extension. Added two identity lineage-repair bridge entries
+  (`2026.03.28.2 -> 2026.05.25.1 -> 2026.07.16.2`,
+  `upgradeAttributes: (old)
+  => old`, no resource schema change) plus the new
+  `2026.07.16.2 ->
+  2026.08.01.1` entry, so the chain is continuous and its
+  final `toVersion` equals `model.version`.
+- **Quality ratchet un-frozen**: with the chain repaired,
+  `swamp extension
+  quality manifest.yaml --json` now emits a real score (14/14
+  points, 100%, `allPassed: true`, `dependencyTrust` passed) instead of
+  erroring. `quality.yaml`'s `ratchet` is restamped from that tool output:
+  `baselinePercentage: 0` / UNSCORABLE -> `baselinePercentage: 100` / Grade A.
+- **Tests**: the LB-1 pin in `telegram_import_adversarial_test.ts` is flipped
+  from "the escape src reaches `Deno.copyFile` verbatim" to a fix-regression
+  test asserting rejection — no escaping `copyInvocation`, an `errors[]` entry
+  records it, and the note for that message is still created (via the captured
+  `obsidian create` call). Added regression pins: dedicated escape-rejection
+  tests for the FILE and VIDEO copy sites (not just photo, since all three share
+  `safeCopyMedia`), a sibling-prefix false-accept probe (a source under
+  `<extractDir-basename>-evil`, pinning the trailing-separator requirement found
+  during test review), the three legit relative media sources from
+  `fixtures/basic/result.json` (`photos/photo_4@2x.jpg`,
+  `files/fixture_report.pdf`, `video_files/fixture_clip.mp4`, msg ids 4/5/6)
+  still reaching `Deno.copyFile` byte-exact and unchanged, and the absolute-path
+  incidental-containment pin. LB-2 through LB-9 pins in the same file are
+  untouched and stay green — the guard does not touch their code paths.
+  `telegram_import_contract_test.ts`'s static-contract test is updated to assert
+  the new `model.version`.
+- **Dependency**: `jsr:@std/path@1` (subpath import `jsr:@std/path@1/posix`) is
+  a new direct dependency, now in `deno.lock` (previously only a transitive
+  dependency of the test toolchain). Passes the quality ratchet's
+  `dependency-trust` factor (audited clean).
+- Full `deno task check` / `test` / `fmt:check` / `lint` all green; property
+  suite re-verified at `FC_NUM_RUNS=5000`. LB-2 (MEDIUM), LB-3 (MEDIUM), and
+  LB-4..LB-9 (MEDIUM/LOW) remain deferred on the `telegram-import-latent-bugs`
+  model — none share LB-1's fix path.
+
+## Unreleased (folded into 2026.08.01.1 above)
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4a child
-of the extension-quality backfill program, `ext-quality-test-backfill`). No
-behavior change — `telegram_import.ts` is byte-frozen; the model `version` stays
-`2026.07.16.2` and `manifest.yaml` is unchanged (no version bump).
+of the extension-quality backfill program, `ext-quality-test-backfill`). At
+authorship time this was NO behavior change — `telegram_import.ts` was
+byte-frozen and the model `version` stayed `2026.07.16.2` (`manifest.yaml` was
+also unchanged, no version bump); the LB-1/LB-0 fix above is the change that
+finally moved the version, so both land together in `2026.08.01.1`.
 
 - Added `extensions/models/telegram_import_test_helpers.ts` — a shared harness:
   a fake ctx (globalArgs, tagged-template-safe logger, capturing

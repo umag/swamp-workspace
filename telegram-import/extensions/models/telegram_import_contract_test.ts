@@ -1,15 +1,19 @@
 /**
  * Contract-fixture suite for @magistr/telegram-import.
  *
- * telegram_import.ts is BYTE-FROZEN by ext-quality-bf-telegram-import — this
- * suite pins two things:
+ * telegram_import.ts was BYTE-FROZEN by ext-quality-bf-telegram-import at
+ * authorship time; 2026.08.01.1 (the LB-1 path-containment guard fix + LB-0
+ * upgrade-chain repair) is the first production change since then, so
+ * `model.version` below now tracks that release rather than a frozen
+ * constant. This suite still pins two things:
  *
  *  (a) the STATIC contract: model type/version, the GlobalArgsSchema shape
  *      (required fields + defaults), and the exact method list; and
  *  (b) a GOLDEN pipeline run over fixtures/basic/result.json under
  *      `@std/testing`'s FakeTime, asserting the exact `result` summary and
  *      the exact rendered Markdown for one note (message id 2 — the
- *      simplest case: plain text, no photo/file/forwarded/reply).
+ *      simplest case: plain text, no photo/file/forwarded/reply). Message id
+ *      2 has no photo/file, so it is unaffected by the LB-1 guard.
  *
  * Every subprocess (unzip/find/obsidian) and every filesystem mutation
  * (copyFile/mkdir/makeTempDir/remove) is stubbed via
@@ -36,9 +40,9 @@ import basicFixture from "../../fixtures/basic/result.json" with {
 // (a) Static contract
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: model type/version are unchanged", () => {
+Deno.test("contract: model type is unchanged; version tracks the 2026.08.01.1 LB-1/LB-0 fix release", () => {
   assertEquals(model.type, "@magistr/telegram/import");
-  assertEquals(model.version, "2026.07.16.2");
+  assertEquals(model.version, "2026.08.01.1");
 });
 
 Deno.test("contract: exposes exactly one method — import", () => {

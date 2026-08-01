@@ -1,13 +1,23 @@
 /**
- * Adversarial suite for @magistr/telegram-import — pins nine latent bugs
- * (LB-1..LB-9) as CHARACTERIZATION tests: each asserts telegram_import.ts's
- * CURRENT, already-shipped behavior, not a spec to satisfy. telegram_import.ts
- * is byte-frozen — none of these are fixed here. All ten (this file's nine
- * plus LB-0, the model-upgrade-chain break that drives the UNSCORABLE
- * ratchet in quality.yaml) are tracked in the LOCAL `telegram-import-latent-bugs`
- * issue-lifecycle model — never filed to the swamp.club Lab.
+ * Adversarial suite for @magistr/telegram-import — pins eight latent bugs
+ * (LB-2..LB-9) as CHARACTERIZATION tests: each asserts telegram_import.ts's
+ * CURRENT, already-shipped behavior, not a spec to satisfy. Those files are
+ * still byte-frozen for LB-2..LB-9 — none of those are fixed here.
  *
- * LB-1/LB-2's escape targets are asserted ONLY against captured
+ * LB-1 (HIGH path-traversal via export photo/file/video path escaping
+ * extractDir) has been PROMOTED from a characterization pin to a
+ * fix-regression test: telegram_import.ts's `safeCopyMedia`/
+ * `isPathContained` guard (2026.08.01.1) now REJECTS any source path that
+ * escapes `extractDir`, so the section below asserts the FIXED behavior
+ * (rejection, an `errors[]` entry, the note still created, no escaping
+ * `copyInvocation`) plus regression pins that legit relative photo/file/video
+ * sources still reach `Deno.copyFile` unchanged. LB-0 (the model-upgrade-chain
+ * break) is also repaired in 2026.08.01.1 — quality.yaml's ratchet is
+ * restamped from UNSCORABLE to the honest score. All ten bugs (LB-0..LB-9) are
+ * tracked in the LOCAL `telegram-import-latent-bugs` issue-lifecycle model —
+ * never filed to the swamp.club Lab.
+ *
+ * LB-2's escape target is asserted ONLY against captured
  * `Deno.copyFile`/`obsidian create` argv — Deno.copyFile is always stubbed in
  * these tests, so a path-traversal payload is never actually opened against
  * a real filesystem, and no obsidian vault write ever really happens.
@@ -28,17 +38,132 @@ import {
 import maliciousFixture from "../../fixtures/malicious/result.json" with {
   type: "json",
 };
+import basicFixture from "../../fixtures/basic/result.json" with {
+  type: "json",
+};
 
 function payload(messages: Record<string, unknown>[], name = "Fixture Chan") {
   return { name, type: "public_channel", id: 42, messages };
 }
 
 // ---------------------------------------------------------------------------
-// LB-1 (HIGH) — path-traversal / arbitrary host-file read via export photo path
+// LB-1 (HIGH, FIXED 2026.08.01.1) — path-traversal / arbitrary host-file read
+// via export photo/file/video path, closed by isPathContained/safeCopyMedia
 // ---------------------------------------------------------------------------
 
-Deno.test("LB-1: msg.photo escaping extractDir is passed VERBATIM to Deno.copyFile — no path sanitization or containment check", async () => {
+Deno.test("fix regression (telegram-import-latent-bugs LB-1, HIGH): msg.photo escaping extractDir is REJECTED — no escaping copyInvocation, an errors[] entry records it, and the note for that message is still created", async () => {
   const real = await writeRealResultJson(maliciousFixture);
+  try {
+    const { ctx, written } = makeCtx(DEFAULT_GLOBAL_ARGS);
+    let copies: { src: string; dest: string }[] = [];
+    let creates: { path?: string }[] = [];
+    await withStubs({ resultJsonPath: real.resultPath }, async (stubs) => {
+      await runImport(ctx);
+      copies = stubs.copyInvocations;
+      creates = stubs.obsidianCreateCalls;
+    });
+    const escape = copies.find((c) =>
+      c.src.includes("../../../../etc/hostname")
+    );
+    assert(
+      !escape,
+      "photo:'../../../../etc/hostname' must NEVER reach Deno.copyFile — " +
+        "isPathContained rejects it (post-normalization, before the copy) so safeCopyMedia never calls Deno.copyFile",
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    const errors = result.payload.errors as string[];
+    assert(
+      errors.some((e) =>
+        e.includes("escapes extractDir") && e.includes("etc/hostname")
+      ),
+      "the rejection must be recorded in errors[], same shape as the pre-existing per-item copy-failure catch",
+    );
+    const note = creates.find((c) => c.path?.includes("2021-01-01-100"));
+    assert(
+      note,
+      "the note for the LB-1 message (id 100) must still be created — the guard skips only the copy, not the whole message",
+    );
+  } finally {
+    await real.cleanup();
+  }
+});
+
+Deno.test("fix regression (telegram-import-latent-bugs LB-1, HIGH): msg.file escaping extractDir is REJECTED at the FILE copy site too — the shared safeCopyMedia guard is not photo-only", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-07-05T00:00:00",
+      text: "file-attachment escape probe",
+      file: "../../../../etc/file-escape-pin.txt",
+      mime_type: "text/plain",
+    }]),
+  );
+  try {
+    const { ctx, written } = makeCtx(DEFAULT_GLOBAL_ARGS);
+    let copies: { src: string; dest: string }[] = [];
+    await withStubs({ resultJsonPath: real.resultPath }, async (stubs) => {
+      await runImport(ctx);
+      copies = stubs.copyInvocations;
+    });
+    assertEquals(
+      copies.length,
+      0,
+      "the escaping file attachment must never reach Deno.copyFile — the FILE site shares safeCopyMedia with the photo site",
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    const errors = result.payload.errors as string[];
+    assert(
+      errors.some((e) =>
+        e.includes("escapes extractDir") && e.includes("file-escape-pin.txt")
+      ),
+      "the rejection must be recorded in errors[]",
+    );
+    assertEquals(result.payload.filesCopied, 0);
+  } finally {
+    await real.cleanup();
+  }
+});
+
+Deno.test("fix regression (telegram-import-latent-bugs LB-1, HIGH): msg.file escaping extractDir is REJECTED at the VIDEO copy site too — the shared safeCopyMedia guard is not photo-only", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-07-06T00:00:00",
+      text: "video escape probe",
+      file: "../../../../etc/video-escape-pin.mp4",
+      media_type: "video_file",
+    }]),
+  );
+  try {
+    const { ctx, written } = makeCtx(DEFAULT_GLOBAL_ARGS);
+    let copies: { src: string; dest: string }[] = [];
+    await withStubs({ resultJsonPath: real.resultPath }, async (stubs) => {
+      await runImport(ctx);
+      copies = stubs.copyInvocations;
+    });
+    assertEquals(
+      copies.length,
+      0,
+      "the escaping video source must never reach Deno.copyFile — the VIDEO site shares safeCopyMedia with the photo site",
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    const errors = result.payload.errors as string[];
+    assert(
+      errors.some((e) =>
+        e.includes("escapes extractDir") && e.includes("video-escape-pin.mp4")
+      ),
+      "the rejection must be recorded in errors[]",
+    );
+    assertEquals(result.payload.filesCopied, 0);
+  } finally {
+    await real.cleanup();
+  }
+});
+
+Deno.test("fix regression (telegram-import-latent-bugs LB-1, HIGH): legit relative photo/file/video sources are unaffected by the containment guard — each still reaches Deno.copyFile byte-exact and unchanged", async () => {
+  const real = await writeRealResultJson(basicFixture);
   try {
     const { ctx } = makeCtx(DEFAULT_GLOBAL_ARGS);
     let copies: { src: string; dest: string }[] = [];
@@ -46,15 +171,91 @@ Deno.test("LB-1: msg.photo escaping extractDir is passed VERBATIM to Deno.copyFi
       await runImport(ctx);
       copies = stubs.copyInvocations;
     });
-    const escape = copies.find((c) =>
-      c.src.includes("../../../../etc/hostname")
+    assertEquals(
+      copies.length,
+      3,
+      "exactly the three legit media sources (msg id 4 photo, id 5 file, id 6 video) are copied — nothing else, nothing dropped by the guard",
     );
     assert(
-      escape,
-      "photo:'../../../../etc/hostname' must reach Deno.copyFile as-is — " +
-        "telegram_import.ts never validates that srcFile stays inside extractDir",
+      copies.some((c) => c.src === `${real.dir}/photos/photo_4@2x.jpg`),
+      "the legit photo (msg id 4) must still reach Deno.copyFile, byte-exact source path",
     );
-    assertEquals(escape!.src, `${real.dir}/../../../../etc/hostname`);
+    assert(
+      copies.some((c) => c.src === `${real.dir}/files/fixture_report.pdf`),
+      "the legit file attachment (msg id 5) must still reach Deno.copyFile, byte-exact source path",
+    );
+    assert(
+      copies.some((c) => c.src === `${real.dir}/video_files/fixture_clip.mp4`),
+      "the legit video (msg id 6) must still reach Deno.copyFile, byte-exact source path",
+    );
+  } finally {
+    await real.cleanup();
+  }
+});
+
+Deno.test("containment guard: an absolute-looking msg.photo (e.g. '/etc/...') stays incidentally contained — string-concatenated onto extractDir, not resolved as a real filesystem root — so it still reaches Deno.copyFile (pinned per review-security LOW finding)", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-07-01T00:00:00",
+      text: "absolute-looking photo path",
+      photo: "/etc/absolute-path-pin.jpg",
+    }]),
+  );
+  try {
+    const { ctx } = makeCtx(DEFAULT_GLOBAL_ARGS);
+    let copies: { src: string; dest: string }[] = [];
+    await withStubs({ resultJsonPath: real.resultPath }, async (stubs) => {
+      await runImport(ctx);
+      copies = stubs.copyInvocations;
+    });
+    assertEquals(
+      copies.length,
+      1,
+      "the absolute-looking path is still treated as contained: extractDir + '/' + msg.photo normalizes to a path INSIDE extractDir",
+    );
+    assertEquals(copies[0].src, `${real.dir}//etc/absolute-path-pin.jpg`);
+  } finally {
+    await real.cleanup();
+  }
+});
+
+Deno.test("containment guard: a sibling directory that merely shares extractDir as a bare string prefix is REJECTED, not naively accepted (pins the trailing-separator fix from review-security's sibling-prefix false-accept finding)", async () => {
+  // Allocate a real temp dir via the harness, then overwrite its result.json
+  // with a payload whose photo path references "<basename>-evil" — a sibling
+  // directory one level up whose name starts with extractDir's own basename.
+  // A naive `candidate.startsWith(base)` (no trailing separator) would wrongly
+  // accept this; isPathContained's `${normalizedBase}/` requirement rejects it.
+  const real = await writeRealResultJson(payload([]));
+  try {
+    const siblingName = `${real.dir.split("/").pop()}-evil`;
+    const maliciousPayload = payload([{
+      id: 1,
+      type: "message",
+      date: "2022-07-04T00:00:00",
+      text: "sibling-prefix false-accept probe",
+      photo: `../${siblingName}/sibling.jpg`,
+    }]);
+    await Deno.writeTextFile(real.resultPath, JSON.stringify(maliciousPayload));
+
+    const { ctx, written } = makeCtx(DEFAULT_GLOBAL_ARGS);
+    let copies: { src: string; dest: string }[] = [];
+    await withStubs({ resultJsonPath: real.resultPath }, async (stubs) => {
+      await runImport(ctx);
+      copies = stubs.copyInvocations;
+    });
+    assertEquals(
+      copies.length,
+      0,
+      "a sibling directory sharing extractDir as a bare string prefix (with no trailing separator) must be rejected — a naive startsWith(extractDir) without the trailing-separator requirement would wrongly accept it",
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    const errors = result.payload.errors as string[];
+    assert(
+      errors.some((e) => e.includes("escapes extractDir")),
+      "the sibling-prefix escape must be recorded in errors[]",
+    );
   } finally {
     await real.cleanup();
   }
