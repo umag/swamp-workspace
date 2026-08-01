@@ -1,4 +1,5 @@
 import { z } from "npm:zod@4";
+import { normalize as posixNormalize } from "jsr:@std/path@1/posix";
 
 const GlobalArgsSchema = z.object({
   zipPath: z.string().describe("Path to Telegram channel export zip file"),
@@ -131,12 +132,65 @@ function noteSlug(msg: Record<string, unknown>): string {
 }
 
 /**
+ * Path-containment guard (telegram-import-latent-bugs LB-1, HIGH). Both
+ * `base` and `candidate` are posix-normalized — collapsing `..`/`.`
+ * segments and redundant slashes — BEFORE the containment check runs, so a
+ * traversal payload can never slip past a naive pre-normalization
+ * `startsWith`. The prefix compare requires a trailing separator (or exact
+ * equality) so a sibling directory that merely shares `base` as a string
+ * prefix (e.g. base `/tmp/x` and candidate `/tmp/xy/evil`) is never
+ * mistaken for containment. This is lexical normalization only, not a
+ * `realpath` — a symlink created inside `base` that points outside it is a
+ * documented residual, not covered here (see CHANGELOG.md).
+ */
+function isPathContained(base: string, candidate: string): boolean {
+  const normalizedBase = posixNormalize(base);
+  const normalizedCandidate = posixNormalize(candidate);
+  return normalizedCandidate === normalizedBase ||
+    normalizedCandidate.startsWith(`${normalizedBase}/`);
+}
+
+/**
+ * Copy one media file from the export's `extractDir` into the vault's
+ * attachments folder, guarded by `isPathContained` (LB-1). `srcFile` is
+ * checked for containment BEFORE `Deno.copyFile` ever runs — an escaping
+ * source is never opened; it is recorded in `errors` and the copy is
+ * skipped, same shape as the pre-existing per-item catch below (the note
+ * for the message is still created either way). Returns whether the copy
+ * actually happened, so each call site can drive its own counter/embed-line
+ * side effects.
+ */
+async function safeCopyMedia(
+  extractDir: string,
+  srcFile: string,
+  destFile: string,
+  label: string,
+  errors: string[],
+): Promise<boolean> {
+  if (!isPathContained(extractDir, srcFile)) {
+    errors.push(
+      `Refused to copy ${label}: source path escapes extractDir ("${srcFile}")`,
+    );
+    return false;
+  }
+  try {
+    await Deno.copyFile(srcFile, destFile);
+    return true;
+  } catch (e) {
+    errors.push(
+      `Failed to copy ${label}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return false;
+  }
+}
+
+/**
  * Telegram channel export importer model: parses a Telegram JSON export zip and
  * writes posts, images, files, and videos into an Obsidian vault.
  */
 export const model = {
   type: "@magistr/telegram/import",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     result: {
@@ -157,6 +211,27 @@ export const model = {
       fromVersion: "2026.03.28.1",
       toVersion: "2026.03.28.2",
       description: "Switch from zip.js to unzip CLI for extraction",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.03.28.2",
+      toVersion: "2026.05.25.1",
+      description:
+        "Lineage-repair bridge (no resource schema change) -- closes the gap between the upgrades[] tail (2026.03.28.2) and the shipped 2026.07.16.2 initial release; see CHANGELOG.md 2026.08.01.1.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.05.25.1",
+      toVersion: "2026.07.16.2",
+      description:
+        "Lineage-repair bridge (no resource schema change) -- see CHANGELOG.md 2026.08.01.1.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.01.1",
+      description:
+        "Path-containment guard (isPathContained/safeCopyMedia) applied at the photo/file/video Deno.copyFile sites, closing telegram-import-latent-bugs LB-1 (HIGH path-traversal). No resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -255,28 +330,29 @@ export const model = {
               body.push(text, "");
             }
 
-            // Handle photo
+            // Handle photo — srcFile is containment-guarded (LB-1) by
+            // safeCopyMedia before Deno.copyFile ever runs.
             let photoFilename;
             if (msg.photo) {
               const srcFile = `${extractDir}/${msg.photo}`;
               photoFilename = msg.photo.split("/").pop();
-              try {
-                await Deno.copyFile(
-                  srcFile,
-                  `${attachDiskPath}/${photoFilename}`,
-                );
+              const copied = await safeCopyMedia(
+                extractDir,
+                srcFile,
+                `${attachDiskPath}/${photoFilename}`,
+                `image ${photoFilename}`,
+                errors,
+              );
+              if (copied) {
                 imagesCopied++;
                 body.push(`![[${attachFolder}/${photoFilename}]]`, "");
-              } catch (e) {
-                errors.push(
-                  `Failed to copy image ${photoFilename}: ${
-                    e instanceof Error ? e.message : String(e)
-                  }`,
-                );
               }
             }
 
-            // Handle file attachment (PDF etc) — skip thumbnails and videos handled below
+            // Handle file attachment (PDF etc) — skip thumbnails and videos
+            // handled below. srcFile is containment-guarded (LB-1) by
+            // safeCopyMedia, applied AFTER the _thumb skip so thumbnails
+            // stay silently skipped and only true escapes record an error.
             if (
               msg.file &&
               typeof msg.file === "string" &&
@@ -285,40 +361,35 @@ export const model = {
               const fileName = msg.file.split("/").pop();
               if (!fileName.endsWith("_thumb.jpg")) {
                 const srcFile = `${extractDir}/${msg.file}`;
-                try {
-                  await Deno.copyFile(
-                    srcFile,
-                    `${attachDiskPath}/${fileName}`,
-                  );
+                const copied = await safeCopyMedia(
+                  extractDir,
+                  srcFile,
+                  `${attachDiskPath}/${fileName}`,
+                  `file ${fileName}`,
+                  errors,
+                );
+                if (copied) {
                   filesCopied++;
                   body.push(`![[${attachFolder}/${fileName}]]`, "");
-                } catch (e) {
-                  errors.push(
-                    `Failed to copy file ${fileName}: ${
-                      e instanceof Error ? e.message : String(e)
-                    }`,
-                  );
                 }
               }
             }
 
-            // Handle video
+            // Handle video — srcFile is containment-guarded (LB-1) by
+            // safeCopyMedia before Deno.copyFile ever runs.
             if (msg.media_type === "video_file" && msg.file) {
               const fileName = msg.file.split("/").pop();
               const srcFile = `${extractDir}/${msg.file}`;
-              try {
-                await Deno.copyFile(
-                  srcFile,
-                  `${attachDiskPath}/${fileName}`,
-                );
+              const copied = await safeCopyMedia(
+                extractDir,
+                srcFile,
+                `${attachDiskPath}/${fileName}`,
+                `video ${fileName}`,
+                errors,
+              );
+              if (copied) {
                 filesCopied++;
                 body.push(`![[${attachFolder}/${fileName}]]`, "");
-              } catch (e) {
-                errors.push(
-                  `Failed to copy video ${fileName}: ${
-                    e instanceof Error ? e.message : String(e)
-                  }`,
-                );
               }
             }
 

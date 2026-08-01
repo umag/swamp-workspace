@@ -2,11 +2,21 @@
 # This file is then HAND-MAINTAINED: the scaffolder never overwrites an
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
-# Backfilled to full five-suite compliance (ext-quality-bf-telegram-import,
-# wave-4 batch-4a child of the extension-quality backfill program). telegram_
-# import.ts is unmodified — every suite drives model.methods.import.execute()
-# against a fake ctx + a full Deno.Command/copyFile/mkdir/makeTempDir/remove
-# stub seam, characterizing already-shipped behavior.
+# HISTORICAL NOTE (as of the ext-quality-bf-telegram-import backfill):
+# backfilled to full five-suite compliance (wave-4 batch-4a child of the
+# extension-quality backfill program). telegram_import.ts was UNMODIFIED at
+# that time — every suite drove model.methods.import.execute() against a fake
+# ctx + a full Deno.Command/copyFile/mkdir/makeTempDir/remove stub seam,
+# characterizing already-shipped behavior; no production code changed and no
+# manifest/model version bump in that backfill.
+#
+# THE FREEZE HAS SINCE BROKEN: 2026.08.01.1 (see CHANGELOG.md and the
+# `ratchet` block below) fixes latent bug LB-1 (HIGH path-traversal) with a
+# posix-normalize path-containment guard (isPathContained/safeCopyMedia) at
+# the photo/file/video Deno.copyFile sites, repairs the model upgrade chain
+# (LB-0), and bumps model.version/manifest.yaml. Production code DID change in
+# that release — this header's "unmodified" language above describes the
+# ORIGINAL backfill only, not the current state of telegram_import.ts.
 #
 # Role map (each new file assigned exactly ONE role — there was no
 # pre-existing test file to gap-check, so this is a from-scratch build, not
@@ -59,13 +69,12 @@ docs:
     justification: telegram-import bundles no Claude skill — an export importer, nothing to document as a skill
 ratchet:
   rubricVersion: 3
-  baselinePercentage: 0
+  baselinePercentage: 100
   label: >-
-    UNSCORABLE — swamp extension quality errors on telegram_import.ts's
-    broken model upgrade chain (declared version 2026.07.16.2, but the only
-    declared upgrade entry ends at toVersion 2026.03.28.2); this predates
-    the backfill and telegram_import.ts is byte-frozen here so it cannot be
-    repaired in this change. score_ratchet.ts reports an unscorable
-    extension as SKIPPED, not a CI failure. Tracked in
-    telegram-import-latent-bugs (LB-0); do not attempt to fix the chain
-    here.
+    Grade A — the model upgrade chain is repaired (2026.03.28.1 ->
+    2026.03.28.2 -> 2026.05.25.1 -> 2026.07.16.2 -> 2026.08.01.1, continuous,
+    final toVersion === model.version) as part of the LB-1 path-traversal fix
+    in telegram-import-latent-bugs (2026.08.01.1). `swamp extension quality
+    manifest.yaml --json` now emits a real score: 14/14 points (100%),
+    allPassed true, dependencyTrust passed (jsr:@std/path audited clean).
+    Stamped directly from that tool output, not guessed.
