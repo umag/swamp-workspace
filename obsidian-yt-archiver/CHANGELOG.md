@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026.08.01.1
+
+Fixes LB2 (HIGH, path traversal), tracked in the LOCAL
+`obsidian-yt-archiver-latent-bugs` issue-lifecycle model (NEVER filed to the
+swamp.club Lab -- see CLAUDE.md's anti-bypass rule). `scan`'s and `sync`'s
+`folder` method-argument was concatenated directly into `vaultPath` with no
+containment check, so `folder: "../outside"` (or a deeper/absolute escape)
+walked arbitrary host directories via `walkMd` and read every non-hidden `.md`
+file outside the vault.
+
+- Added a shared pure guard, `assertFolderWithinVault(vaultPath, folder)`, using
+  `jsr:@std/path@1`'s `resolve`/`relative`/`isAbsolute` -- LEXICAL only (never
+  `Deno.realPath`, since the vault commonly lives under a symlinked temp root,
+  e.g. macOS `/var` resolving to `/private/var`, and realPath would break every
+  legitimate scan of such a vault). Rejects an absolute `folder`, or a
+  vault-relative resolved path that is `..` or begins with `../`. Invoked
+  identically at both `scan.execute` and `sync.execute`, before `walkMd` runs --
+  one shared helper, no divergent inline re-check.
+- Flipped the LB2 characterization pin in
+  `obsidian_yt_archiver_adversarial_test.ts` from "the escape succeeds" to
+  `assertRejects`, for both `scan` and `sync`, and added deeper rejection cases
+  (`..`, `../..`, `notes/../../outside`, and an absolute path) for both methods.
+  Every previously-green legit-subfolder test (`scan`/`sync`
+  folder=notes/Clippings/Sub) and the does-not-exist -> `Deno.errors.NotFound`
+  test stay green: a contained-but-nonexistent folder passes the guard and still
+  fails at `readDir`, unchanged.
+- Added the `jsr:@std/path@1` dependency; `deno.lock` regenerated on deno 2.8.3.
+  No other runtime behavior changes -- LB1 and LB3-LB8 remain latent/tracked in
+  the same local model, unaffected by this change.
+- `manifest.yaml` and `model.version` bumped to `2026.08.01.1`.
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4b child

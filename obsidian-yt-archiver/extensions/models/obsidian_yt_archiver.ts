@@ -1,4 +1,5 @@
 import { z } from "npm:zod@4";
+import { isAbsolute, relative, resolve } from "jsr:@std/path@1";
 
 const GlobalArgsSchema = z.object({
   vaultPath: z.string().describe("Absolute path to Obsidian vault"),
@@ -80,6 +81,28 @@ async function taApi(
 
 // --- Vault filesystem helpers ---
 
+/**
+ * Confines a caller-supplied `folder` argument to the vault, LEXICALLY.
+ * Rejects an absolute `folder`, or a folder whose vault-relative resolved
+ * path is `..` or begins with `../` (i.e. escapes the vault root).
+ *
+ * Deliberately lexical (resolve/relative) and NOT Deno.realPath: the vault
+ * commonly lives under a symlinked temp root (e.g. macOS `/var` resolves to
+ * `/private/var`), and realPath would break every legitimate scan of such a
+ * vault. Must be called before any filesystem access (readDir/readTextFile).
+ */
+function assertFolderWithinVault(vaultPath: string, folder: string): void {
+  if (isAbsolute(folder)) {
+    throw new Error(
+      `folder must be relative to the vault, got an absolute path: ${folder}`,
+    );
+  }
+  const rel = relative(resolve(vaultPath), resolve(vaultPath, folder));
+  if (rel === ".." || rel.startsWith("../")) {
+    throw new Error(`folder escapes the vault: ${folder}`);
+  }
+}
+
 async function* walkMd(dir: string): AsyncGenerator<string> {
   for await (const entry of Deno.readDir(dir)) {
     const path = `${dir}/${entry.name}`;
@@ -133,7 +156,7 @@ const ResolvedSchema = z.object({
 /** Obsidian YouTube archiver model: scans a vault for YouTube links, queues them in TubeArchivist, and resolves video metadata. */
 export const model = {
   type: "@magistr/obsidian-yt-archiver",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     scan: {
@@ -165,6 +188,9 @@ export const model = {
       }),
       execute: async (args, context) => {
         const { vaultPath } = context.globalArgs;
+        if (args.folder) {
+          assertFolderWithinVault(vaultPath, args.folder);
+        }
         const scanDir = args.folder ? `${vaultPath}/${args.folder}` : vaultPath;
         const links: Array<
           { file: string; videoId: string; url: string; line: number }
@@ -366,6 +392,9 @@ export const model = {
       execute: async (args, context) => {
         const { vaultPath, tubearchivistUrl, tubearchivistToken } =
           context.globalArgs;
+        if (args.folder) {
+          assertFolderWithinVault(vaultPath, args.folder);
+        }
         const scanDir = args.folder ? `${vaultPath}/${args.folder}` : vaultPath;
 
         // 1. Scan
