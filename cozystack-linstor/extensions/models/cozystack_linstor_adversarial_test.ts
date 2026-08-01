@@ -1,15 +1,20 @@
 /**
  * Adversarial suite: destructive-blast-radius guard characterization
- * (createZfsPool's idempotency-key fail-open in BOTH directions — including
- * the fold-in mirror approved alongside plan v2), option-injection via
- * missing `--` sentinels, hostile/malformed linstor output, retry exhaustion
- * under FakeTime, and a k8s/kubeconfig-tuned fixtures-secret-scan.
+ * (createZfsPool's device-availability guard, fixed in BOTH directions —
+ * cozystack-linstor-fail-open-guards), option-injection via missing `--`
+ * sentinels, hostile/malformed linstor output, retry exhaustion under
+ * FakeTime, and a k8s/kubeconfig-tuned fixtures-secret-scan.
  *
- * cozystack_linstor.ts is UNMODIFIED — every test here PINS current behavior
- * (including behavior that is a real, documented gap) rather than proposing
- * a fix. The model bug itself (createZfsPool's idempotency key is
- * (node, storagePool NAME) only, never `device`) is tracked separately as
- * cozystack-linstor-fail-open-guards and is NOT fixed by this change.
+ * createZfsPool's idempotency key WAS (node, storagePool NAME) only, never
+ * `device` — reusing an already-provisioned device under a different pool
+ * name fell through to the destructive `create-device-pool` call (a device
+ * wipe), and the mirror case (same pool name, different device) silently
+ * no-opped without ever provisioning the requested device. Both directions
+ * are now FIXED: a `physical-storage list` inventory read establishes
+ * device availability, folded into a 4-way decision alongside the
+ * (node, storagePool) name match. Every other test in this file still PINS
+ * current, unrelated behavior (including behavior that is a real,
+ * documented gap elsewhere) rather than proposing a fix.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
@@ -22,6 +27,9 @@ import deployReady from "../../fixtures/deploy-ready.json" with {
   type: "json",
 };
 import deployNotReady from "../../fixtures/deploy-notready.json" with {
+  type: "json",
+};
+import physicalStorageList from "../../fixtures/physical-storage-list.json" with {
   type: "json",
 };
 
@@ -95,28 +103,36 @@ function run(name: string, args: Record<string, unknown>, ctx: unknown) {
 }
 
 // ---------------------------------------------------------------------------
-// createZfsPool: the idempotency-key guard, characterized in BOTH directions
+// createZfsPool: the device-availability guard, characterized in BOTH
+// directions (cozystack-linstor-fail-open-guards)
 // ---------------------------------------------------------------------------
-// The find() predicate (cozystack_linstor.ts lines ~427-430) is
-// `p.stor_pool_name === args.storagePool && p.node_name === args.node` — it
-// never inspects `device`. Two symmetric facts follow, both pinned below:
-//   (1) FAIL-OPEN WIPE: a different storagePool NAME on the node does not
-//       match -> the destructive create-device-pool call against the
-//       requested device IS issued, even if that device already holds data.
-//   (2) FAIL-OPEN NO-OP (fold-in, approved alongside plan v2): the SAME
-//       storagePool name on the node matches regardless of device -> the
-//       call is suppressed as "already exists", and a DIFFERENT requested
-//       device is silently NEVER provisioned.
+// The name-only `nameMatch` (cozystack_linstor.ts ~427-430,
+// `p.stor_pool_name === args.storagePool && p.node_name === args.node`) is
+// now folded together with `deviceFree` (from a `physical-storage list`
+// inventory read) into a 4-way decision:
+//   nameMatch && !deviceFree   -> idempotent no-op (pool exists, device
+//                                 consumed — consistent state)
+//   nameMatch && deviceFree    -> DIRECTION B: reject (same pool name, a
+//                                 DIFFERENT still-unclaimed device)
+//   !nameMatch && !deviceFree  -> DIRECTION A: reject (no matching pool, but
+//                                 the requested device is already in use —
+//                                 creating would WIPE it)
+//   !nameMatch && deviceFree   -> create (legit new node+pool+device)
+// Previously, `nameMatch` alone decided everything: a different storagePool
+// NAME on the node caused a FAIL-OPEN WIPE (create proceeded even though the
+// device already held data), and the SAME storagePool name regardless of
+// device caused a FAIL-OPEN NO-OP (silently never provisioning a different
+// requested device). Both are fixed below.
 
-Deno.test("createZfsPool: exact (node, storagePool) match short-circuits — only the pre-flight list call is issued", async () => {
+Deno.test("createZfsPool: exact (node, storagePool) match with the device already claimed — idempotent no-op, only the two read calls are issued", async () => {
   const existing = JSON.stringify([{
     stor_pools: [{ node_name: "worker-0", stor_pool_name: "data" }],
   }]);
-  const stub = installCmdStub([{
-    success: true,
-    stdout: existing,
-    stderr: "",
-  }]);
+  const noFreeDevices = JSON.stringify([{ physical_storage: [] }]);
+  const stub = installCmdStub([
+    { success: true, stdout: existing, stderr: "" },
+    { success: true, stdout: noFreeDevices, stderr: "" },
+  ]);
   const { ctx, written } = makeCtx();
   try {
     await run("createZfsPool", { node: "worker-0", device: "/dev/vdb" }, ctx);
@@ -125,28 +141,34 @@ Deno.test("createZfsPool: exact (node, storagePool) match short-circuits — onl
   }
   assertEquals(
     stub.invocations.length,
-    1,
-    "only the list call; no create call",
+    2,
+    "the pre-flight list call and the physical-storage inventory read; no create call",
   );
   const res = written.find((w) => w.name === "create-zfs-worker-0-data")!;
   assertEquals(res.payload.success, true);
 });
 
-Deno.test("createZfsPool FOLD-IN (mirror, MEDIUM): same (node, storagePool NAME) but a DIFFERENT requested device is STILL suppressed — success:true, device silently never provisioned", async () => {
-  // Symmetric to the fail-open WIPE below: there, a device match under a
-  // different pool NAME causes an unwanted wipe; here, a pool-NAME match
-  // under a different device causes an unwanted NO-OP that still reports
-  // success:true. `device` is not part of find()'s predicate in either
-  // direction — this is the same root cause, pinned from both sides so a
-  // future device-aware find() hardening flips BOTH tests, not just one.
+Deno.test("createZfsPool DIRECTION B (fixed): same (node, storagePool NAME) but a DIFFERENT, still-unclaimed requested device is REFUSED — success:false, no create-device-pool call", async () => {
+  // Previously: `device` was absent from the idempotency decision entirely,
+  // so a pool-NAME match under a different device was silently suppressed as
+  // "already exists" (success:true) — the requested device was never
+  // provisioned and the caller was never told. Now: nameMatch && deviceFree
+  // is Direction B — the guard REFUSES instead of silently discarding the
+  // request.
   const existing = JSON.stringify([{
     stor_pools: [{ node_name: "worker-0", stor_pool_name: "data" }],
   }]);
-  const stub = installCmdStub([{
-    success: true,
-    stdout: existing,
-    stderr: "",
+  const deviceStillFree = JSON.stringify([{
+    physical_storage: [{
+      size: 10737418240,
+      rotational: false,
+      nodes: { "worker-0": [{ device: "/dev/vdb-replacement" }] },
+    }],
   }]);
+  const stub = installCmdStub([
+    { success: true, stdout: existing, stderr: "" },
+    { success: true, stdout: deviceStillFree, stderr: "" },
+  ]);
   const { ctx, written } = makeCtx();
   try {
     await run(
@@ -159,26 +181,35 @@ Deno.test("createZfsPool FOLD-IN (mirror, MEDIUM): same (node, storagePool NAME)
   }
   assertEquals(
     stub.invocations.length,
-    1,
-    "device is absent from find()'s predicate — no create-device-pool invocation",
+    2,
+    "both reads are issued; create-device-pool is refused before it would run",
+  );
+  assert(
+    !stub.invocations.some((i) => i.args.includes("create-device-pool")),
+    "the requested device must NOT be silently discarded nor provisioned",
   );
   const res = written.find((w) => w.name === "create-zfs-worker-0-data")!;
-  assertEquals(res.payload.success, true);
+  assertEquals(res.payload.success, false);
   assert(
-    (res.payload.message as string).includes(
-      "already exists on node 'worker-0', skipped creation",
-    ),
-    "reports success even though /dev/vdb-replacement was never touched",
+    (res.payload.message as string).includes("/dev/vdb-replacement"),
+    "the refusal names the conflicting device",
   );
 });
 
-Deno.test("createZfsPool: an existing pool under a DIFFERENT storagePool name on the node does NOT short-circuit — the device wipe IS issued (fail-open blast radius)", async () => {
+Deno.test("createZfsPool DIRECTION A (fixed): an existing pool under a DIFFERENT storagePool name, requested device NOT available — REFUSED, the device wipe is NOT issued", async () => {
+  // Previously: an existing pool under a different storagePool NAME did not
+  // match nameMatch, so the destructive create-device-pool call proceeded
+  // even though the requested device already held data (a device wipe).
+  // Now: the physical-storage inventory read shows the requested device is
+  // NOT available (absent = already backing some other pool), so
+  // !nameMatch && !deviceFree is Direction A — the guard REFUSES.
   const existingUnderDifferentName = JSON.stringify([{
     stor_pools: [{ node_name: "worker-0", stor_pool_name: "legacy" }],
   }]);
+  const deviceInUse = JSON.stringify([{ physical_storage: [] }]);
   const stub = installCmdStub([
     { success: true, stdout: existingUnderDifferentName, stderr: "" },
-    { success: true, stdout: "", stderr: "" },
+    { success: true, stdout: deviceInUse, stderr: "" },
   ]);
   const { ctx, written } = makeCtx();
   try {
@@ -193,12 +224,18 @@ Deno.test("createZfsPool: an existing pool under a DIFFERENT storagePool name on
   assertEquals(
     stub.invocations.length,
     2,
-    "create-device-pool WAS issued despite an existing pool on this node",
+    "both reads are issued; create-device-pool is refused before it would run",
   );
-  assert(stub.invocations[1].args.includes("create-device-pool"));
-  assert(stub.invocations[1].args.includes("/dev/vdb"));
+  assert(
+    !stub.invocations.some((i) => i.args.includes("create-device-pool")),
+    "the device wipe must NOT be issued",
+  );
   const res = written.find((w) => w.name === "create-zfs-worker-0-data")!;
-  assert((res.payload.message as string).includes("Created ZFS pool"));
+  assertEquals(res.payload.success, false);
+  assert(
+    (res.payload.message as string).includes("/dev/vdb"),
+    "the refusal names the device",
+  );
 });
 
 Deno.test("createZfsPool: an existing pool under the SAME storagePool name but on a DIFFERENT node does NOT short-circuit — create IS issued (the `node_name` conjunct, tested in isolation)", async () => {
@@ -218,6 +255,17 @@ Deno.test("createZfsPool: an existing pool under the SAME storagePool name but o
       }]),
       stderr: "",
     },
+    {
+      success: true,
+      stdout: JSON.stringify([{
+        physical_storage: [{
+          size: 10737418240,
+          rotational: false,
+          nodes: { "worker-0": [{ device: "/dev/vdb" }] },
+        }],
+      }]),
+      stderr: "",
+    },
     { success: true, stdout: "", stderr: "" },
   ]);
   const { ctx } = makeCtx();
@@ -228,15 +276,26 @@ Deno.test("createZfsPool: an existing pool under the SAME storagePool name but o
   }
   assertEquals(
     stub.invocations.length,
-    2,
-    "the existing pool is on a different node — find() must not match, so create proceeds",
+    3,
+    "the existing pool is on a different node — nameMatch must not match, and the requested device is available, so create proceeds",
   );
-  assert(stub.invocations[1].args.includes("create-device-pool"));
+  assert(stub.invocations[2].args.includes("create-device-pool"));
 });
 
-Deno.test("createZfsPool: an EMPTY pre-flight list ([]) issues the create-device-pool call", async () => {
+Deno.test("createZfsPool: an EMPTY pre-flight list ([]) with the device available issues the create-device-pool call", async () => {
   const stub = installCmdStub([
     { success: true, stdout: JSON.stringify([{ stor_pools: [] }]), stderr: "" },
+    {
+      success: true,
+      stdout: JSON.stringify([{
+        physical_storage: [{
+          size: 10737418240,
+          rotational: false,
+          nodes: { "worker-0": [{ device: "/dev/vdb" }] },
+        }],
+      }]),
+      stderr: "",
+    },
     { success: true, stdout: "", stderr: "" },
   ]);
   const { ctx } = makeCtx();
@@ -245,8 +304,8 @@ Deno.test("createZfsPool: an EMPTY pre-flight list ([]) issues the create-device
   } finally {
     stub.restore();
   }
-  assertEquals(stub.invocations.length, 2);
-  assert(stub.invocations[1].args.includes("create-device-pool"));
+  assertEquals(stub.invocations.length, 3);
+  assert(stub.invocations[2].args.includes("create-device-pool"));
 });
 
 Deno.test("createZfsPool: a `{}` (non-array truthy) pre-flight payload throws BEFORE any create call — fail-CLOSED", async () => {
@@ -296,6 +355,17 @@ Deno.test("createZfsPool: a non-JSON pre-flight payload throws a SyntaxError BEF
 Deno.test("OPTION INJECTION: a `-`-leading device value lands verbatim in create-device-pool's exact positional slot", async () => {
   const stub = installCmdStub([
     { success: true, stdout: JSON.stringify([{ stor_pools: [] }]), stderr: "" },
+    {
+      success: true,
+      stdout: JSON.stringify([{
+        physical_storage: [{
+          size: 10737418240,
+          rotational: false,
+          nodes: { "worker-0": [{ device: "--force" }] },
+        }],
+      }]),
+      stderr: "",
+    },
     { success: true, stdout: "", stderr: "" },
   ]);
   const { ctx } = makeCtx();
@@ -313,7 +383,7 @@ Deno.test("OPTION INJECTION: a `-`-leading device value lands verbatim in create
   } finally {
     stub.restore();
   }
-  assertEquals(stub.invocations[1].args, [
+  assertEquals(stub.invocations[2].args, [
     "exec",
     "-n",
     "cozy-linstor",
@@ -335,6 +405,11 @@ Deno.test("OPTION INJECTION: a `-`-leading device value lands verbatim in create
 Deno.test("OPTION INJECTION: a `-`-leading node value lands verbatim in the pre-flight list's `-n` slot", async () => {
   const stub = installCmdStub([
     { success: true, stdout: JSON.stringify([{ stor_pools: [] }]), stderr: "" },
+    {
+      success: true,
+      stdout: JSON.stringify([{ physical_storage: [] }]),
+      stderr: "",
+    },
     { success: true, stdout: "", stderr: "" },
   ]);
   const { ctx } = makeCtx();
@@ -657,6 +732,7 @@ const FIXTURES: Record<string, unknown> = {
   "storage-pool-list.json": storagePoolList,
   "deploy-ready.json": deployReady,
   "deploy-notready.json": deployNotReady,
+  "physical-storage-list.json": physicalStorageList,
 };
 
 Deno.test("fixtures-secret-scan: no committed fixture contains a k8s/kubeconfig-secret-shaped string", () => {

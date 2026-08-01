@@ -8,12 +8,14 @@
  *
  * Properties:
  *  (a) argv-builder injectivity, over the CANONICAL (non-collapsing) input
- *      subset — createZfsPool issues TWO linstor calls (pre-flight list,
- *      then create-device-pool); the pre-flight list is stubbed EMPTY so the
+ *      subset — createZfsPool issues THREE linstor calls (pre-flight
+ *      storage-pool list, physical-storage inventory read, then
+ *      create-device-pool); the pre-flight list is stubbed EMPTY and the
+ *      inventory read always reports the requested device free, so the
  *      destructive path is always reached, and injectivity is signed over
- *      the SECOND (create-device-pool) invocation's argv only, per the
+ *      the THIRD (create-device-pool) invocation's argv only, per the
  *      round-1 review finding that the naive "whole call" framing is false
- *      (the first call's argv depends only on `node`).
+ *      (the first two calls' argv depend only on `node`).
  *  (b) parser round-trip — listNodes/listStoragePools preserve every
  *      generated wire element, in order, with count == length.
  *  (c) kubeconfig/context flag invariant — across the boolean cross-product,
@@ -112,17 +114,31 @@ function runCheck(name: string, ctx: unknown) {
 }
 
 // ---------------------------------------------------------------------------
-// (a) createZfsPool argv-builder injectivity — 2nd (create-device-pool) call
+// (a) createZfsPool argv-builder injectivity — 3rd (create-device-pool) call
 // ---------------------------------------------------------------------------
 
-/** Run createZfsPool against an EMPTY pre-flight list (so the destructive
- * create-device-pool call is always reached) and return that SECOND
- * invocation's exact argv. */
+/** Run createZfsPool against an EMPTY pre-flight list and a physical-storage
+ * inventory that reports the given `device` as available on the given
+ * `node` (so the destructive create-device-pool call is always reached) and
+ * return that THIRD invocation's exact argv. */
 async function createDeviceArgvFor(
   args: Record<string, unknown>,
 ): Promise<string[]> {
+  const node = args.node as string;
+  const device = args.device as string;
   const stub = installCmdStub([
     { success: true, stdout: JSON.stringify([{ stor_pools: [] }]), stderr: "" },
+    {
+      success: true,
+      stdout: JSON.stringify([{
+        physical_storage: [{
+          size: 10737418240,
+          rotational: false,
+          nodes: { [node]: [{ device }] },
+        }],
+      }]),
+      stderr: "",
+    },
     { success: true, stdout: "", stderr: "" },
   ]);
   const { ctx } = makeCtx();
@@ -131,7 +147,7 @@ async function createDeviceArgvFor(
   } finally {
     stub.restore();
   }
-  return stub.invocations[1].args;
+  return stub.invocations[2].args;
 }
 
 // Canonical domain: all four fields ALWAYS explicit (never omitted), so the
@@ -328,6 +344,17 @@ function scenarios(): Scenario[] {
         {
           success: true,
           stdout: JSON.stringify([{ stor_pools: [] }]),
+          stderr: "",
+        },
+        {
+          success: true,
+          stdout: JSON.stringify([{
+            physical_storage: [{
+              size: 10737418240,
+              rotational: false,
+              nodes: { "worker-0": [{ device: "/dev/vdb" }] },
+            }],
+          }]),
           stderr: "",
         },
         { success: true, stdout: "", stderr: "" },

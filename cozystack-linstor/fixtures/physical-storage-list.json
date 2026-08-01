@@ -1,0 +1,24 @@
+[
+  {
+    "physical_storage": [
+      {
+        "size": 10737418240,
+        "rotational": false,
+        "nodes": {
+          "worker-0": [
+            { "device": "/dev/vdb", "model": null, "serial": null, "wwn": null }
+          ]
+        }
+      },
+      {
+        "size": 21474836480,
+        "rotational": true,
+        "nodes": {
+          "worker-2": [
+            { "device": "/dev/vdc", "model": null, "serial": null, "wwn": null }
+          ]
+        }
+      }
+    ]
+  }
+]
