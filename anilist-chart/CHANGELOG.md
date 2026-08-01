@@ -1,12 +1,27 @@
 # Changelog
 
-## Unreleased
+## 2026.08.01.1
+
+Docs-only completion of the quality ratchet: added real JSDoc to the two
+exported symbols of `extensions/models/anilist_chart.ts` that the wave-4
+backfill below left undocumented — the `RenderTaskBundle` interface and the
+`model` const — raising `symbols-docs` coverage from 50% (2/4) to 100% (4/4) and
+earning the last rubric point. This is the first version bump since the backfill
+below (which never bumped the version): `model.version` and `manifest.yaml` move
+from `2026.07.21.1` to `2026.08.01.1`. No runtime behavior changed and no tests
+were added or flipped — the five existing suites (`contract-fixture`, `methods`,
+`adversarial`, `coverage`, `property-invariant-flow`) stay green unchanged.
+Ratchet: **100% (14/14, rubricVersion 3) — Grade A**, up from 92% (13/14).
+
+Everything below this point is the prior wave-4 backfill entry, retained as-is
+except for the two bullets whose "byte-frozen"/"unreachable" claims about
+`symbols-docs` are now superseded by the entry above.
 
 Test + docs backfill to the STANDARD.md five-suite quality bar
 (`ext-quality-bf-anilist-chart`, wave-4 batch-4d, the FINAL batch of the
 extension-quality backfill program, `ext-quality-test-backfill`). No behavior
-change — `anilist_chart.ts` and every `lib/*.ts` file are byte-frozen; the model
-`version` stays `2026.07.21.1`; `manifest.yaml` is unchanged.
+change — `anilist_chart.ts` and every `lib/*.ts` file were byte-frozen at the
+time; the model `version` stayed `2026.07.21.1`; `manifest.yaml` was unchanged.
 
 - Re-assigned the 16 pre-existing test files (all dumped under
   `contract-fixture` by the scaffolder) to their HONEST primary role: 12 stay
@@ -90,9 +105,9 @@ change — `anilist_chart.ts` and every `lib/*.ts` file are byte-frozen; the mod
   via `assertFinite`/`fx2` rather than leaking a broken cell into a page.
 - Expanded `README.md` with an architecture/data-flow section, the seam map, and
   a latent-bugs summary (a documentation-only change — the entrypoint
-  `anilist_chart.ts` itself is byte-frozen, so the registry's `symbols-docs`
-  JSDoc-coverage point could not be earned this way; see the ratchet note
-  below).
+  `anilist_chart.ts` itself was byte-frozen at the time, so the registry's
+  `symbols-docs` JSDoc-coverage point could not be earned this way; that point
+  was earned later, in `2026.08.01.1` above).
 - `deno.json`: the default `test` task now grants
   `--allow-read --allow-write --allow-env=FC_NUM_RUNS` (previously flagless) —
   needed for the `methods` suite's real `Deno.makeTempDir` local-publish path
@@ -104,11 +119,11 @@ change — `anilist_chart.ts` and every `lib/*.ts` file are byte-frozen; the mod
   `docs.changelog` `present`; `docs.skill` stays `na` ("anilist-chart bundles no
   Claude skill — a chart-rendering/publish pipeline, nothing to document as a
   skill"); `watch`/`canary` stay `backlog` (exempt from the allowlist gate per
-  STANDARD.md, tracked in `ext-quality-test-backfill`). Measured ratchet: **92%
-  (13/14, rubricVersion 3)** — see the quality.yaml `ratchet` block for the full
-  honest label. This is NOT Grade A: the remaining point (`symbols-docs`, JSDoc
-  coverage ≥80% on the byte-frozen `anilist_chart.ts` entrypoint, currently
-  ~50%) is unreachable without editing frozen source, which this change
-  deliberately does not do.
+  STANDARD.md, tracked in `ext-quality-test-backfill`). Measured ratchet at the
+  time: **92% (13/14, rubricVersion 3)** — NOT Grade A, since the remaining
+  point (`symbols-docs`, JSDoc coverage ≥80% on the then-byte-frozen
+  `anilist_chart.ts` entrypoint, then ~50%) was unreachable without editing
+  frozen source, which this change deliberately did not do. That point was
+  earned in `2026.08.01.1` above, moving the ratchet to 100% (14/14) — Grade A.
 - Removed `anilist-chart` from the repo-root `quality-allowlist.txt`
   (shrink-only gate) — done LAST, after all five suites were confirmed present.

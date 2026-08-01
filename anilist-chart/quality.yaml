@@ -4,8 +4,14 @@
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-anilist-chart,
 # wave-4 batch-4d, FINAL batch of the Phase D extension-quality backfill).
-# anilist_chart.ts and every lib/*.ts file are BYTE-FROZEN by this change —
-# no production code changed, no manifest/model version bump.
+# At that time anilist_chart.ts and every lib/*.ts file were BYTE-FROZEN — no
+# production code changed, no manifest/model version bump.
+#
+# 2026.08.01.1 (anilist-chart-grade-a, LOCAL issue-lifecycle model): the
+# entrypoint freeze above ended — added real JSDoc to the two exported
+# symbols that were missing it (RenderTaskBundle, model), earning the last
+# rubric point (symbols-docs, 50% -> 100%). Docs-only: no runtime behavior
+# changed, no test flips. Ratchet moves 92% -> 100% (14/14) = Grade A.
 #
 # Role map (the scaffolder originally dumped all 16 pre-existing test files
 # under contract-fixture; this corrects that to their HONEST primary role —
@@ -100,12 +106,12 @@ docs:
     justification: anilist-chart bundles no Claude skill — a chart-rendering/publish pipeline, nothing to document as a skill
 ratchet:
   rubricVersion: 3
-  baselinePercentage: 92
+  baselinePercentage: 100
   label: >-
-    92% (13/14, rubricVersion 3) — NOT Grade A. Five suites present, docs
-    present, rich-readme earned by expanding README.md. The remaining point
-    (symbols-docs: JSDoc on >=80% of exported symbols in anilist_chart.ts,
-    currently ~50%) is UNREACHABLE without editing the byte-frozen
-    entrypoint, which this change deliberately does not do. Measured via
+    100% (14/14, rubricVersion 3) — Grade A. Five suites present, docs
+    present, rich-readme earned by expanding README.md, and symbols-docs now
+    earned: JSDoc added to the two exported symbols that were missing it
+    (RenderTaskBundle, model), bringing entrypoint coverage to 4/4 (100%,
+    >=80% threshold). Measured via
     `swamp extension quality manifest.yaml --repo-dir <workspace-root> --json`
     (stdout is valid despite a non-zero exit — Lab #1481).
