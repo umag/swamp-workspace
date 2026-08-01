@@ -12,7 +12,8 @@
     "lineWidth": 80,
     "indentWidth": 2,
     "semiColons": true,
-    "singleQuote": false
+    "singleQuote": false,
+    "exclude": ["extensions/models/fixtures/"]
   },
   "lint": { "rules": { "tags": ["recommended"] } }
 }

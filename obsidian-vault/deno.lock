@@ -3,6 +3,7 @@
   "specifiers": {
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
+    "npm:fast-check@4.8.0": "4.8.0",
     "npm:yaml@2.6.1": "2.6.1",
     "npm:zod@4": "4.4.3"
   },
@@ -18,6 +19,15 @@
     }
   },
   "npm": {
+    "fast-check@4.8.0": {
+      "integrity": "sha512-GOJ158CUMnN6cSahsv4+ExARvIDuzzinFjkp0E9WtiBa5zcVeLozVkWaE4IzFcc+Y48Wp1EDlUZsXRyAztQcSg==",
+      "dependencies": [
+        "pure-rand"
+      ]
+    },
+    "pure-rand@8.4.2": {
+      "integrity": "sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng=="
+    },
     "yaml@2.6.1": {
       "integrity": "sha512-7r0XPzioN/Q9kXBro/XPnA6kznR73DHq+GXh5ON7ZozRO6aMjbmiBuKste2wslTFkC5d1dw0GooOCepZXJ2SAg==",
       "bin": true
