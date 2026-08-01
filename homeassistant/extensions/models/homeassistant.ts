@@ -21,9 +21,12 @@ async function fetchStatistics(
 ): Promise<Record<string, unknown>[]> {
   const wsProto = (protocol || "https") === "https" ? "wss" : "ws";
   const wsUrl = `${wsProto}://${host}/api/websocket`;
+  const requestId = 1;
   return await new Promise<Record<string, unknown>[]>((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
+    let done = false;
     const timer = setTimeout(() => {
+      done = true;
       try {
         ws.close();
       } catch {
@@ -42,7 +45,7 @@ async function fetchStatistics(
         ws.send(JSON.stringify({ type: "auth", access_token: token }));
       } else if (msg.type === "auth_ok") {
         ws.send(JSON.stringify({
-          id: 1,
+          id: requestId,
           type: "recorder/statistics_during_period",
           start_time: startTime,
           end_time: endTime,
@@ -50,6 +53,7 @@ async function fetchStatistics(
           period,
         }));
       } else if (msg.type === "auth_invalid") {
+        done = true;
         clearTimeout(timer);
         try {
           ws.close();
@@ -58,6 +62,13 @@ async function fetchStatistics(
         }
         reject(new Error(`Auth invalid: ${msg.message}`));
       } else if (msg.type === "result") {
+        if (msg.id !== requestId) {
+          // Not our command's response (e.g. a foreign/stale id on a
+          // multiplexed socket) — ignore and keep waiting for the matching
+          // result.
+          return;
+        }
+        done = true;
         clearTimeout(timer);
         try {
           ws.close();
@@ -72,9 +83,16 @@ async function fetchStatistics(
       }
     });
     ws.addEventListener("error", (e) => {
+      done = true;
       clearTimeout(timer);
       const errEvent = e as Event & { message?: string };
       reject(new Error(`WS error: ${errEvent.message || errEvent.type}`));
+    });
+    ws.addEventListener("close", () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reject(new Error("WebSocket closed before result"));
     });
   });
 }
@@ -110,7 +128,7 @@ async function haFetch(host, token, path, protocol, options: RequestInit = {}) {
  */
 export const model = {
   type: "@magistr/homeassistant",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: InputSchema,
   resources: {
     "states": {

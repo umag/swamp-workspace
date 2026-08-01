@@ -1,15 +1,19 @@
 /**
- * Adversarial suite: hostile WebSocket scenarios (no msg.id correlation,
- * auth_invalid, error events, malformed frames, mid-sequence connection
- * drops driven by FakeTime), unencoded REST path injection, hostile-echo
- * token-leak scenarios on both the WS and REST error paths, and a mechanical
- * fixtures-secret-scan over homeassistant/fixtures/*.json.
+ * Adversarial suite: hostile WebSocket scenarios (id correlation, close
+ * handling, auth_invalid, error events, malformed frames, mid-sequence
+ * connection drops driven by FakeTime), unencoded REST path injection,
+ * hostile-echo token-leak scenarios on both the WS and REST error paths, and
+ * a mechanical fixtures-secret-scan over homeassistant/fixtures/*.json.
  *
- * homeassistant.ts is UNMODIFIED — every test here PINS current behavior
- * (including behavior that is arguably risky) rather than proposing a fix.
- * Where a test documents a real gap, it is labeled "pin" and says so
- * explicitly. All 9 items tracked in the local `homeassistant-latent-bugs`
- * issue-lifecycle model are pinned somewhere in this file or in
+ * homeassistant.ts v2026.08.01.1 folds in fixes for the two HIGH items
+ * tracked in the local `homeassistant-latent-bugs` issue-lifecycle model:
+ * `fetchStatistics` now correlates `type:"result"` frames against the id it
+ * sent (ignoring foreign ids) and registers a `close` listener so a clean
+ * server-side close rejects immediately instead of hanging for 60s. Those
+ * two behaviors are exercised as FIX tests below (labeled "fix:"), not pins.
+ * Every other item — including the remaining MED/LOW findings — is still
+ * characterized rather than fixed and is labeled "pin". All 9 originally
+ * tracked items are covered somewhere in this file or in
  * homeassistant_coverage_test.ts.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
@@ -141,6 +145,11 @@ type WSFrame = Record<string, unknown>;
 
 type WSStep =
   | { kind: "message"; frame: WSFrame }
+  // A burst of frames delivered synchronously within ONE delivery tick (no
+  // intervening `ws.send()`) — needed to script "ignore this frame, keep
+  // waiting" followed by the frame that actually settles the call, since
+  // the model issues no further `send()` between them.
+  | { kind: "messages"; frames: WSFrame[] }
   | { kind: "raw"; data: string }
   | { kind: "error"; message?: string }
   | { kind: "close" }
@@ -148,6 +157,10 @@ type WSStep =
 
 function msg(frame: WSFrame): WSStep {
   return { kind: "message", frame };
+}
+
+function msgBurst(frames: WSFrame[]): WSStep {
+  return { kind: "messages", frames };
 }
 
 const AUTH_REQUIRED: WSStep = msg({ type: "auth_required" });
@@ -214,6 +227,12 @@ class FakeWebSocket {
       for (const l of this.#messageListeners) {
         l({ data: JSON.stringify(step.frame) });
       }
+    } else if (step.kind === "messages") {
+      for (const frame of step.frames) {
+        for (const l of this.#messageListeners) {
+          l({ data: JSON.stringify(frame) });
+        }
+      }
     } else if (step.kind === "raw") {
       for (const l of this.#messageListeners) l({ data: step.data });
     } else if (step.kind === "error") {
@@ -271,27 +290,44 @@ function statisticsArgs(overrides: Record<string, unknown> = {}) {
 // Hostile WebSocket scenarios
 // =============================================================================
 
-Deno.test("pin: the model performs NO msg.id correlation — it resolves on the first type:result regardless of id (latent gap, not live confusion for a single-command socket)", async () => {
+Deno.test("fix: a foreign id:999 result is IGNORED — only the matching id:1 result resolves the call (flip of the former no-correlation pin)", async () => {
   const { ctx, written } = makeCtx();
   const steps: WSStep[] = [
     AUTH_REQUIRED,
     AUTH_OK,
     // The command frame the model sends carries id:1 (see the wire
-    // assertion in the methods suite); this result deliberately answers
-    // with a MISMATCHED id (999) to prove there is no correlation check.
-    msg({
-      id: 999,
-      type: "result",
-      success: true,
-      result: { "sensor.example_temperature": TEMP_POINTS },
-    }),
+    // assertion in the methods suite). The model issues no further `send()`
+    // after AUTH_OK, so both frames below must land in the SAME delivery
+    // tick (msgBurst) — a foreign id (999) arrives first and must be
+    // ignored entirely (no resolve, no reject, no close), leaving the call
+    // pending until the matching id:1 result, delivered right after it,
+    // settles the promise.
+    msgBurst([
+      {
+        id: 999,
+        type: "result",
+        success: true,
+        result: { "sensor.example_temperature": [{ start: 0, mean: 999 }] },
+      },
+      {
+        id: 1,
+        type: "result",
+        success: true,
+        result: { "sensor.example_temperature": TEMP_POINTS },
+      },
+    ]),
   ];
   await withWebSocketStub(
     steps,
     () => run("get-statistics", statisticsArgs(), ctx),
   );
   const res = written.find((w) => w.spec === "statistics")!;
-  assertEquals(res.payload.count, TEMP_POINTS.length);
+  assertEquals(
+    res.payload.count,
+    TEMP_POINTS.length,
+    "must resolve on the MATCHING id:1 result — the foreign id:999 result " +
+      "must be silently ignored, not resolved on",
+  );
 });
 
 Deno.test("pin: auth_invalid rejects with 'Auth invalid: <server message>'", async () => {
@@ -392,7 +428,26 @@ Deno.test("pin: a malformed (non-JSON) frame is silently swallowed — no fast e
   await rejects;
 });
 
-Deno.test("pin: a mid-sequence connection drop (no close, no error, no result) hangs until the 60s timeout — the absent close listener means even an explicit close signal changes nothing", async () => {
+Deno.test("fix: an explicit close before any result rejects fast with 'WebSocket closed before result' — no 60s wait — and registers exactly one close listener", async () => {
+  const { ctx } = makeCtx();
+  const steps: WSStep[] = [AUTH_REQUIRED, AUTH_OK, { kind: "close" }];
+  const sockets = await withWebSocketStub(steps, async (sockets) => {
+    await assertRejects(
+      () => run("get-statistics", statisticsArgs(), ctx),
+      Error,
+      "WebSocket closed before result",
+    );
+    return sockets;
+  });
+  assertEquals(
+    sockets[0].closeListenerCount,
+    1,
+    "fetchStatistics must register exactly one close listener so a clean " +
+      "server-side close rejects immediately instead of hanging for 60s",
+  );
+});
+
+Deno.test("pin: a mid-sequence connection drop (no close, no error, no result) still hangs until the 60s timeout — a close listener IS registered, but a silent drop never fires a close event", async () => {
   using time = new FakeTime();
   const { ctx } = makeCtx();
   const steps: WSStep[] = [AUTH_REQUIRED, AUTH_OK, { kind: "none" }];
@@ -409,9 +464,11 @@ Deno.test("pin: a mid-sequence connection drop (no close, no error, no result) h
   });
   assertEquals(
     sockets[0].closeListenerCount,
-    0,
-    "fetchStatistics never registers a close listener — a clean server-side " +
-      "close would be JUST as invisible to it as the silent drop above",
+    1,
+    "fetchStatistics now registers a close listener (see the close-before-" +
+      "result fix test above) — but a SILENT drop never fires a close " +
+      "event, so the listener never runs and the call still hangs until " +
+      "the 60s timeout",
   );
 });
 
