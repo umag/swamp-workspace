@@ -533,8 +533,10 @@ Deno.test({
     // step 1 just set server-side. onboard-artists' pending filter includes
     // `s === "Skipped"`, so it re-queues it, silently undoing step 1's
     // intent. This is the real cross-method idempotency defect from plan
-    // v2 (tracked by headphones-apikey-hardening) — PINNED here, not fixed,
-    // since headphones.ts is byte-frozen by this change.
+    // v2 (tracked by the local `headphones-apikey-hardening` issue-lifecycle
+    // model) — PINNED here, not fixed; it is explicitly out of scope for the
+    // redaction + array-unwrap fix landed by that model (onboard-artists'
+    // pending filter is untouched by this change).
     const { ctx: onboardCtx, written: onboardWritten } = makeCtx();
     const queuedIds: string[] = [];
     await withFetchStub(

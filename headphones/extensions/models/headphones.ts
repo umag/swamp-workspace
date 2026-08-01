@@ -56,6 +56,41 @@ const DEFAULT_EXTRA_TYPES: readonly (typeof EXTRA_TYPES)[number][] = [
 
 // --- helpers ---
 
+/**
+ * Strip the value of an `apikey=`/`api_key=` query parameter from an error
+ * message so it never leaks the Headphones credential — whether through a
+ * fetch-rejection's own error text (which typically embeds the request URL)
+ * or a hostile/misconfigured server echoing the request back in its error
+ * body. Strict no-op when the message contains no such parameter, so it must
+ * never alter a message that carries no secret (e.g. a plain `429 - quota
+ * exceeded` API error) — flip only what needs redacting.
+ */
+function redactSecrets(message: string): string {
+  return message.replace(/\bapi_?key=[^&\s"')]+/gi, (match) => {
+    const eq = match.indexOf("=");
+    return `${match.slice(0, eq + 1)}REDACTED`;
+  });
+}
+
+/**
+ * Rethrow a caught fetch-rejection error with its message redacted via
+ * redactSecrets(). Diagnostics are preserved through a REDACTED single-level
+ * `cause` — never the raw original error — so the secret can't resurface
+ * through a default Error/cause-chain inspection (e.g. Deno's default
+ * console formatting, which recurses into `.cause`) even though the
+ * top-level `.message` is clean. Any deeper nested cause on the original
+ * error is intentionally dropped: a redacted single-level cause is enough
+ * for diagnostics, and carrying the raw chain through would just relocate
+ * the leak from `.message` to `.cause`.
+ */
+function rethrowRedacted(e: unknown): never {
+  const message = e instanceof Error ? e.message : String(e);
+  const cause = e instanceof Error
+    ? new Error(redactSecrets(e.message))
+    : undefined;
+  throw new Error(redactSecrets(message), cause ? { cause } : {});
+}
+
 async function api(
   host: string,
   apiKey: string,
@@ -70,13 +105,25 @@ async function api(
   }
   // Bound every request so a stalled instance can't hang a method indefinitely
   // (the onboard-artists poll loop relies on this to honour timeoutSeconds).
-  const response = await fetch(url.toString(), {
-    signal: AbortSignal.timeout(60_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (e) {
+    // A network-layer failure (DNS, TLS, connection reset, or the
+    // AbortSignal.timeout above firing) throws a Deno error that typically
+    // embeds the request URL — which carries ?apikey=<KEY> — verbatim.
+    // Redact before rethrow (message AND cause) so the credential never
+    // reaches logs/callers through either.
+    rethrowRedacted(e);
+  }
   if (!response.ok) {
     const body = await response.text();
     throw new Error(
-      `API ${cmd} failed: ${response.status} - ${body.slice(0, 200)}`,
+      redactSecrets(
+        `API ${cmd} failed: ${response.status} - ${body.slice(0, 200)}`,
+      ),
     );
   }
   const text = await response.text();
@@ -99,13 +146,23 @@ async function webUi(
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v);
   }
-  const response = await fetch(url.toString(), {
-    signal: AbortSignal.timeout(60_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (e) {
+    // Same wrap-and-redact treatment as api(), for defense-in-depth — this
+    // URL never carries the apiKey (getExtras is the unauthenticated web-UI
+    // form), but the mechanism must still apply unconditionally.
+    rethrowRedacted(e);
+  }
   if (!response.ok) {
     const body = await response.text();
     throw new Error(
-      `${path} failed: ${response.status} - ${body.slice(0, 200)}`,
+      redactSecrets(
+        `${path} failed: ${response.status} - ${body.slice(0, 200)}`,
+      ),
     );
   }
   return await response.text();
@@ -252,7 +309,7 @@ const TaskResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/headphones",
-  version: "2026.07.27.1",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     artists: {
@@ -414,7 +471,8 @@ export const model = {
         const { host, apiKey } = context.globalArgs;
         const data = await api(host, apiKey, "getArtist", { id: args.id });
         const handle = await context.writeResource("artist", args.id, {
-          artist: data.artist || data,
+          artist: (Array.isArray(data.artist) ? data.artist[0] : data.artist) ||
+            data,
           albums: data.albums || [],
           timestamp: new Date().toISOString(),
         });
@@ -709,7 +767,8 @@ export const model = {
         const { host, apiKey } = context.globalArgs;
         const data = await api(host, apiKey, "getAlbum", { id: args.id });
         const handle = await context.writeResource("album", args.id, {
-          album: data.album || data,
+          album: (Array.isArray(data.album) ? data.album[0] : data.album) ||
+            data,
           tracks: data.tracks || [],
           timestamp: new Date().toISOString(),
         });

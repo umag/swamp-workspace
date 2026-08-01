@@ -3,12 +3,13 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-headphones,
-# wave-2b full build of the Phase D extension-quality backfill). headphones.ts
-# is unmodified — every suite drives model.methods.<m>.execute() against a
-# stubbed fetch (+ a stubbed Deno.Command for audit-library) and a fake
-# context, characterizing already-shipped behavior. The apikey-in-URL-query
-# fetch-rejection leak (source is byte-frozen here) is tracked by the
-# follow-up hardening issue headphones-apikey-hardening — see CHANGELOG.md.
+# wave-2b full build of the Phase D extension-quality backfill). Every suite
+# drives model.methods.<m>.execute() against a stubbed fetch (+ a stubbed
+# Deno.Command for audit-library) and a fake context. The apikey-in-URL-query
+# fetch-rejection leak and the get-artist/get-album array non-unwrap were
+# later fixed via the local `headphones-apikey-hardening` issue-lifecycle
+# model (redactSecrets wrapper + array unwrap, version 2026.08.01.1) — see
+# CHANGELOG.md.
 schemaVersion: 1
 extension: headphones
 tests:
