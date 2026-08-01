@@ -316,7 +316,7 @@ Deno.test("[cross-model trap] vm.stop issues `shutdown` (graceful) and NEVER `de
   const { ctx: stopCtx } = makeCtx(LOCAL);
   await withCommandStub([
     on(["shutdown", "web"], ok()),
-    on(["dominfo", "web"], ok("State: in shutdown")),
+    on(["dominfo", "web"], ok("State: shut off")),
   ], async (calls) => {
     await run(vmModel, "stop", { name: "web" }, stopCtx);
     assertEquals(
