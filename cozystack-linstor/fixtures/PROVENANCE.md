@@ -71,9 +71,12 @@ guarantee that would also hold for genuinely captured data.
   never a real node in this homelab's Cozystack cluster.
 - IP addresses: `192.0.2.10`, `192.0.2.11`, `192.0.2.21` — from the `TEST-NET-1`
   documentation range ([RFC 5737](https://www.rfc-editor.org/rfc/rfc5737)).
-- Block device: `/dev/vdb` — a generic virtio-block device name used only as an
-  argument in test code, not a fixture value; never a real device path from a
-  live node.
+- Block device: `/dev/vdb`, `/dev/vdc` — generic virtio-block device names.
+  Prior to `physical-storage-list.json`, device paths appeared only as arguments
+  in test code, never as a fixture value; that fixture now carries them as data
+  too (LINSTOR's physical-storage inventory genuinely groups device paths by
+  node), but they remain the same generic virtio-block names, never a real
+  device path from a live node.
 - Storage pool / ZFS pool names: `data` — LINSTOR's own documented default pool
   name, not a real cluster's naming convention.
 - `free_space`/`total_capacity` byte counts (`3221225472`, `10737418240`, `0`) —
@@ -82,12 +85,13 @@ guarantee that would also hold for genuinely captured data.
 
 ## Per-file mapping to the documented shape
 
-| File                     | Documented shape                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------- |
-| `node-list.json`         | `linstor node list --output-version=v1 -m` (machine-readable node list)               |
-| `storage-pool-list.json` | `linstor storage-pool list --output-version=v1 -m`                                    |
-| `deploy-ready.json`      | `kubectl get deploy/linstor-controller -o json` — ready (`readyReplicas >= replicas`) |
-| `deploy-notready.json`   | Same shape — not ready (`readyReplicas < replicas`)                                   |
+| File                         | Documented shape                                                                                      |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `node-list.json`             | `linstor node list --output-version=v1 -m` (machine-readable node list)                               |
+| `storage-pool-list.json`     | `linstor storage-pool list --output-version=v1 -m`                                                    |
+| `deploy-ready.json`          | `kubectl get deploy/linstor-controller -o json` — ready (`readyReplicas >= replicas`)                 |
+| `deploy-notready.json`       | Same shape — not ready (`readyReplicas < replicas`)                                                   |
+| `physical-storage-list.json` | `linstor physical-storage list --output-version=v1 -m` — unclaimed/available devices, grouped by node |
 
 ## A documented shape quirk this corpus deliberately preserves
 
@@ -101,3 +105,18 @@ deliberately varies the third pool's shape: `worker-2`'s entry carries no
 `free_space.free_capacity` is exactly `0` (not absent) — both pin the model's
 `!= null` (not truthy) numeric-zero handling and the `|| "unknown"` fallback
 chain against a real doc-derived absence rather than a fabricated edge case.
+
+`physical-storage-list.json` preserves the same top-level-array-plus-named-key
+wrapping (`[{"physical_storage": [...]}]`), read via the identical
+`data[0]?.physical_storage || data.physical_storage || data || []` fallback. Its
+per-entry shape (`size`, `rotational`, and a `nodes` dict mapping node name to a
+list of `{device, model, serial, wwn}` entries) is transcribed from LINBIT's
+`linstor-api-py` `PhysicalDevice`/`NodeStorageEntry` response classes (the
+Python client library backing `linstor-client`), not from any live capture. The
+load-bearing semantic this fixture encodes: a device already backing a storage
+pool does **not** appear anywhere in this list — its absence is exactly what
+signals "in use" to `createZfsPool`'s device-availability guard
+(`cozystack-linstor-fail-open-guards`). `worker-1` has no entry at all here,
+standing in for "every device on this node is already claimed" — an omission,
+not an empty array, that is itself a doc-derived absence rather than a
+fabricated edge case.

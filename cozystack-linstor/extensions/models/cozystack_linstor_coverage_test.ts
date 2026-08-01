@@ -581,9 +581,18 @@ Deno.test("listNodes: type and connection_status BOTH absent -> both fall back t
 // setZfsFailmode, applyStorageClasses all share this `stderr ? split : []` shape
 // ---------------------------------------------------------------------------
 
+const CREATE_ZFS_DEVICE_FREE = JSON.stringify([{
+  physical_storage: [{
+    size: 10737418240,
+    rotational: false,
+    nodes: { "worker-0": [{ device: "/dev/vdb" }] },
+  }],
+}]);
+
 Deno.test("createZfsPool: a non-empty create-device-pool stderr becomes a filtered, non-empty warnings array", async () => {
   const stub = installCmdStub([
     { success: true, stdout: JSON.stringify([{ stor_pools: [] }]), stderr: "" },
+    { success: true, stdout: CREATE_ZFS_DEVICE_FREE, stderr: "" },
     {
       success: true,
       stdout: "",
@@ -606,6 +615,7 @@ Deno.test("createZfsPool: a non-empty create-device-pool stderr becomes a filter
 Deno.test("createZfsPool: empty create-device-pool stderr -> `warnings` key is absent (undefined), not an empty array", async () => {
   const stub = installCmdStub([
     { success: true, stdout: JSON.stringify([{ stor_pools: [] }]), stderr: "" },
+    { success: true, stdout: CREATE_ZFS_DEVICE_FREE, stderr: "" },
     { success: true, stdout: "", stderr: "" },
   ]);
   const { ctx, written } = makeCtx();

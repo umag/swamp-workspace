@@ -311,10 +311,18 @@ Deno.test("listStoragePools: failure path — a non-transient kubectl error thro
 // createZfsPool
 // ---------------------------------------------------------------------------
 
-Deno.test("createZfsPool: happy path — no existing pool, issues list THEN create-device-pool with default poolName/storagePool", async () => {
+Deno.test("createZfsPool: happy path — no existing pool, issues list, physical-storage inventory read, THEN create-device-pool with default poolName/storagePool", async () => {
   const emptyList = JSON.stringify([{ stor_pools: [] }]);
+  const deviceFree = JSON.stringify([{
+    physical_storage: [{
+      size: 10737418240,
+      rotational: false,
+      nodes: { "worker-0": [{ device: "/dev/vdb" }] },
+    }],
+  }]);
   const stub = installCmdStub([
     { success: true, stdout: emptyList, stderr: "" },
+    { success: true, stdout: deviceFree, stderr: "" },
     { success: true, stdout: "", stderr: "" },
   ]);
   const { ctx, written } = makeCtx();
@@ -323,7 +331,7 @@ Deno.test("createZfsPool: happy path — no existing pool, issues list THEN crea
   } finally {
     stub.restore();
   }
-  assertEquals(stub.invocations.length, 2);
+  assertEquals(stub.invocations.length, 3);
   assertEquals(stub.invocations[0].args, [
     "exec",
     "-n",
@@ -340,6 +348,19 @@ Deno.test("createZfsPool: happy path — no existing pool, issues list THEN crea
     ...KC_FLAGS,
   ]);
   assertEquals(stub.invocations[1].args, [
+    "exec",
+    "-n",
+    "cozy-linstor",
+    "deploy/linstor-controller",
+    "--",
+    "linstor",
+    "physical-storage",
+    "list",
+    "--output-version=v1",
+    "-m",
+    ...KC_FLAGS,
+  ]);
+  assertEquals(stub.invocations[2].args, [
     "exec",
     "-n",
     "cozy-linstor",

@@ -161,7 +161,7 @@ const ResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/cozystack-linstor",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgs,
   checks: {
     "cluster-reachable": {
@@ -398,7 +398,7 @@ export const model = {
 
     createZfsPool: {
       description:
-        "Create a ZFS storage pool on a node. Idempotent: skips if pool already exists.",
+        "Create a ZFS storage pool on a node. Idempotent: skips if pool already exists. Verify-before-destructive: reads LINSTOR's live physical-storage inventory to confirm the requested device is available before creating, refusing instead of wiping a device already in use or silently discarding a mismatched request.",
       arguments: z.object({
         node: z.string().describe("Node name to create the pool on"),
         device: z.string().describe("Block device path (e.g. /dev/vdb)"),
@@ -424,12 +424,44 @@ export const model = {
         const pools = listData[0]?.stor_pools || listData.stor_pools ||
           listData || [];
 
-        const existing = pools.find(
+        const nameMatch = pools.find(
           (p) =>
             p.stor_pool_name === args.storagePool && p.node_name === args.node,
         );
 
-        if (existing) {
+        // Verify-before-destructive (CLAUDE.md Rule 5): read LINSTOR's live
+        // physical-storage inventory to establish device AVAILABILITY before
+        // any decision to create. A device already backing a storage pool
+        // does not appear in this list — its absence signals "in use".
+        // `physical-storage list` has no per-node filter, so the full
+        // inventory is read and filtered client-side, mirroring the
+        // `data[0]?.x || data.x || data || []` fallback used above.
+        const { stdout: invOut } = await linstor(context.globalArgs, [
+          "physical-storage",
+          "list",
+          "--output-version=v1",
+          "-m",
+        ]);
+        const invData = JSON.parse(invOut);
+        const physicalStorage = invData[0]?.physical_storage ||
+          invData.physical_storage || invData || [];
+
+        const availableDevices = new Set();
+        if (Array.isArray(physicalStorage)) {
+          for (const entry of physicalStorage) {
+            const nodeDevices = entry?.nodes?.[args.node];
+            if (Array.isArray(nodeDevices)) {
+              for (const d of nodeDevices) {
+                if (d?.device) availableDevices.add(d.device);
+              }
+            }
+          }
+        }
+        const deviceFree = availableDevices.has(args.device);
+
+        if (nameMatch && !deviceFree) {
+          // Idempotent no-op: the pool already exists and its device is
+          // consumed — a consistent, already-provisioned state.
           const handle = await context.writeResource(
             "result",
             `create-zfs-${args.node}-${args.storagePool}`,
@@ -443,6 +475,42 @@ export const model = {
           return { dataHandles: [handle] };
         }
 
+        if (nameMatch && deviceFree) {
+          // Direction B: same storage-pool name already exists, but the
+          // requested device is a DIFFERENT, still-unclaimed device. Refuse
+          // rather than silently no-op and never provision it.
+          const handle = await context.writeResource(
+            "result",
+            `create-zfs-${args.node}-${args.storagePool}`,
+            {
+              success: false,
+              message:
+                `Refusing to create: storage pool '${args.storagePool}' already exists on node '${args.node}', but requested device '${args.device}' is a different, unclaimed device — not silently discarding the request`,
+              timestamp: now,
+            },
+          );
+          return { dataHandles: [handle] };
+        }
+
+        if (!nameMatch && !deviceFree) {
+          // Direction A: no storage pool matches this name on this node, but
+          // the requested device is NOT available — it already backs some
+          // other pool. Proceeding would WIPE it. Refuse.
+          const handle = await context.writeResource(
+            "result",
+            `create-zfs-${args.node}-${args.storagePool}`,
+            {
+              success: false,
+              message:
+                `Refusing to create: device '${args.device}' on node '${args.node}' is not available (already in use) and no storage pool named '${args.storagePool}' exists on this node — creating would risk wiping an in-use device`,
+              timestamp: now,
+            },
+          );
+          return { dataHandles: [handle] };
+        }
+
+        // !nameMatch && deviceFree: a genuinely new node+pool+device — safe
+        // to create.
         // Create the ZFS device pool
         const { stderr } = await linstor(context.globalArgs, [
           "physical-storage",
