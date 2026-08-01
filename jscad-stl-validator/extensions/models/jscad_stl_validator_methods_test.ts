@@ -38,6 +38,7 @@ function makeCtx(
   opts: {
     definitions?: Map<string, Found>;
     content?: Map<string, Uint8Array | null>;
+    allowedRoots?: string[];
   } = {},
 ) {
   const written: Written[] = [];
@@ -72,6 +73,7 @@ function makeCtx(
         });
         return Promise.resolve({ spec, name });
       },
+      globalArgs: { allowedRoots: opts.allowedRoots ?? [] },
     },
   };
 }
@@ -262,5 +264,76 @@ Deno.test("validateFile: wraps a directory-path read error with the file path in
     );
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// validateFile() — allowedRoots confinement (operator-set global argument,
+// read via context.globalArgs; NOT part of the per-call untrusted arguments)
+// ---------------------------------------------------------------------------
+
+Deno.test("validateFile: with allowedRoots configured, accepts a file inside the allowed root", async () => {
+  const stl = buildBinaryStl(1);
+  await withTempStlFile(stl, async (filePath, root) => {
+    const { ctx, written } = makeCtx({ allowedRoots: [root] });
+    await run("validateFile", { filePath }, ctx);
+    assertEquals(written[0].payload.format, "binary");
+    assertEquals(written[0].payload.triangleCount, 1);
+  });
+});
+
+Deno.test("validateFile: with allowedRoots configured, rejects a file outside every allowed root", async () => {
+  const allowedRoot = await Deno.makeTempDir({
+    prefix: "jscad-stl-validator-allowed-",
+  });
+  const stl = buildBinaryStl(1);
+  try {
+    await withTempStlFile(stl, async (filePath) => {
+      const { ctx, written } = makeCtx({ allowedRoots: [allowedRoot] });
+      await assertRejects(
+        () => run("validateFile", { filePath }, ctx),
+        Error,
+        "Refusing to read",
+      );
+      assertEquals(written.length, 0);
+    });
+  } finally {
+    await Deno.remove(allowedRoot, { recursive: true });
+  }
+});
+
+Deno.test("validateFile: a smuggled per-call args.allowedRoots has NO effect — confinement is governed exclusively by context.globalArgs (operator-set), never the per-call (untrusted) arguments", async () => {
+  const restrictiveRoot = await Deno.makeTempDir({
+    prefix: "jscad-stl-validator-restrictive-",
+  });
+  const stl = buildBinaryStl(1);
+  try {
+    await withTempStlFile(stl, async (filePath, actualRoot) => {
+      // ctx.globalArgs.allowedRoots is RESTRICTIVE — it does NOT include the
+      // file's real directory. The per-call args smuggle in an
+      // `allowedRoots` naming the file's ACTUAL directory, which — if the
+      // method mistakenly read confinement off `args` instead of
+      // `context.globalArgs` — would incorrectly permit the read. Since the
+      // method's arguments schema declares only `filePath`, this extra key
+      // must be ignored (stripped by the schema, never consulted), so the
+      // read is still rejected under the real (restrictive) globalArgs.
+      const { ctx, written } = makeCtx({ allowedRoots: [restrictiveRoot] });
+      await assertRejects(
+        () =>
+          run(
+            "validateFile",
+            { filePath, allowedRoots: [actualRoot] } as unknown as Record<
+              string,
+              unknown
+            >,
+            ctx,
+          ),
+        Error,
+        "Refusing to read",
+      );
+      assertEquals(written.length, 0);
+    });
+  } finally {
+    await Deno.remove(restrictiveRoot, { recursive: true });
   }
 });

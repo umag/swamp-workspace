@@ -24,7 +24,7 @@ import {
 
 type Written = { spec: string; name: string; payload: Record<string, unknown> };
 
-function makeCtx() {
+function makeCtx(allowedRoots: string[] = []) {
   const written: Written[] = [];
   return {
     written,
@@ -37,6 +37,7 @@ function makeCtx() {
         });
         return Promise.resolve({ spec, name });
       },
+      globalArgs: { allowedRoots },
     },
   };
 }
@@ -52,14 +53,15 @@ function run(name: string, args: Record<string, unknown>, ctx: unknown) {
 }
 
 // ---------------------------------------------------------------------------
-// pin: LB1 — validateFile arbitrary-file-read / path traversal (HIGH)
-// filePath is Deno.readFile'd verbatim — no allow-list, no confinement to
-// any base directory, no realpath check. A traversal-shaped path (or any
-// absolute path) is honored exactly. Escape target stays INSIDE the
-// per-test temp tree — no real system file is ever touched.
+// fix: LB1 — validateFile arbitrary-file-read / path traversal (HIGH), FIXED
+// filePath now goes through jscad/safe_path.ts's resolveStlPath guard:
+// non-absolute paths and any '.'/'..' traversal segment are rejected BEFORE
+// any filesystem access; the target is then canonicalized via
+// Deno.realPath. Escape target/allowed dirs stay INSIDE the per-test temp
+// tree — no real system file is ever touched.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: validateFile has no path confinement — a '../' traversal path outside the intended directory is read verbatim (LB1, HIGH)", async () => {
+Deno.test("fix: validateFile now REJECTS a '../' traversal path — the secret file outside the intended directory is never read (was LB1, HIGH)", async () => {
   const root = await Deno.makeTempDir({ prefix: "jscad-stl-validator-trav-" });
   try {
     const allowedDir = `${root}/allowed`;
@@ -74,24 +76,26 @@ Deno.test("pin: validateFile has no path confinement — a '../' traversal path 
 
     const { ctx, written } = makeCtx();
     const traversalPath = `${allowedDir}/../secret.stl`;
-    await run("validateFile", { filePath: traversalPath }, ctx);
+    await assertRejects(
+      () => run("validateFile", { filePath: traversalPath }, ctx),
+      Error,
+      "Refusing to read",
+    );
 
-    // The method happily parsed the secret file outside `allowedDir` — no
-    // boundary was enforced anywhere in `validateFile`.
-    assertEquals(written[0].payload.format, "ascii");
-    assertEquals(written[0].payload.triangleCount, 1);
-    assertEquals(written[0].payload.valid, true);
+    // The secret file outside `allowedDir` was never parsed — nothing
+    // written, no boundary was crossed.
+    assertEquals(written.length, 0);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
 });
 
-Deno.test("pin: validateFile has no notion of an 'expected' base directory at all — two calls against files in TWO entirely unrelated temp roots both succeed identically (LB1, HIGH)", async () => {
+Deno.test("regression: validateFile's default contract is preserved — with no allowedRoots configured, two calls against files in TWO entirely unrelated temp roots both still succeed identically", async () => {
   // Two independent `Deno.makeTempDir()` roots, standing in for "two
-  // unrelated locations on disk" — neither is configured anywhere as THE
-  // expected directory. If `validateFile` enforced any confinement, one of
-  // these would need to be rejected; the shipped code has no such concept,
-  // so both succeed identically.
+  // unrelated locations on disk" — neither is configured as an
+  // `allowedRoots` entry. This is the intended DEFAULT contract (empty
+  // allowedRoots = no confinement), not a bug: a caller that wants
+  // confinement must opt in via the `allowedRoots` global argument.
   await withTempStlFile(
     encodeBinaryStl({ triangles: nTriangles(1) }),
     async (filePathA) => {
