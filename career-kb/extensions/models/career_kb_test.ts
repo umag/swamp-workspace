@@ -1,6 +1,12 @@
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertThrows,
+} from "jsr:@std/assert@1";
 import {
   asArray,
+  assertWithinRefs,
   buildEntry,
   extractSections,
   getSection,
@@ -131,6 +137,28 @@ Deno.test("buildEntry: structures a source from path + markdown", () => {
   assertEquals(e.keyConstructs, ["k1", "k2"]);
   assertEquals(e.summary, "s");
   assertEquals(e.sections, ["A", "B"]);
+});
+
+Deno.test("assertWithinRefs: accepts a legitimate cluster/file.md relative path and the bare index.json", () => {
+  assertWithinRefs("inaction/career-inaction.md");
+  assertWithinRefs("index.json");
+});
+
+Deno.test("assertWithinRefs: rejects `..` segments, absolute paths, mixed traversal, `.` segments, and backslashes -- naming the offending input", () => {
+  const rejections: string[] = [
+    "../x",
+    "/etc/passwd",
+    "a/../../b",
+    "./x",
+    "..\\x",
+  ];
+  for (const rel of rejections) {
+    const err = assertThrows(() => assertWithinRefs(rel), Error);
+    assert(
+      err.message.includes(rel),
+      `expected the thrown message to name the offending input "${rel}", got: ${err.message}`,
+    );
+  }
 });
 
 // ---------- Schema / argument defaults --------------------------------------

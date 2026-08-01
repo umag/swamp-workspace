@@ -2,25 +2,31 @@
  * Adversarial suite for @magistr/career-kb (career_kb.ts) -- hostile/boundary
  * inputs plus a mechanical fixtures-secret-scan over `fixtures/**`.
  *
- * career_kb.ts is UNMODIFIED -- every test here PINS current behavior
- * (including behavior that is a documented latent bug) rather than proposing
- * a fix. This suite is where the 7 latent bugs tracked in the LOCAL
+ * LB1 (path traversal via `read`'s `file` argument, HIGH) was FIXED by this
+ * change: `readRef()` now calls the exported `assertWithinRefs()` guard
+ * before building the on-disk path, so a `file` argument that escapes
+ * `references/` is REJECTED (no read, no resource written) instead of
+ * succeeding. Every OTHER test here still PINS current behavior (including
+ * behavior that is a documented latent bug) rather than proposing a fix. This
+ * suite is where the remaining 6 latent bugs tracked in the LOCAL
  * `career-kb-latent-bugs` issue-lifecycle model (NEVER filed to the
  * swamp.club Lab -- see CLAUDE.md's anti-bypass rule) are characterized as
  * failing-would-be-red-if-"fixed" pins:
- *   LB1 path traversal via `read`'s `file` argument (HIGH), LB2 all
- *   out-of-range CARINAS values yield a NaN mean mislabeled "high" (MEDIUM),
- *   LB3 resource-name slug collision between distinct `assess` situations
- *   (MEDIUM), LB4 one bad/missing source aborts the whole catalog build
- *   (MEDIUM), LB5 an empty `clusters: []` global arg disables filtering
+ *   LB2 all out-of-range CARINAS values yield a NaN mean mislabeled "high"
+ *   (MEDIUM), LB3 resource-name slug collision between distinct `assess`
+ *   situations (MEDIUM), LB4 one bad/missing source aborts the whole catalog
+ *   build (MEDIUM), LB5 an empty `clusters: []` global arg disables filtering
  *   entirely (LOW), LB6 no size cap on `read`/`index` (LOW), LB7 verbatim
  *   unsanitized content storage (LOW/info).
  *
- * LB1 uses the COMMITTED `fixtures/outside/` sibling (never a real file).
- * LB4/LB6/LB7 need bespoke corpora (a broken index entry, a huge file, an
- * injection payload) that must NOT pollute the shared `fixtures/references/`
- * corpus the methods/coverage/property suites depend on -- each builds its
- * own disposable `Deno.makeTempDir()` corpus, cleaned up in a `finally`.
+ * LB1 uses the COMMITTED `fixtures/outside/` sibling (never a real file) --
+ * now an unreachable synthetic attack target, kept committed to prove the
+ * guard actually rejects a real escape rather than merely rejecting a
+ * nonexistent path. LB4/LB6/LB7 need bespoke corpora (a broken index entry, a
+ * huge file, an injection payload) that must NOT pollute the shared
+ * `fixtures/references/` corpus the methods/coverage/property suites depend
+ * on -- each builds its own disposable `Deno.makeTempDir()` corpus, cleaned
+ * up in a `finally`.
  *
  * It also pins two REFUTED risk classes as covered-negatives: credential
  * leak (globalArguments carries no secret-shaped field) and
@@ -103,21 +109,59 @@ async function withTempCorpus(
 }
 
 // ===========================================================================
-// LB1 path traversal via `read`'s `file` argument -- HIGH
+// LB1 path traversal via `read`'s `file` argument -- HIGH -- FIXED
 // ===========================================================================
 
-Deno.test("pin (career-kb-latent-bugs LB1, HIGH): a `file` argument containing `..` segments escapes references/ into a sibling directory -- context.extensionFile performs NO confinement", async () => {
+Deno.test("pin (career-kb-latent-bugs LB1, HIGH -- FIXED): a `file` argument containing `..` segments is REJECTED before any read is attempted -- assertWithinRefs confines readRef() to references/", async () => {
   const { context, writes } = fixtureContext();
-  await model.methods.read.execute(
-    { file: "../outside/fixture-escape-target.md" },
-    context,
+  await assertRejects(
+    () =>
+      model.methods.read.execute(
+        { file: "../outside/fixture-escape-target.md" },
+        context,
+      ),
+    Error,
+    "Invalid reference path",
   );
-  const doc = writes[0].data as { file: string; content: string };
-  assertEquals(doc.file, "../outside/fixture-escape-target.md");
-  assert(
-    doc.content.includes("FIXTURE-OUTSIDE-ESCAPE-TARGET"),
-    "the read reached the file OUTSIDE references/ and returned its content verbatim",
+  assertEquals(
+    writes.length,
+    0,
+    "the traversal attempt must be rejected before any resource is written -- the fixture-escape-target content must never surface",
   );
+});
+
+// Each of these is genuinely RED against the unmodified source (verified):
+// pre-fix, "/etc/passwd" and "a/../../b" 404 as unrelated Deno.errors.NotFound
+// (the naive `${REF_DIR}/${rel}` template-literal join never reaches real
+// filesystem paths outside the fixtures tree in this test harness), "../.."
+// throws Deno.errors.IsADirectory (it walks up to the fixtures parent, a real
+// directory), and "./x" resolves harmlessly inside references/ and 404s on a
+// nonexistent file -- NONE of those messages contain "Invalid reference
+// path", so asserting that specific substring genuinely fails before
+// assertWithinRefs is wired into readRef() and genuinely passes after,
+// proving the guard -- not an incidental filesystem error -- is what rejects
+// every shape.
+Deno.test("pin (career-kb-latent-bugs LB1, HIGH -- FIXED): additional synthetic traversal shapes (absolute, nested ../.., mixed a/../../b, ./x) are all REJECTED by assertWithinRefs specifically, no resource written", async () => {
+  const traversalAttempts = [
+    "/etc/passwd",
+    "../..",
+    "a/../../b",
+    "./x",
+  ];
+  for (const file of traversalAttempts) {
+    const { context, writes } = fixtureContext();
+    await assertRejects(
+      () => model.methods.read.execute({ file }, context),
+      Error,
+      "Invalid reference path",
+      `expected "${file}" to be rejected by assertWithinRefs specifically`,
+    );
+    assertEquals(
+      writes.length,
+      0,
+      `no resource written for rejected traversal-shaped input "${file}"`,
+    );
+  }
 });
 
 // ===========================================================================
