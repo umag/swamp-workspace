@@ -4,10 +4,15 @@
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-homeassistant, wave
 # 2c full build of the extension-quality backfill program,
-# ext-quality-test-backfill). homeassistant.ts is unmodified — every suite
-# drives model.methods.<m>.execute() against a stubbed fetch + a novel
-# FakeWebSocket scripted-responder (the model's one WS path, fetchStatistics)
-# + a fake context, characterizing already-shipped behavior.
+# ext-quality-test-backfill). Every suite drives model.methods.<m>.execute()
+# against a stubbed fetch + a novel FakeWebSocket scripted-responder (the
+# model's one WS path, fetchStatistics) + a fake context.
+#
+# homeassistant.ts v2026.08.01.1 folds in fixes for two HIGH findings from the
+# local `homeassistant-latent-bugs` issue-lifecycle model (WS clean-close hang
+# + latent msg.id non-correlation) — homeassistant.ts is NO LONGER unmodified;
+# see CHANGELOG.md. All remaining MED/LOW findings from that model are still
+# characterized (pinned), not fixed.
 schemaVersion: 1
 extension: homeassistant
 tests:
