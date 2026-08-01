@@ -11,6 +11,12 @@ Ground truth was captured against **link-cli v0.9.0** and is pinned by the
 contract fixtures in `stripe_mpp_test.ts`; the release-watch cron flags a new
 `@stripe/link-cli` release so the fixtures can be re-pinned.
 
+Fixtures re-pinned to v0.10.1 on 2026-08-01 based on the published release notes
+(additive/security changes, no documented stdio-MCP contract change) — not
+re-observed, since Link is still US-only and not live-verifiable from this
+maintainer's EU account. The v0.9.0 ground truth above remains the last
+directly-observed transcript.
+
 ## Tools used (of the 19 the server exposes)
 
 | Model method                 | MCP tool                 | Notes                     |

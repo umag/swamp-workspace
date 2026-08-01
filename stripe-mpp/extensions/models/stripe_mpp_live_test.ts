@@ -57,7 +57,7 @@ Deno.test({
       secretKey: "sk_test_placeholder", // not used by the consumer path
       networkId,
       linkCliPath: binPath,
-      linkCliVersion: "0.9.0",
+      linkCliVersion: "0.10.1",
       allowLiveGrants: false, // test mode
     });
 

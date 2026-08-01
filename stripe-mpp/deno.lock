@@ -4,7 +4,7 @@
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:fast-check@4.8.0": "4.8.0",
-    "npm:mppx@0.8.12": "0.8.12_viem@2.55.4__zod@4.4.3",
+    "npm:mppx@0.8.14": "0.8.14_viem@2.55.10__zod@4.4.3",
     "npm:stripe@22.4.0-beta.1": "22.4.0-beta.1",
     "npm:zod@4": "4.4.3"
   },
@@ -92,8 +92,8 @@
         "pure-rand"
       ]
     },
-    "incur@0.4.19": {
-      "integrity": "sha512-xSH6Y79oIeLwwiOp51MjXTyBzcNmP/gOQN+pCrjqG04UdAawZkKoqs6lpTto5c8ht1fGnGz8PADRJqdpf8mD2A==",
+    "incur@0.4.26": {
+      "integrity": "sha512-63lwOc8+o1VeFkIW3sWWMrDSP5Dd1NsvucUWyxLUk+DoNRiNl7cj481nlLdlboXkq+tqYPBSlV/7XbylS2S4BA==",
       "dependencies": [
         "@cfworker/json-schema",
         "@modelcontextprotocol/server",
@@ -111,13 +111,13 @@
         "ws"
       ]
     },
-    "mppx@0.8.12_viem@2.55.4__zod@4.4.3": {
-      "integrity": "sha512-aLtXfnOZ92E2aYsBNAo6StO7osQvBoSyzLc82pyrVKRn2VGhgVcMiqDIhSq0NWWhjrl8UQAjqU1Q8Qpt9WFSrw==",
+    "mppx@0.8.14_viem@2.55.10__zod@4.4.3": {
+      "integrity": "sha512-rXeq9HvU5oKtJ5K89WdO1s40uCsimGPxyaRnY44jxtctKL20Wd9WmQYRWIIab73ruMmM9KnvevN1BkDKGRI+7A==",
       "dependencies": [
         "@stripe/stripe-js",
         "eventsource-parser",
         "incur",
-        "ox",
+        "ox@0.14.30_zod@4.4.3",
         "viem",
         "zod"
       ],
@@ -136,17 +136,29 @@
         "eventemitter3"
       ]
     },
+    "ox@0.14.33_zod@4.4.3": {
+      "integrity": "sha512-rooA/4o7bBof4Ge2VH/eovfNPb/AEEYyrNj03wggc55g5HZD8Pjs/OeWhttgjic3dDcqn0r29bDuvQEdTiUemQ==",
+      "dependencies": [
+        "@adraffy/ens-normalize",
+        "@noble/ciphers",
+        "@noble/curves",
+        "@noble/hashes",
+        "@scure/bip32",
+        "@scure/bip39",
+        "eventemitter3"
+      ]
+    },
     "pure-rand@8.4.2": {
       "integrity": "sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng=="
     },
     "stripe@22.4.0-beta.1": {
       "integrity": "sha512-tuV9BlNQhEpxscZpADb8VavhM5lONFk3qZ5CbbnVe5H8VISIzhUbKTGX7qeZAmWXVeoiavHizEOhWyKnyGgZ+g=="
     },
-    "tokenx@1.3.0": {
-      "integrity": "sha512-NLdXTEZkKiO0gZuLtMoZKjCXTREXeZZt8nnnNeyoXtNZAfG/GKGSbQtLU5STspc0rMSwcA+UJfWZkbNU01iKmQ=="
+    "tokenx@1.6.0": {
+      "integrity": "sha512-CKTjk345ajvBAUp5xUI9a5KKN0zU0lBueVHQbCskH1Hp6WkUKsPW2qGCYNs0pxNyfzxfo+IIjdt2W4sMbw/qBw=="
     },
-    "viem@2.55.4_zod@4.4.3": {
-      "integrity": "sha512-iSVcFADHPS0GRcY+YMGubuOH0QXcLN87HVlPNaFLPzJv6OzNOql2cim+QxtTe/QxXUqbXLnzTmpFms4PLGyJ6A==",
+    "viem@2.55.10_zod@4.4.3": {
+      "integrity": "sha512-Q9Ba+/ma81U2M5o5P2AQ7Ux8rTIwmCZvUcr8rKdQ22bV0IBFHllM2m5gWDP8hFaUN2nH2oW3QG44amRazflYNQ==",
       "dependencies": [
         "@noble/curves",
         "@noble/hashes",
@@ -154,7 +166,7 @@
         "@scure/bip39",
         "abitype",
         "isows",
-        "ox",
+        "ox@0.14.33_zod@4.4.3",
         "ws"
       ]
     },
