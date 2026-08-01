@@ -4,16 +4,17 @@
  * `model.methods.<m>.arguments.parse()` + `.execute()` against a stubbed
  * `globalThis.fetch` and a fake context.
  *
- * dawarich.ts is BYTE-FROZEN by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * dawarich.ts hardened its api_key transport (dawarich-hardening, 2026.08.01.1):
+ * every test here is a characterization test that PINS the model's current,
+ * already-shipped behavior. It is not red-green TDD: there is no new behavior
+ * to drive out.
  *
  * Token-leak assertions run for every method: the `apiKey` global arg must
  * never appear in a thrown error, a written resource payload, or a logger
  * call. A standalone pin also asserts that NO method calls the logger today,
- * and a dedicated sweep asserts the api_key rides in the REQUEST URL QUERY
- * (never a header) for every method — the load-bearing transport-boundary
- * difference from tubearchivist's Authorization-header token.
+ * and a dedicated sweep asserts the api_key rides in an Authorization: Bearer
+ * HEADER (never the request URL query) for every method — like
+ * tubearchivist's Authorization-header token.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./dawarich.ts";
@@ -133,17 +134,18 @@ async function requestBody(req: Request): Promise<Record<string, unknown>> {
 // health
 // ---------------------------------------------------------------------------
 
-Deno.test("health: happy path — GETs /api/v1/health with api_key in the query, no headers leak it", async () => {
+Deno.test("health: happy path — GETs /api/v1/health with api_key in an Authorization: Bearer header, never the query", async () => {
   const { ctx, written } = makeCtx();
   await withOneResponse({ status: "ok" }, 200, async (calls) => {
     await run("health", {}, ctx);
     const url = new URL(calls[0].url);
     assertEquals(url.pathname, "/api/v1/health");
-    assertEquals(url.searchParams.get("api_key"), API_KEY);
+    assertEquals(url.searchParams.get("api_key"), null);
     assertEquals(calls[0].method, "GET");
-    assert(
-      !calls[0].headers.has("Authorization"),
-      "api_key must not ride as an Authorization header",
+    assertEquals(
+      calls[0].headers.get("Authorization"),
+      `Bearer ${API_KEY}`,
+      "api_key must ride as an Authorization: Bearer header",
     );
   });
   const res = written.find((w) => w.spec === "health");
@@ -242,14 +244,15 @@ Deno.test("stats: omitting the required `year` argument fails at the parse bound
 // points
 // ---------------------------------------------------------------------------
 
-Deno.test("points: happy path, no filters — GETs /api/v1/points with no query string beyond api_key", async () => {
+Deno.test("points: happy path, no filters — GETs /api/v1/points with no query string at all (api_key rides the header)", async () => {
   const { ctx, written } = makeCtx();
   const fixture = [{ id: 1, latitude: -33.8568, longitude: 151.2153 }];
   await withOneResponse(fixture, 200, async (calls) => {
     await run("points", {}, ctx);
     const url = new URL(calls[0].url);
     assertEquals(url.pathname, "/api/v1/points");
-    assertEquals([...url.searchParams.keys()], ["api_key"]);
+    assertEquals([...url.searchParams.keys()], []);
+    assertEquals(calls[0].headers.get("Authorization"), `Bearer ${API_KEY}`);
   });
   const res = written.find((w) => w.spec === "points");
   assert(res);
@@ -606,7 +609,7 @@ const ALL_METHOD_SCENARIOS: Array<
   ["photos", {}, []],
 ];
 
-Deno.test("the api_key rides in the REQUEST URL QUERY (never a header) for all 10 methods", async () => {
+Deno.test("the api_key rides in an Authorization: Bearer header (never the request URL query) for all 10 methods", async () => {
   assertEquals(
     ALL_METHOD_SCENARIOS.length,
     10,
@@ -619,12 +622,13 @@ Deno.test("the api_key rides in the REQUEST URL QUERY (never a header) for all 1
       const url = new URL(calls[0].url);
       assertEquals(
         url.searchParams.get("api_key"),
-        API_KEY,
-        `${name}: api_key must be present in the request URL query`,
+        null,
+        `${name}: api_key must not be present in the request URL query`,
       );
-      assert(
-        !calls[0].headers.has("Authorization"),
-        `${name}: api_key must not ride as an Authorization header`,
+      assertEquals(
+        calls[0].headers.get("Authorization"),
+        `Bearer ${API_KEY}`,
+        `${name}: api_key must ride as an Authorization: Bearer header`,
       );
     });
   }
