@@ -1,28 +1,38 @@
 /**
  * Adversarial suite: attacker's-perspective tests for @magistr/skype — TSV
  * row-corruption on embedded newline/tab, path traversal via an unsanitized
- * `folder`, resource-name collisions, the unbounded single-blob export
- * resource, the absent subprocess timeout, lone-surrogate slice truncation,
- * YAML frontmatter injection, the emoji numeric-entity mis-decode, and the
- * hand-rolled SQL escaping (a covered NEGATIVE — pinning that it holds
- * TODAY). Plus a mechanical fixtures-secret-scan over skype/fixtures/*.
+ * `folder`/`profile`, resource-name collisions, the unbounded single-blob
+ * export resource, the absent subprocess timeout, lone-surrogate slice
+ * truncation, YAML frontmatter injection, the emoji numeric-entity
+ * mis-decode, and the hand-rolled SQL escaping (a covered NEGATIVE — pinning
+ * that it holds TODAY). Plus a mechanical fixtures-secret-scan over
+ * skype/fixtures/*.
  *
- * skype.ts is BYTE-FROZEN — every test here PINS current behavior (including
- * behavior that is arguably risky/buggy). Where a test documents a real gap,
- * it is labeled "pin"/"BUG #n" and says so explicitly. Every finding here is
- * filed against the LOCAL `skype-latent-bugs` issue-lifecycle model, never
- * the Lab. See fixtures/PROVENANCE.md for fixture provenance.
+ * FIXED (2026.08.01.1): BUG #1 (TSV row corruption on embedded newline/tab —
+ * queryDb now transports via `sqlite3 -ascii`, 0x1F/0x1E framing) and BUG #2
+ * (path traversal via unsanitized `folder`/`profile` — importToObsidian now
+ * guards the write target with `resolveWithin`). Both are now GREEN tests
+ * proving the fix, not pins of buggy behavior. Every other bug (#3-#9) is
+ * still characterized-not-fixed — skype.ts remains BYTE-FROZEN for those.
+ * Where a test documents a real gap, it is labeled "pin"/"BUG #n" and says so
+ * explicitly. Every finding here is filed against the LOCAL
+ * `skype-latent-bugs` issue-lifecycle model, never the Lab. See
+ * fixtures/PROVENANCE.md for fixture provenance.
+ *
+ * All `sqlite3` stdout stubs use `asciiTable()` — 0x1F between columns, 0x1E
+ * terminating every record (the real `sqlite3 -ascii` wire shape) — never
+ * raw tab/newline joins, which the fixed queryDb no longer parses as framing.
  *
  * No test in this file hangs (BUG #5 is pinned by inspecting the Deno.Command
  * options, never by simulating a real subprocess hang) and no test reads a
  * real filesystem path outside a `Deno.makeTempDir` sandbox (BUG #2's escape
- * target is a sibling temp directory, never a real system path).
+ * targets are sibling temp directories, never a real system path).
  *
  * Toolchain rule (deno 2.8.3 in CI): the `Deno.Command` seam is installed via
  * `(globalThis as any).Deno.Command = FakeCommand`, never a
  * `as typeof Deno.Command` cast.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./skype.ts";
 
 // ---------------------------------------------------------------------------
@@ -140,12 +150,23 @@ function byTable(
   };
 }
 
+/** Frame rows the way real `sqlite3 -ascii` does: columns joined by 0x1F
+ * (unit separator), every record (including the last) terminated by 0x1E
+ * (record separator). Mirrors queryDb's own parse exactly. */
+function asciiTable(rows: string[][]): string {
+  const US = "\x1F";
+  const RS = "\x1E";
+  return rows.map((r) => r.join(US) + RS).join("");
+}
+
 // ---------------------------------------------------------------------------
-// BUG #1 (HIGH): TSV row corruption on embedded newline in body_xml
+// BUG #1 (HIGH, FIXED 2026.08.01.1): TSV row corruption on embedded newline
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG #1 pin: an embedded raw newline in body_xml fabricates a SECOND, garbage message row", async () => {
-  const conversations = "1\tlive:.cid.fake0001\tAna Synthetic\n";
+Deno.test("BUG #1 FIXED: an embedded raw newline in body_xml no longer fabricates a second row — the ascii transport preserves it as ONE intact message", async () => {
+  const conversations = asciiTable([
+    ["1", "live:.cid.fake0001", "Ana Synthetic"],
+  ]);
   const messages = await loadFixture("messages_newline_corruption.tsv");
   const { ctx, written } = makeCtx();
   await withSqliteStub(
@@ -156,34 +177,24 @@ Deno.test("BUG #1 pin: an embedded raw newline in body_xml fabricates a SECOND, 
   const rows = res.payload.messages as Array<Record<string, unknown>>;
   assertEquals(
     rows.length,
-    2,
-    "queryDb's text.split('\\n') fabricates a second row out of the tail of body_xml",
+    1,
+    "0x1E framing never collides with an embedded newline — no spurious second row",
   );
   assertEquals(
     rows[0].body,
-    "line one",
-    "the real message's body is silently TRUNCATED at the embedded newline",
-  );
-  assertEquals(
-    rows[1].id,
-    NaN,
-    "the fabricated second row has no real id — parseInt('line two continued') is NaN",
-  );
-  assertEquals(
-    rows[1].body,
-    "",
-    "the truncated tail ('line two continued') lands in the fabricated row's r[0] " +
-      "(read as `id`, not `body_xml`, since the corrupted row only has ONE column) " +
-      "— it is NOT recovered as message text, it is simply LOST",
+    "line one\nline two continued",
+    "the full body_xml, embedded newline included, survives intact",
   );
 });
 
 // ---------------------------------------------------------------------------
-// BUG #1 sibling (HIGH): TSV column-shift corruption on embedded tab
+// BUG #1 sibling (HIGH, FIXED 2026.08.01.1): TSV column-shift on embedded tab
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG #1 sibling pin: an embedded raw tab in body_xml shifts every following column right by one, silently dropping the last field", async () => {
-  const conversations = "1\tlive:.cid.fake0004\tFixture Four\n";
+Deno.test("BUG #1 sibling FIXED: an embedded raw tab in body_xml no longer shifts columns — chatname and dialogPartner stay correct and nothing is dropped", async () => {
+  const conversations = asciiTable([
+    ["1", "live:.cid.fake0004", "Fixture Four"],
+  ]);
   const messages = await loadFixture("messages_tab_corruption.tsv");
   const { ctx, written } = makeCtx();
   await withSqliteStub(
@@ -195,72 +206,123 @@ Deno.test("BUG #1 sibling pin: an embedded raw tab in body_xml shifts every foll
   assertEquals(rows.length, 1);
   assertEquals(
     rows[0].body,
-    "alpha",
-    "body_xml is truncated to the text BEFORE the embedded tab",
+    "alpha\tbeta",
+    "0x1F framing never collides with an embedded tab — body_xml survives intact",
   );
   assertEquals(
     rows[0].chatname,
-    "beta",
-    "the text AFTER the embedded tab is misread as chatname",
+    "RealChat",
+    "chatname is read from the correct (unshifted) column",
   );
   assertEquals(
     rows[0].dialogPartner,
-    "RealChat",
-    "the real chatname value is misread as dialogPartner",
-  );
-  // The real dialog_partner value ("live:.cid.fake0005") is the 10th column —
-  // the mapper only ever reads r[0..8], so it is silently dropped, not
-  // erroring and not appearing anywhere in the mapped row.
-  assert(
-    !JSON.stringify(rows[0]).includes("live:.cid.fake0005"),
-    "the real trailing dialog_partner value vanishes without a trace",
+    "live:.cid.fake0005",
+    "the real trailing dialog_partner value is no longer dropped",
   );
 });
 
 // ---------------------------------------------------------------------------
-// BUG #2 (HIGH): path traversal via unsanitized `folder` in importToObsidian
+// BUG #2 (HIGH, FIXED 2026.08.01.1): path traversal via unsanitized `folder`
+// / `profile` in importToObsidian
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG #2 pin: importToObsidian's unsanitized `folder` escapes the vault directory via '../'", async () => {
+Deno.test("BUG #2 FIXED: importToObsidian rejects a `folder` that escapes the vault directory via '../' — nothing is written outside it", async () => {
   const sandbox = await Deno.makeTempDir();
   const vault = `${sandbox}/vault`;
   await Deno.mkdir(vault, { recursive: true });
-  const conversations =
-    "1\tlive:.cid.fake0001\tAna Synthetic\t1\t1\t1700000000\t1700000000\n";
+  const conversations = asciiTable([
+    [
+      "1",
+      "live:.cid.fake0001",
+      "Ana Synthetic",
+      "1",
+      "1",
+      "1700000000",
+      "1700000000",
+    ],
+  ]);
   const messages = await loadFixture("messages_export.tsv");
   try {
     const { ctx } = makeCtx();
-    await withSqliteStub(
-      byTable({ conversations, messages }),
+    await assertRejects(
       () =>
-        run(
-          "importToObsidian",
-          { vaultPath: vault, folder: "../escaped" },
-          ctx,
+        withSqliteStub(
+          byTable({ conversations, messages }),
+          () =>
+            run(
+              "importToObsidian",
+              { vaultPath: vault, folder: "../escaped" },
+              ctx,
+            ),
         ),
+      Error,
+      "escapes",
+      "resolveWithin throws before any file is written",
     );
-    // noteDir = `${vaultPath}/${folder}/${profile}` = `${vault}/../escaped/synthetic-user`
-    // which resolves OUTSIDE the vault, as a sibling of it.
-    const escapedDir = `${sandbox}/escaped/synthetic-user`;
-    const entries: string[] = [];
-    for await (const entry of Deno.readDir(escapedDir)) {
-      entries.push(entry.name);
-    }
-    assert(
-      entries.length > 0,
-      "the traversal folder wrote files OUTSIDE the intended vault directory",
-    );
-    let insideVault = false;
+    // The would-be escape target must never have been created.
+    let escapedExists = true;
     try {
-      for await (const _ of Deno.readDir(`${vault}/../escaped`)) {
-        insideVault = true;
-      }
+      await Deno.stat(`${sandbox}/escaped`);
     } catch {
-      // expected: nothing written directly under vault/
+      escapedExists = false;
     }
     assert(
-      insideVault,
-      "sanity: the escaped dir is indeed reachable from vault/..",
+      !escapedExists,
+      "the traversal folder must NEVER write files outside the intended vault directory",
+    );
+  } finally {
+    await Deno.remove(sandbox, { recursive: true });
+  }
+});
+
+Deno.test("BUG #2 FIXED: importToObsidian also rejects a `profile` global argument that escapes the vault directory via '../'", async () => {
+  // resolveWithin guards `resolve(vaultPath, folder, profile)` as a WHOLE —
+  // a benign folder combined with a hostile profile must be rejected exactly
+  // like a hostile folder, per the security review finding on the approved
+  // plan (guarding folder alone would leave a profile-based escape open).
+  const sandbox = await Deno.makeTempDir();
+  const vault = `${sandbox}/vault`;
+  await Deno.mkdir(vault, { recursive: true });
+  const conversations = asciiTable([
+    [
+      "1",
+      "live:.cid.fake0001",
+      "Ana Synthetic",
+      "1",
+      "1",
+      "1700000000",
+      "1700000000",
+    ],
+  ]);
+  const messages = await loadFixture("messages_export.tsv");
+  try {
+    // Two "../" levels: the joined target is resolve(vaultPath, "Skype",
+    // profile) — "Skype" (the default folder, one level deep) must be popped
+    // AND vaultPath itself, or the profile-escape only lands back inside the
+    // vault (e.g. a single "../" here would merely cancel out "Skype").
+    const { ctx } = makeCtx({
+      basePath: "/fixtures/skype-data",
+      profile: "../../escaped-via-profile",
+    });
+    await assertRejects(
+      () =>
+        withSqliteStub(
+          byTable({ conversations, messages }),
+          () => run("importToObsidian", { vaultPath: vault }, ctx),
+        ),
+      Error,
+      "escapes",
+      "a hostile profile is rejected exactly like a hostile folder",
+    );
+    let escapedExists = true;
+    try {
+      await Deno.stat(`${sandbox}/escaped-via-profile`);
+    } catch {
+      escapedExists = false;
+    }
+    assert(
+      !escapedExists,
+      "no file is ever written outside the intended vault directory via profile",
     );
   } finally {
     await Deno.remove(sandbox, { recursive: true });
@@ -274,8 +336,8 @@ Deno.test("BUG #2 pin: importToObsidian's unsanitized `folder` escapes the vault
 Deno.test("BUG #3 pin: readConversation's safeKey collides for two conversations whose first 50 sanitized characters are identical", async () => {
   const longNameA = "Fixture Group " + "X".repeat(60) + " Alpha";
   const longNameB = "Fixture Group " + "X".repeat(60) + " Beta";
-  const namesA = "1\tlive:.cid.fakeA\t" + longNameA + "\n";
-  const namesB = "2\tlive:.cid.fakeB\t" + longNameB + "\n";
+  const namesA = asciiTable([["1", "live:.cid.fakeA", longNameA]]);
+  const namesB = asciiTable([["2", "live:.cid.fakeB", longNameB]]);
   const messages = "";
 
   const { ctx, written } = makeCtx();
@@ -299,9 +361,10 @@ Deno.test("BUG #3 pin: readConversation's safeKey collides for two conversations
 Deno.test("BUG #3 pin: exportToObsidian's obsidianPath collides for two conversations sharing the same first-80-chars sanitized displayname", async () => {
   const longA = "Y".repeat(90) + " Alpha";
   const longB = "Y".repeat(90) + " Beta";
-  const conversations =
-    `1\tlive:.cid.fakeA\t${longA}\t1\t2\t1700000000\t1700000000\n` +
-    `2\tlive:.cid.fakeB\t${longB}\t1\t2\t1700000000\t1700000000\n`;
+  const conversations = asciiTable([
+    ["1", "live:.cid.fakeA", longA, "1", "2", "1700000000", "1700000000"],
+    ["2", "live:.cid.fakeB", longB, "1", "2", "1700000000", "1700000000"],
+  ]);
   const messages = await loadFixture("messages_export.tsv");
   const { ctx, written } = makeCtx();
   await withSqliteStub(
@@ -377,8 +440,17 @@ Deno.test("BUG #6 pin: importToObsidian's 80-char filename slice can cut a surro
   // BEFORE the slice does not touch emoji, so the pair survives intact up to
   // the cut.
   const displayname = "A".repeat(79) + "\u{1F600}" + " tail";
-  const conversations =
-    `1\tlive:.cid.fakeSurrogate\t${displayname}\t1\t1\t1700000000\t1700000000\n`;
+  const conversations = asciiTable([
+    [
+      "1",
+      "live:.cid.fakeSurrogate",
+      displayname,
+      "1",
+      "1",
+      "1700000000",
+      "1700000000",
+    ],
+  ]);
   const messages = await loadFixture("messages_export.tsv");
   const vault = await Deno.makeTempDir();
   try {
@@ -421,16 +493,24 @@ Deno.test("BUG #7 pin: a carriage return in displayname breaks out of the YAML '
   // raw line-break, so an attacker-controlled displayname can inject
   // arbitrary additional YAML-shaped lines into the frontmatter block.
   //
-  // NOTE: a raw LF ("\n") cannot actually survive as part of one field value
-  // — queryDb's own `text.split("\n")` would fabricate a corrupted second row
-  // out of it first (that is BUG #1, exercised separately above). A raw CR
-  // ("\r") is NOT a row separator for queryDb (it only splits on "\n"), so it
+  // NOTE: this bug is independent of queryDb's transport (TSV or ascii) —
+  // exportToObsidian's frontmatter builder only ever escapes the quote
+  // character, never a line-break, regardless of how the row reached it. A
+  // raw CR ("\r") is not a record separator in either transport, so it
   // survives intact as a single coherent displayname value all the way
-  // through to the frontmatter template literal — this is the realistic
-  // carrier for this bug, not a LF.
+  // through to the frontmatter template literal.
   const hostileName = 'Evil"\rtags:\r  - injected-by-displayname';
-  const conversations =
-    `1\tlive:.cid.fakeEvil\t${hostileName}\t1\t1\t1700000000\t1700000000\n`;
+  const conversations = asciiTable([
+    [
+      "1",
+      "live:.cid.fakeEvil",
+      hostileName,
+      "1",
+      "1",
+      "1700000000",
+      "1700000000",
+    ],
+  ]);
   const messages = await loadFixture("messages_export.tsv");
   const { ctx, written } = makeCtx();
   await withSqliteStub(
@@ -451,7 +531,9 @@ Deno.test("BUG #7 pin: a carriage return in displayname breaks out of the YAML '
 // ---------------------------------------------------------------------------
 
 Deno.test("BUG #8 pin: stripXml's &#N; decoder is CORRECT for BMP code points but silently mis-decodes an astral (>0xFFFF) code point via String.fromCharCode instead of String.fromCodePoint", async () => {
-  const conversations = "1\tlive:.cid.fake0007\tFixture Seven\n";
+  const conversations = asciiTable([
+    ["1", "live:.cid.fake0007", "Fixture Seven"],
+  ]);
   const messages = await loadFixture("messages_entities.tsv");
   const { ctx, written } = makeCtx();
   await withSqliteStub(
@@ -511,6 +593,11 @@ Deno.test("covered negative: queryDb invokes sqlite3 via an ARGV ARRAY, never a 
   // A future refactor to `new Deno.Command("sh", { args: ["-c", ...] })`
   // would reintroduce a real shell-injection vector; this test must go red
   // the moment that happens.
+  //
+  // Updated 2026.08.01.1: the transport itself moved from "-separator \t"
+  // (TSV) to "-ascii" (BUG #1 fix), so the argv shape is now
+  // ["-ascii", dbPath, sql] — still a plain 3-element array, never a shell
+  // string.
   const conversations = await loadFixture("conversations.tsv");
   const { ctx } = makeCtx();
   await withSqliteStub(byTable({ conversations }), async (stub) => {
@@ -518,8 +605,8 @@ Deno.test("covered negative: queryDb invokes sqlite3 via an ARGV ARRAY, never a 
     assertEquals(stub.invocations.length, 1);
     const { options } = stub.invocations[0];
     const args = options.args as string[];
-    assertEquals(args[0], "-separator");
-    assertEquals(args[1], "\t");
+    assertEquals(args.length, 3, "['-ascii', dbPath, sql] — three elements");
+    assertEquals(args[0], "-ascii");
     assert(
       !args.some((a) => a === "sh" || a === "-c" || a === "bash"),
       "no shell indirection appears anywhere in the argv array",
@@ -553,8 +640,12 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   { name: "high-entropy token-shaped value", re: /^[A-Za-z0-9+/_=-]{32,}$/ },
 ];
 
-function collectFields(tsvText: string): string[] {
-  return tsvText.split("\n").flatMap((line) => line.split("\t"));
+function collectFields(asciiText: string): string[] {
+  // Fixtures are ascii-framed (0x1E record / 0x1F unit separator) since
+  // 2026.08.01.1 — split on the real framing bytes, not tab/newline (which
+  // may now legitimately appear INSIDE a field value, e.g. the corruption
+  // fixtures' embedded newline/tab).
+  return asciiText.split("\x1E").flatMap((record) => record.split("\x1F"));
 }
 
 const FIXTURE_FILES = [

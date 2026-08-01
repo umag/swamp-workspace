@@ -1,11 +1,65 @@
 # Changelog
 
-## Unreleased
+## 2026.08.01.1
+
+Two of the nine latent bugs pinned below (both HIGH) are now FIXED. Tracked
+end-to-end in the LOCAL `skype-latent-bugs` issue-lifecycle model — never a Lab
+issue, since this is a `@magistr/*` extension.
+
+1. **TSV row corruption on embedded newline/tab (HIGH), FIXED** — `queryDb`
+   transported `sqlite3` output via `-separator "\t"` (TSV list mode), which
+   does not escape an embedded newline/tab byte inside a `body_xml` TEXT value:
+   a raw newline fabricated a spurious second message row and truncated the real
+   body; a raw tab shifted every following column one position right and
+   silently dropped the final field. Fixed by switching the transport to
+   `sqlite3 -ascii`, whose column separator (0x1F, unit separator) and record
+   separator (0x1E) never occur in ordinary text, so embedded newline/tab bytes
+   now survive intact inside a field. The parser splits on 0x1E first and drops
+   the trailing empty record — `-ascii` terminates every row including the last,
+   so a naive split would otherwise fabricate one spurious blank row per query.
+   The `string[][]` positional-row return contract, the NULL-to-`""` mapping,
+   and every call site are unchanged.
+2. **Path traversal via unsanitized `folder`/`profile` (HIGH), FIXED** —
+   `importToObsidian` joined `args.folder` and the `profile` global argument
+   into `noteDir` with no validation; either one containing `../` wrote `.md`
+   files outside the intended vault directory. Fixed with a `resolveWithin`
+   guard (`jsr:@std/path@1`'s `resolve`/`relative`/`isAbsolute`) that resolves
+   `vaultPath` + `folder` + `profile` as one joined target and throws if it
+   escapes `vaultPath` — covering both a hostile `folder` and a hostile
+   `profile`, since guarding only one would leave the other open. **Residual
+   (accepted, not closed by this fix):** the containment check is lexical — it
+   does not call `realpath`/follow symlinks — so a pre-existing symlink inside
+   the vault pointing outward could still let a write escape. The threat model
+   here is a local user with write access to their own vault, not a hostile
+   filesystem, so this residual is accepted rather than closed; a
+   `realpath`-based check would be a separate, larger change. `exportToObsidian`
+   (which only returns the path as swamp data, never writes to disk) is
+   unaffected and out of scope.
+
+- Added the `jsr:@std/path@1` import (pinned major version); regenerated
+  `deno.lock`.
+- Migrated every `sqlite3` stdout stub across all five test suites, plus all 8
+  committed fixtures, from TSV framing (tab/newline) to the real
+  `sqlite3 -ascii` wire shape (0x1F column / 0x1E record separator) via a
+  per-suite `asciiTable()` helper — required because the parser itself changed;
+  a stub still framed as TSV would fail for an unrelated reason (queryDb would
+  read the whole blob as one column). The two corruption fixtures
+  (`messages_newline_corruption.tsv`, `messages_tab_corruption.tsv`) were
+  re-authored so the embedded newline/tab now lives safely INSIDE a field,
+  proving the fix rather than the bug. Added boundary tests for the 0x1E
+  trailing-record-drop (single-row and empty-result cases) and for the
+  `profile`-based traversal escape.
+- `model.version` (`extensions/models/skype.ts`) and `manifest.yaml` both bump
+  to `2026.08.01.1`, in sync.
+
+## Test backfill (prior to 2026.08.01.1, no version bump at the time)
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4a of the
 extension-quality backfill program, `ext-quality-test-backfill`). No behavior
-change — `skype.ts` is BYTE-FROZEN and the model `version` stays `2026.07.16.2`;
-`manifest.yaml` is unchanged (no version bump).
+change at the time — `skype.ts` was BYTE-FROZEN and the model `version` stayed
+`2026.07.16.2`; `manifest.yaml` was unchanged. The `2026.08.01.1` fixes above
+build directly on this test suite (and its fixtures were subsequently migrated
+from TSV to ascii framing as part of that fix).
 
 - Added `extensions/models/skype_test.ts` (contract-fixture),
   `skype_methods_test.ts` (methods), `skype_adversarial_test.ts` (adversarial),

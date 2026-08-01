@@ -3,11 +3,15 @@
  * `|| ""`/`|| 0` falsy guard on both sides, `tsToIso`'s full branch table
  * (including the exact 4102444800 cap boundary), default-argument
  * interpolation for every method, `exportToObsidian`'s type-name/date-header/
- * empty-body-skip branches, and `importToObsidian`'s chunking-loop and
- * progress-log boundaries.
+ * empty-body-skip branches, `importToObsidian`'s chunking-loop and
+ * progress-log boundaries, and (since 2026.08.01.1) queryDb's ascii-framing
+ * record-separator boundary (single-row / empty-result).
  *
- * skype.ts is BYTE-FROZEN — every test here PINS current behavior. It is not
- * red-green TDD.
+ * skype.ts is otherwise BYTE-FROZEN by this change — every other test here
+ * PINS already-shipped behavior. It is not red-green TDD except for the two
+ * new boundary tests, which characterize the BUG #1 fix's own edge cases.
+ * All `sqlite3` stdout stubs use the local `asciiTable()` helper (0x1F/0x1E
+ * framing) since queryDb no longer parses TSV.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { model } from "./skype.ts";
@@ -124,12 +128,58 @@ function byTable(
   };
 }
 
+/** Frame rows the way real `sqlite3 -ascii` does: columns joined by 0x1F
+ * (unit separator), every record (including the last) terminated by 0x1E
+ * (record separator). Mirrors queryDb's own parse exactly. */
+function asciiTable(rows: string[][]): string {
+  const US = "\x1F";
+  const RS = "\x1E";
+  return rows.map((r) => r.join(US) + RS).join("");
+}
+
+// ---------------------------------------------------------------------------
+// queryDb ascii-framing boundary: single-row + empty-result (BUG #1 fix)
+// ---------------------------------------------------------------------------
+
+Deno.test("guard: a single-row ascii result is not fabricated into two rows by the trailing 0x1E terminator", async () => {
+  const { ctx, written } = makeCtx();
+  await withSqliteStub(
+    byTable({
+      conversations: asciiTable([["1", "live:.cid.fake0001", "Fixture"]]),
+    }),
+    () => run("listConversations", {}, ctx),
+  );
+  const rows = written[0].payload.conversations as Array<
+    Record<string, unknown>
+  >;
+  assertEquals(
+    rows.length,
+    1,
+    "the trailing empty record after the last 0x1E must be dropped, not fabricated into a blank second row",
+  );
+});
+
+Deno.test("guard: an empty ascii result (zero records) yields zero rows, not one blank row", async () => {
+  const { ctx, written } = makeCtx();
+  await withSqliteStub(
+    byTable({ conversations: "" }),
+    () => run("listConversations", {}, ctx),
+  );
+  const rows = written[0].payload.conversations as Array<
+    Record<string, unknown>
+  >;
+  assertEquals(rows.length, 0);
+  assertEquals(written[0].payload.count, 0);
+});
+
 // ---------------------------------------------------------------------------
 // tsToIso — full branch table, pinned via listConversations
 // ---------------------------------------------------------------------------
 
 function convRowWithTs(first: string, last: string): string {
-  return `1\tlive:.cid.fake0001\tFixture\t1\t1\t${first}\t${last}\n`;
+  return asciiTable([
+    ["1", "live:.cid.fake0001", "Fixture", "1", "1", first, last],
+  ]);
 }
 
 Deno.test("guard: tsToIso — ts exactly 0 yields ''", async () => {
@@ -186,7 +236,9 @@ Deno.test("guard: tsToIso — ts of exactly 1 (smallest valid positive) produces
 Deno.test("guard: listConversations — a row missing the type column entirely defaults type to 0", async () => {
   const { ctx, written } = makeCtx();
   await withSqliteStub(
-    byTable({ conversations: "1\tlive:.cid.fake0001\tFixture\n" }),
+    byTable({
+      conversations: asciiTable([["1", "live:.cid.fake0001", "Fixture"]]),
+    }),
     () => run("listConversations", {}, ctx),
   );
   const row =
@@ -198,7 +250,7 @@ Deno.test("guard: listConversations — a row missing the type column entirely d
 Deno.test("guard: listConversations — identity missing entirely defaults to '' (not 'undefined')", async () => {
   const { ctx, written } = makeCtx();
   await withSqliteStub(
-    byTable({ conversations: "1\n" }),
+    byTable({ conversations: asciiTable([["1"]]) }),
     () => run("listConversations", {}, ctx),
   );
   const row =
@@ -238,10 +290,35 @@ Deno.test("guard: exportToObsidian — an explicit minMessages is interpolated v
 // ---------------------------------------------------------------------------
 
 Deno.test("guard: exportToObsidian — convoType 2 maps to 'group', anything else maps to 'direct'", async () => {
-  const conversations =
-    "1\tlive:.cid.fakeGroup\tGroup One\t2\t1\t1700000000\t1700000000\n" +
-    "2\tlive:.cid.fakeDirect\tDirect One\t1\t1\t1700000000\t1700000000\n" +
-    "3\tlive:.cid.fakeOther\tOther Type\t99\t1\t1700000000\t1700000000\n";
+  const conversations = asciiTable([
+    [
+      "1",
+      "live:.cid.fakeGroup",
+      "Group One",
+      "2",
+      "1",
+      "1700000000",
+      "1700000000",
+    ],
+    [
+      "2",
+      "live:.cid.fakeDirect",
+      "Direct One",
+      "1",
+      "1",
+      "1700000000",
+      "1700000000",
+    ],
+    [
+      "3",
+      "live:.cid.fakeOther",
+      "Other Type",
+      "99",
+      "1",
+      "1700000000",
+      "1700000000",
+    ],
+  ]);
   const { ctx, written } = makeCtx();
   await withSqliteStub(
     byTable({ conversations, messages: "" }),
@@ -264,10 +341,21 @@ Deno.test("guard: exportToObsidian — convoType 2 maps to 'group', anything els
 // ---------------------------------------------------------------------------
 
 Deno.test("guard: exportToObsidian — a message whose stripped body is blank/whitespace-only is skipped from the chat log", async () => {
-  const conversations =
-    "1\tlive:.cid.fake0001\tFixture\t1\t2\t1700000000\t1700000100\n";
-  const messages = "Ana\tlive:.cid.fake0001\t1700000000\t   \n" + // whitespace-only after strip
-    "Boris\tlive:.cid.fake0002\t1700000100\t<b></b>\n"; // tags strip to ""
+  const conversations = asciiTable([
+    [
+      "1",
+      "live:.cid.fake0001",
+      "Fixture",
+      "1",
+      "2",
+      "1700000000",
+      "1700000100",
+    ],
+  ]);
+  const messages = asciiTable([
+    ["Ana", "live:.cid.fake0001", "1700000000", "   "], // whitespace-only after strip
+    ["Boris", "live:.cid.fake0002", "1700000100", "<b></b>"], // tags strip to ""
+  ]);
   const { ctx, written } = makeCtx();
   await withSqliteStub(
     byTable({ conversations, messages }),
@@ -285,9 +373,20 @@ Deno.test("guard: exportToObsidian — a message whose stripped body is blank/wh
 });
 
 Deno.test("guard: exportToObsidian — a message with an invalid/zero timestamp is skipped even with a real body", async () => {
-  const conversations =
-    "1\tlive:.cid.fake0001\tFixture\t1\t1\t1700000000\t1700000000\n";
-  const messages = "Ana\tlive:.cid.fake0001\t0\tReal body text\n";
+  const conversations = asciiTable([
+    [
+      "1",
+      "live:.cid.fake0001",
+      "Fixture",
+      "1",
+      "1",
+      "1700000000",
+      "1700000000",
+    ],
+  ]);
+  const messages = asciiTable([
+    ["Ana", "live:.cid.fake0001", "0", "Real body text"],
+  ]);
   const { ctx, written } = makeCtx();
   await withSqliteStub(
     byTable({ conversations, messages }),
@@ -304,11 +403,22 @@ Deno.test("guard: exportToObsidian — a message with an invalid/zero timestamp 
 // ---------------------------------------------------------------------------
 
 Deno.test("guard: exportToObsidian — consecutive same-day messages share ONE date header; a new day emits a new one", async () => {
-  const conversations =
-    "1\tlive:.cid.fake0001\tFixture\t1\t3\t1700000000\t1700200000\n";
-  const messages = "Ana\tlive:.cid.fake0001\t1700000000\tFirst message\n" +
-    "Ana\tlive:.cid.fake0001\t1700003600\tSecond message same day\n" +
-    "Ana\tlive:.cid.fake0001\t1700200000\tThird message next day\n";
+  const conversations = asciiTable([
+    [
+      "1",
+      "live:.cid.fake0001",
+      "Fixture",
+      "1",
+      "3",
+      "1700000000",
+      "1700200000",
+    ],
+  ]);
+  const messages = asciiTable([
+    ["Ana", "live:.cid.fake0001", "1700000000", "First message"],
+    ["Ana", "live:.cid.fake0001", "1700003600", "Second message same day"],
+    ["Ana", "live:.cid.fake0001", "1700200000", "Third message next day"],
+  ]);
   const { ctx, written } = makeCtx();
   await withSqliteStub(
     byTable({ conversations, messages }),
@@ -330,10 +440,21 @@ Deno.test("guard: exportToObsidian — consecutive same-day messages share ONE d
 // ---------------------------------------------------------------------------
 
 Deno.test("guard: importToObsidian — a message-fetch batch returning FEWER rows than chunkSize (10000) stops after ONE iteration", async () => {
-  const conversations =
-    "1\tlive:.cid.fake0001\tFixture\t1\t2\t1700000000\t1700000100\n";
-  const messages =
-    "Ana\tlive:.cid.fake0001\t1700000000\tHello\nAna\tlive:.cid.fake0001\t1700000100\tWorld\n";
+  const conversations = asciiTable([
+    [
+      "1",
+      "live:.cid.fake0001",
+      "Fixture",
+      "1",
+      "2",
+      "1700000000",
+      "1700000100",
+    ],
+  ]);
+  const messages = asciiTable([
+    ["Ana", "live:.cid.fake0001", "1700000000", "Hello"],
+    ["Ana", "live:.cid.fake0001", "1700000100", "World"],
+  ]);
   const vault = await Deno.makeTempDir();
   try {
     const { ctx } = makeCtx();
@@ -362,20 +483,27 @@ Deno.test("guard: importToObsidian — a message-fetch batch returning FEWER row
 });
 
 Deno.test("guard: importToObsidian — logs a 'Progress' line only when written is a positive multiple of 20", async () => {
-  const rows = Array.from(
-    { length: 20 },
-    (_, i) =>
-      `${i}\tlive:.cid.fake${i}\tConvo ${i}\t1\t1\t${1700000000 + i}\t${
-        1700000000 + i
-      }`,
-  ).join("\n") + "\n";
+  const rows = asciiTable(
+    Array.from(
+      { length: 20 },
+      (_, i) => [
+        String(i),
+        `live:.cid.fake${i}`,
+        `Convo ${i}`,
+        "1",
+        "1",
+        String(1700000000 + i),
+        String(1700000000 + i),
+      ],
+    ),
+  );
   const vault = await Deno.makeTempDir();
   try {
     const { ctx, logs } = makeCtx();
     await withSqliteStub(
       byTable({
         conversations: rows,
-        messages: "Ana\tlive:.cid.fake0\t1700000000\tHi\n",
+        messages: asciiTable([["Ana", "live:.cid.fake0", "1700000000", "Hi"]]),
       }),
       () => run("importToObsidian", { vaultPath: vault }, ctx),
     );
@@ -458,8 +586,8 @@ Deno.test("guard: every method builds dbPath as '<basePath>/<profile>/main.db' �
   }
   assertEquals(capturedArgs.length, 1);
   assertEquals(
-    capturedArgs[0][2],
+    capturedArgs[0][1],
     "/srv/skype-archive/weird profile name/main.db",
-    "dbPath is argv[2] — sandwiched between the -separator flag and the SQL text",
+    "dbPath is argv[1] — sandwiched between the -ascii flag and the SQL text",
   );
 });
