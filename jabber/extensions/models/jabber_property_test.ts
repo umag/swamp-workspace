@@ -29,6 +29,12 @@
  *      local-part (including sanitizeFilename's replace-target characters).
  *  (e) multi-step flow invariant -- for any jid appearing in list()'s OWN
  *      output, read() with that exact jid always finds >=1 match.
+ *  (f) vaultRoot import invariant (swamp-workspace #57) -- for any synthetic
+ *      set of single-message DM conversations, importToObsidian via the
+ *      headless vaultRoot global argument writes exactly one note per
+ *      importable item, each note's frontmatter parse recovers the keys this
+ *      model wrote, and no produced note path escapes the vault's REAL
+ *      (symlink-resolved) root.
  */
 import { assert } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
@@ -342,6 +348,110 @@ Deno.test("property: for any jid appearing in list()'s own output, read() with t
           }
           return true;
         });
+      },
+    ),
+    FC_RUNS,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// (f) vaultRoot import invariant (swamp-workspace #57): exactly one note per
+// importable item, frontmatter round-trips its keys, no path escapes the
+// vault's REAL root. Reuses the withTempVault helper defined above (already
+// used by property (d)).
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal reader for this model's hand-built frontmatter block -- recovers
+ * scalar `key: value` lines and the `tags:` block-style list. Good enough to
+ * assert round-trip of the KEYS this model writes; not a general YAML parser
+ * (this model deliberately does not depend on one -- see the plan's scope
+ * constraint: no npm:yaml, PATH-CONFINEMENT only transfers from PR #56).
+ */
+function parseSimpleFrontmatter(note: string): Record<string, unknown> {
+  const lines = note.split("\n");
+  if (lines[0] !== "---") return {};
+  const props: Record<string, unknown> = {};
+  let i = 1;
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === "---") break;
+    if (line === "tags:") {
+      const tags: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && lines[j].startsWith("  - ")) {
+        tags.push(lines[j].slice(4));
+        j++;
+      }
+      props.tags = tags;
+      i = j - 1;
+      continue;
+    }
+    const m = line.match(/^([a-zA-Z_]+): (.*)$/);
+    if (m) {
+      const [, key, rawValue] = m;
+      props[key] = rawValue.startsWith('"') && rawValue.endsWith('"')
+        ? rawValue.slice(1, -1)
+        : rawValue;
+    }
+  }
+  return props;
+}
+
+Deno.test("property: importToObsidian via vaultRoot writes exactly one note per importable item, each note's frontmatter round-trips its keys, and no note path escapes the vault's REAL root", async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.uniqueArray(arbSafeLocal, { minLength: 1, maxLength: 8 }),
+      async (locals) => {
+        const files: Record<string, string> = {};
+        for (const local of locals) {
+          files[`${local}_at_example.com.history`] =
+            `|2024-02-01T00:00:00Z|1|to|0|hello from ${local}\n`;
+        }
+        return await withTempHistoryDir(
+          files,
+          (historyDir) =>
+            withTempVault(async (vaultPath) => {
+              const realRoot = await Deno.realPath(vaultPath);
+              const { ctx } = makeCtx(historyDir);
+              (ctx.globalArgs as Record<string, unknown>).vaultRoot = vaultPath;
+              await run(
+                "importToObsidian",
+                { folder: "Jabber", chatType: "dm" },
+                ctx,
+              );
+
+              const entries: string[] = [];
+              for await (const e of Deno.readDir(`${vaultPath}/Jabber`)) {
+                entries.push(e.name);
+              }
+              // exactly one note per importable item: every generated local
+              // has exactly one non-empty message, so none are skipped
+              if (entries.length !== locals.length) return false;
+
+              for (const entry of entries) {
+                const full = await Deno.realPath(
+                  `${vaultPath}/Jabber/${entry}`,
+                );
+                if (!full.startsWith(`${realRoot}/`)) return false; // containment
+
+                const note = await Deno.readTextFile(
+                  `${vaultPath}/Jabber/${entry}`,
+                );
+                const props = parseSimpleFrontmatter(note);
+                if (props.type !== "dm") return false;
+                if (typeof props.jid !== "string") return false;
+                if (!Array.isArray(props.tags)) return false;
+                if (!(props.tags as string[]).includes("jabber")) {
+                  return false;
+                }
+                if (!(props.tags as string[]).includes("jabber-dm")) {
+                  return false;
+                }
+              }
+              return true;
+            }),
+        );
       },
     ),
     FC_RUNS,

@@ -5,8 +5,11 @@
  * `Deno.readDir`/`Deno.readTextFile`/`Deno.writeTextFile` (synthetic on-disk
  * fixtures + `Deno.makeTempDir` scratch trees) and a fake context.
  *
- * jabber_history.ts is UNMODIFIED -- every test here is a characterization
- * test that PINS the model's current, already-shipped behavior.
+ * Most tests here are characterizations that PIN the model's already-shipped
+ * behavior. The "vaultRoot (headless)" section near the end covers the new
+ * `vaultRoot` global argument added for swamp-workspace #57 (mirrors PR #56's
+ * obsidian-vault backend split): with `vaultRoot` set, importToObsidian must
+ * never invoke the Obsidian CLI at all.
  *
  * importToObsidian's `vaultPath` branch does REAL filesystem writes into a
  * `Deno.makeTempDir` vault (cleaned up after each test). Its `vault` (name)
@@ -345,5 +348,125 @@ Deno.test("importToObsidian: vault (name) resolution failure -- stderr surfaces 
         "Failed to resolve vault path: vault 'my-vault' is not registered",
       );
     },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// vaultRoot (headless) -- swamp-workspace #57. Mirrors PR #56's obsidian-vault
+// backend split: with vaultRoot set, importToObsidian must write directly to
+// disk and never invoke the Obsidian CLI at all.
+// ---------------------------------------------------------------------------
+
+function withThrowingCommandStub(fn: () => Promise<void>) {
+  const denoRecord = globalThis.Deno as unknown as Record<string, unknown>;
+  const original = denoRecord.Command;
+  let calls = 0;
+  // deno-lint-ignore no-explicit-any
+  (denoRecord as any).Command = class {
+    constructor() {
+      calls++;
+      throw new Error(
+        "Deno.Command must not be constructed when vaultRoot is set -- the CLI must never be invoked",
+      );
+    }
+  };
+  return (async () => {
+    try {
+      await fn();
+    } finally {
+      denoRecord.Command = original;
+      assertEquals(
+        calls,
+        0,
+        "Deno.Command must never be constructed when vaultRoot is set",
+      );
+    }
+  })();
+}
+
+Deno.test("importToObsidian: with vaultRoot set and Deno.Command stubbed to throw, import writes notes to disk and the CLI is NEVER invoked", async () => {
+  await withTempVault(async (vaultPath) => {
+    await withThrowingCommandStub(async () => {
+      const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+      (ctx.globalArgs as Record<string, unknown>).vaultRoot = vaultPath;
+      await run(
+        "importToObsidian",
+        { folder: "Jabber", chatType: "dm" },
+        ctx,
+      );
+      const stat = await Deno.stat(
+        `${vaultPath}/Jabber/alice@example.com.md`,
+      );
+      assert(stat.isFile);
+    });
+  });
+});
+
+Deno.test("importToObsidian: vaultRoot writes bytes IDENTICAL to the vaultPath-argument branch, including the block-style 'tags:' list verbatim", async () => {
+  await withTempVault(async (vaultPathA) => {
+    const { ctx: ctxA } = makeCtx(GOOD_HISTORY_DIR);
+    await run(
+      "importToObsidian",
+      { vaultPath: vaultPathA, folder: "Jabber", chatType: "dm" },
+      ctxA,
+    );
+    const viaVaultPath = await Deno.readTextFile(
+      `${vaultPathA}/Jabber/alice@example.com.md`,
+    );
+
+    await withTempVault(async (vaultPathB) => {
+      await withThrowingCommandStub(async () => {
+        const { ctx: ctxB } = makeCtx(GOOD_HISTORY_DIR);
+        (ctxB.globalArgs as Record<string, unknown>).vaultRoot = vaultPathB;
+        await run(
+          "importToObsidian",
+          { folder: "Jabber", chatType: "dm" },
+          ctxB,
+        );
+        const viaVaultRoot = await Deno.readTextFile(
+          `${vaultPathB}/Jabber/alice@example.com.md`,
+        );
+        assertEquals(
+          viaVaultRoot,
+          viaVaultPath,
+          "vaultRoot must produce EXACTLY the same bytes as the vaultPath-argument branch",
+        );
+        assert(
+          viaVaultRoot.includes("tags:\n  - jabber\n  - jabber-dm\n"),
+          "the block-style 'tags:' list must survive verbatim",
+        );
+      });
+    });
+  });
+});
+
+Deno.test("importToObsidian: vaultPath argument wins over vaultRoot global argument (precedence)", async () => {
+  await withTempVault(async (vaultPathArg) => {
+    await withTempVault(async (vaultPathGlobal) => {
+      const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+      (ctx.globalArgs as Record<string, unknown>).vaultRoot = vaultPathGlobal;
+      await run(
+        "importToObsidian",
+        { vaultPath: vaultPathArg, folder: "Jabber", chatType: "dm" },
+        ctx,
+      );
+      const stat = await Deno.stat(
+        `${vaultPathArg}/Jabber/alice@example.com.md`,
+      );
+      assert(stat.isFile, "the vaultPath argument must win");
+      await assertRejects(
+        () => Deno.stat(`${vaultPathGlobal}/Jabber/alice@example.com.md`),
+        "vaultRoot must NOT be used when vaultPath is also given",
+      );
+    });
+  });
+});
+
+Deno.test("importToObsidian: neither vault, vaultPath, nor vaultRoot -- rejects before any filesystem work, mentioning vaultRoot as an option", async () => {
+  const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+  await assertRejects(
+    () => run("importToObsidian", { folder: "Jabber", chatType: "all" }, ctx),
+    Error,
+    "Either 'vault' or 'vaultPath' must be provided",
   );
 });
