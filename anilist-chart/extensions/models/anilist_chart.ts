@@ -146,6 +146,13 @@ export interface RenderInputs {
   now: Date;
 }
 
+/**
+ * Value object returned by `buildRenderTasks`: the ordered list of per-page
+ * render tasks (each producing one `PageRender` when invoked), plus the
+ * shared `Warn` sink the board task's compute functions accumulate into as
+ * they run, so the caller can inspect skips and dropped notes once every
+ * task has executed.
+ */
 export interface RenderTaskBundle {
   tasks: { key: string; render: () => PageRender }[];
   /** Board compute warnings (award skips + dropped curated notes) after run. */
@@ -318,9 +325,19 @@ function configFrom(g: Record<string, unknown>): ClickHouseConfig | null {
   };
 }
 
+/**
+ * The `@magistr/anilist-chart` extension facade: a read-only render layer
+ * over ClickHouse-backed AniList chat statistics. Declares the model's
+ * `globalArguments` (ClickHouse connection plus render-tuning knobs), its
+ * four resource specs (`settings`, `renderedPage`, `renderRun`,
+ * `publishRun`), and its three methods — `settings` echoes the resolved
+ * configuration, `render` fans out the seven page artifacts behind the
+ * freshness gate, and `publish` writes the rendered pages to the serving
+ * node, preferring a local filesystem write and falling back to ssh.
+ */
 export const model = {
   type: "@magistr/anilist-chart",
-  version: "2026.07.21.1",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     settings: {
