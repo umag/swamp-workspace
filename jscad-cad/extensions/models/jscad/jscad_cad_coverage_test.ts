@@ -9,10 +9,17 @@
  * time), Geometry.of([]) throwing (documenting the guard that the real
  * eval-subprocess path never calls), and the deprecated evaluate() throw.
  *
- * script_evaluator.ts / types.ts are BYTE-FROZEN — every test here PINS
- * already-shipped behavior; it is not red-green TDD.
+ * script_evaluator.ts / types.ts are byte-frozen for everything covered in
+ * this file (B1/B2 are asserted in the adversarial/contract/property suites
+ * instead); every evaluateAndSerialize call site here is now awaited to
+ * match the B2 sync-to-async signature change.
  */
-import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertThrows,
+} from "jsr:@std/assert@1";
 import {
   CadScript,
   Geometry,
@@ -71,6 +78,9 @@ function installCommandStub(outcome: CommandOutcome) {
         stderr: encoder.encode(outcome.stderr ?? ""),
       };
     }
+    output() {
+      return Promise.resolve(this.outputSync());
+    }
   }
   g.Deno.Command = FakeCommand;
   return {
@@ -80,10 +90,13 @@ function installCommandStub(outcome: CommandOutcome) {
   };
 }
 
-function withCommandStub<T>(outcome: CommandOutcome, fn: () => T): T {
+async function withCommandStub<T>(
+  outcome: CommandOutcome,
+  fn: () => T | Promise<T>,
+): Promise<T> {
   const stub = installCommandStub(outcome);
   try {
-    return fn();
+    return await fn();
   } finally {
     stub.restore();
   }
@@ -143,9 +156,9 @@ const EXPECTED_PACKAGE: Record<OutputFormat, string> = {
 };
 
 for (const format of OUTPUT_FORMATS) {
-  Deno.test(`coverage: serializerPackage("${format}") === ${EXPECTED_PACKAGE[format]}`, () => {
+  Deno.test(`coverage: serializerPackage("${format}") === ${EXPECTED_PACKAGE[format]}`, async () => {
     let script = "";
-    withCommandStub(
+    await withCommandStub(
       {
         success: true,
         objectCount: 1,
@@ -154,13 +167,12 @@ for (const format of OUTPUT_FORMATS) {
           script = Deno.readTextFileSync(evalPath);
         },
       },
-      () => {
+      () =>
         ScriptEvaluator.evaluateAndSerialize(
           CadScript.of(SIMPLE_SCRIPT),
           ScriptParameters.empty(),
           format,
-        );
-      },
+        ),
     );
     assert(script.includes(`"${EXPECTED_PACKAGE[format]}"`));
   });
@@ -170,9 +182,9 @@ for (const format of OUTPUT_FORMATS) {
 // serializeOpts — the three branches: stl / stl-ascii / catch-all "{}"
 // ---------------------------------------------------------------------------
 
-Deno.test('coverage: serializeOpts("stl") === "{ binary: true }"', () => {
+Deno.test('coverage: serializeOpts("stl") === "{ binary: true }"', async () => {
   let script = "";
-  withCommandStub(
+  await withCommandStub(
     {
       success: true,
       objectCount: 1,
@@ -189,9 +201,9 @@ Deno.test('coverage: serializeOpts("stl") === "{ binary: true }"', () => {
   assert(script.includes("serializer.serialize({ binary: true }, "));
 });
 
-Deno.test('coverage: serializeOpts("stl-ascii") === "{ binary: false }"', () => {
+Deno.test('coverage: serializeOpts("stl-ascii") === "{ binary: false }"', async () => {
   let script = "";
-  withCommandStub(
+  await withCommandStub(
     {
       success: true,
       objectCount: 1,
@@ -209,9 +221,9 @@ Deno.test('coverage: serializeOpts("stl-ascii") === "{ binary: false }"', () => 
 });
 
 for (const format of ["dxf", "svg", "obj", "3mf"] as const) {
-  Deno.test(`coverage: serializeOpts("${format}") falls into the catch-all "{}"`, () => {
+  Deno.test(`coverage: serializeOpts("${format}") falls into the catch-all "{}"`, async () => {
     let script = "";
-    withCommandStub(
+    await withCommandStub(
       {
         success: true,
         objectCount: 1,
@@ -234,10 +246,10 @@ for (const format of ["dxf", "svg", "obj", "3mf"] as const) {
 // stripMarkdownFences — match / no-match / idempotence
 // ---------------------------------------------------------------------------
 
-Deno.test("coverage: stripMarkdownFences matches a fenced block and strips it", () => {
+Deno.test("coverage: stripMarkdownFences matches a fenced block and strips it", async () => {
   const inner = "const main = () => primitives.cuboid({ size: [1,1,1] });\n";
   let script = "";
-  withCommandStub(
+  await withCommandStub(
     {
       success: true,
       objectCount: 1,
@@ -255,9 +267,9 @@ Deno.test("coverage: stripMarkdownFences matches a fenced block and strips it", 
   assertEquals(JSON.parse(m[1]), inner);
 });
 
-Deno.test("coverage: stripMarkdownFences does NOT match plain (non-fenced) source", () => {
+Deno.test("coverage: stripMarkdownFences does NOT match plain (non-fenced) source", async () => {
   let script = "";
-  withCommandStub(
+  await withCommandStub(
     {
       success: true,
       objectCount: 1,
@@ -275,10 +287,10 @@ Deno.test("coverage: stripMarkdownFences does NOT match plain (non-fenced) sourc
   assertEquals(JSON.parse(m[1]), SIMPLE_SCRIPT);
 });
 
-Deno.test("coverage: stripMarkdownFences does not match a fence that doesn't close at the very end", () => {
+Deno.test("coverage: stripMarkdownFences does not match a fence that doesn't close at the very end", async () => {
   const notReallyFenced = "```js\nconst main = () => {};\n``` trailing text";
   let script = "";
-  withCommandStub(
+  await withCommandStub(
     {
       success: true,
       objectCount: 1,
@@ -300,8 +312,8 @@ Deno.test("coverage: stripMarkdownFences does not match a fence that doesn't clo
 // stderr "    at " line-filter — remaining branches
 // ---------------------------------------------------------------------------
 
-Deno.test("coverage: stderr filter picks the FIRST line when it is already a non-frame message", () => {
-  assertThrows(
+Deno.test("coverage: stderr filter picks the FIRST line when it is already a non-frame message", async () => {
+  await assertRejects(
     () =>
       withCommandStub(
         {
@@ -320,14 +332,14 @@ Deno.test("coverage: stderr filter picks the FIRST line when it is already a non
   );
 });
 
-Deno.test("coverage: a LEADING frame line is de-indented by the whole-blob .trim() BEFORE the split — so it is picked as the message, not skipped", () => {
+Deno.test("coverage: a LEADING frame line is de-indented by the whole-blob .trim() BEFORE the split — so it is picked as the message, not skipped", async () => {
   // The whole-blob `.trim()` runs before `.split(\"\\n\")`, so it strips ALL
   // of line 1's leading whitespace regardless of how many spaces it had.
   // A stderr blob whose FIRST line starts with the "    at " frame indent
   // therefore never actually reaches the `startsWith(\"    at \")` check as
   // originally indented — it is de-indented first, so the filter treats it
   // as the real message rather than skipping past it to line 2.
-  assertThrows(
+  await assertRejects(
     () =>
       withCommandStub(
         {
@@ -351,8 +363,8 @@ Deno.test("coverage: a LEADING frame line is de-indented by the whole-blob .trim
 // finally cleanup — try/catch around Deno.removeSync
 // ---------------------------------------------------------------------------
 
-Deno.test("coverage: finally's removeSync(evalPath) catch swallows a throw when the eval file is already gone, without masking a successful result", () => {
-  const out = withCommandStub(
+Deno.test("coverage: finally's removeSync(evalPath) catch swallows a throw when the eval file is already gone, without masking a successful result", async () => {
+  const out = await withCommandStub(
     {
       success: true,
       objectCount: 1,
@@ -378,10 +390,10 @@ Deno.test("coverage: finally's removeSync(evalPath) catch swallows a throw when 
   assertEquals(out.serialized.bytes, new Uint8Array([9, 9, 9]));
 });
 
-Deno.test("coverage: a normal successful run removes BOTH temp files (evalPath and outputPath) by the time it returns", () => {
+Deno.test("coverage: a normal successful run removes BOTH temp files (evalPath and outputPath) by the time it returns", async () => {
   let evalPathSeen = "";
   let outputPathSeen = "";
-  withCommandStub(
+  await withCommandStub(
     {
       success: true,
       objectCount: 1,

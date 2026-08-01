@@ -6,9 +6,11 @@
  * `ScriptEvaluator.evaluateAndSerialize` to pin its return shape
  * independently of the model layer.
  *
- * jscad_cad.ts is BYTE-FROZEN — every test here characterizes already-shipped
- * behavior; it is not red-green TDD. `execute()` has no try/catch of its own
- * around `ScriptEvaluator.evaluateAndSerialize`, so an evaluation failure
+ * jscad_cad.ts is byte-frozen apart from the B2 fix's `await` on the
+ * now-async `ScriptEvaluator.evaluateAndSerialize` call and its version
+ * bump (2026.08.01.1); the tests below characterize already-shipped
+ * behavior otherwise. `execute()` has no try/catch of its own around
+ * `ScriptEvaluator.evaluateAndSerialize`, so an evaluation failure
  * propagates as a REJECTED promise with zero dataHandles written — that
  * characteristic is pinned explicitly below, not assumed.
  *
@@ -67,6 +69,9 @@ function installCommandStub(outcome: CommandOutcome) {
         stderr: encoder.encode(outcome.stderr ?? ""),
       };
     }
+    output() {
+      return Promise.resolve(this.outputSync());
+    }
   }
   g.Deno.Command = FakeCommand;
   return {
@@ -76,10 +81,13 @@ function installCommandStub(outcome: CommandOutcome) {
   };
 }
 
-function withCommandStub<T>(outcome: CommandOutcome, fn: () => T): T {
+async function withCommandStub<T>(
+  outcome: CommandOutcome,
+  fn: () => T | Promise<T>,
+): Promise<T> {
   const stub = installCommandStub(outcome);
   try {
-    return fn();
+    return await fn();
   } finally {
     stub.restore();
   }
@@ -291,13 +299,13 @@ Deno.test("run: eval failure with a multi-line stack trace picks the first non-f
 // independent of the model layer)
 // ---------------------------------------------------------------------------
 
-Deno.test("evaluateAndSerialize (direct): returns {serialized:{bytes,format}, objectCount}", () => {
-  withCommandStub({
+Deno.test("evaluateAndSerialize (direct): returns {serialized:{bytes,format}, objectCount}", async () => {
+  await withCommandStub({
     success: true,
     objectCount: 3,
     outputBytes: new Uint8Array([42]),
-  }, () => {
-    const out = ScriptEvaluator.evaluateAndSerialize(
+  }, async () => {
+    const out = await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "stl",
@@ -308,11 +316,11 @@ Deno.test("evaluateAndSerialize (direct): returns {serialized:{bytes,format}, ob
   });
 });
 
-Deno.test("evaluateAndSerialize (direct): text-format output round-trips through readFileSync as bytes", () => {
-  withCommandStub(
+Deno.test("evaluateAndSerialize (direct): text-format output round-trips through readFileSync as bytes", async () => {
+  await withCommandStub(
     { success: true, objectCount: 1, outputText: "<svg/>" },
-    () => {
-      const out = ScriptEvaluator.evaluateAndSerialize(
+    async () => {
+      const out = await ScriptEvaluator.evaluateAndSerialize(
         CadScript.of(SIMPLE_SCRIPT),
         ScriptParameters.of({ size: 3 }),
         "svg",

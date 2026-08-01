@@ -43,6 +43,10 @@ function serializeOpts(format: OutputFormat): string {
   return "{}";
 }
 
+// Default bound on how long the eval subprocess may run before it is killed.
+// Kept generous enough to clear cold npm-cache warm-up on the first render.
+const EVAL_TIMEOUT_MS = 30_000;
+
 // Build the subprocess evaluator script as a string.
 // The subprocess imports @jscad/modeling, evaluates the user-provided CadScript
 // via dynamic code construction, serializes geometry, and writes output.
@@ -118,11 +122,12 @@ export const ScriptEvaluator = {
    * Evaluate a CadScript and serialize to the target format in one subprocess.
    * Returns SerializedModel bytes and object count.
    */
-  evaluateAndSerialize(
+  async evaluateAndSerialize(
     script: CadScript,
     params: ScriptParameters,
     format: OutputFormat,
-  ): { serialized: SerializedModel; objectCount: number } {
+    timeoutMs: number = EVAL_TIMEOUT_MS,
+  ): Promise<{ serialized: SerializedModel; objectCount: number }> {
     const source = stripMarkdownFences(script.source);
     const paramsJson = JSON.stringify(params.values);
     const outputPath = Deno.makeTempFileSync({ suffix: ".bin" });
@@ -134,19 +139,27 @@ export const ScriptEvaluator = {
         buildEvalScript(source, paramsJson, format, outputPath),
       );
 
+      const signal = AbortSignal.timeout(timeoutMs);
       const cmd = new Deno.Command("deno", {
         args: [
           "run",
           "--allow-write=" + outputPath,
-          "--allow-read",
+          "--allow-read=" + evalPath,
           "--node-modules-dir=auto",
           evalPath,
         ],
         stdout: "piped",
         stderr: "piped",
+        signal,
       });
 
-      const result = cmd.outputSync();
+      const result = await cmd.output();
+
+      if (signal.aborted) {
+        throw new Error(
+          "CadScript evaluation timed out after " + timeoutMs + "ms",
+        );
+      }
 
       if (!result.success) {
         const stderr = new TextDecoder().decode(result.stderr).trim();

@@ -10,8 +10,11 @@
  * parameters, and markdown-fence stripping — WITHOUT ever spawning a real
  * process or touching the network.
  *
- * script_evaluator.ts is BYTE-FROZEN — every test here characterizes
- * already-shipped behavior; it is not red-green TDD.
+ * script_evaluator.ts is byte-frozen for everything EXCEPT the B1 argv fix
+ * (2026.08.01.1: `--allow-read` is now scoped to `evalPath`, asserted below)
+ * and the sync-to-async ripple from the B2 timeout fix (every
+ * evaluateAndSerialize call site here is now awaited); the wire-shape
+ * assertions otherwise characterize already-shipped behavior.
  *
  * Seam: only `globalThis.Deno.Command` is stubbed (installed via
  * `(globalThis as any).Deno.Command =`, restored in a `finally`). The real
@@ -115,6 +118,9 @@ function installCommandStub(
         stderr: encoder.encode(o.stderr ?? ""),
       };
     }
+    output() {
+      return Promise.resolve(this.outputSync());
+    }
   }
   g.Deno.Command = FakeCommand;
   return {
@@ -125,15 +131,15 @@ function installCommandStub(
   };
 }
 
-function withCommandStub<T>(
+async function withCommandStub<T>(
   outcome:
     | CommandOutcome
     | ((inv: { argv: string[]; evalScript: string }) => CommandOutcome),
-  fn: (stub: ReturnType<typeof installCommandStub>) => T,
-): T {
+  fn: (stub: ReturnType<typeof installCommandStub>) => T | Promise<T>,
+): Promise<T> {
   const stub = installCommandStub(outcome);
   try {
-    return fn(stub);
+    return await fn(stub);
   } finally {
     stub.restore();
   }
@@ -147,9 +153,9 @@ const SIMPLE_SCRIPT = `
 // argv shape — identical across all 6 formats
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: argv is exactly [run, --allow-write=<outputPath>, --allow-read, --node-modules-dir=auto, <evalPath>]", () => {
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+Deno.test("contract: argv is exactly [run, --allow-write=<outputPath>, --allow-read=<evalPath>, --node-modules-dir=auto, <evalPath>]", async () => {
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "stl",
@@ -159,15 +165,19 @@ Deno.test("contract: argv is exactly [run, --allow-write=<outputPath>, --allow-r
     assertEquals(argv.length, 5);
     assertEquals(argv[0], "run");
     assert(argv[1].startsWith("--allow-write="));
-    assertEquals(argv[2], "--allow-read");
+    assert(argv[2].startsWith("--allow-read="));
+    assert(
+      argv[2].includes(argv[4]),
+      `expected --allow-read= to be scoped to evalPath, got ${argv[2]}`,
+    );
     assertEquals(argv[3], "--node-modules-dir=auto");
     assert(argv[4].length > 0);
   });
 });
 
-Deno.test("contract: outputPath carries a .bin suffix and evalPath a .mjs suffix (Deno.makeTempFileSync options)", () => {
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+Deno.test("contract: outputPath carries a .bin suffix and evalPath a .mjs suffix (Deno.makeTempFileSync options)", async () => {
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "stl",
@@ -182,9 +192,9 @@ Deno.test("contract: outputPath carries a .bin suffix and evalPath a .mjs suffix
   });
 });
 
-Deno.test("contract: outputPath and evalPath are distinct temp files", () => {
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+Deno.test("contract: outputPath and evalPath are distinct temp files", async () => {
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "stl",
@@ -217,9 +227,9 @@ const EXPECTED_OPTS: Record<OutputFormat, string> = {
 };
 
 for (const format of OUTPUT_FORMATS) {
-  Deno.test(`contract: format "${format}" imports ${EXPECTED_PACKAGE[format]} and serializes with ${EXPECTED_OPTS[format]}`, () => {
-    withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-      ScriptEvaluator.evaluateAndSerialize(
+  Deno.test(`contract: format "${format}" imports ${EXPECTED_PACKAGE[format]} and serializes with ${EXPECTED_OPTS[format]}`, async () => {
+    await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+      await ScriptEvaluator.evaluateAndSerialize(
         CadScript.of(SIMPLE_SCRIPT),
         ScriptParameters.empty(),
         format,
@@ -241,9 +251,9 @@ for (const format of OUTPUT_FORMATS) {
   });
 }
 
-Deno.test("contract: every eval script imports npm:@jscad/modeling@2.12.0 as modeling", () => {
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+Deno.test("contract: every eval script imports npm:@jscad/modeling@2.12.0 as modeling", async () => {
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "svg",
@@ -260,11 +270,11 @@ Deno.test("contract: every eval script imports npm:@jscad/modeling@2.12.0 as mod
 // User script source is ALWAYS embedded via an exact JSON.stringify round-trip
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: hostile-looking source (quotes, backslashes, backticks, newlines) round-trips exactly through JSON.stringify embedding", () => {
+Deno.test("contract: hostile-looking source (quotes, backslashes, backticks, newlines) round-trips exactly through JSON.stringify embedding", async () => {
   const hostile =
     'const main = () => { const s = "a\\"b\\\\c`d\ne"; return primitives.cuboid({ size: [1,1,1] }); };';
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(hostile),
       ScriptParameters.empty(),
       "stl",
@@ -282,11 +292,11 @@ Deno.test("contract: hostile-looking source (quotes, backslashes, backticks, new
   });
 });
 
-Deno.test("contract: unicode source is embedded and recovered byte-for-byte", () => {
+Deno.test("contract: unicode source is embedded and recovered byte-for-byte", async () => {
   const source =
     `const main = () => { const label = "éèê😀"; return primitives.cuboid({ size: [1,1,1] }); };`;
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(source),
       ScriptParameters.empty(),
       "stl",
@@ -299,9 +309,9 @@ Deno.test("contract: unicode source is embedded and recovered byte-for-byte", ()
   });
 });
 
-Deno.test("contract: parameters are embedded as JSON.stringify(values), not re-escaped", () => {
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+Deno.test("contract: parameters are embedded as JSON.stringify(values), not re-escaped", async () => {
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.of({ size: 20, label: 'quote"inside' }),
       "stl",
@@ -313,9 +323,9 @@ Deno.test("contract: parameters are embedded as JSON.stringify(values), not re-e
   });
 });
 
-Deno.test("contract: empty parameters embed as {}", () => {
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+Deno.test("contract: empty parameters embed as {}", async () => {
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "stl",
@@ -332,11 +342,11 @@ Deno.test("contract: empty parameters embed as {}", () => {
 // Markdown fence stripping — pinned via the eval script's embedded userSource
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: a fenced source (with language tag) is stripped to its inner content before embedding", () => {
+Deno.test("contract: a fenced source (with language tag) is stripped to its inner content before embedding", async () => {
   const inner = "const main = () => primitives.cuboid({ size: [5, 5, 5] });\n";
   const fenced = "```javascript\n" + inner + "```";
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(fenced),
       ScriptParameters.empty(),
       "stl",
@@ -349,11 +359,11 @@ Deno.test("contract: a fenced source (with language tag) is stripped to its inne
   });
 });
 
-Deno.test("contract: a fenced source WITHOUT a language tag is also stripped", () => {
+Deno.test("contract: a fenced source WITHOUT a language tag is also stripped", async () => {
   const inner = "const main = () => primitives.cuboid({ size: [5, 5, 5] });\n";
   const fenced = "```\n" + inner + "```";
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(fenced),
       ScriptParameters.empty(),
       "stl",
@@ -366,9 +376,9 @@ Deno.test("contract: a fenced source WITHOUT a language tag is also stripped", (
   });
 });
 
-Deno.test("contract: a non-fenced source is embedded completely unchanged", () => {
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+Deno.test("contract: a non-fenced source is embedded completely unchanged", async () => {
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "stl",
@@ -381,11 +391,11 @@ Deno.test("contract: a non-fenced source is embedded completely unchanged", () =
   });
 });
 
-Deno.test("contract: stripMarkdownFences is idempotent (fenced-once === fenced-twice's inner content)", () => {
+Deno.test("contract: stripMarkdownFences is idempotent (fenced-once === fenced-twice's inner content)", async () => {
   const inner = "const main = () => primitives.cuboid({ size: [5, 5, 5] });\n";
   const oneFence = "```js\n" + inner + "```";
-  withCommandStub({ success: true, objectCount: 1 }, (stub) => {
-    ScriptEvaluator.evaluateAndSerialize(
+  await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(oneFence),
       ScriptParameters.empty(),
       "stl",
@@ -399,7 +409,7 @@ Deno.test("contract: stripMarkdownFences is idempotent (fenced-once === fenced-t
 
     // Feeding the already-stripped content back through produces no further
     // change (it no longer matches the fence pattern at all).
-    ScriptEvaluator.evaluateAndSerialize(
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(strippedOnce),
       ScriptParameters.empty(),
       "stl",

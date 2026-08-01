@@ -1,8 +1,12 @@
 /**
  * Property-based tests (fast-check) for @magistr/jscad-cad's eval-subprocess
- * seam. script_evaluator.ts / types.ts are BYTE-FROZEN — every property here
- * is observed by driving `ScriptEvaluator.evaluateAndSerialize` (and, for
- * one flow test, `model.methods.run.execute()`) against a stubbed
+ * seam. script_evaluator.ts / types.ts are byte-frozen apart from the B1
+ * argv fix (2026.08.01.1: `--allow-read` is now scoped to `evalPath`,
+ * asserted in the argv-shape property below) and the B2 sync-to-async
+ * signature change (every property that drives evaluateAndSerialize is now
+ * an `fc.asyncProperty`, awaited via `await fc.assert(...)`). Every
+ * property here is observed by driving `ScriptEvaluator.evaluateAndSerialize`
+ * (and, for one flow test, `model.methods.run.execute()`) against a stubbed
  * `Deno.Command` and reading back the generated eval-script text / return
  * value. No test spawns a real subprocess or hits the network.
  *
@@ -98,6 +102,9 @@ function installCommandStub(outcome: CommandOutcome) {
         stderr: new Uint8Array(),
       };
     }
+    output() {
+      return Promise.resolve(this.outputSync());
+    }
   }
   g.Deno.Command = FakeCommand;
   return {
@@ -107,23 +114,26 @@ function installCommandStub(outcome: CommandOutcome) {
   };
 }
 
-function withCommandStub<T>(outcome: CommandOutcome, fn: () => T): T {
+async function withCommandStub<T>(
+  outcome: CommandOutcome,
+  fn: () => T | Promise<T>,
+): Promise<T> {
   const stub = installCommandStub(outcome);
   try {
-    return fn();
+    return await fn();
   } finally {
     stub.restore();
   }
 }
 
-function captureInvocation(
+async function captureInvocation(
   source: string,
   format: OutputFormat,
   params: Record<string, unknown> = {},
-): { argv: string[]; evalScript: string } {
+): Promise<{ argv: string[]; evalScript: string }> {
   let capturedArgv: string[] = [];
   let capturedScript = "";
-  withCommandStub(
+  await withCommandStub(
     {
       success: true,
       objectCount: 1,
@@ -142,12 +152,12 @@ function captureInvocation(
   return { argv: capturedArgv, evalScript: capturedScript };
 }
 
-function evalScriptFor(
+async function evalScriptFor(
   source: string,
   format: OutputFormat,
   params: Record<string, unknown> = {},
-) {
-  return captureInvocation(source, format, params).evalScript;
+): Promise<string> {
+  return (await captureInvocation(source, format, params)).evalScript;
 }
 
 function extractUserSource(evalScript: string): string {
@@ -206,10 +216,10 @@ const EXPECTED_PACKAGE: Record<OutputFormat, string> = {
 
 const arbFormat = fc.constantFrom(...OUTPUT_FORMATS);
 
-Deno.test("property: for any OutputFormat, the eval script always imports that format's pinned serializer package", () => {
-  fc.assert(
-    fc.property(arbFormat, arbParams, (format, params) => {
-      const script = evalScriptFor(
+Deno.test("property: for any OutputFormat, the eval script always imports that format's pinned serializer package", async () => {
+  await fc.assert(
+    fc.asyncProperty(arbFormat, arbParams, async (format, params) => {
+      const script = await evalScriptFor(
         "const main = () => primitives.cuboid({ size: [1,1,1] });",
         format,
         params,
@@ -222,17 +232,18 @@ Deno.test("property: for any OutputFormat, the eval script always imports that f
   );
 });
 
-Deno.test("property: argv always has exactly 5 elements in the fixed [run, --allow-write=, --allow-read, --node-modules-dir=auto, evalPath] shape, for any format", () => {
-  fc.assert(
-    fc.property(arbFormat, (format) => {
-      const { argv } = captureInvocation(
+Deno.test("property: argv always has exactly 5 elements in the fixed [run, --allow-write=, --allow-read=<evalPath>, --node-modules-dir=auto, evalPath] shape, for any format", async () => {
+  await fc.assert(
+    fc.asyncProperty(arbFormat, async (format) => {
+      const { argv } = await captureInvocation(
         "const main = () => primitives.cuboid({ size: [1,1,1] });",
         format,
       );
       return argv.length === 5 &&
         argv[0] === "run" &&
         argv[1].startsWith("--allow-write=") &&
-        argv[2] === "--allow-read" &&
+        argv[2].startsWith("--allow-read=") &&
+        argv[2].includes(argv[4]) &&
         argv[3] === "--node-modules-dir=auto" &&
         argv[4].length > 0;
     }),
@@ -275,10 +286,10 @@ const arbSource = fc.array(arbSourceChar, { minLength: 1, maxLength: 60 }).map((
 ) => cs.join(""))
   .filter((s) => s.trim().length > 0);
 
-Deno.test("property: any generated source (incl. quotes/backslashes/newlines/template-literal-shaped substrings) round-trips exactly through the JSON.stringify embedding, with no breakout", () => {
-  fc.assert(
-    fc.property(arbSource, (source) => {
-      const script = evalScriptFor(source, "stl");
+Deno.test("property: any generated source (incl. quotes/backslashes/newlines/template-literal-shaped substrings) round-trips exactly through the JSON.stringify embedding, with no breakout", async () => {
+  await fc.assert(
+    fc.asyncProperty(arbSource, async (source) => {
+      const script = await evalScriptFor(source, "stl");
       const recovered = extractUserSource(script);
       // No breakout: the recovered source is byte-for-byte identical, and
       // the eval script's fixed structural anchors are still present
@@ -306,13 +317,13 @@ const arbMaybeFenced = fc.tuple(arbSource, fc.boolean(), arbFenceLang).map(
     fenced ? "```" + lang + "\n" + content + "\n```" : content,
 );
 
-Deno.test("property: stripping an already-stripped source a second time is a no-op (idempotence)", () => {
-  fc.assert(
-    fc.property(arbMaybeFenced, (candidate) => {
-      const firstScript = evalScriptFor(candidate, "stl");
+Deno.test("property: stripping an already-stripped source a second time is a no-op (idempotence)", async () => {
+  await fc.assert(
+    fc.asyncProperty(arbMaybeFenced, async (candidate) => {
+      const firstScript = await evalScriptFor(candidate, "stl");
       const strippedOnce = extractUserSource(firstScript);
       if (!strippedOnce.trim()) return true; // CadScript.of would reject; skip degenerate case
-      const secondScript = evalScriptFor(strippedOnce, "stl");
+      const secondScript = await evalScriptFor(strippedOnce, "stl");
       const strippedTwice = extractUserSource(secondScript);
       return strippedTwice === strippedOnce;
     }),

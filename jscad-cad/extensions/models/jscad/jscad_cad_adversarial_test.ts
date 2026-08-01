@@ -1,24 +1,34 @@
 /**
  * Adversarial suite: attacker's-perspective tests for @magistr/jscad-cad's
- * eval-subprocess seam. Pins the latent bug catalog tracked in the LOCAL
- * `jscad-cad-latent-bugs` issue-lifecycle model (never the Lab):
+ * eval-subprocess seam. Originally pinned the latent bug catalog tracked in
+ * the LOCAL `jscad-cad-latent-bugs` issue-lifecycle model (never the Lab);
+ * B1 and B2 are now FIXED (2026.08.01.1) and this suite asserts the fix:
  *
- *   B1 (HIGH)   unrestricted `--allow-read` (no path scope) on the nested
- *               `deno run` subprocess -> arbitrary host-file read,
- *               exfiltratable via the `output` artifact. Pinned via argv
- *               inspection ONLY — no test here ever reads a real secret.
- *   B2 (HIGH)   no subprocess timeout/signal -> an infinite-looping user
- *               script hangs the method forever. Pinned STRUCTURALLY by
- *               inspecting the captured Deno.Command constructor options —
- *               no test ever spawns or simulates a real hang.
+ *   B1 (HIGH, FIXED)   `--allow-read` is now scoped to the generated eval
+ *               script's own temp path (`--allow-read=<evalPath>`) instead of
+ *               a bare unscoped flag -> no more arbitrary host-file read /
+ *               exfiltration via the `output` artifact. Asserted via argv
+ *               inspection — no test here ever reads a real secret (the live
+ *               negative lives in script_evaluator_test.ts).
+ *   B2 (HIGH, FIXED)   the subprocess now runs with
+ *               `signal: AbortSignal.timeout(EVAL_TIMEOUT_MS)` and is awaited
+ *               via `await cmd.output()` (never `outputSync()`), so an
+ *               infinite-looping user script can no longer hang the method
+ *               forever. Asserted structurally by inspecting the captured
+ *               Deno.Command constructor options — no test here spawns or
+ *               simulates a real hang (the live negative lives in
+ *               script_evaluator_test.ts).
  *   B3 (MEDIUM) the subprocess's single stdout stream carries both its own
  *               final `console.log(JSON.stringify({objectCount}))` and
  *               anything the user's CadScript itself logs, so a script that
- *               calls console.log corrupts the trailing JSON.parse.
- *   B4 (LOW)    a main() returning [] yields objectCount 0 silently.
+ *               calls console.log corrupts the trailing JSON.parse. Still
+ *               open — out of scope for this fix.
+ *   B4 (LOW)    a main() returning [] yields objectCount 0 silently. Still
+ *               open — out of scope for this fix.
  *   B5 (LOW)    unbounded in-memory output — pinned structurally (no
  *               truncation/chunking logic exists in the generated script;
- *               no large fixture is ever allocated here).
+ *               no large fixture is ever allocated here). Still open — out
+ *               of scope for this fix.
  *
  * Covered negatives (verified to currently hold, pinned as holding):
  *   N1  no shell/argv command-injection surface — the user's script content
@@ -28,16 +38,19 @@
  *       exclusively from Deno.makeTempFileSync, never from user input.
  *   N3  the eval script obtains the Function constructor via
  *       `globalThis["Func"+"tion"]` specifically to evade static scanners
- *       that grep the literal "new Function" — this is the ROOT CAUSE of
- *       B1's arbitrary-code-execution surface, and the same class of
+ *       that grep the literal "new Function" — this was the ROOT CAUSE of
+ *       B1's arbitrary-code-execution surface (now scoped, not eliminated —
+ *       CadScript execution is arbitrary-by-design), and the same class of
  *       naive-scanner evasion that produces the quality-scorer's own
  *       bare-import false positive on the template-literal
  *       `import * as serializer from "${pkg}";`.
  *
- * script_evaluator.ts is BYTE-FROZEN — every test here PINS current
- * behavior (including behavior that is arguably risky), it does not fix
- * anything. No test in this file spawns a real subprocess, hits the
- * network, hangs, or allocates an oversized fixture.
+ * script_evaluator.ts is no longer byte-frozen for B1/B2 — this suite now
+ * asserts the FIXED behavior for those two; B3/B4/B5/N1/N2/N3 remain
+ * characterization pins of already-shipped (unfixed) behavior. No test in
+ * this file spawns a real subprocess, hits the network, hangs, or allocates
+ * an oversized fixture — those live cases are covered by the SOLE live e2e
+ * suite, script_evaluator_test.ts.
  */
 import {
   assert,
@@ -113,6 +126,9 @@ function installCommandStub(outcome: CommandOutcome) {
         stderr: encoder.encode(outcome.stderr ?? ""),
       };
     }
+    output() {
+      return Promise.resolve(this.outputSync());
+    }
   }
   g.Deno.Command = FakeCommand;
   return {
@@ -123,13 +139,13 @@ function installCommandStub(outcome: CommandOutcome) {
   };
 }
 
-function withCommandStub<T>(
+async function withCommandStub<T>(
   outcome: CommandOutcome,
-  fn: (opts: CapturedOptions[]) => T,
-): T {
+  fn: (opts: CapturedOptions[]) => T | Promise<T>,
+): Promise<T> {
   const stub = installCommandStub(outcome);
   try {
-    return fn(stub.capturedOptions);
+    return await fn(stub.capturedOptions);
   } finally {
     stub.restore();
   }
@@ -176,26 +192,28 @@ const SIMPLE_SCRIPT = `
 // B1 (HIGH): unrestricted --allow-read
 // ---------------------------------------------------------------------------
 
-Deno.test("B1 pin: --allow-read carries NO path scope (full host filesystem read), while --allow-write IS scoped to outputPath", () => {
-  withCommandStub({
+Deno.test("B1 fix: --allow-read is scoped to evalPath (no bare unscoped flag), while --allow-write stays scoped to outputPath", async () => {
+  await withCommandStub({
     success: true,
     objectCount: 1,
     outputBytes: new Uint8Array([1]),
-  }, (opts) => {
-    ScriptEvaluator.evaluateAndSerialize(
+  }, async (opts) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "stl",
     );
     const argv = opts[0].args!;
-    const readArg = argv.find((a) =>
-      a === "--allow-read" || a.startsWith("--allow-read=")
+    const readArg = argv.find((a) => a.startsWith("--allow-read="));
+    assert(readArg !== undefined, "expected a scoped --allow-read= flag");
+    const evalPath = argv[argv.length - 1];
+    assert(
+      readArg!.includes(evalPath),
+      `expected --allow-read= to be scoped to evalPath ${evalPath}, got ${readArg}`,
     );
-    assert(readArg !== undefined, "expected an --allow-read flag");
-    assertEquals(
-      readArg,
-      "--allow-read",
-      "must have NO =path scope — full filesystem read",
+    assert(
+      !argv.includes("--allow-read"),
+      "must never carry the bare unscoped --allow-read flag",
     );
     const writeArg = argv.find((a) => a.startsWith("--allow-write="));
     assert(
@@ -209,18 +227,21 @@ Deno.test("B1 pin: --allow-read carries NO path scope (full host filesystem read
 // B2 (HIGH): no subprocess timeout — structural only, never a real hang
 // ---------------------------------------------------------------------------
 
-Deno.test("B2 pin: Deno.Command options carry no signal/timeout — structural inspection only, no real hang simulated", () => {
-  withCommandStub({
+Deno.test("B2 fix: Deno.Command options carry a real AbortSignal (bounded execution) — structural inspection only, no real hang simulated", async () => {
+  await withCommandStub({
     success: true,
     objectCount: 1,
     outputBytes: new Uint8Array([1]),
-  }, (opts) => {
-    ScriptEvaluator.evaluateAndSerialize(
+  }, async (opts) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "stl",
     );
-    assertEquals(opts[0].signal, undefined);
+    assert(
+      opts[0].signal instanceof AbortSignal,
+      "expected a real AbortSignal on the Deno.Command options",
+    );
   });
 });
 
@@ -228,15 +249,15 @@ Deno.test("B2 pin: Deno.Command options carry no signal/timeout — structural i
 // B3 (MEDIUM): user stdout corrupts the trailing JSON.parse
 // ---------------------------------------------------------------------------
 
-Deno.test("B3 pin: user console.log output ahead of the JSON line corrupts JSON.parse, even though the subprocess 'succeeded' and wrote valid output bytes", () => {
-  withCommandStub(
+Deno.test("B3 pin: user console.log output ahead of the JSON line corrupts JSON.parse, even though the subprocess 'succeeded' and wrote valid output bytes", async () => {
+  await withCommandStub(
     {
       success: true,
       stdoutOverride: 'debug output from user script\n{"objectCount":1}',
       outputBytes: new Uint8Array([1, 2, 3]),
     },
-    () => {
-      assertThrows(
+    async () => {
+      await assertRejects(
         () =>
           ScriptEvaluator.evaluateAndSerialize(
             CadScript.of(SIMPLE_SCRIPT),
@@ -253,11 +274,11 @@ Deno.test("B3 pin: user console.log output ahead of the JSON line corrupts JSON.
 // B4 (LOW): empty-array geometry -> silent objectCount 0
 // ---------------------------------------------------------------------------
 
-Deno.test("B4 pin: an empty-array result from main() yields a clean success with objectCount 0 (no error anywhere)", () => {
-  withCommandStub(
+Deno.test("B4 pin: an empty-array result from main() yields a clean success with objectCount 0 (no error anywhere)", async () => {
+  await withCommandStub(
     { success: true, objectCount: 0, outputBytes: new Uint8Array([0]) },
-    () => {
-      const out = ScriptEvaluator.evaluateAndSerialize(
+    async () => {
+      const out = await ScriptEvaluator.evaluateAndSerialize(
         CadScript.of("const main = () => [];"),
         ScriptParameters.empty(),
         "stl",
@@ -279,7 +300,7 @@ Deno.test("B4 contrast: types.ts's OWN Geometry.of([]) guard DOES throw — it i
 // B5 (LOW): unbounded in-memory output — structural pin only
 // ---------------------------------------------------------------------------
 
-Deno.test("B5 pin: the generated eval script contains no size cap / truncation / chunking logic for serializer output", () => {
+Deno.test("B5 pin: the generated eval script contains no size cap / truncation / chunking logic for serializer output", async () => {
   const capturedScripts: string[] = [];
   const encoder = new TextEncoder();
   // deno-lint-ignore no-explicit-any
@@ -305,10 +326,13 @@ Deno.test("B5 pin: the generated eval script contains no size cap / truncation /
         stderr: new Uint8Array(),
       };
     }
+    output() {
+      return Promise.resolve(this.outputSync());
+    }
   }
   g.Deno.Command = FakeCommand;
   try {
-    ScriptEvaluator.evaluateAndSerialize(
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.empty(),
       "stl",
@@ -328,15 +352,15 @@ Deno.test("B5 pin: the generated eval script contains no size cap / truncation /
 // N1 (negative, covered): no shell/argv command-injection surface
 // ---------------------------------------------------------------------------
 
-Deno.test("N1 covered: hostile shell metacharacters in the script NEVER appear as an argv token — argv shape is unchanged", () => {
+Deno.test("N1 covered: hostile shell metacharacters in the script NEVER appear as an argv token — argv shape is unchanged", async () => {
   const hostile =
     'const main = () => { /* "; rm -rf / ; echo $(whoami) ` */ return primitives.cuboid({size:[1,1,1]}); };';
-  withCommandStub({
+  await withCommandStub({
     success: true,
     objectCount: 1,
     outputBytes: new Uint8Array([1]),
-  }, (opts) => {
-    ScriptEvaluator.evaluateAndSerialize(
+  }, async (opts) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(hostile),
       ScriptParameters.empty(),
       "stl",
@@ -360,14 +384,14 @@ Deno.test("N1 covered: hostile shell metacharacters in the script NEVER appear a
 // N2 (negative, covered): no output/eval path traversal via user input
 // ---------------------------------------------------------------------------
 
-Deno.test("N2 covered: outputPath/evalPath stay inside the OS temp dir regardless of script/parameters/outputFormat content", () => {
+Deno.test("N2 covered: outputPath/evalPath stay inside the OS temp dir regardless of script/parameters/outputFormat content", async () => {
   const traversalAttempt = "../../../../etc/passwd";
-  withCommandStub({
+  await withCommandStub({
     success: true,
     objectCount: 1,
     outputBytes: new Uint8Array([1]),
-  }, (opts) => {
-    ScriptEvaluator.evaluateAndSerialize(
+  }, async (opts) => {
+    await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
       ScriptParameters.of({ path: traversalAttempt, name: traversalAttempt }),
       "stl",
@@ -405,9 +429,9 @@ Deno.test('N3 pin (part 1 — source): script_evaluator.ts\'s OWN source contain
   );
 });
 
-Deno.test('N3 pin (part 2 — generated output): the EVAL SCRIPT that gets written to a (never-committed) temp file at runtime contains the already-resolved globalThis["Function"] bracket lookup', () => {
+Deno.test('N3 pin (part 2 — generated output): the EVAL SCRIPT that gets written to a (never-committed) temp file at runtime contains the already-resolved globalThis["Function"] bracket lookup', async () => {
   let captured = "";
-  withCommandStub(
+  await withCommandStub(
     {
       success: true,
       objectCount: 1,
@@ -457,15 +481,15 @@ Deno.test("adversarial: Deno.exit()-mid-eval is indistinguishable from any other
   );
 });
 
-Deno.test("adversarial: non-JSON stdout on an otherwise-successful run throws a JSON parse error, never silently returns garbage", () => {
-  withCommandStub(
+Deno.test("adversarial: non-JSON stdout on an otherwise-successful run throws a JSON parse error, never silently returns garbage", async () => {
+  await withCommandStub(
     {
       success: true,
       stdoutOverride: "not json at all",
       outputBytes: new Uint8Array([1]),
     },
-    () => {
-      assertThrows(
+    async () => {
+      await assertRejects(
         () =>
           ScriptEvaluator.evaluateAndSerialize(
             CadScript.of(SIMPLE_SCRIPT),
@@ -478,17 +502,20 @@ Deno.test("adversarial: non-JSON stdout on an otherwise-successful run throws a 
   );
 });
 
-Deno.test("adversarial: a modestly large (64KiB) but bounded output round-trips without truncation", () => {
+Deno.test("adversarial: a modestly large (64KiB) but bounded output round-trips without truncation", async () => {
   const big = new Uint8Array(64 * 1024).fill(7);
-  withCommandStub({ success: true, objectCount: 1, outputBytes: big }, () => {
-    const out = ScriptEvaluator.evaluateAndSerialize(
-      CadScript.of(SIMPLE_SCRIPT),
-      ScriptParameters.empty(),
-      "stl",
-    );
-    assertEquals(out.serialized.bytes.byteLength, big.byteLength);
-    assertEquals(out.serialized.bytes, big);
-  });
+  await withCommandStub(
+    { success: true, objectCount: 1, outputBytes: big },
+    async () => {
+      const out = await ScriptEvaluator.evaluateAndSerialize(
+        CadScript.of(SIMPLE_SCRIPT),
+        ScriptParameters.empty(),
+        "stl",
+      );
+      assertEquals(out.serialized.bytes.byteLength, big.byteLength);
+      assertEquals(out.serialized.bytes, big);
+    },
+  );
 });
 
 Deno.test("adversarial: stderr with ONLY stack-frame lines — the whole-blob .trim() de-indents line 1, so the 'first non-frame line' filter picks the (now-de-indented) FIRST frame, never falling through to the lines[lines.length-1] fallback", async () => {

@@ -9,7 +9,7 @@ import { ScriptEvaluator } from "./jscad/script_evaluator.ts";
 /** The @magistr/jscad-cad model — evaluates a JSCAD v2 CadScript main() and serializes the result to STL/DXF/SVG/OBJ/3MF. */
 export const model = {
   type: "@magistr/jscad-cad",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
 
   resources: {
     result: {
@@ -66,7 +66,7 @@ export const model = {
         // Domain — eval + serialize in one subprocess call
         const script = CadScript.of(args.script);
         const params = ScriptParameters.of(args.parameters);
-        const { serialized, objectCount } = ScriptEvaluator
+        const { serialized, objectCount } = await ScriptEvaluator
           .evaluateAndSerialize(
             script,
             params,

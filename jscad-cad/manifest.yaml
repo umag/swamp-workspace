@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/jscad-cad"
-version: "2026.07.16.2"
+version: "2026.08.01.1"
 description: >-
   JSCAD v2 CAD renderer — evaluate CadScript main() and serialize to
   STL/DXF/SVG/OBJ/3MF. Includes jscad-codegen Claude Code skill.
