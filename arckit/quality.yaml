@@ -4,10 +4,20 @@
 #
 # Backfilled to full five-suite compliance by ext-quality-bf-arckit
 # (wave-4 batch-4d, FINAL batch of the extension-quality backfill program,
-# ext-quality-test-backfill). arckit_workspace.ts and manifest.yaml are
-# BYTE-FROZEN by this change — every listed test file characterizes/pins
-# already-shipped behavior; no production code changed and no manifest/model
-# version bump.
+# ext-quality-test-backfill). arckit_workspace.ts and manifest.yaml were
+# BYTE-FROZEN by that backfill — every listed test file characterized/pinned
+# already-shipped behavior at the time; no production code changed and no
+# manifest/model version bump.
+#
+# 2026.08.01.1: fixed the HIGH path-traversal latent bug (LB1, tracked in the
+# LOCAL `arckit-latent-bugs` issue-lifecycle model — never a swamp.club Lab
+# issue) — startProject.execute now rejects any `dir` that is not a single
+# NNN-slug segment before readProjectState/Deno.mkdir/writeResource run. This
+# is the first production change to arckit_workspace.ts since the backfill;
+# it is no longer byte-frozen. manifest.yaml and model.version bumped in
+# lockstep. The two LB1 pins in the adversarial suite are now fix-regression
+# tests (rejection), not current-behavior pins; LB2..LB7 remain deferred
+# pins, untouched.
 #
 # Role map (each file assigned to exactly ONE honest role):
 #   contract-fixture        -> arckit_workspace_test.ts (unchanged — pins

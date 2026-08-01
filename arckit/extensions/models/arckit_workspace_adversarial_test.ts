@@ -1,15 +1,18 @@
 /**
- * Adversarial suite: hostile/malformed inputs, pinning CURRENT behavior.
- * `arckit_workspace.ts` is BYTE-FROZEN — nothing here is a proposed fix,
- * every test asserts what the shipped code ACTUALLY does today. Every
- * `pin (arckit-latent-bugs LBN, SEVERITY):`-titled test corresponds to one
- * of the 7 findings recorded in the LOCAL `arckit-latent-bugs`
- * issue-lifecycle model (NEVER a swamp.club Lab issue) — see that model's
- * description for the full write-up; these tests are the reproduction.
+ * Adversarial suite: hostile/malformed inputs. `arckit_workspace.ts` was
+ * BYTE-FROZEN when this suite was first authored; the LB1 (HIGH,
+ * path-traversal in `startProject`) fix is the first production change to
+ * land here, so its two blocks below are now FIX-REGRESSION tests — they
+ * assert the guarded, POST-fix behavior (rejection), not a current-behavior
+ * pin. Every remaining `pin (arckit-latent-bugs LBN, SEVERITY):`-titled test
+ * still asserts what the shipped code ACTUALLY does today for LB2..LB7 — see
+ * the LOCAL `arckit-latent-bugs` issue-lifecycle model (NEVER a swamp.club Lab
+ * issue) for the full write-up; these tests are the reproduction.
  *
  * No test in this suite ever writes outside its own `Deno.makeTempDir()`
- * tree (the datastore/no-escape rule) — LB1's traversal payload and LB2's
- * apply-overwrite both resolve strictly INSIDE the temp root.
+ * tree (the datastore/no-escape rule) — LB1's synthetic traversal payloads
+ * (now all REJECTED inputs that create nothing) and LB2's apply-overwrite
+ * both resolve strictly INSIDE the temp root.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./arckit_workspace.ts";
@@ -24,52 +27,90 @@ import {
 } from "./fixtures/workspace.ts";
 
 // ---------------------------------------------------------------------------
-// pin (arckit-latent-bugs LB1, HIGH): startProject's `dir` accepts a
-// traversal segment with zero sanitization — arckit_workspace.ts:1049/1065
+// fix regression (arckit-latent-bugs LB1, HIGH): startProject now rejects any
+// `dir` that is not a single NNN-slug segment — arckit_workspace.ts ~:1059,
+// BEFORE readProjectState/Deno.mkdir/writeResource. parseProjectDir itself is
+// UNCHANGED (stays permissive for scanWorkspace's read-model inventory); the
+// allowlist guard lives only in startProject, the sole write-side factory.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin (arckit-latent-bugs LB1, HIGH): startProject's dir '001-a/../b' resolves on disk to projects/b (the '..' collapses '001-a'), never creating 001-a, while the persisted projectState resource is keyed on the RAW literal string", async () => {
+Deno.test("fix regression (arckit-latent-bugs LB1, HIGH): startProject rejects dir '001-a/../b' — nothing created on disk, no projectState resource written", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
     const { ctx, written } = makeCtx(root, templatesDir);
-    await run(model, "startProject", { title: "x", dir: "001-a/../b" }, ctx);
+    await assertRejects(
+      () => run(model, "startProject", { title: "x", dir: "001-a/../b" }, ctx),
+      Error,
+      "NNN-slug segment",
+    );
 
-    // On-disk: only "b" exists under projects/ — "001-a" was never created,
-    // the whole segment was consumed by mkdir's OS-level path normalization.
-    const bStat = await Deno.stat(`${root}/projects/b`);
-    assert(bStat.isDirectory);
+    // Neither the collapsed target "b" nor the literal "001-a" segment was
+    // ever created — the guard fires before Deno.mkdir runs at all.
+    await assertRejects(() => Deno.stat(`${root}/projects/b`));
     await assertRejects(() => Deno.stat(`${root}/projects/001-a`));
-
-    // The written projectState resource is keyed on the LITERAL unsanitized
-    // dir string, not the resolved on-disk path.
-    assertEquals(written[0].name, "001-a/../b");
-    assertEquals(written[0].payload.projectDir, "001-a/../b");
-    assertEquals(written[0].payload.id, "001"); // parseProjectDir's \d{3} group
-
-    // Never escapes the temp root — proves the sandboxed reproduction is
-    // safe, not that the underlying primitive is safe in general (a deeper
-    // payload like "001-a/../../../../<abs>/pwn" would escape a REAL
-    // workspace root; that is exactly why this is pinned HIGH, not fixed).
-    const rootReal = await Deno.realPath(root);
-    const bReal = await Deno.realPath(`${root}/projects/b`);
-    assert(bReal.startsWith(rootReal));
+    assertEquals(written.length, 0);
   });
 });
 
-Deno.test("pin (arckit-latent-bugs LB1, HIGH): parseProjectDir's regex lets the traversal segment through — it is the `(.+)` group, not a rejected shape", async () => {
+Deno.test("fix regression (arckit-latent-bugs LB1, HIGH): startProject rejects dir '002-nested/deep' — no nested directory created, no projectState resource written", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
-    const { ctx } = makeCtx(root, templatesDir);
-    // A dir with NO ".." still demonstrates the same missing-sanitization
-    // primitive: any "/" in the slug is accepted and becomes a real nested
-    // directory that startProject's caller never asked for by name.
-    await run(
-      model,
-      "startProject",
-      { title: "x", dir: "002-nested/deep" },
-      ctx,
+    const { ctx, written } = makeCtx(root, templatesDir);
+    // A dir with NO ".." still carries a "/" — same guard, same rejection;
+    // this used to become a real nested directory the caller never asked
+    // for by name.
+    await assertRejects(
+      () =>
+        run(
+          model,
+          "startProject",
+          { title: "x", dir: "002-nested/deep" },
+          ctx,
+        ),
+      Error,
+      "NNN-slug segment",
     );
-    const stat = await Deno.stat(`${root}/projects/002-nested/deep`);
-    assert(stat.isDirectory);
+    await assertRejects(() => Deno.stat(`${root}/projects/002-nested`));
+    assertEquals(written.length, 0);
   });
+});
+
+Deno.test("fix regression (arckit-latent-bugs LB1, HIGH): legit single-segment NNN-slug dirs are unaffected by the allowlist guard", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    for (const dir of ["001-payment-gateway", "002-nested"]) {
+      const { ctx, written } = makeCtx(root, templatesDir);
+      await run(model, "startProject", { title: "x", dir }, ctx);
+      const stat = await Deno.stat(`${root}/projects/${dir}`);
+      assert(stat.isDirectory);
+      assertEquals(written[0].payload.projectDir, dir);
+    }
+  });
+});
+
+Deno.test("fix regression (arckit-latent-bugs LB1, HIGH): synthetic traversal payloads are each rejected — nothing created under projects/, no projectState resource written", async () => {
+  const payloads = [
+    "001-a/../b",
+    "002-nested/deep",
+    "001-../../etc",
+    "001-x/../../../tmp/pwn",
+  ];
+  for (const dir of payloads) {
+    await withTempWorkspace(async (root, templatesDir) => {
+      const { ctx, written } = makeCtx(root, templatesDir);
+      await assertRejects(
+        () => run(model, "startProject", { title: "x", dir }, ctx),
+        Error,
+        "NNN-slug segment",
+      );
+      // `${root}/projects` is created unconditionally at the top of
+      // execute() before dir is validated, so it exists but must stay empty
+      // for every rejected payload.
+      const existing: string[] = [];
+      for await (const e of Deno.readDir(`${root}/projects`)) {
+        existing.push(e.name);
+      }
+      assertEquals(existing, []);
+      assertEquals(written.length, 0);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

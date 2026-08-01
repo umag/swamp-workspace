@@ -1,11 +1,54 @@
 # Changelog
 
-## Unreleased
+## 2026.08.01.1
 
-Test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4d, FINAL
+Security fix: `startProject`'s `dir` argument is no longer trusted verbatim.
+Fixes **arckit-latent-bugs LB1 (HIGH)** — path traversal / arbitrary directory
+creation — tracked in the LOCAL `arckit-latent-bugs` issue-lifecycle model
+(NEVER filed to the swamp.club Lab). `parseProjectDir`'s regex `^(\d{3})-(.+)$`
+lets the `(.+)` tail carry `/` and `..`, and the accepted `dir` used to flow
+verbatim into `Deno.mkdir` under `projects/` and into `writeResource`'s instance
+name, with zero sanitization — a dir like `001-a/../../../../<abs>/pwn` could
+create a directory OUTSIDE the configured workspace root.
+
+- `extensions/models/arckit_workspace.ts`: `startProject.execute` now rejects
+  any `dir` not matching `/^\d{3}-[a-z0-9-]+$/` with a clear error, placed
+  immediately after the existing `000`-reserved check and BEFORE
+  `readProjectState`, `Deno.mkdir`, and `writeResource` — the guard precedes all
+  three write-side sinks. `parseProjectDir` itself is UNCHANGED and stays
+  permissive: it is the shared read-model parser used by `scanWorkspace` to
+  inventory pre-existing on-disk directories, and tightening it there would
+  regress that inventory and the LB5 (`>999`) boundary pin. The allowlist guard
+  lives only in `startProject`, the sole write-side factory that turns caller
+  input into a filesystem path plus a resource key.
+- `extensions/models/arckit_workspace_adversarial_test.ts`: the two LB1
+  acceptance pins (`dir: "001-a/../b"`, `dir: "002-nested/deep"`) are flipped
+  from characterizing acceptance to fix-regression tests asserting rejection,
+  nothing created on disk, and no `projectState` resource written. Added
+  regression coverage: legit single-segment dirs (`001-payment-gateway`,
+  `002-nested`) still succeed and create exactly `projects/<dir>`; synthetic
+  traversal payloads (`001-a/../b`, `002-nested/deep`, `001-../../etc`,
+  `001-x/../../../tmp/pwn`) are each rejected with nothing created and no
+  resource written. All payloads are synthetic strings used only as REJECTED
+  inputs, never written to disk, and every case runs inside its own
+  `Deno.makeTempDir()`. LB2..LB7 pins in the same file are untouched.
+- `manifest.yaml` / `model.version`: bumped `2026.07.16.2` → `2026.08.01.1` in
+  lockstep — this is the first production change to `arckit_workspace.ts` since
+  the `ext-quality-bf-arckit` backfill; it is no longer byte-frozen.
+- `quality.yaml`: header comment updated to record this fix and drop the
+  byte-frozen / no-bump language as it pertains to LB1.
+- Full `deno task check` / `test` / `fmt:check` / `lint` all green; property
+  suite re-verified at `FC_NUM_RUNS=5000`. LB2 (MEDIUM) and LB3..LB7 (LOW)
+  remain deferred on the `arckit-latent-bugs` model — none share LB1's fix path.
+
+Also folded into this release (previously recorded here as `Unreleased`, with no
+version bump, since it was itself a byte-frozen characterization pass) -- the
+test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4d, FINAL
 batch of the extension-quality backfill program, `ext-quality-test-backfill`).
-No behavior change -- `arckit_workspace.ts` (1487 LOC) is byte-frozen and the
-model `version` stays `2026.07.16.2` (`manifest.yaml` is also unchanged).
+At authorship time it was NO behavior change -- `arckit_workspace.ts` (1487 LOC)
+was byte-frozen and the model `version` stayed `2026.07.16.2` (`manifest.yaml`
+also unchanged); the LB1 fix above is the change that finally moved the version,
+so both land together in `2026.08.01.1`.
 
 - Added `extensions/models/arckit_workspace_methods_test.ts` (methods),
   `arckit_workspace_adversarial_test.ts` (adversarial),
