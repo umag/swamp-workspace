@@ -28,6 +28,7 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { FakeTime } from "https://deno.land/std@0.224.0/testing/time.ts";
 import { model as vmModel } from "./libvirt_vm.ts";
 import { model as networkModel } from "./libvirt_network.ts";
 import { model as storageModel } from "./libvirt_storage.ts";
@@ -437,7 +438,7 @@ Deno.test("vm.stop: issues `virsh shutdown` (graceful)", async () => {
   const { ctx } = makeCtx(LOCAL);
   await withCommandStub([
     on(["shutdown", "web"], ok()),
-    on(["dominfo", "web"], ok("State: in shutdown")),
+    on(["dominfo", "web"], ok("State: shut off")),
   ], async (calls) => {
     await run(vmModel, "stop", { name: "web" }, ctx);
     assertEquals(logicalArgv(calls[0]), ["shutdown", "web"]);
@@ -460,6 +461,104 @@ Deno.test("vm.stop: a genuine failure throws", async () => {
     on(["shutdown", "web"], fail("error: something else broke")),
   ], async () => {
     await assertRejects(() => run(vmModel, "stop", { name: "web" }, ctx));
+  });
+});
+
+// --- wait-for-shutdown guard (ported from the homelab dev copy; see
+// CHANGELOG.md 2026.08.01.1) --------------------------------------------
+
+Deno.test("vm.stop: waitSeconds polls dominfo until the domain reaches 'shut off'", async () => {
+  const { ctx, written } = makeCtx(LOCAL);
+  const time = new FakeTime();
+  try {
+    let dominfoCalls = 0;
+    const done = withCommandStub([
+      on(["shutdown", "web"], ok()),
+      on(["dominfo", "web"], () => {
+        dominfoCalls++;
+        return dominfoCalls === 1
+          ? ok("State: in shutdown")
+          : ok("State: shut off");
+      }),
+    ], async (calls) => {
+      await run(vmModel, "stop", { name: "web", waitSeconds: 30 }, ctx);
+      assertEquals(logicalArgv(calls[0]), ["shutdown", "web"]);
+    });
+    await time.tickAsync(3000);
+    await done;
+  } finally {
+    time.restore();
+  }
+  const rec = written.find((w) => w.spec === "actionResult");
+  assert(rec);
+  assertEquals(rec.payload.state, "shut off");
+});
+
+Deno.test("vm.stop: waitSeconds throws if the domain never reaches 'shut off' before the deadline", async () => {
+  const { ctx } = makeCtx(LOCAL);
+  const time = new FakeTime();
+  try {
+    const done = withCommandStub([
+      on(["shutdown", "web"], ok()),
+      on(["dominfo", "web"], ok("State: in shutdown")),
+    ], async () => {
+      await assertRejects(
+        () => run(vmModel, "stop", { name: "web", waitSeconds: 6 }, ctx),
+        Error,
+        "did not reach 'shut off'",
+      );
+    });
+    // Advance past the 6s deadline; two 3s polls elapse without the domain
+    // ever leaving "in shutdown".
+    await time.tickAsync(3000);
+    await time.tickAsync(3000);
+    await time.tickAsync(3000);
+    await done;
+  } finally {
+    time.restore();
+  }
+});
+
+Deno.test("vm.stop: waitSeconds=0 is fire-and-forget — returns immediately, no polling, no throw", async () => {
+  const { ctx, written } = makeCtx(LOCAL);
+  await withCommandStub([
+    on(["shutdown", "web"], ok()),
+    on(["dominfo", "web"], ok("State: in shutdown")),
+  ], async (calls) => {
+    await run(vmModel, "stop", { name: "web", waitSeconds: 0 }, ctx);
+    // Two dominfo calls total — the initial read plus reportState's own
+    // re-query (an existing, accepted redundant-read characteristic; see
+    // CHANGELOG.md 2026.08.01.1) — but NO poll retries in between, since
+    // waitSeconds=0 must not sleep at all.
+    assertEquals(
+      calls.filter((c) => logicalArgv(c)[0] === "dominfo").length,
+      2,
+    );
+  });
+  const rec = written.find((w) => w.spec === "actionResult");
+  assert(rec);
+  assertEquals(rec.payload.state, "in shutdown");
+});
+
+Deno.test("vm.stop: waitSeconds outside [0, 3600] is rejected by validation before any virsh call", async () => {
+  const { ctx } = makeCtx(LOCAL);
+  await withCommandStub([], async (calls) => {
+    // The zod schema's .parse() throws synchronously (before `execute` is
+    // ever called, so before any Deno.Command spawn) — wrap in an async
+    // callback so assertRejects sees a rejected promise, not a sync throw.
+    await assertRejects(
+      async () =>
+        await run(vmModel, "stop", { name: "web", waitSeconds: -1 }, ctx),
+    );
+    await assertRejects(
+      async () =>
+        await run(vmModel, "stop", { name: "web", waitSeconds: 3601 }, ctx),
+    );
+    await assertRejects(
+      async () =>
+        await run(vmModel, "stop", { name: "web", waitSeconds: 1.5 }, ctx),
+    );
+    assertEquals(calls.length, 0, "no Deno.Command call before the throw");
   });
 });
 

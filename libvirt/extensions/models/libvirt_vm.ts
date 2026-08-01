@@ -108,6 +108,10 @@ const GUEST_INFO_TYPES = [
   "interface",
 ];
 
+// Poll interval for stop's wait-for-shutdown guard (see CHANGELOG.md
+// 2026.08.01.1). Tests virtualize this via std's FakeTime.
+const POLL_MS = 3000;
+
 async function getDomDetail(conn: LibvirtConn, name: string) {
   const info = parseKV((await virsh(conn, ["dominfo", name])).stdout);
   return {
@@ -166,7 +170,7 @@ async function reportState(
  */
 export const model = {
   type: "@bad-at-naming/libvirt/vm",
-  version: "2026.05.25.1",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     vm: {
@@ -324,8 +328,19 @@ export const model = {
 
     stop: {
       description:
-        "Gracefully shut down a VM (ACPI). Idempotent — succeeds if already stopped.",
-      arguments: z.object({ name: z.string().describe("VM name") }),
+        "Gracefully shut down a VM (ACPI) and wait until it is actually shut off before returning. Idempotent — succeeds if already stopped.",
+      arguments: z.object({
+        name: z.string().describe("VM name"),
+        waitSeconds: z
+          .number()
+          .int()
+          .min(0)
+          .max(3600)
+          .default(120)
+          .describe(
+            "Seconds to wait for the domain to reach 'shut off' before failing (0 = fire-and-forget). qemu keeps the disk image open read-write until the domain is fully off — never touch the image before that.",
+          ),
+      }),
       execute: async (args, context) => {
         const conn = context.globalArgs;
         const res = await virshTry(conn, ["shutdown", args.name]);
@@ -339,6 +354,19 @@ export const model = {
               }`,
             );
           }
+        }
+        const waitSeconds = args.waitSeconds;
+        let detail = await getDomDetail(conn, args.name);
+        const deadline = Date.now() + waitSeconds * 1000;
+        while (detail.state !== "shut off" && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+          detail = await getDomDetail(conn, args.name);
+        }
+        if (waitSeconds > 0 && detail.state !== "shut off") {
+          throw new Error(
+            `VM ${args.name} did not reach 'shut off' within ${waitSeconds}s (state: ${detail.state}); ` +
+              `the guest may be ignoring ACPI — retry, increase waitSeconds, or use forceStop`,
+          );
         }
         return await reportState(conn, args.name, "shutdown", context);
       },

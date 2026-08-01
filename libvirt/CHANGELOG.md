@@ -3,11 +3,44 @@
 All notable changes to `@bad-at-naming/libvirt`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
-## Unreleased — test-backfill to the five-suite quality standard
+## 2026.08.01.1 — vm.stop wait-for-shutdown guard + test-backfill to the five-suite quality standard
+
+### Fixed
+
+- **`@bad-at-naming/libvirt/vm` `stop` (HIGH, data-loss)**: `stop` now waits for
+  the domain to actually reach `shut off` before returning, instead of reporting
+  state immediately after issuing `virsh shutdown`. A new bounded `waitSeconds`
+  argument (`min(0)`, `max(3600)`, default `120`; `0` = fire-and-forget) polls
+  every 3s; if the domain is still not `shut off` when `waitSeconds` elapses,
+  `stop` now throws instead of returning a data-losing false-success. This
+  closes the same class of race that caused the 2026-07-13
+  `qemu-img`-live-resize incident (a dependent operation ran against a qcow2
+  image before the owning domain had actually released it). The fix was proven
+  in the homelab dev copy (`vm` v2026.07.13.1) and is ported here adapted to
+  this package's `conn` abstraction (SSH + local/URI) via
+  `getDomDetail(conn, name)` — the dev copy is SSH-only and could not be copied
+  verbatim. Tracked as the local swamp issue-lifecycle model
+  `libvirt-port-stop-wait-guard` (never filed upstream as a Lab issue —
+  `@bad-at-naming/libvirt` is not a `@swamp/*` package).
+- Two existing `vm.stop` characterization tests (`libvirt_methods_test.ts`,
+  `libvirt_coverage_test.ts`) are flipped from mocking `dominfo` as
+  `"in shutdown"` to `"shut off"`, matching the new wait-then-return contract;
+  the shutdown-verb and never-`destroy` assertions are unaffected. Three new
+  wait-guard tests and one schema-boundary test are added
+  (`libvirt_methods_test.ts`), using `deno.land/std@0.224.0/testing/time.ts`
+  `FakeTime` to virtualize the 3s poll interval so the suite stays instant.
+- `forceStop` (immediate `virsh destroy`) is unchanged — the wait guard only
+  applies to the graceful path.
+
+### Internal
+
+- `@bad-at-naming/libvirt/network`, `/storage`, and `/host` model versions are
+  bumped to `2026.08.01.1` in lockstep with `/vm` and `manifest.yaml` (version
+  only — no behavior change) to satisfy this repo's CI invariant that every
+  model's embedded `version` matches the manifest version.
 
 Wave-1 gap-check child of `ext-quality-test-backfill`, following the pihole PR
-#66 recipe. **Tests and tooling only — no runtime code or manifest version
-changed.**
+#66 recipe, landed in this same release.
 
 ### Added
 
@@ -38,9 +71,7 @@ changed.**
 - The three pre-existing test files (`libvirt_parse_test.ts`,
   `libvirt_connection_test.ts`, `libvirt_idempotency_test.ts`) are byte-for-byte
   unchanged — they remain the `contract-fixture` anchor.
-- No `libvirt_vm.ts` / `libvirt_network.ts` / `libvirt_storage.ts` /
-  `libvirt_host.ts` / `lib/connection.ts` / `lib/parse.ts` runtime source was
-  touched, and `manifest.yaml`'s version is unchanged.
+- `lib/connection.ts` and `lib/parse.ts` runtime source is untouched.
 
 ## 2026.05.25.1 — idempotent network start/stop
 
