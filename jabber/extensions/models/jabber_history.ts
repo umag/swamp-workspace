@@ -4,7 +4,161 @@ const GlobalArgsSchema = z.object({
   historyDir: z.string().describe(
     "Path to Psi/Psi+ Jabber client history directory (containing .history and conference log files)",
   ),
+  vaultRoot: z.string().optional().describe(
+    "Absolute path to the Obsidian vault directory. When set, importToObsidian writes notes directly to this directory (no Obsidian CLI, no desktop app needed) and takes precedence over CLI-based vault-name resolution. Overridden per-call by the importToObsidian method's own vaultPath argument.",
+  ),
 });
+
+// --- Path confinement ------------------------------------------------------
+//
+// Copied (verbatim, same names/comments) from
+// obsidian-vault/extensions/models/obsidian_vault.ts -- see PR #56 for the
+// rationale. Swamp bundles each extension independently, so this ~60-line
+// block is duplicated rather than shared across extensions.
+
+export interface VaultPath {
+  absolutePath: string;
+  vaultRelativePath: string;
+  /**
+   * The vault root with every symlink resolved. Callers that turn walked
+   * absolute paths back into vault-relative ones must compare against this,
+   * not against the configured vaultRoot — on macOS a temp or synced vault
+   * reached via /var resolves to /private/var, and a raw prefix check silently
+   * fails, leaking absolute paths into the data model.
+   */
+  realRoot: string;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function normalizeSegments(path: string): string[] {
+  const segments: string[] = [];
+  for (const raw of path.split("/")) {
+    if (!raw || raw === ".") continue;
+    if (raw === "..") {
+      if (segments.length === 0) {
+        throw new Error(`Path escapes vault root: ${path}`);
+      }
+      segments.pop();
+      continue;
+    }
+    segments.push(raw);
+  }
+  return segments;
+}
+
+/**
+ * Resolve a caller-supplied path against the vault root, rejecting anything
+ * that leaves it. String-level only — see resolveVaultPathSafe for the
+ * symlink-aware form used before any filesystem access.
+ */
+export function resolveVaultPath(
+  globalArgs: Record<string, unknown>,
+  requestedPath: string,
+  options: { allowDotObsidian?: boolean } = {},
+): VaultPath {
+  const rootArg = globalArgs.vaultRoot;
+  if (typeof rootArg !== "string" || rootArg.length === 0) {
+    throw new Error(
+      "vaultRoot is not set — the filesystem backend needs it. Set the vaultRoot global argument, or use backend=cli.",
+    );
+  }
+  const normalizedVaultRoot = "/" +
+    normalizeSegments(trimTrailingSlash(rootArg)).join("/");
+
+  let relativeCandidate: string;
+  if (requestedPath.startsWith("/")) {
+    const normalizedRequested = "/" +
+      normalizeSegments(requestedPath).join("/");
+    if (
+      normalizedRequested !== normalizedVaultRoot &&
+      !normalizedRequested.startsWith(`${normalizedVaultRoot}/`)
+    ) {
+      throw new Error(
+        `Path is outside vault root. vaultRoot=${normalizedVaultRoot} requested=${normalizedRequested}`,
+      );
+    }
+    relativeCandidate = normalizedRequested.slice(normalizedVaultRoot.length)
+      .replace(/^\//, "");
+  } else {
+    relativeCandidate = requestedPath.replace(/^\/+/, "");
+  }
+
+  const relativeSegments = normalizeSegments(relativeCandidate);
+  if (
+    globalArgs.blockDotObsidian !== false && !options.allowDotObsidian &&
+    relativeSegments.some((segment) => segment === ".obsidian")
+  ) {
+    throw new Error(
+      "Refusing to operate on .obsidian internals unless allowDotObsidian=true",
+    );
+  }
+
+  const vaultRelativePath = relativeSegments.join("/");
+  return {
+    absolutePath: vaultRelativePath
+      ? `${normalizedVaultRoot}/${vaultRelativePath}`
+      : normalizedVaultRoot,
+    vaultRelativePath,
+    realRoot: normalizedVaultRoot,
+  };
+}
+
+/**
+ * Resolve a path and refuse to follow any symlink inside the vault.
+ *
+ * String normalization alone is not a boundary: a symlink is invisible to it,
+ * so a link inside the vault pointing at ~/.ssh would pass every check and then
+ * be read or overwritten. Every filesystem method resolves through here.
+ */
+export async function resolveVaultPathSafe(
+  globalArgs: Record<string, unknown>,
+  requestedPath: string,
+  options: { allowDotObsidian?: boolean } = {},
+): Promise<VaultPath> {
+  const logical = resolveVaultPath(globalArgs, requestedPath, options);
+
+  let realRoot: string;
+  const rootArg = trimTrailingSlash(globalArgs.vaultRoot as string);
+  try {
+    realRoot = await Deno.realPath(rootArg);
+  } catch {
+    throw new Error(
+      `vaultRoot does not exist or is not readable: ${rootArg}`,
+    );
+  }
+
+  const segments = logical.vaultRelativePath
+    ? logical.vaultRelativePath.split("/")
+    : [];
+  let current = realRoot;
+  for (const segment of segments) {
+    current = `${current}/${segment}`;
+    let info: Deno.FileInfo;
+    try {
+      info = await Deno.lstat(current);
+    } catch {
+      break; // does not exist yet — nothing to follow
+    }
+    if (info.isSymlink) {
+      throw new Error(
+        `Refusing to follow symlink inside the vault: ${
+          current.slice(realRoot.length + 1)
+        }`,
+      );
+    }
+  }
+
+  return {
+    absolutePath: logical.vaultRelativePath
+      ? `${realRoot}/${logical.vaultRelativePath}`
+      : realRoot,
+    vaultRelativePath: logical.vaultRelativePath,
+    realRoot,
+  };
+}
 
 const MessageSchema = z.object({
   timestamp: z.iso.datetime(),
@@ -197,7 +351,7 @@ async function listHistoryFiles(historyDir: string): Promise<
 /** Psi/Psi+ Jabber (XMPP) chat-history model: list, read, search, and import DMs and MUC conferences into an Obsidian vault as markdown notes. */
 export const model = {
   type: "@magistr/jabber/history",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     summary: {
@@ -469,7 +623,7 @@ export const model = {
           "Obsidian vault name (resolved via CLI)",
         ),
         vaultPath: z.string().optional().describe(
-          "Direct filesystem path to the Obsidian vault (skips CLI resolution)",
+          "Direct filesystem path to the Obsidian vault (skips CLI resolution and the vaultRoot global argument)",
         ),
         folder: z.string().default("Jabber").describe(
           "Target folder inside the vault",
@@ -479,10 +633,23 @@ export const model = {
         ),
       }),
       execute: async (args, context) => {
-        if (!args.vault && !args.vaultPath) {
-          throw new Error("Either 'vault' or 'vaultPath' must be provided");
+        // Precedence: the method's own vaultPath argument, then the global
+        // vaultRoot argument (headless, no Obsidian app needed), then the
+        // Obsidian CLI vault-name lookup (needs the desktop app running).
+        const vaultRoot = context.globalArgs.vaultRoot as string | undefined;
+        if (!args.vault && !args.vaultPath && !vaultRoot) {
+          throw new Error(
+            "Either 'vault' or 'vaultPath' must be provided (or set the vaultRoot global argument)",
+          );
         }
-        const vaultPath = args.vaultPath || await getVaultPath(args.vault!);
+        const vaultPath = args.vaultPath || vaultRoot ||
+          await getVaultPath(args.vault!);
+        // Synthetic globalArgs so the copied resolveVaultPathSafe helper can
+        // confine noteDir/notePath under vaultPath regardless of which of
+        // the three precedence tiers produced it.
+        const pathGlobalArgs: Record<string, unknown> = {
+          vaultRoot: vaultPath,
+        };
         const historyDir = context.globalArgs.historyDir + "/history";
         const files = await listHistoryFiles(historyDir);
 
@@ -506,7 +673,11 @@ export const model = {
           ? importable
           : importable.filter((f) => f.chatType === args.chatType);
 
-        const noteDir = `${vaultPath}/${args.folder}`;
+        const noteDirTarget = await resolveVaultPathSafe(
+          pathGlobalArgs,
+          args.folder,
+        );
+        const noteDir = noteDirTarget.absolutePath;
         await Deno.mkdir(noteDir, { recursive: true });
 
         let written = 0;
@@ -596,7 +767,11 @@ export const model = {
           }
 
           const safeFile = sanitizeFilename(file.jid);
-          const notePath = `${noteDir}/${safeFile}.md`;
+          const noteTarget = await resolveVaultPathSafe(
+            pathGlobalArgs,
+            `${args.folder}/${safeFile}.md`,
+          );
+          const notePath = noteTarget.absolutePath;
 
           try {
             await Deno.writeTextFile(notePath, md);

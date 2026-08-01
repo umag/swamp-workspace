@@ -2,13 +2,18 @@
  * Coverage suite for @magistr/jabber (jabber_history.ts) -- regression tests
  * closing gaps a reviewer found: guards with no test protecting them. Every
  * test here answers "if someone deletes/weakens this guard, does a test go
- * red?" jabber_history.ts is UNMODIFIED by this change.
+ * red?"
  *
  * Also pins bug #8 (unbounded memory -- no streaming/cap on whole-file
  * reads or the all-file scan), tracked in the LOCAL `jabber-latent-bugs`
  * issue-lifecycle model.
+ *
+ * The "backend selection branch matrix" section near the end covers
+ * importToObsidian's destination-resolution precedence added for
+ * swamp-workspace #57 (mirrors PR #56's obsidian-vault backend split):
+ * vaultPath argument > vaultRoot global argument > CLI vault-name lookup.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./jabber_history.ts";
 
 // ---------------------------------------------------------------------------
@@ -312,5 +317,176 @@ Deno.test("bug #8: a several-thousand-message file is read entirely into memory 
         "no truncation/cap -- every one of the N messages was parsed and counted",
       );
     },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// backend selection branch matrix (swamp-workspace #57) -- importToObsidian's
+// destination resolution: vaultPath argument > vaultRoot global argument > CLI
+// vault-name lookup. Every branch either writes to the expected vault or, for
+// the CLI branch, drives the stubbed Deno.Command exactly once.
+// ---------------------------------------------------------------------------
+
+type CommandCall = { cmd: string; options: Record<string, unknown> };
+
+function withCommandStub(
+  handler: (cmd: string, options: Record<string, unknown>) => {
+    success: boolean;
+    stdout?: string;
+    stderr?: string;
+  },
+  fn: (calls: CommandCall[]) => Promise<void>,
+) {
+  const calls: CommandCall[] = [];
+  const denoRecord = globalThis.Deno as unknown as Record<string, unknown>;
+  const original = denoRecord.Command;
+  // deno-lint-ignore no-explicit-any
+  (denoRecord as any).Command = class {
+    #cmd: string;
+    #options: Record<string, unknown>;
+    constructor(cmd: string, options: Record<string, unknown>) {
+      this.#cmd = cmd;
+      this.#options = options;
+      calls.push({ cmd, options });
+    }
+    output() {
+      const result = handler(this.#cmd, this.#options);
+      const enc = new TextEncoder();
+      return Promise.resolve({
+        success: result.success,
+        code: result.success ? 0 : 1,
+        stdout: enc.encode(result.stdout ?? ""),
+        stderr: enc.encode(result.stderr ?? ""),
+        signal: null,
+      });
+    }
+  };
+  return (async () => {
+    try {
+      await fn(calls);
+    } finally {
+      denoRecord.Command = original;
+    }
+  })();
+}
+
+Deno.test("branch matrix: vaultPath alone resolves to itself -- the CLI is never invoked", async () => {
+  await withTempVault(async (vaultPath) => {
+    const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+    await withCommandStub(
+      () => ({ success: false, stderr: "must not be called" }),
+      async (calls) => {
+        await run(
+          "importToObsidian",
+          { vaultPath, folder: "Jabber", chatType: "dm" },
+          ctx,
+        );
+        assertEquals(calls.length, 0);
+      },
+    );
+    const stat = await Deno.stat(`${vaultPath}/Jabber/alice@example.com.md`);
+    assert(stat.isFile);
+  });
+});
+
+Deno.test("branch matrix: vaultRoot alone (no vaultPath, no vault) resolves to itself -- the CLI is never invoked", async () => {
+  await withTempVault(async (vaultPath) => {
+    const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+    (ctx.globalArgs as Record<string, unknown>).vaultRoot = vaultPath;
+    await withCommandStub(
+      () => ({ success: false, stderr: "must not be called" }),
+      async (calls) => {
+        await run(
+          "importToObsidian",
+          { folder: "Jabber", chatType: "dm" },
+          ctx,
+        );
+        assertEquals(calls.length, 0);
+      },
+    );
+    const stat = await Deno.stat(`${vaultPath}/Jabber/alice@example.com.md`);
+    assert(stat.isFile);
+  });
+});
+
+Deno.test("branch matrix: vault (name) alone falls back to the CLI lookup -- exactly one Deno.Command invocation", async () => {
+  await withTempVault(async (resolvedPath) => {
+    const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+    await withCommandStub(
+      () => ({ success: true, stdout: `${resolvedPath}\n` }),
+      async (calls) => {
+        await run(
+          "importToObsidian",
+          { vault: "my-vault", folder: "Jabber", chatType: "dm" },
+          ctx,
+        );
+        assertEquals(calls.length, 1);
+      },
+    );
+    const stat = await Deno.stat(
+      `${resolvedPath}/Jabber/alice@example.com.md`,
+    );
+    assert(stat.isFile);
+  });
+});
+
+Deno.test("branch matrix: vaultRoot + vault both set (no vaultPath) -- vaultRoot wins, the CLI is never invoked", async () => {
+  await withTempVault(async (vaultPath) => {
+    const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+    (ctx.globalArgs as Record<string, unknown>).vaultRoot = vaultPath;
+    await withCommandStub(
+      () => ({ success: false, stderr: "must not be called" }),
+      async (calls) => {
+        await run(
+          "importToObsidian",
+          { vault: "some-other-vault", folder: "Jabber", chatType: "dm" },
+          ctx,
+        );
+        assertEquals(calls.length, 0, "vaultRoot must win over the CLI");
+      },
+    );
+    const stat = await Deno.stat(`${vaultPath}/Jabber/alice@example.com.md`);
+    assert(stat.isFile);
+  });
+});
+
+Deno.test("branch matrix: vaultPath + vaultRoot + vault ALL set -- vaultPath wins over both", async () => {
+  await withTempVault(async (vaultPathArg) => {
+    await withTempVault(async (vaultPathGlobal) => {
+      const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+      (ctx.globalArgs as Record<string, unknown>).vaultRoot = vaultPathGlobal;
+      await withCommandStub(
+        () => ({ success: false, stderr: "must not be called" }),
+        async (calls) => {
+          await run(
+            "importToObsidian",
+            {
+              vaultPath: vaultPathArg,
+              vault: "some-other-vault",
+              folder: "Jabber",
+              chatType: "dm",
+            },
+            ctx,
+          );
+          assertEquals(calls.length, 0, "vaultPath must win over both");
+        },
+      );
+      const stat = await Deno.stat(
+        `${vaultPathArg}/Jabber/alice@example.com.md`,
+      );
+      assert(stat.isFile);
+      await assertRejects(() =>
+        Deno.stat(`${vaultPathGlobal}/Jabber/alice@example.com.md`)
+      );
+    });
+  });
+});
+
+Deno.test("branch matrix: fallback error text mentions all three options when none is set", async () => {
+  const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+  await assertRejects(
+    () => run("importToObsidian", { folder: "Jabber", chatType: "all" }, ctx),
+    Error,
+    "Either 'vault' or 'vaultPath' must be provided (or set the vaultRoot global argument)",
   );
 });

@@ -2,17 +2,25 @@
  * Adversarial suite for @magistr/jabber (jabber_history.ts) -- attacker's
  * -perspective tests: malformed filenames, injection, PATH-hijack, and a
  * falsified-XXE covered-negative (this model parses NO XML at all -- see
- * below). jabber_history.ts is UNMODIFIED; every test here CHARACTERIZES
- * already-shipped behavior (including latent bugs), never fixes it.
+ * below).
  *
  * Nine already-shipped latent bugs are tracked in the LOCAL
  * `jabber-latent-bugs` issue-lifecycle model (never filed to the swamp.club
  * Lab). This file pins bugs #1, #2, #3 (both vectors), #4 (parse-layer
- * only), #5, #6, #7, and #9 -- see jabber_coverage_test.ts for #8
- * (unbounded memory).
+ * only), #6, #7, and #9 -- see jabber_coverage_test.ts for #8
+ * (unbounded memory). **Bug #5 (folder path traversal) is FIXED** by the
+ * headless `vaultRoot`/path-confinement change (swamp-workspace #57, mirrors
+ * PR #56's obsidian-vault backend split) -- see the "path confinement" section
+ * below, which replaces the old bug #5 characterization with tests of the new,
+ * fixed behavior.
+ *
+ * The "path confinement" section below exercises the `resolveVaultPathSafe`
+ * helper copied verbatim from
+ * obsidian-vault/extensions/models/obsidian_vault.ts (PR #56) into
+ * jabber_history.ts, and importToObsidian's new `vaultRoot` global argument.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { model } from "./jabber_history.ts";
+import { model, resolveVaultPathSafe } from "./jabber_history.ts";
 
 // ---------------------------------------------------------------------------
 // Harness (self-contained per suite file, matching the bandcamp/porkbun
@@ -321,13 +329,14 @@ Deno.test("bug #4 (parse-layer only, see doc comment above): a malformed timesta
 });
 
 // ---------------------------------------------------------------------------
-// bug #5 (MEDIUM) -- importToObsidian's `folder` argument is concatenated
-// unsanitized (`${vaultPath}/${args.folder}`); a `../`-relative folder
-// escapes the vault root. The escape target is kept INSIDE our own
-// `Deno.makeTempDir` sandbox and cleaned up after -- never a real system path.
+// path confinement (swamp-workspace #57) -- resolveVaultPathSafe, copied
+// verbatim from obsidian-vault/extensions/models/obsidian_vault.ts (PR #56),
+// now confines importToObsidian's noteDir/notePath. This FIXES former bug #5
+// (folder path traversal) and adds symlink refusal + realpath-based
+// containment, which the old vaultPath-string-concatenation code never had.
 // ---------------------------------------------------------------------------
 
-Deno.test("bug #5: a '../'-relative 'folder' escapes the vault directory (stays inside our own temp sandbox, never a real system path)", async () => {
+Deno.test("FIXED (was bug #5): a '../'-relative 'folder' is now REJECTED before any directory is created -- no note lands outside the vault", async () => {
   const sandboxRoot = await Deno.makeTempDir({
     prefix: "jabber-traversal-test-",
   });
@@ -335,22 +344,141 @@ Deno.test("bug #5: a '../'-relative 'folder' escapes the vault directory (stays 
     const vaultPath = `${sandboxRoot}/vault`;
     await Deno.mkdir(vaultPath, { recursive: true });
     const { ctx } = makeCtx(GOOD_HISTORY_DIR);
-    await run(
-      "importToObsidian",
-      { vaultPath, folder: "../escaped", chatType: "dm" },
-      ctx,
+    await assertRejects(
+      () =>
+        run(
+          "importToObsidian",
+          { vaultPath, folder: "../escaped", chatType: "dm" },
+          ctx,
+        ),
+      Error,
+      "Path escapes vault root",
     );
-    const escapedNote = await Deno.stat(
-      `${sandboxRoot}/escaped/alice@example.com.md`,
+    await assertRejects(
+      () => Deno.stat(`${sandboxRoot}/escaped`),
+      "the note must NOT land outside the vault directory",
     );
-    assert(escapedNote.isFile, "the note landed OUTSIDE the vault directory");
     await assertRejects(
       () => Deno.stat(`${vaultPath}/escaped`),
-      "the escaped note must NOT be reachable from inside the vault directory",
+      "no directory is created for a rejected traversal path",
     );
   } finally {
     await Deno.remove(sandboxRoot, { recursive: true });
   }
+});
+
+Deno.test("path confinement: a nested '../../' traversal buried deeper in 'folder' is also rejected", async () => {
+  await withTempVault(async (vaultPath) => {
+    const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+    await assertRejects(
+      () =>
+        run(
+          "importToObsidian",
+          { vaultPath, folder: "sub/../../escaped", chatType: "dm" },
+          ctx,
+        ),
+      Error,
+      "Path escapes vault root",
+    );
+  });
+});
+
+Deno.test("path confinement: a symlinked 'folder' path segment is refused via realpath, not silently followed", async () => {
+  await withTempVault(async (vaultPath) => {
+    const outside = await Deno.makeTempDir({
+      prefix: "jabber-symlink-outside-",
+    });
+    try {
+      await Deno.symlink(outside, `${vaultPath}/Jabber`);
+      const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+      await assertRejects(
+        () =>
+          run(
+            "importToObsidian",
+            { vaultPath, folder: "Jabber", chatType: "dm" },
+            ctx,
+          ),
+        Error,
+        "symlink",
+      );
+      await assertRejects(
+        () => Deno.stat(`${outside}/alice@example.com.md`),
+        "no note may be written through the symlinked folder",
+      );
+    } finally {
+      await Deno.remove(outside, { recursive: true });
+    }
+  });
+});
+
+Deno.test("path confinement: resolveVaultPathSafe's realRoot is the symlink-resolved root, not the raw configured vaultRoot string (macOS temp dirs resolve /var -> /private/var)", async () => {
+  await withTempVault(async (vaultPath) => {
+    const target = await resolveVaultPathSafe(
+      { vaultRoot: vaultPath },
+      "Jabber/note.md",
+    );
+    const expectedRealRoot = await Deno.realPath(vaultPath);
+    assertEquals(
+      target.realRoot,
+      expectedRealRoot,
+      "containment must be computed against the REAL (symlink-resolved) root, not the raw vaultRoot prefix",
+    );
+    assertEquals(target.absolutePath, `${expectedRealRoot}/Jabber/note.md`);
+  });
+});
+
+Deno.test("path confinement: importToObsidian with vaultRoot (global argument) writes under the vault's REAL root, byte-identical to the vaultPath-argument branch", async () => {
+  await withTempVault(async (vaultPath) => {
+    const realVaultPath = await Deno.realPath(vaultPath);
+
+    const viaVaultPath = makeCtx(GOOD_HISTORY_DIR);
+    await run(
+      "importToObsidian",
+      { vaultPath, folder: "Jabber", chatType: "dm" },
+      viaVaultPath.ctx,
+    );
+    const viaVaultPathNote = await Deno.readTextFile(
+      `${realVaultPath}/Jabber/alice@example.com.md`,
+    );
+    await Deno.remove(`${realVaultPath}/Jabber`, { recursive: true });
+
+    const viaVaultRoot = makeCtx(GOOD_HISTORY_DIR);
+    (viaVaultRoot.ctx.globalArgs as Record<string, unknown>).vaultRoot =
+      vaultPath;
+    await run(
+      "importToObsidian",
+      { folder: "Jabber", chatType: "dm" },
+      viaVaultRoot.ctx,
+    );
+    const viaVaultRootNote = await Deno.readTextFile(
+      `${realVaultPath}/Jabber/alice@example.com.md`,
+    );
+
+    assertEquals(
+      viaVaultRootNote,
+      viaVaultPathNote,
+      "the vaultRoot global-argument branch must produce byte-identical frontmatter/content to the vaultPath-argument branch",
+    );
+  });
+});
+
+// covered-negative: these importers only ever write into a caller-named
+// folder inside the vault -- they never walk the vault directory tree, so
+// there is no dot-dir/.trash EXCLUSION logic to have (unlike obsidian-vault's
+// `list`/`digest`, which do walk and must skip hidden directories).
+Deno.test("covered-negative: dot-dir/.trash exclusion is N/A -- importToObsidian never walks the vault, it only writes into the caller-named folder", async () => {
+  await withTempVault(async (vaultPath) => {
+    const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+    await run(
+      "importToObsidian",
+      { vaultPath, folder: ".trash", chatType: "dm" },
+      ctx,
+    );
+    // A literal ".trash" folder name is honored as an ordinary destination --
+    // there is no vault-walk to exclude it from, so no exclusion rule applies.
+    const stat = await Deno.stat(`${vaultPath}/.trash/alice@example.com.md`);
+    assert(stat.isFile);
+  });
 });
 
 // ---------------------------------------------------------------------------

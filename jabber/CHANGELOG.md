@@ -1,6 +1,57 @@
 # Changelog
 
-## Unreleased
+## 2026.08.01.1
+
+Adds an optional headless `vaultRoot` filesystem backend to `importToObsidian`,
+so the import can run with the Obsidian desktop app closed (swamp-workspace #57;
+mirrors the CLI/filesystem backend split done for `@magistr/obsidian-vault` in
+PR #56 — see that PR for the path-confinement rationale). The Obsidian CLI
+(`getVaultPath`) is kept as the fallback for when neither `vaultPath` (method
+argument) nor `vaultRoot` (global argument) is set.
+
+- Added the `vaultRoot` global argument. `importToObsidian`'s destination now
+  resolves with precedence `vaultPath` (method argument) > `vaultRoot` (global
+  argument) > the existing `vault` (name) CLI lookup via `getVaultPath`. jabber
+  already wrote notes with `Deno.writeTextFile` (never through the Obsidian
+  CLI's `create` command), so only the destination _resolution_ changed -- the
+  write path itself is untouched.
+- Added `resolveVaultPath`/`resolveVaultPathSafe` (realpath + symlink refusal
+  - `..` rejection), copied VERBATIM (same names/comments, per the approved
+    plan's scope constraint against a shared cross-extension module -- swamp
+    bundles each extension independently) from
+    `obsidian-vault/extensions/models/obsidian_vault.ts` (PR #56).
+    `importToObsidian`'s `noteDir`/`notePath` now resolve through
+    `resolveVaultPathSafe` before every `mkdir`/write, regardless of which of
+    the three precedence tiers produced the destination.
+  * **This FIXES latent bug #5** (folder path traversal --
+    `` `${vaultPath}/${args.folder}` `` was concatenated unsanitized, so a
+    `../`-relative `folder` escaped the vault directory): a traversal attempt is
+    now rejected before any directory is created. The other eight tracked latent
+    bugs (#1-4, #6-9) are UNCHANGED and remain pinned in the LOCAL
+    `jabber-latent-bugs` issue-lifecycle model.
+  * No `npm:yaml` dependency was added -- this model emits brand-new hand-built
+    frontmatter into notes it owns, it never round-trips existing frontmatter,
+    so PR #56's yaml-`Document` rationale does not apply here. Every hand-built
+    frontmatter string stays byte-for-byte identical to before this change.
+  * Dot-dir/`.trash` exclusion is N/A: `importToObsidian` writes into a
+    caller-named folder, it never walks the vault tree (covered by a
+    covered-negative test in the adversarial suite).
+- Extended all five existing test suites
+  (`jabber_test.ts`/`jabber_methods_test.ts`/`jabber_adversarial_test.ts`/
+  `jabber_coverage_test.ts`/`jabber_property_test.ts`) with `vaultRoot`
+  coverage: a golden fs-backend run against the synthetic `fixtures/good`
+  corpus, method-level tests proving the CLI is never invoked when `vaultRoot`
+  is set (`Deno.Command` stubbed to throw), a backend-selection precedence
+  branch matrix, path-confinement adversarial tests (`..` traversal and
+  symlinked folder segments refused, `/var`-vs-`/private/var` real-root
+  containment), and a property test asserting exactly one note per importable
+  item with frontmatter round-trip and no path escaping the vault's real root,
+  for any synthetic set of generated JIDs. No new fixture files were needed --
+  every new test builds its own `Deno.makeTempDir` vault and reuses the existing
+  `fixtures/good/history/` corpus.
+- `manifest.yaml`/model `version`: `2026.07.16.2` -> `2026.08.01.1`.
+
+## Unreleased (folded into 2026.08.01.1 above)
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4a child
 of the extension-quality backfill program, `ext-quality-test-backfill`). No
@@ -67,7 +118,8 @@ stays `2026.07.16.2`.
   5. **`importToObsidian`'s `folder` path traversal (MEDIUM)** --
      `` `${vaultPath}/${args.folder}` `` is never sanitized; a `../`-relative
      folder escapes the vault directory entirely (pinned inside our own temp-dir
-     sandbox, never a real system path).
+     sandbox, never a real system path). **FIXED in 2026.08.01.1 above** by the
+     `resolveVaultPathSafe` path-confinement change.
   6. **No timeout on the `obsidian` subprocess -- import can hang (MEDIUM)** --
      `Deno.Command`'s options carry no `AbortSignal`/timeout anywhere (exit code
      and stderr ARE checked); a real hang is never simulated, only the absence

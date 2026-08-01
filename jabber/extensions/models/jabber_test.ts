@@ -5,13 +5,19 @@
  * `decodeJid`, all of which are module-private in jabber_history.ts. Every
  * assertion here is reached through the method seam (`list`/`read`/`search`)
  * against the SYNTHETIC on-disk tree at `fixtures/good/history/` (real
- * `Deno.readDir`/`Deno.readTextFile`, never a stubbed filesystem) --
- * jabber_history.ts is BYTE-FROZEN by this change, so every assertion below
- * was captured by actually running the frozen source against these fixtures.
+ * `Deno.readDir`/`Deno.readTextFile`, never a stubbed filesystem) -- these
+ * parsing assertions were captured by actually running the source against
+ * these fixtures and remain byte-frozen.
+ *
+ * The "golden fs-backend run" section near the end covers importToObsidian's
+ * new `vaultRoot` global argument (swamp-workspace #57, mirrors PR #56's
+ * obsidian-vault backend split): a full import run against the synthetic
+ * corpus, asserting the exact set of produced note files with vaultRoot in
+ * place of the CLI/vaultPath resolution path.
  *
  * See fixtures/PROVENANCE.md for the fixture tree and per-file mapping.
  */
-import { assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { model } from "./jabber_history.ts";
 
 // ---------------------------------------------------------------------------
@@ -238,4 +244,52 @@ Deno.test("list: an empty .history file parses to messageCount 0 with firstMessa
   assertEquals(carol.messageCount, 0);
   assertEquals(carol.firstMessage, undefined);
   assertEquals(carol.lastMessage, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// golden fs-backend run (swamp-workspace #57) -- a full importToObsidian run
+// against the SAME synthetic fixtures/good corpus used throughout this file,
+// driven through the new `vaultRoot` global argument instead of the CLI
+// vault-name lookup or the vaultPath method argument. Pins the exact set of
+// note files produced headlessly.
+// ---------------------------------------------------------------------------
+
+async function withTempVault<T>(
+  fn: (vaultPath: string) => Promise<T>,
+): Promise<T> {
+  const vaultPath = await Deno.makeTempDir({ prefix: "jabber-golden-vault-" });
+  try {
+    return await fn(vaultPath);
+  } finally {
+    await Deno.remove(vaultPath, { recursive: true });
+  }
+}
+
+Deno.test("golden fs-backend run: importToObsidian via vaultRoot produces exactly the same note files as the vaultPath branch, against the full fixtures/good corpus", async () => {
+  await withTempVault(async (vaultPath) => {
+    const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+    (ctx.globalArgs as Record<string, unknown>).vaultRoot = vaultPath;
+    await run("importToObsidian", { folder: "Jabber", chatType: "all" }, ctx);
+
+    const entries: string[] = [];
+    for await (const e of Deno.readDir(`${vaultPath}/Jabber`)) {
+      entries.push(e.name);
+    }
+    assertEquals(
+      entries.sort(),
+      [
+        "alice@example.com.md",
+        "room1@conference.example.com.md",
+        "room2@conference.example.com.md",
+        "room3@conference.example.com.md",
+      ].sort(),
+    );
+
+    const alice = await Deno.readTextFile(
+      `${vaultPath}/Jabber/alice@example.com.md`,
+    );
+    assert(alice.startsWith("---\n"));
+    assert(alice.includes('jid: "alice@example.com"'));
+    assert(alice.includes("tags:\n  - jabber\n  - jabber-dm\n"));
+  });
 });
