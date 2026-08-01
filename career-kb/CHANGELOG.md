@@ -1,11 +1,49 @@
 # Changelog
 
+## 2026.08.01.1
+
+Fixes the HIGH latent bug characterized (pinned, not fixed) by the test backfill
+below, tracked and resolved via the local `career-kb-latent-bugs`
+issue-lifecycle model:
+
+- **Path traversal via `read`'s `file` argument (HIGH)**: when `file` contained
+  a `/`, it flowed verbatim through `readRef()` into
+  `context.extensionFile(`references/${rel}`)` then `Deno.readTextFile(...)`
+  with zero sanitization, so a value with `..` segments (e.g.
+  `../outside/some-file.md`) escaped the `references/` directory into a sibling
+  directory. Added a pure `assertWithinRefs(rel)` guard (next to `slugify` in
+  the Helpers section) that rejects absolute paths (leading `/`), any
+  `..`/`.`/empty path segment, and backslashes, and calls it at the single
+  `readRef()` chokepoint BEFORE building the on-disk path -- this confines
+  `read`, `loadRaw`, `loadSources`, and `sourceList` in one place, independent
+  of (and regardless of) any downstream `context.extensionFile` confinement, as
+  defense in depth. Legitimate `cluster/file.md` relative reads and the bare
+  `index.json` lookup are unaffected.
+- Bumped `manifest.yaml` and `model.version` to CalVer `2026.08.01.1`, in sync.
+- Flipped the LB1 pin in `career_kb_adversarial_test.ts` from
+  success-characterization to `assertRejects` (asserting zero resource writes on
+  rejection), and added a second pin for four extra synthetic traversal shapes
+  (absolute `/etc/passwd`, nested `../..`, mixed `a/../../b`, `./x`) -- both
+  assert the rejection is the guard's own `"Invalid reference path"` message
+  specifically (not an incidental filesystem error), verified genuinely RED
+  against the unmodified source before the guard was wired in. Added focused
+  unit tests for `assertWithinRefs` in `career_kb_test.ts` (accepts
+  `inaction/career-inaction.md` and `index.json`; rejects `../x`, `/etc/passwd`,
+  `a/../../b`, `./x`, and a backslash variant, naming the offending input in
+  each thrown message). The committed
+  `fixtures/outside/fixture-escape-target.md` stays as the now-unreachable
+  synthetic attack target. LB2-LB7 pins are unchanged -- they remain deferred
+  and still characterize current behavior, still tracked by the local
+  `career-kb-latent-bugs` issue-lifecycle model (NEVER filed to the swamp.club
+  Lab).
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4b child
 of the extension-quality backfill program, `ext-quality-test-backfill`). No
-behavior change -- `career_kb.ts` is byte-frozen and the model `version` stays
-`2026.07.16.2` (`manifest.yaml` is also unchanged).
+behavior change at the time -- `career_kb.ts` was byte-frozen and the model
+`version` stayed `2026.07.16.2` (`manifest.yaml` was also unchanged; later fixed
+above in `2026.08.01.1`).
 
 - Added `extensions/models/career_kb_methods_test.ts` (methods),
   `career_kb_adversarial_test.ts` (adversarial), `career_kb_coverage_test.ts`

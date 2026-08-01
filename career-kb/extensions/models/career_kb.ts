@@ -379,6 +379,33 @@ export function slugify(s) {
 }
 
 /**
+ * Confine a reference path to the `references/` root (career-kb-latent-bugs
+ * LB1, HIGH). Rejects absolute paths (leading `/`), backslashes, and any `..`
+ * / `.` / empty path segment; accepts `cluster/file.md`-shaped relative paths
+ * and the bare `index.json`. Throws a plain `Error` naming the offending
+ * input on rejection.
+ */
+export function assertWithinRefs(rel) {
+  if (rel.includes("\\")) {
+    throw new Error(
+      `Invalid reference path (backslashes are not allowed): "${rel}"`,
+    );
+  }
+  if (rel.startsWith("/")) {
+    throw new Error(
+      `Invalid reference path (absolute paths are not allowed): "${rel}"`,
+    );
+  }
+  for (const segment of rel.split("/")) {
+    if (segment === "" || segment === "." || segment === "..") {
+      throw new Error(
+        `Invalid reference path (escapes the references root): "${rel}"`,
+      );
+    }
+  }
+}
+
+/**
  * Parse a markdown file's YAML frontmatter into a record and return the body.
  * Handles quoted/unquoted scalars, inline `[a, b]` arrays, and numbers; a file
  * with no frontmatter block yields an empty record and the full text as body.
@@ -476,7 +503,11 @@ export function buildEntry(rel, text) {
 }
 
 // Read a bundled reference file (resolved relative to the manifest directory).
+// Confined to the references/ root by assertWithinRefs (career-kb-latent-bugs
+// LB1) regardless of any downstream context.extensionFile confinement -- this
+// is the single chokepoint for read, loadRaw, loadSources, and sourceList.
 async function readRef(context, rel) {
+  assertWithinRefs(rel);
   return await Deno.readTextFile(context.extensionFile(`${REF_DIR}/${rel}`));
 }
 
@@ -527,7 +558,7 @@ export function tokenize(q) {
  */
 export const model = {
   type: "@magistr/career-kb",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     catalog: {
