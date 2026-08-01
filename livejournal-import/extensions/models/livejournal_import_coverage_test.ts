@@ -104,7 +104,14 @@ async function readFixture(name: string): Promise<string> {
 type CommandCall = { args: string[] };
 
 function withDenoStubs<T = void>(
-  opts: { vaultPath?: string },
+  opts: {
+    vaultPath?: string;
+    /** Leave Deno.mkdir un-stubbed (real) -- needed by the vaultRoot
+     * (headless) branch-matrix tests below (swamp-workspace #57). */
+    realMkdir?: boolean;
+    /** Throw when Deno.Command is constructed for "obsidian". */
+    throwOnObsidian?: boolean;
+  },
   fn: (
     calls: {
       commands: CommandCall[];
@@ -127,6 +134,11 @@ function withDenoStubs<T = void>(
     _args: string[];
     constructor(_cmd: string, options: { args?: string[] }) {
       this._args = options.args ?? [];
+      if (opts.throwOnObsidian && _cmd === "obsidian") {
+        throw new Error(
+          "Deno.Command must not be constructed for 'obsidian' when vaultRoot is set -- the CLI must never be invoked",
+        );
+      }
       commands.push({ args: this._args });
     }
     output() {
@@ -148,10 +160,12 @@ function withDenoStubs<T = void>(
   }
 
   denoAny.Command = FakeCommand;
-  denoAny.mkdir = (path: string) => {
-    mkdirs.push(path);
-    return Promise.resolve();
-  };
+  if (!opts.realMkdir) {
+    denoAny.mkdir = (path: string) => {
+      mkdirs.push(path);
+      return Promise.resolve();
+    };
+  }
   denoAny.writeFile = (path: string | URL) => {
     writes.push({ path: String(path) });
     return Promise.resolve();
@@ -634,5 +648,112 @@ Deno.test("fetchWithRetry: all 3 attempts fail -- the per-post catch records an 
     );
   } finally {
     time.restore();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// backend selection branch matrix (swamp-workspace #57) -- import's note
+// -destination resolution: vaultRoot (global argument) > the CLI vault-name
+// lookup (getVaultPath) / obsidian create. Every branch either writes to the
+// expected vault directory or drives the stubbed Deno.Command exactly once.
+// ---------------------------------------------------------------------------
+
+const SINGLE_POST_INDEX_HTML =
+  `<html><body><a href="https://fixture-journal.example.com/5001.html">Post</a></body></html>`;
+
+function singlePostHtml(): string {
+  return `<html><body>
+<div class="aentry-post__title-text">Fixture Branch Matrix Post</div>
+<div class="aentry-head__date"><time>May 5 2019, 11:00</time></div>
+<div class="aentry-post__text"><p>fixture body</p></div>
+</body></html>`;
+}
+
+function singlePostRoutes(): Route[] {
+  const postHtml = singlePostHtml();
+  return [(req) => {
+    const url = new URL(req.url);
+    if (url.pathname === "/" && !url.searchParams.has("skip")) {
+      return htmlResponse(SINGLE_POST_INDEX_HTML);
+    }
+    if (url.pathname === "/5001.html") return htmlResponse(postHtml);
+    return undefined;
+  }];
+}
+
+Deno.test("branch matrix: vaultRoot unset -- falls back to the CLI (getVaultPath + obsidian create), exactly as before this change", async () => {
+  const { ctx, written } = makeCtx(GLOBAL_ARGS);
+  await withDenoStubs({}, async ({ commands }) => {
+    await withFetchStub(
+      singlePostRoutes(),
+      () => run({}, ctx) as Promise<void>,
+    );
+    assertEquals(
+      commands.filter((c) => c.args[0] === "vault").length,
+      1,
+      "getVaultPath must be called exactly once when vaultRoot is unset",
+    );
+    assertEquals(
+      commands.filter((c) => c.args[0] === "create").length,
+      1,
+      "obsidian create must be called exactly once when vaultRoot is unset",
+    );
+  });
+  const result = written.find((w) => w.spec === "result")!;
+  assertEquals(result.payload.notesCreated, 1);
+});
+
+Deno.test("branch matrix: vaultRoot set -- the CLI is never invoked at all, note written directly to disk", async () => {
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-branch-matrix-",
+  });
+  try {
+    const { ctx, written } = makeCtx({ ...GLOBAL_ARGS, vaultRoot });
+    await withDenoStubs({ realMkdir: true }, async ({ commands }) => {
+      await withFetchStub(
+        singlePostRoutes(),
+        () => run({}, ctx) as Promise<void>,
+      );
+      assertEquals(
+        commands.length,
+        0,
+        "no obsidian subcommand (vault OR create) may be invoked when vaultRoot is set",
+      );
+    });
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 1);
+    const entries: string[] = [];
+    for await (const e of Deno.readDir(`${vaultRoot}/LiveJournal`)) {
+      if (e.name.endsWith(".md")) entries.push(e.name);
+    }
+    assertEquals(entries.length, 1);
+  } finally {
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+Deno.test("branch matrix: vaultRoot + vault BOTH set -- vaultRoot wins, getVaultPath is never invoked", async () => {
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-branch-matrix-precedence-",
+  });
+  try {
+    const { ctx, written } = makeCtx({
+      ...GLOBAL_ARGS,
+      vault: "some-other-vault",
+      vaultRoot,
+    });
+    await withDenoStubs(
+      { realMkdir: true, throwOnObsidian: true },
+      async () => {
+        await withFetchStub(
+          singlePostRoutes(),
+          () => run({}, ctx) as Promise<void>,
+        );
+      },
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 1);
+  } finally {
+    await Deno.remove(vaultRoot, { recursive: true });
   }
 });

@@ -1,5 +1,67 @@
 # Changelog
 
+## 2026.08.01.1
+
+Adds an optional headless `vaultRoot` filesystem backend to `import`, so the
+import can run with the Obsidian desktop app closed (swamp-workspace #57;
+mirrors the CLI/filesystem backend split done for `@magistr/obsidian-vault` in
+PR #56 — see that PR for the path-confinement rationale). The Obsidian CLI
+(`getVaultPath` + `runObsidian("create", ...)`) is kept as the fallback for when
+`vaultRoot` is not set. Cross-reference: swamp-workspace#57.
+
+- Added the `vaultRoot` global argument. When set, the vault path resolves to it
+  directly (skipping the `obsidian vault ... info=path` CLI call), and the note
+  is written with a confined atomic write instead of
+  `runObsidian("create", ...)`.
+- Added `resolveVaultPath`/`resolveVaultPathSafe` (realpath + symlink refusal
+  - `..` rejection) and the atomic-write helpers (`writeAtomic`,
+    `ensureParentDir`, `chmodQuietly`), copied VERBATIM (same names/comments,
+    per the approved plan's scope constraint against a shared cross-extension
+    module — swamp bundles each extension independently) from
+    `obsidian-vault/extensions/models/obsidian_vault.ts` (PR #56). The note
+    write now resolves through `resolveVaultPathSafe` before every
+    `mkdir`/write, closing folder-traversal and symlink-escape vectors on the
+    new headless path.
+- **This guard is scoped to the note write ONLY**: LB7 (folder path traversal on
+  the `attachDiskPath` mkdir + image write, LOW, tracked in the local
+  `livejournal-import-latent-bugs` model) is UNCHANGED and remains pinned for
+  both the CLI branch and the new vaultRoot branch — a malicious `folder` global
+  argument still lets `Deno.mkdir`/`Deno.writeFile` land outside the vault for
+  attachments, even when vaultRoot is set. Only the note itself is now confined.
+- No `npm:yaml` dependency was added — this model emits brand-new hand-built
+  frontmatter into notes it owns, it never round-trips existing frontmatter, so
+  PR #56's yaml-`Document` rationale does not apply here. Every hand-built
+  frontmatter string stays byte-for-byte identical to before this change.
+- Dot-dir/`.trash` exclusion is N/A: `import` writes into a caller-named folder,
+  it never walks the vault tree (covered by a covered-negative test in the
+  adversarial suite).
+- **Real-world behavior note**: writing the note directly via
+  `Deno.writeTextFile` (through the new atomic-write helper) may not be
+  byte-identical to what the real Obsidian CLI's `create` command would have
+  produced on disk — the CLI has never been observed to differ in this repo's
+  tests (it's always stubbed), but a real `obsidian create` call could in
+  principle normalize a trailing newline differently than a raw
+  `Deno.writeTextFile`. Not reproduced or fixed here, just flagged.
+- Extended all five test suites (contract-fixture, methods, adversarial,
+  coverage, property-invariant-flow) with `vaultRoot` coverage: method-level
+  tests proving the CLI is never invoked when `vaultRoot` is set (`Deno.Command`
+  stubbed to throw on `"obsidian"`) and that bytes match the CLI branch exactly,
+  a backend-selection precedence branch matrix, path-confinement adversarial
+  tests (`..` traversal and symlinked folder segment refused,
+  `/var`-vs-`/private/var` real-root containment, plus an explicit regression
+  pin that LB7's attachment-mkdir traversal is UNCHANGED), and a property test
+  asserting exactly one note per generated post with frontmatter round-trip and
+  no path escaping the vault's real root. No new fixture files were needed.
+- `deno.json`: `test`/`test:soak` tasks gain `--allow-write` (previously
+  `--allow-read --allow-env` only) so the new fs-write tests can run.
+- Added an identity `upgrades[]` entry (`2026.07.31.1 -> 2026.08.01.1`,
+  `upgradeAttributes: (old) => old`, no resource schema change) — required so
+  the model-upgrade chain stays continuous with
+  `final toVersion ===
+  model.version`, per this repo's ratchet-label
+  convention.
+- `manifest.yaml`/model `version`: `2026.07.31.1` -> `2026.08.01.1`.
+
 ## 2026.07.31.1
 
 Fix for latent bug LB1 (SSRF via image `src`, HIGH) tracked in the LOCAL

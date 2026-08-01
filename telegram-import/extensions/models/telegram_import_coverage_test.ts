@@ -16,6 +16,7 @@
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
+  DEFAULT_GLOBAL_ARGS,
   makeCtx,
   runImport,
   withStubs,
@@ -320,5 +321,122 @@ Deno.test("coverage: a message with none of photo/file/forwarded_from/reply_to_m
     assert(!content.includes("forwarded_from:"));
   } finally {
     await real.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// backend selection branch matrix (swamp-workspace #57) -- import's note
+// -destination resolution: vaultRoot (global argument) > the CLI vault-name
+// lookup (getVaultPath) / obsidian create. Every branch either writes to the
+// expected vault directory or drives the stubbed Deno.Command exactly once.
+// ---------------------------------------------------------------------------
+
+Deno.test("branch matrix: vaultRoot unset -- falls back to the CLI (getVaultPath + obsidian create), exactly as before this change", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-08-01T00:00:00",
+      text: "cli branch",
+    }]),
+  );
+  try {
+    const { ctx, written } = makeCtx(DEFAULT_GLOBAL_ARGS);
+    let invocations: { cmd: string; args: string[] }[] = [];
+    await withStubs(
+      { resultJsonPath: real.resultPath, vaultPath: "/vault/fixture-vault" },
+      async (stubs) => {
+        await runImport(ctx);
+        invocations = stubs.commandInvocations;
+      },
+    );
+    assertEquals(
+      invocations.filter((i) => i.cmd === "obsidian" && i.args[0] === "vault")
+        .length,
+      1,
+      "getVaultPath must be called exactly once when vaultRoot is unset",
+    );
+    assertEquals(
+      invocations.filter((i) => i.cmd === "obsidian" && i.args[0] === "create")
+        .length,
+      1,
+      "obsidian create must be called exactly once when vaultRoot is unset",
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 1);
+  } finally {
+    await real.cleanup();
+  }
+});
+
+Deno.test("branch matrix: vaultRoot set -- the CLI is never invoked at all, note written directly to disk", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-08-02T00:00:00",
+      text: "fs branch",
+    }]),
+  );
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-branch-matrix-",
+  });
+  try {
+    const { ctx, written } = makeCtx({ ...DEFAULT_GLOBAL_ARGS, vaultRoot });
+    let invocations: { cmd: string; args: string[] }[] = [];
+    await withStubs(
+      { resultJsonPath: real.resultPath, realMkdir: true },
+      async (stubs) => {
+        await runImport(ctx);
+        invocations = stubs.commandInvocations;
+      },
+    );
+    assertEquals(
+      invocations.filter((i) => i.cmd === "obsidian").length,
+      0,
+      "no obsidian subcommand (vault OR create) may be invoked when vaultRoot is set",
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 1);
+    const stat = await Deno.stat(`${vaultRoot}/Telegram/2022-08-02-1.md`);
+    assert(stat.isFile);
+  } finally {
+    await real.cleanup();
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+Deno.test("branch matrix: vaultRoot + vault BOTH set -- vaultRoot wins, getVaultPath is never invoked", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-08-03T00:00:00",
+      text: "precedence branch",
+    }]),
+  );
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-branch-matrix-precedence-",
+  });
+  try {
+    const { ctx, written } = makeCtx({
+      ...DEFAULT_GLOBAL_ARGS,
+      vault: "some-other-vault",
+      vaultRoot,
+    });
+    let invocations: { cmd: string; args: string[] }[] = [];
+    await withStubs(
+      { resultJsonPath: real.resultPath, realMkdir: true },
+      async (stubs) => {
+        await runImport(ctx);
+        invocations = stubs.commandInvocations;
+      },
+    );
+    assertEquals(invocations.filter((i) => i.cmd === "obsidian").length, 0);
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 1);
+  } finally {
+    await real.cleanup();
+    await Deno.remove(vaultRoot, { recursive: true });
   }
 });

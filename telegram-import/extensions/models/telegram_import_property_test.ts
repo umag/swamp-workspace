@@ -25,11 +25,17 @@
  *  (e) re-import idempotency — running import twice over the SAME input
  *      (fresh ctx + fresh stubs each time) yields an identical summary and
  *      an identical set of post payloads.
+ *  (f) vaultRoot import invariant (swamp-workspace #57) — for any synthetic
+ *      set of messages with unique ids, importing via the headless vaultRoot
+ *      global argument writes exactly one note per message, each note's
+ *      frontmatter parse recovers the keys this model wrote, and no
+ *      produced note path escapes the vault's REAL (symlink-resolved) root.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
 import fc from "npm:fast-check@4.8.0";
 import {
+  DEFAULT_GLOBAL_ARGS,
   makeCtx,
   runImport,
   withStubs,
@@ -212,6 +218,110 @@ Deno.test("property: re-running import over the SAME input twice yields an ident
           assertEquals(firstPosts, secondPosts);
         },
       ),
+      FC_RUNS,
+    );
+  } finally {
+    time.restore();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// (f) vaultRoot import invariant (swamp-workspace #57): exactly one note per
+// importable item, frontmatter round-trips its keys, no path escapes the
+// vault's REAL root
+// ---------------------------------------------------------------------------
+
+const uniqueMessageArrayArb = fc.uniqueArray(messageArb, {
+  selector: (m) => m.id,
+  minLength: 1,
+  maxLength: 8,
+});
+
+/**
+ * Minimal reader for this model's hand-built frontmatter block -- recovers
+ * scalar `key: value` lines and the `tags:` block-style list. Good enough to
+ * assert round-trip of the KEYS this model writes; not a general YAML parser
+ * (this model deliberately does not depend on one -- see the plan's scope
+ * constraint: no npm:yaml, PATH-CONFINEMENT only transfers from PR #56).
+ */
+function parseSimpleFrontmatter(note: string): Record<string, unknown> {
+  const lines = note.split("\n");
+  if (lines[0] !== "---") return {};
+  const props: Record<string, unknown> = {};
+  let i = 1;
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === "---") break;
+    if (line === "tags:") {
+      const tags: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && lines[j].startsWith("  - ")) {
+        tags.push(lines[j].slice(4));
+        j++;
+      }
+      props.tags = tags;
+      i = j - 1;
+      continue;
+    }
+    const m = line.match(/^([a-zA-Z_]+): (.*)$/);
+    if (m) {
+      const [, key, rawValue] = m;
+      props[key] = rawValue.startsWith('"') && rawValue.endsWith('"')
+        ? rawValue.slice(1, -1)
+        : rawValue;
+    }
+  }
+  return props;
+}
+
+Deno.test("property: importing via vaultRoot writes exactly one note per message, each note's frontmatter round-trips its keys, and no note path escapes the vault's REAL root", async () => {
+  const time = new FakeTime(new Date("2024-06-01T00:00:00.000Z"));
+  try {
+    await fc.assert(
+      fc.asyncProperty(uniqueMessageArrayArb, async (messages) => {
+        const real = await writeRealResultJson({
+          name: "Fixture Property Channel",
+          type: "public_channel",
+          id: 1,
+          messages: messages.map((m) => ({ ...m, type: "message" })),
+        });
+        const vaultRoot = await Deno.makeTempDir({
+          prefix: "telegram-import-property-vaultroot-",
+        });
+        try {
+          const realRoot = await Deno.realPath(vaultRoot);
+          const { ctx, written } = makeCtx({
+            ...DEFAULT_GLOBAL_ARGS,
+            vaultRoot,
+          });
+          await withStubs(
+            { resultJsonPath: real.resultPath, realMkdir: true },
+            async () => {
+              await runImport(ctx);
+            },
+          );
+          const result = written.find((w) => w.spec === "result")!;
+          if (result.payload.notesCreated !== messages.length) return false;
+          if ((result.payload.errors as string[]).length !== 0) return false;
+
+          for (const m of messages) {
+            const slug = `${m.date.split("T")[0]}-${m.id}`;
+            const fullPath = `${vaultRoot}/Telegram/${slug}.md`;
+            const realNotePath = await Deno.realPath(fullPath);
+            if (!realNotePath.startsWith(`${realRoot}/`)) return false; // containment
+            const note = await Deno.readTextFile(fullPath);
+            const props = parseSimpleFrontmatter(note);
+            if (props.source !== "telegram") return false;
+            if (String(props.telegram_id) !== String(m.id)) return false;
+            if (!Array.isArray(props.tags)) return false;
+            if (!(props.tags as string[]).includes("telegram")) return false;
+          }
+          return true;
+        } finally {
+          await real.cleanup();
+          await Deno.remove(vaultRoot, { recursive: true });
+        }
+      }),
       FC_RUNS,
     );
   } finally {
