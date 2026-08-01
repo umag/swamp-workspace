@@ -2,19 +2,22 @@
  * Adversarial suite: hostile/boundary inputs and a mechanical
  * fixtures-secret-scan over obsidian-yt-archiver/fixtures/*.
  *
- * obsidian_yt_archiver.ts is UNMODIFIED -- every test here PINS current
- * behavior (including behavior that is a documented latent bug) rather than
- * proposing a fix. This suite is where the 8 latent bugs tracked in the
+ * As of 2026.08.01.1, obsidian_yt_archiver.ts carries ONE behavior change --
+ * the `assertFolderWithinVault` containment guard that fixes LB2 -- and is
+ * otherwise unmodified. This suite is where the 8 latent bugs tracked in the
  * LOCAL `obsidian-yt-archiver-latent-bugs` issue-lifecycle model (NEVER
  * filed to the swamp.club Lab -- see CLAUDE.md's anti-bypass rule) are
- * characterized as failing-would-be-red-if-"fixed" pins:
+ * characterized: 7 remain failing-would-be-red-if-"fixed" pins of current
+ * (unfixed) behavior, and LB2 is now a fixed-would-be-red-if-"reintroduced"
+ * pin (assertRejects) rather than a pin of the escape:
  *   LB1 request-forgery via arbitrary videoIds reaching other TA endpoints on
- *   the SAME host (MEDIUM), LB2 path traversal via `folder` (HIGH), LB3
- *   error-handling conflates fetch-fail/401/500 with "not archived" -> mass
- *   re-queue (MEDIUM), LB4 no fetch timeout (MEDIUM), LB5 whole-file reads +
- *   sequential per-id fetch with no cap (LOW-MED), LB6 error body truncated
- *   to 200 chars, token never leaked (LOW), LB7 default redirect:"follow"
- *   (LOW), LB8 a non-JSON 200 resolves to a blank "archived" record (LOW).
+ *   the SAME host (MEDIUM), LB2 path traversal via `folder` (HIGH, FIXED --
+ *   see "LB2 ... FIXED" below), LB3 error-handling conflates
+ *   fetch-fail/401/500 with "not archived" -> mass re-queue (MEDIUM), LB4 no
+ *   fetch timeout (MEDIUM), LB5 whole-file reads + sequential per-id fetch
+ *   with no cap (LOW-MED), LB6 error body truncated to 200 chars, token
+ *   never leaked (LOW), LB7 default redirect:"follow" (LOW), LB8 a non-JSON
+ *   200 resolves to a blank "archived" record (LOW).
  *
  * It also pins six REFUTED risk classes as covered-negatives -- explicitly
  * checked and found NOT applicable to this model, so a future change that
@@ -34,7 +37,7 @@
  *     operator-fixed `tubearchivistUrl` global argument; neither `videoIds`
  *     nor `folder` can change the request's host/origin, only its path.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./obsidian_yt_archiver.ts";
 
 // ---------------------------------------------------------------------------
@@ -211,23 +214,77 @@ Deno.test("refuted (covered-negative, cross-host SSRF): an absolute-URL-shaped v
 });
 
 // ===========================================================================
-// LB2 path traversal via `folder` -- HIGH
+// LB2 path traversal via `folder` -- HIGH -- FIXED 2026.08.01.1
 // ===========================================================================
+//
+// assertFolderWithinVault now rejects any `folder` that escapes the vault
+// root (an absolute path, or a vault-relative resolved path that is `..` or
+// begins with `../`), invoked identically before `scan` and `sync` ever
+// touch the filesystem. These cases PIN THE FIX (assertRejects), reusing the
+// SAME synthetic `fixtures/outside/escape-note.md` escape target as a
+// now-REJECTED input, plus deeper traversal and absolute-path variants, for
+// BOTH scan and sync symmetrically.
 
-Deno.test("pin (obsidian-yt-archiver-latent-bugs LB2, HIGH): folder='../outside' escapes vaultPath with no traversal guard, reading fixtures/outside's SYNTHETIC escape target", async () => {
+const LB2_TRAVERSAL_FOLDERS = [
+  "../outside",
+  "..",
+  "../..",
+  "notes/../../outside",
+];
+
+for (const folder of LB2_TRAVERSAL_FOLDERS) {
+  Deno.test(`fixed (obsidian-yt-archiver-latent-bugs LB2, HIGH): scan(folder="${folder}") is rejected -- the vault escape no longer reads fixtures/outside`, async () => {
+    const v = await setupVault();
+    try {
+      const { ctx } = makeCtx(globalArgs(v.vaultPath));
+      await assertRejects(
+        () => run("scan", { folder }, ctx) as Promise<void>,
+        Error,
+        "escapes the vault",
+      );
+    } finally {
+      await v.cleanup();
+    }
+  });
+
+  Deno.test(`fixed (obsidian-yt-archiver-latent-bugs LB2, HIGH): sync(folder="${folder}") is rejected -- the SAME guard applies symmetrically to sync`, async () => {
+    const v = await setupVault();
+    try {
+      const { ctx } = makeCtx(globalArgs(v.vaultPath));
+      await assertRejects(
+        () => run("sync", { folder }, ctx) as Promise<void>,
+        Error,
+        "escapes the vault",
+      );
+    } finally {
+      await v.cleanup();
+    }
+  });
+}
+
+Deno.test("fixed (obsidian-yt-archiver-latent-bugs LB2, HIGH): scan(folder=<absolute path>) is rejected outright, before any relative-escape check runs", async () => {
   const v = await setupVault();
   try {
-    const { ctx, written } = makeCtx(globalArgs(v.vaultPath));
-    await run("scan", { folder: "../outside" }, ctx);
-    const res = written.find((w) => w.spec === "scan")!;
-    assertEquals(res.payload.totalFiles, 1);
-    const links = res.payload.links as Array<Record<string, unknown>>;
-    assertEquals(links.length, 1);
-    assertEquals(links[0].videoId, "fixtureOUT6");
-    // The unsanitized relPath slice carries the literal ../ traversal segment
-    // through into the 'file' field -- pinning the EXACT resulting artifact,
-    // not just that the read succeeded.
-    assertEquals(links[0].file, "../outside/escape-note.md");
+    const { ctx } = makeCtx(globalArgs(v.vaultPath));
+    await assertRejects(
+      () => run("scan", { folder: `${v.root}/outside` }, ctx) as Promise<void>,
+      Error,
+      "absolute path",
+    );
+  } finally {
+    await v.cleanup();
+  }
+});
+
+Deno.test("fixed (obsidian-yt-archiver-latent-bugs LB2, HIGH): sync(folder=<absolute path>) is rejected outright, before any relative-escape check runs", async () => {
+  const v = await setupVault();
+  try {
+    const { ctx } = makeCtx(globalArgs(v.vaultPath));
+    await assertRejects(
+      () => run("sync", { folder: `${v.root}/outside` }, ctx) as Promise<void>,
+      Error,
+      "absolute path",
+    );
   } finally {
     await v.cleanup();
   }
