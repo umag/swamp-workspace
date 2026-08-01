@@ -4,14 +4,16 @@
  * `model.methods.import.arguments.parse()` + `.execute()` against a stubbed
  * `globalThis.fetch` and stubbed `Deno.Command`/`Deno.mkdir`/`Deno.writeFile`.
  *
- * livejournal_import.ts is UNMODIFIED -- every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior: request URL shapes (index pagination, post fetch, image fetch),
- * the `obsidian` CLI argv shape for both subcommands it shells out to
- * (`vault ... info=path` and `create ... overwrite`), the vault-attachment
- * mkdir/writeFile paths, and the empty `z.object({})` argument schema.
+ * Most of this file is a characterization test that PINS the model's
+ * already-shipped behavior: request URL shapes (index pagination, post
+ * fetch, image fetch), the `obsidian` CLI argv shape for both subcommands it
+ * shells out to (`vault ... info=path` and `create ... overwrite`), the
+ * vault-attachment mkdir/writeFile paths, and the empty `z.object({})`
+ * argument schema. The "vaultRoot (headless)" section near the end covers
+ * the new `vaultRoot` global argument (swamp-workspace #57, mirrors PR #56's
+ * obsidian-vault backend split).
  */
-import { assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { model } from "./livejournal_import.ts";
 
 // ---------------------------------------------------------------------------
@@ -103,7 +105,19 @@ type MkdirCall = { path: string; recursive: boolean | undefined };
 type WriteCall = { path: string; data: Uint8Array };
 
 function withDenoStubs(
-  opts: { vaultPath?: string },
+  opts: {
+    vaultPath?: string;
+    /** Leave Deno.mkdir un-stubbed (real). Needed by the vaultRoot (headless)
+     * tests (swamp-workspace #57): the confined atomic write's
+     * ensureParentDir calls the SAME global Deno.mkdir as the
+     * attachments-folder mkdir, so it must be real for a note to actually
+     * land on disk under a real `Deno.makeTempDir` vault. */
+    realMkdir?: boolean;
+    /** Throw when Deno.Command is constructed for "obsidian" (any
+     * subcommand). Used by the vaultRoot (headless) tests to hard-prove the
+     * CLI is never invoked. */
+    throwOnObsidian?: boolean;
+  },
   fn: (
     calls: {
       commands: CommandCall[];
@@ -126,6 +140,11 @@ function withDenoStubs(
     _args: string[];
     constructor(_cmd: string, options: { args?: string[] }) {
       this._args = options.args ?? [];
+      if (opts.throwOnObsidian && _cmd === "obsidian") {
+        throw new Error(
+          "Deno.Command must not be constructed for 'obsidian' when vaultRoot is set -- the CLI must never be invoked",
+        );
+      }
       commands.push({ cmd: _cmd, args: this._args });
     }
     output() {
@@ -147,10 +166,12 @@ function withDenoStubs(
   }
 
   denoAny.Command = FakeCommand;
-  denoAny.mkdir = (path: string, options?: { recursive?: boolean }) => {
-    mkdirs.push({ path, recursive: options?.recursive });
-    return Promise.resolve();
-  };
+  if (!opts.realMkdir) {
+    denoAny.mkdir = (path: string, options?: { recursive?: boolean }) => {
+      mkdirs.push({ path, recursive: options?.recursive });
+      return Promise.resolve();
+    };
+  }
   denoAny.writeFile = (path: string | URL, data: Uint8Array) => {
     writes.push({ path: String(path), data });
     return Promise.resolve();
@@ -392,4 +413,133 @@ Deno.test("import: an empty index -- getVaultPath + mkdir still run, zero posts,
     assertEquals(result.payload.imagesCopied, 0);
     assertEquals(result.payload.errors, []);
   });
+});
+
+// ---------------------------------------------------------------------------
+// vaultRoot (headless) -- swamp-workspace #57. Mirrors PR #56's obsidian
+// -vault backend split: with vaultRoot set, import must write directly to
+// disk and never invoke the Obsidian CLI at all.
+// ---------------------------------------------------------------------------
+
+// A single-post index (avoids fixtures/index.html's two posts, which would
+// otherwise collide onto the SAME slug once fed the SAME post_bad_date.html
+// body for both -- this model has no per-post filename disambiguation).
+const SINGLE_POST_INDEX_HTML =
+  `<html><body><a href="https://fixture-journal.example.com/2001.html">Post</a></body></html>`;
+
+Deno.test("import: with vaultRoot set and Deno.Command stubbed to throw on 'obsidian', import writes the note to disk and the CLI is NEVER invoked", async () => {
+  const postHtml = await readFixture("post_bad_date.html");
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-vaultroot-test-",
+  });
+  try {
+    const { ctx, written } = makeCtx({ ...GLOBAL_ARGS, vaultRoot });
+    await withDenoStubs(
+      { realMkdir: true, throwOnObsidian: true },
+      async () => {
+        await withFetchStub(
+          [(req) => {
+            const url = new URL(req.url);
+            if (url.pathname === "/" && !url.searchParams.has("skip")) {
+              return htmlResponse(SINGLE_POST_INDEX_HTML);
+            }
+            return htmlResponse(postHtml);
+          }],
+          () => run({}, ctx) as Promise<void>,
+        );
+      },
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 1);
+    assertEquals(result.payload.errors, []);
+    const entries: string[] = [];
+    for await (const e of Deno.readDir(`${vaultRoot}/LiveJournal`)) {
+      entries.push(e.name);
+    }
+    assertEquals(entries.filter((n) => n.endsWith(".md")).length, 1);
+  } finally {
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+Deno.test("import: vaultRoot writes bytes IDENTICAL to the Obsidian-CLI branch, including the block-style 'tags:' list verbatim", async () => {
+  const postHtml = await readFixture("post_bad_date.html");
+  const routes = [(req: Request) => {
+    const url = new URL(req.url);
+    if (url.pathname === "/" && !url.searchParams.has("skip")) {
+      return htmlResponse(SINGLE_POST_INDEX_HTML);
+    }
+    return htmlResponse(postHtml);
+  }];
+
+  const { ctx: ctxCli } = makeCtx(GLOBAL_ARGS);
+  let viaCli = "";
+  await withDenoStubs({}, async ({ commands }) => {
+    await withFetchStub(routes, () => run({}, ctxCli) as Promise<void>);
+    const create = commands.find((c) => c.args[0] === "create")!;
+    const contentArg = create.args.find((a) => a.startsWith("content="))!;
+    viaCli = contentArg.slice("content=".length);
+  });
+
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-vaultroot-bytes-",
+  });
+  try {
+    const { ctx: ctxFs } = makeCtx({ ...GLOBAL_ARGS, vaultRoot });
+    await withDenoStubs(
+      { realMkdir: true, throwOnObsidian: true },
+      async () => {
+        await withFetchStub(routes, () => run({}, ctxFs) as Promise<void>);
+      },
+    );
+    const entries: string[] = [];
+    for await (const e of Deno.readDir(`${vaultRoot}/LiveJournal`)) {
+      if (e.name.endsWith(".md")) entries.push(e.name);
+    }
+    assertEquals(entries.length, 1, "post_bad_date.html yields a single post");
+    const viaFs = await Deno.readTextFile(
+      `${vaultRoot}/LiveJournal/${entries[0]}`,
+    );
+    assertEquals(
+      viaFs,
+      viaCli,
+      "vaultRoot must produce EXACTLY the same bytes as the Obsidian CLI's content= argument",
+    );
+    assert(
+      viaFs.includes("tags:\n  - livejournal\n"),
+      "the block-style 'tags:' list must survive verbatim",
+    );
+  } finally {
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+Deno.test("import: vaultRoot takes precedence over the vault (name) CLI lookup -- getVaultPath is never invoked when vaultRoot is set", async () => {
+  const indexHtml = await readFixture("index_empty.html");
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-vaultroot-precedence-",
+  });
+  try {
+    const { ctx } = makeCtx({
+      ...GLOBAL_ARGS,
+      vault: "some-other-vault",
+      vaultRoot,
+    });
+    await withDenoStubs(
+      { realMkdir: true, throwOnObsidian: true },
+      async () => {
+        await withFetchStub(
+          [() => htmlResponse(indexHtml)],
+          () => run({}, ctx) as Promise<void>,
+        );
+      },
+    );
+    const stat = await Deno.stat(`${vaultRoot}/LiveJournal/attachments`);
+    assert(
+      stat.isDirectory,
+      "vaultRoot must win over the vault (name) CLI lookup",
+    );
+  } finally {
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
 });

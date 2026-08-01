@@ -1,5 +1,65 @@
 # Changelog
 
+## 2026.08.01.2
+
+Adds an optional headless `vaultRoot` filesystem backend to `import`, so the
+import can run with the Obsidian desktop app closed (swamp-workspace #57;
+mirrors the CLI/filesystem backend split done for `@magistr/obsidian-vault` in
+PR #56 — see that PR for the path-confinement rationale). The Obsidian CLI
+(`getVaultPath` + `runObsidian("create", ...)`) is kept as the fallback for when
+`vaultRoot` is not set. Cross-reference: swamp-workspace#57.
+
+- Added the `vaultRoot` global argument. When set, the vault path resolves to it
+  directly (skipping the `obsidian vault ... info=path` CLI call), and the note
+  is written with a confined atomic write instead of
+  `runObsidian("create", ...)`.
+- Added `resolveVaultPath`/`resolveVaultPathSafe` (realpath + symlink refusal
+  - `..` rejection) and the atomic-write helpers (`writeAtomic`,
+    `ensureParentDir`, `chmodQuietly`), copied VERBATIM (same names/comments,
+    per the approved plan's scope constraint against a shared cross-extension
+    module — swamp bundles each extension independently) from
+    `obsidian-vault/extensions/models/obsidian_vault.ts` (PR #56). The note
+    write now resolves through `resolveVaultPathSafe` before every
+    `mkdir`/write, closing folder-traversal and symlink-escape vectors on the
+    new headless path (the CLI fallback is untouched and keeps whatever behavior
+    it already had).
+- **Upgraded `isPathContained`/`safeCopyMedia` (LB-1's extractDir confinement)
+  from lexical-only to realpath-aware**: after the existing lexical containment
+  check passes, every existing path segment between `extractDir`'s realpath and
+  the candidate is walked with `Deno.lstat`, refusing to follow a symlink —
+  closing the "symlink created inside extractDir that points outside it"
+  residual the 2026.08.01.1 CHANGELOG entry documented as accepted. A segment
+  that does not exist yet is not an error, same as before.
+- No `npm:yaml` dependency was added — this model emits brand-new hand-built
+  frontmatter into notes it owns, it never round-trips existing frontmatter, so
+  PR #56's yaml-`Document` rationale does not apply here. Every hand-built
+  frontmatter string stays byte-for-byte identical to before this change.
+- Dot-dir/`.trash` exclusion is N/A: `import` writes into a caller-named folder,
+  it never walks the vault tree (covered by a covered-negative test in the
+  adversarial suite).
+- **Real-world behavior note**: writing the note directly via
+  `Deno.writeTextFile` (through the new atomic-write helper) may not be
+  byte-identical to what the real Obsidian CLI's `create` command would have
+  produced on disk — the CLI has never been observed to differ in this repo's
+  tests (it's always stubbed), but a real `obsidian create` call could in
+  principle normalize a trailing newline differently than a raw
+  `Deno.writeTextFile`. Not reproduced or fixed here, just flagged.
+- Extended all five test suites (contract-fixture, methods, adversarial,
+  coverage, property-invariant-flow) with `vaultRoot` coverage: a golden
+  fs-backend run against `fixtures/basic/result.json`, a method-level test
+  proving the CLI is never invoked when `vaultRoot` is set (`Deno.Command`
+  stubbed to throw on `"obsidian"`), a backend-selection precedence branch
+  matrix, path-confinement adversarial tests (`..` traversal and symlinked
+  folder segment refused, `/var`-vs-`/private/var` real-root containment), and a
+  property test asserting exactly one note per message with frontmatter
+  round-trip and no path escaping the vault's real root, for any synthetic set
+  of messages with unique ids. `telegram_import_test_helpers.ts` gained two new
+  `StubConfig` options (`realMkdir`, `throwOnObsidian`) so these new tests can
+  let `Deno.mkdir` run for real against a real `Deno.makeTempDir` vault while
+  keeping `Deno.Command`/`copyFile` stubbed. No new committed fixture files were
+  needed.
+- `manifest.yaml`/model `version`: `2026.08.01.1` -> `2026.08.01.2`.
+
 ## 2026.08.01.1
 
 Fix for latent bug **LB-1 (path-traversal via export photo/file/video path,

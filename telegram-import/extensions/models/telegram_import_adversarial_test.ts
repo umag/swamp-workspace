@@ -35,6 +35,7 @@ import {
   withStubs,
   writeRealResultJson,
 } from "./telegram_import_test_helpers.ts";
+import { resolveVaultPathSafe } from "./telegram_import.ts";
 import maliciousFixture from "../../fixtures/malicious/result.json" with {
   type: "json",
 };
@@ -553,4 +554,160 @@ Deno.test("LB-9b: a leading-dash zipPath is passed through verbatim — a real u
         "as unzip's second argv element (after the -o flag)",
     );
   });
+});
+
+// ---------------------------------------------------------------------------
+// path confinement (vaultRoot note-write destination, swamp-workspace #57) --
+// resolveVaultPathSafe, copied verbatim from
+// obsidian-vault/extensions/models/obsidian_vault.ts (PR #56). Unrelated to
+// isPathContained/safeCopyMedia's extractDir confinement (LB-1) above: this
+// section is about where the NOTE lands, not where media is copied FROM.
+// ---------------------------------------------------------------------------
+
+Deno.test("path confinement: a '../'-relative note path is rejected via resolveVaultPathSafe -- recorded in errors[], the run continues to the next message", async () => {
+  // sandboxRoot/vault pattern: the mkdir for attachDiskPath is NOT confined
+  // (scope is the note write only, per the approved plan), so a malicious
+  // `folder` global argument can still make Deno.mkdir create an
+  // "escaped/attachments" sibling directory for real. Nesting vaultRoot
+  // inside its own sandboxRoot means removing sandboxRoot cleans up that
+  // side effect too, instead of leaking it next to the OS temp root.
+  const sandboxRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-confinement-sandbox-",
+  });
+  const vaultRoot = `${sandboxRoot}/vault`;
+  await Deno.mkdir(vaultRoot, { recursive: true });
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-07-10T00:00:00",
+      text: "traversal probe",
+    }]),
+  );
+  try {
+    // folder is a global argument, not per-message -- craft it to traverse.
+    const { ctx, written } = makeCtx({
+      ...DEFAULT_GLOBAL_ARGS,
+      folder: "../escaped",
+      vaultRoot,
+    });
+    await withStubs(
+      { resultJsonPath: real.resultPath, realMkdir: true },
+      async () => {
+        await runImport(ctx);
+      },
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 0);
+    const errors = result.payload.errors as string[];
+    assert(
+      errors.some((e) => e.includes("Path escapes vault root")),
+      "the traversal must be rejected and recorded in errors[], not silently escape",
+    );
+    await assertRejects(
+      () => Deno.stat(`${sandboxRoot}/escaped/2022-07-10-1.md`),
+      "no note may land outside the vault directory",
+    );
+  } finally {
+    await real.cleanup();
+    await Deno.remove(sandboxRoot, { recursive: true });
+  }
+});
+
+Deno.test("path confinement: a symlinked 'folder' path segment is refused via realpath, not silently followed", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-07-11T00:00:00",
+      text: "symlink probe",
+    }]),
+  );
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-symlink-vault-",
+  });
+  const outside = await Deno.makeTempDir({
+    prefix: "telegram-import-symlink-outside-",
+  });
+  try {
+    await Deno.symlink(outside, `${vaultRoot}/Telegram`);
+    const { ctx, written } = makeCtx({ ...DEFAULT_GLOBAL_ARGS, vaultRoot });
+    await withStubs(
+      { resultJsonPath: real.resultPath, realMkdir: true },
+      async () => {
+        await runImport(ctx);
+      },
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 0);
+    const errors = result.payload.errors as string[];
+    assert(errors.some((e) => e.includes("symlink")));
+    await assertRejects(
+      () => Deno.stat(`${outside}/2022-07-11-1.md`),
+      "no note may be written through the symlinked folder",
+    );
+  } finally {
+    await real.cleanup();
+    await Deno.remove(outside, { recursive: true });
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+Deno.test("path confinement: resolveVaultPathSafe's realRoot is the symlink-resolved root, not the raw configured vaultRoot string (macOS temp dirs resolve /var -> /private/var)", async () => {
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-realroot-",
+  });
+  try {
+    const target = await resolveVaultPathSafe(
+      { vaultRoot },
+      "Telegram/note.md",
+    );
+    const expectedRealRoot = await Deno.realPath(vaultRoot);
+    assertEquals(
+      target.realRoot,
+      expectedRealRoot,
+      "containment must be computed against the REAL (symlink-resolved) root, not the raw vaultRoot prefix",
+    );
+    assertEquals(target.absolutePath, `${expectedRealRoot}/Telegram/note.md`);
+  } finally {
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+// covered-negative: import only ever writes into a caller-named folder --
+// it never walks the vault, so there is no dot-dir/.trash EXCLUSION rule to
+// have (unlike obsidian-vault's list/digest, which do walk and must skip
+// hidden directories).
+Deno.test("covered-negative: dot-dir/.trash exclusion is N/A -- import never walks the vault, it only writes into the caller-named folder", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-07-12T00:00:00",
+      text: "dot-dir probe",
+    }]),
+  );
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-dotdir-",
+  });
+  try {
+    const { ctx, written } = makeCtx({
+      ...DEFAULT_GLOBAL_ARGS,
+      folder: ".trash",
+      vaultRoot,
+    });
+    await withStubs(
+      { resultJsonPath: real.resultPath, realMkdir: true },
+      async () => {
+        await runImport(ctx);
+      },
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 1);
+    const stat = await Deno.stat(`${vaultRoot}/.trash/2022-07-12-1.md`);
+    assert(stat.isFile);
+  } finally {
+    await real.cleanup();
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
 });

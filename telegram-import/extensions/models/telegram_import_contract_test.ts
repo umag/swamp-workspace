@@ -3,9 +3,12 @@
  *
  * telegram_import.ts was BYTE-FROZEN by ext-quality-bf-telegram-import at
  * authorship time; 2026.08.01.1 (the LB-1 path-containment guard fix + LB-0
- * upgrade-chain repair) is the first production change since then, so
- * `model.version` below now tracks that release rather than a frozen
- * constant. This suite still pins two things:
+ * upgrade-chain repair) was the first production change since then, and
+ * 2026.08.01.2 (swamp-workspace #57: headless vaultRoot filesystem backend,
+ * plus upgrading isPathContained/safeCopyMedia's extractDir confinement from
+ * lexical-only to realpath-aware) is the second. `model.version` below now
+ * tracks that release rather than a frozen constant. This suite still pins
+ * two things:
  *
  *  (a) the STATIC contract: model type/version, the GlobalArgsSchema shape
  *      (required fields + defaults), and the exact method list; and
@@ -13,14 +16,19 @@
  *      `@std/testing`'s FakeTime, asserting the exact `result` summary and
  *      the exact rendered Markdown for one note (message id 2 — the
  *      simplest case: plain text, no photo/file/forwarded/reply). Message id
- *      2 has no photo/file, so it is unaffected by the LB-1 guard.
+ *      2 has no photo/file, so it is unaffected by the LB-1 guard. This
+ *      golden run does not set vaultRoot, so it exercises the unchanged
+ *      Obsidian CLI branch — see the "golden fs-backend run" section near
+ *      the end for the vaultRoot equivalent.
  *
  * Every subprocess (unzip/find/obsidian) and every filesystem mutation
  * (copyFile/mkdir/makeTempDir/remove) is stubbed via
  * telegram_import_test_helpers.ts. The only real disk I/O in this file is
  * writing fixtures/basic/result.json's content into a harness-owned scratch
  * file so the model's own (never-stubbed) `Deno.readTextFile` has something
- * real to read.
+ * real to read -- except the new "golden fs-backend run" section, which uses
+ * a real `Deno.makeTempDir` vault (vaultRoot bypasses the copyFile/mkdir
+ * stubs entirely for the note write, since it never calls the Obsidian CLI).
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
@@ -40,9 +48,9 @@ import basicFixture from "../../fixtures/basic/result.json" with {
 // (a) Static contract
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: model type is unchanged; version tracks the 2026.08.01.1 LB-1/LB-0 fix release", () => {
+Deno.test("contract: model type is unchanged; version tracks the 2026.08.01.2 vaultRoot/LB-1-residual release", () => {
   assertEquals(model.type, "@magistr/telegram/import");
-  assertEquals(model.version, "2026.08.01.1");
+  assertEquals(model.version, "2026.08.01.2");
 });
 
 Deno.test("contract: exposes exactly one method — import", () => {
@@ -158,5 +166,60 @@ Deno.test("golden: message id 2's rendered note is byte-exact", async () => {
   } finally {
     time.restore();
     await real.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// golden fs-backend run (swamp-workspace #57) -- same golden fixture, driven
+// through the new vaultRoot global argument instead of the Obsidian CLI.
+// realMkdir:true leaves Deno.mkdir un-stubbed so the confined atomic write
+// (and the attachments-folder mkdir) really land on disk under a real
+// Deno.makeTempDir vault -- see telegram_import_test_helpers.ts.
+// ---------------------------------------------------------------------------
+
+Deno.test("golden fs-backend run: basic/result.json via vaultRoot produces the exact same note bytes as the CLI branch, written for real to a Deno.makeTempDir vault", async () => {
+  const time = new FakeTime(FIXED_NOW);
+  const real = await writeRealResultJson(basicFixture);
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-golden-vault-",
+  });
+  try {
+    const { ctx } = makeCtx({ ...DEFAULT_GLOBAL_ARGS, vaultRoot });
+    await withStubs(
+      { resultJsonPath: real.resultPath, realMkdir: true },
+      async (stubs) => {
+        await runImport(ctx);
+        assertEquals(
+          stubs.commandInvocations.filter((c) => c.cmd === "obsidian").length,
+          0,
+          "vaultRoot must skip the obsidian CLI entirely -- both the vault-path lookup and create",
+        );
+      },
+    );
+
+    const noteContent = await Deno.readTextFile(
+      `${vaultRoot}/Telegram/2020-09-15-2.md`,
+    );
+    const expected = [
+      "---",
+      'title: "Post 2"',
+      "date: 2020-09-15T10:00:00",
+      "source: telegram",
+      'channel: "Fixture Broadcast"',
+      "telegram_id: 2",
+      "tags:",
+      "  - telegram",
+      "---",
+      "",
+    ].join("\n") + ["Hello from the fixture channel.", ""].join("\n");
+    assertEquals(
+      noteContent,
+      expected,
+      "the vaultRoot fs-backend write must be byte-identical to the CLI branch's content= argument",
+    );
+  } finally {
+    time.restore();
+    await real.cleanup();
+    await Deno.remove(vaultRoot, { recursive: true });
   }
 });

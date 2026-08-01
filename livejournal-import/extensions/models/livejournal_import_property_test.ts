@@ -25,6 +25,11 @@
  *  (d) multi-post flow invariant -- for any generated set of N well-formed
  *      posts, import() always writes exactly N `post` resources plus one
  *      `result` summary with totalPosts === notesCreated === N.
+ *  (e) vaultRoot import invariant (swamp-workspace #57) -- for any generated
+ *      set of N well-formed posts, importing via the headless vaultRoot
+ *      global argument writes exactly one note per post, each note's
+ *      frontmatter parse recovers the keys this model wrote, and no
+ *      produced note path escapes the vault's REAL (symlink-resolved) root.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
@@ -412,6 +417,184 @@ Deno.test("property: for any generated set of N well-formed posts, import() writ
             result.payload.notesCreated === titles.length;
         } finally {
           time.restore();
+        }
+      },
+    ),
+    { ...FC_RUNS, numRuns: Math.min(FC_RUNS.numRuns, 30) },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// (e) vaultRoot import invariant (swamp-workspace #57): exactly one note per
+// generated post, frontmatter round-trips its keys, no path escapes the
+// vault's REAL root
+// ---------------------------------------------------------------------------
+
+/** Minimal variant of withDenoStubs that leaves Deno.mkdir un-stubbed (real)
+ * -- needed so the confined atomic write actually lands on disk under a
+ * real Deno.makeTempDir vault. Deliberately separate from withDenoStubs
+ * above (not adding an options parameter there) to avoid touching every
+ * existing call site in this file. */
+function withDenoStubsRealMkdir<T = void>(
+  fn: (calls: { commands: { args: string[] }[] }) => Promise<T>,
+): Promise<T> {
+  const commands: { args: string[] }[] = [];
+  const vaultPath = "/fixture/vault";
+  // deno-lint-ignore no-explicit-any
+  const denoAny = globalThis.Deno as any;
+  const originalCommand = denoAny.Command;
+  const originalWriteFile = denoAny.writeFile;
+
+  class FakeCommand {
+    _args: string[];
+    constructor(_cmd: string, options: { args?: string[] }) {
+      this._args = options.args ?? [];
+      commands.push({ args: this._args });
+    }
+    output() {
+      if (this._args[0] === "vault") {
+        return Promise.resolve({
+          success: true,
+          code: 0,
+          stdout: new TextEncoder().encode(vaultPath),
+          stderr: new Uint8Array(),
+        });
+      }
+      return Promise.resolve({
+        success: true,
+        code: 0,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+      });
+    }
+  }
+
+  denoAny.Command = FakeCommand;
+  denoAny.writeFile = () => Promise.resolve();
+
+  return (async () => {
+    try {
+      return await fn({ commands });
+    } finally {
+      denoAny.Command = originalCommand;
+      denoAny.writeFile = originalWriteFile;
+    }
+  })();
+}
+
+/**
+ * Minimal reader for this model's hand-built frontmatter block -- recovers
+ * scalar `key: value` lines and the `tags:` block-style list. Good enough to
+ * assert round-trip of the KEYS this model writes; not a general YAML parser
+ * (this model deliberately does not depend on one -- see the plan's scope
+ * constraint: no npm:yaml, PATH-CONFINEMENT only transfers from PR #56).
+ */
+function parseSimpleFrontmatter(note: string): Record<string, unknown> {
+  const lines = note.split("\n");
+  if (lines[0] !== "---") return {};
+  const props: Record<string, unknown> = {};
+  let i = 1;
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === "---") break;
+    if (line === "tags:") {
+      const tags: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && lines[j].startsWith("  - ")) {
+        tags.push(lines[j].slice(4));
+        j++;
+      }
+      props.tags = tags;
+      i = j - 1;
+      continue;
+    }
+    const m = line.match(/^([a-zA-Z_]+): (.*)$/);
+    if (m) {
+      const [, key, rawValue] = m;
+      props[key] = rawValue.startsWith('"') && rawValue.endsWith('"')
+        ? rawValue.slice(1, -1)
+        : rawValue;
+    }
+  }
+  return props;
+}
+
+Deno.test("property: importing via vaultRoot writes exactly one note per generated post, each note's frontmatter round-trips its keys, and no note path escapes the vault's REAL root", async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.array(arbTitle, { minLength: 1, maxLength: 4 }),
+      async (rawTitles) => {
+        // Suffix each title with a per-index tag so no two generated posts
+        // ever collapse onto the SAME sanitized slug (this model has no
+        // slug-collision disambiguation -- a real note-write invariant needs
+        // distinct destinations, unlike the stub-only test (d) above).
+        const titles = rawTitles.map((t, i) => `${t} uniq${i}`);
+        // No FakeTime here (unlike test (d) above): this property does real
+        // filesystem I/O (mkdir/writeTextFile/realPath/lstat via the
+        // confined atomic write), and driving FakeTime's virtual clock
+        // alongside real async fs ops leaves a dangling op the test
+        // sanitizer flags. The inter-post 300ms polite delay is small
+        // (<=3 posts * 300ms) and numRuns is already capped below.
+        const vaultRoot = await Deno.makeTempDir({
+          prefix: "livejournal-import-property-vaultroot-",
+        });
+        try {
+          const ids = titles.map((_, i) => 9200 + i);
+          const indexHtml = `<html><body>${
+            ids.map((id) =>
+              `<a href="https://fixture-journal.example.com/${id}.html">p</a>`
+            ).join("")
+          }</body></html>`;
+          const realRoot = await Deno.realPath(vaultRoot);
+          const { ctx, written } = makeCtx({ ...GLOBAL_ARGS, vaultRoot });
+          await withDenoStubsRealMkdir(async () => {
+            await withFetchStub(
+              [(req) => {
+                const url = new URL(req.url);
+                if (url.pathname === "/" && !url.searchParams.has("skip")) {
+                  return htmlResponse(indexHtml);
+                }
+                const match = url.pathname.match(/^\/(\d+)\.html$/);
+                if (match) {
+                  const idx = ids.indexOf(Number(match[1]));
+                  const title = titles[idx];
+                  return htmlResponse(
+                    `<html><body><div class="aentry-post__title-text">${title}</div>` +
+                      `<div class="aentry-head__date"><time>May 1 2020, 10:00</time></div>` +
+                      `<div class="aentry-post__text"><p>fixture body</p></div></body></html>`,
+                  );
+                }
+                return undefined;
+              }],
+              () => run({}, ctx) as Promise<void>,
+            );
+          });
+
+          const result = written.find((w) => w.spec === "result")!;
+          if (result.payload.notesCreated !== titles.length) return false;
+          if ((result.payload.errors as string[]).length !== 0) return false;
+
+          const entries: string[] = [];
+          for await (const e of Deno.readDir(`${vaultRoot}/LiveJournal`)) {
+            if (e.name.endsWith(".md")) entries.push(e.name);
+          }
+          if (entries.length !== titles.length) return false;
+
+          for (const entry of entries) {
+            const fullPath = `${vaultRoot}/LiveJournal/${entry}`;
+            const realNotePath = await Deno.realPath(fullPath);
+            if (!realNotePath.startsWith(`${realRoot}/`)) return false; // containment
+            const note = await Deno.readTextFile(fullPath);
+            const props = parseSimpleFrontmatter(note);
+            if (props.source !== "livejournal") return false;
+            if (!Array.isArray(props.tags)) return false;
+            if (!(props.tags as string[]).includes("livejournal")) {
+              return false;
+            }
+          }
+          return true;
+        } finally {
+          await Deno.remove(vaultRoot, { recursive: true });
         }
       },
     ),

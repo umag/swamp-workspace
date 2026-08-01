@@ -17,6 +17,12 @@
 # change in that release -- this header describes the ORIGINAL backfill
 # only, not the current state of livejournal_import.ts.
 #
+# 2026.08.01.1 (swamp-workspace #57, mirrors PR #56's obsidian-vault backend
+# split) adds an optional headless vaultRoot filesystem backend to `import`.
+# LB7 (folder traversal on the attachment mkdir/write path) remains
+# UNCHANGED and pinned -- only the note write is now confined. All five
+# suites extended with vaultRoot coverage -- see CHANGELOG.md.
+#
 # Role map (each test file assigned to exactly ONE honest role):
 #   contract-fixture        -> livejournal_import_test.ts
 #   methods                 -> livejournal_import_methods_test.ts
@@ -68,10 +74,12 @@ ratchet:
   rubricVersion: 3
   baselinePercentage: 100
   label: >-
-    Grade A — the model upgrade chain is repaired (2026.03.29.1 ->
-    2026.05.25.1 -> 2026.07.16.2 -> 2026.07.31.1, continuous, final
-    toVersion === model.version) as part of the SSRF fix in
-    livejournal-import-latent-bugs (2026.07.31.1). `swamp extension quality
-    manifest.yaml --json` now emits a real score: 14/14 points (100%),
-    allPassed true, dependencyTrust passed (cheerio/domhandler both audited
-    clean). Stamped directly from that tool output, not guessed.
+    Grade A — the model upgrade chain is repaired and stays continuous
+    (2026.03.29.1 -> 2026.05.25.1 -> 2026.07.16.2 -> 2026.07.31.1 ->
+    2026.08.01.1, final toVersion === model.version) as part of the SSRF fix
+    in livejournal-import-latent-bugs (2026.07.31.1) and the
+    swamp-workspace #57 vaultRoot change (2026.08.01.1, identity upgrade
+    entry appended). `swamp extension quality manifest.yaml --json` now
+    emits a real score: 14/14 points (100%), allPassed true, dependencyTrust
+    passed (cheerio/domhandler both audited clean). Stamped directly from
+    that tool output, not guessed.

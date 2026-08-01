@@ -6,8 +6,10 @@
  * harness-owned scratch file — not one of the three committed fixtures
  * (those back the contract-fixture golden run and the adversarial LB pins).
  *
- * telegram_import.ts is UNMODIFIED — every test characterizes already-shipped
- * behavior.
+ * telegram_import.ts is UNMODIFIED by most of this file — those tests
+ * characterize already-shipped behavior. The "vaultRoot (headless)" section
+ * near the end covers the new `vaultRoot` global argument (swamp-workspace
+ * #57, mirrors PR #56's obsidian-vault backend split).
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
@@ -448,5 +450,141 @@ Deno.test("import: errors[] accumulates independent failures across photo, file,
     assertEquals(result.payload.filesCopied, 0);
   } finally {
     await real.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// vaultRoot (headless) -- swamp-workspace #57. Mirrors PR #56's obsidian
+// -vault backend split: with vaultRoot set, import must write directly to
+// disk and never invoke the Obsidian CLI at all.
+// ---------------------------------------------------------------------------
+
+Deno.test("import: with vaultRoot set and Deno.Command stubbed to throw on 'obsidian', import writes the note to disk and the CLI is NEVER invoked", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 1,
+      type: "message",
+      date: "2022-06-10T00:00:00",
+      text: "headless write",
+    }]),
+  );
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-vaultroot-test-",
+  });
+  try {
+    const { ctx, written } = makeCtx({ ...DEFAULT_GLOBAL_ARGS, vaultRoot });
+    await withStubs(
+      {
+        resultJsonPath: real.resultPath,
+        realMkdir: true,
+        throwOnObsidian: true,
+      },
+      async () => {
+        await runImport(ctx);
+      },
+    );
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 1);
+    assertEquals(result.payload.errors, []);
+    const note = await Deno.readTextFile(
+      `${vaultRoot}/Telegram/2022-06-10-1.md`,
+    );
+    assert(note.startsWith("---\n"));
+    assert(note.includes("telegram_id: 1"));
+  } finally {
+    await real.cleanup();
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+Deno.test("import: vaultRoot writes bytes IDENTICAL to the Obsidian-CLI branch, including the block-style 'tags:' list verbatim", async () => {
+  const message = {
+    id: 2,
+    type: "message",
+    date: "2022-06-11T00:00:00",
+    text: "compare CLI vs fs-backend bytes",
+  };
+
+  const realA = await writeRealResultJson(payload([message]));
+  let viaCli: string | undefined;
+  try {
+    const { ctx: ctxA } = makeCtx(DEFAULT_GLOBAL_ARGS);
+    let calls: { content?: string }[] = [];
+    await withStubs({ resultJsonPath: realA.resultPath }, async (stubs) => {
+      await runImport(ctxA);
+      calls = stubs.obsidianCreateCalls;
+    });
+    viaCli = calls[0].content;
+  } finally {
+    await realA.cleanup();
+  }
+
+  const realB = await writeRealResultJson(payload([message]));
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-vaultroot-bytes-",
+  });
+  try {
+    const { ctx: ctxB } = makeCtx({ ...DEFAULT_GLOBAL_ARGS, vaultRoot });
+    await withStubs(
+      {
+        resultJsonPath: realB.resultPath,
+        realMkdir: true,
+        throwOnObsidian: true,
+      },
+      async () => {
+        await runImport(ctxB);
+      },
+    );
+    const viaVaultRoot = await Deno.readTextFile(
+      `${vaultRoot}/Telegram/2022-06-11-2.md`,
+    );
+    assertEquals(
+      viaVaultRoot,
+      viaCli,
+      "vaultRoot must produce EXACTLY the same bytes as the Obsidian CLI's content= argument",
+    );
+    assert(
+      viaVaultRoot!.includes("tags:\n  - telegram\n"),
+      "the block-style 'tags:' list must survive verbatim",
+    );
+  } finally {
+    await realB.cleanup();
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+Deno.test("import: vaultRoot takes precedence over the vault (name) CLI lookup -- getVaultPath is never invoked when vaultRoot is set", async () => {
+  const real = await writeRealResultJson(
+    payload([{
+      id: 3,
+      type: "message",
+      date: "2022-06-12T00:00:00",
+      text: "precedence probe",
+    }]),
+  );
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "telegram-import-vaultroot-precedence-",
+  });
+  try {
+    const { ctx } = makeCtx({
+      ...DEFAULT_GLOBAL_ARGS,
+      vault: "some-other-vault",
+      vaultRoot,
+    });
+    await withStubs(
+      {
+        resultJsonPath: real.resultPath,
+        realMkdir: true,
+        throwOnObsidian: true,
+      },
+      async () => {
+        await runImport(ctx);
+      },
+    );
+    const stat = await Deno.stat(`${vaultRoot}/Telegram/2022-06-12-3.md`);
+    assert(stat.isFile, "vaultRoot must win over the vault (name) CLI lookup");
+  } finally {
+    await real.cleanup();
+    await Deno.remove(vaultRoot, { recursive: true });
   }
 });

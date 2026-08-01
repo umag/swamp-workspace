@@ -37,7 +37,7 @@
  *     pass through as inert array elements, never reaching a shell.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { model } from "./livejournal_import.ts";
+import { model, resolveVaultPathSafe } from "./livejournal_import.ts";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -140,7 +140,14 @@ type CommandCall = {
 };
 
 function withDenoStubs<T = void>(
-  opts: { vaultPath?: string },
+  opts: {
+    vaultPath?: string;
+    /** Leave Deno.mkdir un-stubbed (real) -- needed by the vaultRoot
+     * (headless) path-confinement tests below (swamp-workspace #57). */
+    realMkdir?: boolean;
+    /** Throw when Deno.Command is constructed for "obsidian". */
+    throwOnObsidian?: boolean;
+  },
   fn: (
     calls: {
       commands: CommandCall[];
@@ -163,6 +170,11 @@ function withDenoStubs<T = void>(
     _args: string[];
     constructor(_cmd: string, options: Record<string, unknown>) {
       this._args = (options.args as string[]) ?? [];
+      if (opts.throwOnObsidian && _cmd === "obsidian") {
+        throw new Error(
+          "Deno.Command must not be constructed for 'obsidian' when vaultRoot is set -- the CLI must never be invoked",
+        );
+      }
       commands.push({ cmd: _cmd, args: this._args, options });
     }
     output() {
@@ -184,10 +196,12 @@ function withDenoStubs<T = void>(
   }
 
   denoAny.Command = FakeCommand;
-  denoAny.mkdir = (path: string) => {
-    mkdirs.push(path);
-    return Promise.resolve();
-  };
+  if (!opts.realMkdir) {
+    denoAny.mkdir = (path: string) => {
+      mkdirs.push(path);
+      return Promise.resolve();
+    };
+  }
   denoAny.writeFile = (path: string | URL) => {
     writes.push({ path: String(path) });
     return Promise.resolve();
@@ -843,6 +857,169 @@ Deno.test("pin (livejournal-import-latent-bugs LB7, LOW): a `folder` global argu
 });
 
 // ===========================================================================
+// path confinement (vaultRoot note-write destination, swamp-workspace #57) --
+// resolveVaultPathSafe, copied verbatim from
+// obsidian-vault/extensions/models/obsidian_vault.ts (PR #56). This is a
+// NEW, separate guard applied ONLY to the note write when vaultRoot is set --
+// it does NOT touch the attachDiskPath mkdir/image-write path above, so LB7
+// (folder traversal on the attachment disk path) remains UNFIXED exactly as
+// pinned above, for both the CLI branch and the vaultRoot branch.
+// ===========================================================================
+
+Deno.test("path confinement: a '../'-relative 'folder' rejects the NOTE write via resolveVaultPathSafe when vaultRoot is set (LB7's attachDiskPath mkdir is UNCHANGED and still traverses)", async () => {
+  const postHtml = await readFixture("post_full.html");
+  const sandboxRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-confinement-sandbox-",
+  });
+  const vaultRoot = `${sandboxRoot}/vault`;
+  await Deno.mkdir(vaultRoot, { recursive: true });
+  try {
+    const { ctx, written } = makeCtx({
+      ...GLOBAL_ARGS,
+      folder: "../escaped",
+      vaultRoot,
+    });
+    await withDenoStubs({ realMkdir: true }, async () => {
+      await withFetchStub(
+        [(req) => {
+          const url = new URL(req.url);
+          if (url.pathname === "/" && !url.searchParams.has("skip")) {
+            return htmlResponse(SINGLE_POST_INDEX_HTML);
+          }
+          if (url.pathname === "/9001.html") return htmlResponse(postHtml);
+          return undefined;
+        }],
+        () => run({}, ctx) as Promise<void>,
+      );
+    });
+    // LB7 is UNCHANGED: the attachments mkdir still carries the raw
+    // traversal segments verbatim (this guard was never applied there) --
+    // realMkdir:true means it really landed outside the vault, in sandboxRoot.
+    const attachStat = await Deno.stat(`${sandboxRoot}/escaped/attachments`);
+    assert(attachStat.isDirectory);
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(
+      result.payload.notesCreated,
+      0,
+      "the note write itself must be rejected by the NEW confinement guard",
+    );
+    const errors = result.payload.errors as string[];
+    assert(errors.some((e) => e.includes("Path escapes vault root")));
+    // The attachDiskPath mkdir side effect (LB7, unfixed) DOES create
+    // sandboxRoot/escaped -- what must NOT happen is a note landing inside
+    // it: no .md file anywhere under the escaped directory.
+    const escapedEntries: string[] = [];
+    for await (const e of Deno.readDir(`${sandboxRoot}/escaped`)) {
+      escapedEntries.push(e.name);
+    }
+    assert(
+      escapedEntries.every((n) => !n.endsWith(".md")),
+      "no note may land outside the vault directory, even though LB7's attachments mkdir still does",
+    );
+  } finally {
+    await Deno.remove(sandboxRoot, { recursive: true });
+  }
+});
+
+Deno.test("path confinement: a symlinked 'folder' path segment is refused via realpath for the note write, not silently followed", async () => {
+  const postHtml = await readFixture("post_full.html");
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-symlink-vault-",
+  });
+  const outside = await Deno.makeTempDir({
+    prefix: "livejournal-import-symlink-outside-",
+  });
+  try {
+    await Deno.symlink(outside, `${vaultRoot}/LiveJournal`);
+    const { ctx, written } = makeCtx({ ...GLOBAL_ARGS, vaultRoot });
+    await withDenoStubs({ realMkdir: true }, async () => {
+      await withFetchStub(
+        [(req) => {
+          const url = new URL(req.url);
+          if (url.pathname === "/" && !url.searchParams.has("skip")) {
+            return htmlResponse(SINGLE_POST_INDEX_HTML);
+          }
+          if (url.pathname === "/9001.html") return htmlResponse(postHtml);
+          return undefined;
+        }],
+        () => run({}, ctx) as Promise<void>,
+      );
+    });
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 0);
+    const errors = result.payload.errors as string[];
+    assert(errors.some((e) => e.includes("symlink")));
+  } finally {
+    await Deno.remove(outside, { recursive: true });
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+Deno.test("path confinement: resolveVaultPathSafe's realRoot is the symlink-resolved root, not the raw configured vaultRoot string (macOS temp dirs resolve /var -> /private/var)", async () => {
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-realroot-",
+  });
+  try {
+    const target = await resolveVaultPathSafe(
+      { vaultRoot },
+      "LiveJournal/note.md",
+    );
+    const expectedRealRoot = await Deno.realPath(vaultRoot);
+    assertEquals(
+      target.realRoot,
+      expectedRealRoot,
+      "containment must be computed against the REAL (symlink-resolved) root, not the raw vaultRoot prefix",
+    );
+    assertEquals(
+      target.absolutePath,
+      `${expectedRealRoot}/LiveJournal/note.md`,
+    );
+  } finally {
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+// covered-negative: import only ever writes into a caller-named folder --
+// it never walks the vault, so there is no dot-dir/.trash EXCLUSION rule to
+// have (unlike obsidian-vault's list/digest, which do walk and must skip
+// hidden directories).
+Deno.test("covered-negative: dot-dir/.trash exclusion is N/A -- import never walks the vault, it only writes into the caller-named folder", async () => {
+  const postHtml = await readFixture("post_full.html");
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-dotdir-",
+  });
+  try {
+    const { ctx, written } = makeCtx({
+      ...GLOBAL_ARGS,
+      folder: ".trash",
+      vaultRoot,
+    });
+    await withDenoStubs({ realMkdir: true }, async () => {
+      await withFetchStub(
+        [(req) => {
+          const url = new URL(req.url);
+          if (url.pathname === "/" && !url.searchParams.has("skip")) {
+            return htmlResponse(SINGLE_POST_INDEX_HTML);
+          }
+          if (url.pathname === "/9001.html") return htmlResponse(postHtml);
+          return undefined;
+        }],
+        () => run({}, ctx) as Promise<void>,
+      );
+    });
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(result.payload.notesCreated, 1);
+    const entries: string[] = [];
+    for await (const e of Deno.readDir(`${vaultRoot}/.trash`)) {
+      entries.push(e.name);
+    }
+    assert(entries.some((n) => n.endsWith(".md")));
+  } finally {
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});
+
+// ===========================================================================
 // LB8 parseLjDate silent fallthrough -- LOW
 // ===========================================================================
 
@@ -872,12 +1049,13 @@ Deno.test("pin (livejournal-import-latent-bugs LB8, LOW): a date string not matc
 
 Deno.test("refuted: globalArguments carries no credential-shaped field -- there is nothing for a credential-leak test to catch", () => {
   const shape = model.globalArguments;
-  // GlobalArgsSchema is a zod object; its shape keys are exactly these four.
+  // GlobalArgsSchema is a zod object; its shape keys are exactly these five
+  // (vaultRoot added by swamp-workspace #57's headless filesystem backend).
   // deno-lint-ignore no-explicit-any
   const keys = Object.keys((shape as any).shape ?? {});
   assertEquals(
     keys.sort(),
-    ["attachmentsFolder", "folder", "journalUrl", "vault"],
+    ["attachmentsFolder", "folder", "journalUrl", "vault", "vaultRoot"],
   );
   for (const k of keys) {
     assert(

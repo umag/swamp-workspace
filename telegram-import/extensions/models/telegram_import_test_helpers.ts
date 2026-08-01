@@ -180,6 +180,17 @@ export interface StubConfig {
   /** placeholder path returned by the stubbed Deno.makeTempDir — never
    * touched for real I/O, only ever fed back into other stubbed calls. */
   tempDirPlaceholder?: string;
+  /** Leave Deno.mkdir un-stubbed (real). Needed by the vaultRoot (headless)
+   * tests (swamp-workspace #57): the confined atomic write's ensureParentDir
+   * calls the SAME global Deno.mkdir as the attachments-folder mkdir, so it
+   * must be real for a note to actually land on disk under a real
+   * `Deno.makeTempDir` vault. Safe to leave real in every other test too --
+   * the attachments mkdir target is never asserted against when this is set. */
+  realMkdir?: boolean;
+  /** Throw when Deno.Command is constructed for "obsidian" (any subcommand).
+   * Used by the vaultRoot (headless) tests to hard-prove the CLI is never
+   * invoked -- see FakeCommand's constructor. */
+  throwOnObsidian?: boolean;
 }
 
 export interface InstalledStubs {
@@ -223,6 +234,8 @@ export function installStubs(config: StubConfig = {}): InstalledStubs {
     obsidianCreateFails = false,
     copyFileFails,
     tempDirPlaceholder = "/fake-tmp/telegram-import-test",
+    realMkdir = false,
+    throwOnObsidian = false,
   } = config;
 
   const commandInvocations: CommandInvocation[] = [];
@@ -243,6 +256,17 @@ export function installStubs(config: StubConfig = {}): InstalledStubs {
     constructor(cmd: string, opts: { args?: string[] } = {}) {
       this.#cmd = cmd;
       this.#args = opts.args ?? [];
+      // vaultRoot (swamp-workspace #57) must skip the Obsidian CLI entirely --
+      // throwing here on construction (before output() is ever called, and
+      // before commandInvocations records anything) gives a hard proof that
+      // neither the vault-path lookup nor `create` is ever reached when
+      // vaultRoot is set, stronger than merely counting invocations after
+      // the fact.
+      if (throwOnObsidian && cmd === "obsidian") {
+        throw new Error(
+          "Deno.Command must not be constructed for 'obsidian' when vaultRoot is set -- the CLI must never be invoked",
+        );
+      }
     }
     output(): Promise<
       { success: boolean; code: number; stdout: Uint8Array; stderr: Uint8Array }
@@ -346,14 +370,16 @@ export function installStubs(config: StubConfig = {}): InstalledStubs {
     return Promise.resolve();
   };
 
-  // deno-lint-ignore no-explicit-any
-  (globalThis as any).Deno.mkdir = (
-    path: string,
-    opts?: { recursive?: boolean },
-  ) => {
-    mkdirCalls.push({ path, recursive: !!opts?.recursive });
-    return Promise.resolve();
-  };
+  if (!realMkdir) {
+    // deno-lint-ignore no-explicit-any
+    (globalThis as any).Deno.mkdir = (
+      path: string,
+      opts?: { recursive?: boolean },
+    ) => {
+      mkdirCalls.push({ path, recursive: !!opts?.recursive });
+      return Promise.resolve();
+    };
+  }
 
   // deno-lint-ignore no-explicit-any
   (globalThis as any).Deno.makeTempDir = (_opts?: { prefix?: string }) =>
