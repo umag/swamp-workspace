@@ -4,18 +4,18 @@
  * don't already pin on both sides — so deleting or "helpfully" fixing one of
  * these behaviors turns a test red (STANDARD.md's coverage role).
  *
- * IMPORTANT — several of these tests characterize a GAP (a guard the model
- * does NOT have: victorialogs.ts never checks ssh's output.success, never
- * bounds compare-periods' empty windows, never checks logsql/start/end
- * length). This is honest for a model with zero pre-existing test coverage:
- * these pins protect the CURRENT (buggy) behavior, not a correct guard. If a
- * future change deliberately ADDS one of these guards (fixing the gap), the
- * corresponding test below must be updated deliberately — a red result here
- * after such a fix is expected and correct, not a regression.
- *
- * victorialogs.ts is UNMODIFIED; every test PINS existing behavior.
+ * FIXED (2026.08.01.1): P4 (ssh `output.success` is now checked) and P6
+ * (compare-periods now guards empty baseline/comparison windows AND
+ * non-numeric totals, throwing distinct errors instead of silently
+ * collapsing to NEW/GONE/NORMAL) and P13 (the sort comparator's `?? 9` no
+ * longer falsy-collapses GONE's priority). The five pins below that used to
+ * characterize those gaps are now GREEN tests proving the guards reject as
+ * intended. Every other gap (P5 undefined-name fallback, M2 partial-write,
+ * P9 timestamp collisions, and the blank-line/5-sample-cap guards) is
+ * unchanged — these pins still protect CURRENT behavior, not a correct
+ * guard, and a deliberate future fix must update them deliberately.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./victorialogs.ts";
 import queryFixture from "../../fixtures/query.json" with { type: "json" };
 
@@ -131,10 +131,10 @@ function installCmdStub(queue: CmdResp[]) {
 // Gap: P4 — output.success is NEVER checked by getRunningContainers
 // ---------------------------------------------------------------------------
 
-Deno.test("coverage-pin: P4 — stdout is decoded and used REGARDLESS of output.success (even success:false with non-empty stdout is trusted)", async () => {
-  // If output.success were ever checked, a success:false response would be
-  // treated as "no running containers" (or thrown) rather than trusting
-  // whatever happens to be on stdout. Today it is trusted unconditionally.
+Deno.test("coverage-pin: P4 FIXED — output.success is now checked; a success:false response REJECTS regardless of non-empty stdout", async () => {
+  // output.success is now checked before stdout is ever trusted — a
+  // success:false response throws instead of being decoded as if it were a
+  // real container list.
   const cmdStub = installCmdStub([
     {
       success: false,
@@ -142,23 +142,22 @@ Deno.test("coverage-pin: P4 — stdout is decoded and used REGARDLESS of output.
       stderr: "unrelated warning on stderr",
     },
   ]);
-  const { ctx, written } = makeCtx();
+  const { ctx } = makeCtx();
   try {
     await withFetchStub(
       [queueRoute([{
         text: ndjson([{ container_name: "svc-alpha", total: "5" }]),
       }])],
-      () => run("container-log-status", {}, ctx),
+      async () => {
+        await assertRejects(
+          () => run("container-log-status", {}, ctx),
+          Error,
+        );
+      },
     );
   } finally {
     cmdStub.restore();
   }
-  const res = written.find((w) => w.spec === "containerStatus")!;
-  assertEquals(
-    res.payload.notLogging,
-    ["svc-beta"],
-    "stdout content is used even though output.success was false",
-  );
 });
 
 // ---------------------------------------------------------------------------
@@ -197,77 +196,113 @@ Deno.test("coverage-pin: P5 — a stats-by-container_name row with NO container_
 // Gap: P6 — compare-periods empty-window storms
 // ---------------------------------------------------------------------------
 
-Deno.test("coverage-pin: P6 — empty BASELINE + non-empty comparison -> every container classifies as NEW", async () => {
+Deno.test("coverage-pin: P6 FIXED — empty BASELINE + non-empty comparison now REJECTS instead of classifying every container as NEW", async () => {
   const compare = [
     { container_name: "svc-alpha", total: "10" },
     { container_name: "svc-beta", total: "20" },
   ];
-  const { ctx, written } = makeCtx();
+  const { ctx } = makeCtx();
   await withFetchStub(
     [queueRoute([{ text: ndjson([]) }, { text: ndjson(compare) }])],
-    () => run("compare-periods", {}, ctx),
+    async () => {
+      const err = await assertRejects(
+        () => run("compare-periods", {}, ctx),
+        Error,
+      );
+      assert(
+        err.message.includes("baseline window returned no data"),
+        "must reject via the empty-baseline guard specifically",
+      );
+    },
   );
-  const rows = written.find((w) => w.spec === "stats")!.payload
-    .stats as Array<{ status: string }>;
-  assertEquals(rows.length, 2);
-  assert(rows.every((r) => r.status === "NEW"));
 });
 
-Deno.test("coverage-pin: P6 — non-empty baseline + empty COMPARISON -> every container classifies as GONE (fleet-wide false-alarm storm)", async () => {
+Deno.test("coverage-pin: P6 FIXED — non-empty baseline + empty COMPARISON now REJECTS instead of a fleet-wide false-alarm GONE storm", async () => {
   const baseline = [
     { container_name: "svc-alpha", total: "10" },
     { container_name: "svc-beta", total: "20" },
   ];
-  const { ctx, written } = makeCtx();
+  const { ctx } = makeCtx();
   await withFetchStub(
     [queueRoute([{ text: ndjson(baseline) }, { text: ndjson([]) }])],
-    () => run("compare-periods", {}, ctx),
+    async () => {
+      const err = await assertRejects(
+        () => run("compare-periods", {}, ctx),
+        Error,
+      );
+      assert(
+        err.message.includes("comparison window returned no data"),
+        "must reject via the empty-comparison guard specifically",
+      );
+    },
   );
-  const rows = written.find((w) => w.spec === "stats")!.payload
-    .stats as Array<{ status: string }>;
-  assertEquals(rows.length, 2);
-  assert(rows.every((r) => r.status === "GONE"));
 });
 
-Deno.test("coverage-pin: P6 — both windows empty -> zero rows, no crash", async () => {
-  const { ctx, written } = makeCtx();
+Deno.test("coverage-pin: P6 FIXED — both windows empty now REJECTS instead of silently producing zero rows", async () => {
+  const { ctx } = makeCtx();
   await withFetchStub(
     [queueRoute([{ text: ndjson([]) }, { text: ndjson([]) }])],
-    () => run("compare-periods", {}, ctx),
+    async () => {
+      const err = await assertRejects(
+        () => run("compare-periods", {}, ctx),
+        Error,
+      );
+      assert(
+        err.message.includes("baseline window returned no data"),
+        "the baseline-empty guard is checked first, so it fires even when both windows are empty",
+      );
+    },
   );
-  const rows = written.find((w) => w.spec === "stats")!.payload
-    .stats as unknown[];
-  assertEquals(rows, []);
 });
 
-Deno.test("coverage-pin: P6 — a non-numeric 'total' (parseInt -> NaN) collapses to 0 via `|| 0`, silently landing on NORMAL instead of GONE", async () => {
-  // baselineMap[name] = parseInt("not-a-number") = NaN; `base = baselineMap[name] || 0`
-  // treats NaN as falsy, so base becomes 0 — masking what should read as
-  // "this container had SOME baseline volume" as if it never existed. Absent
-  // from the comparison window too, comp is also 0 -> status resolves to
-  // NORMAL, not GONE. A garbled total therefore silently hides a real
-  // disappearance instead of surfacing an error.
+Deno.test("coverage-pin: P6 FIXED — a non-numeric 'total' (parseInt -> NaN) now REJECTS instead of silently collapsing to 0/NORMAL", async () => {
+  // Previously: baselineMap[name] = parseInt("not-a-number") = NaN, and
+  // `base = baselineMap[name] || 0` treated NaN as falsy, masking what
+  // should read as "this container had SOME baseline volume" as if it never
+  // existed — a garbled total silently hid a real disappearance instead of
+  // surfacing an error. Now the NaN is caught at ingest and thrown.
+  //
+  // The comparison window MUST be non-empty here — an empty compare window
+  // trips the P6 empty-comparison guard before the NaN check ever runs,
+  // which would make this test pass for the wrong reason (found in review).
   const baseline = [{ container_name: "svc-alpha", total: "not-a-number" }];
-  const { ctx, written } = makeCtx();
+  const compare = [{ container_name: "svc-alpha", total: "5" }];
+  const { ctx } = makeCtx();
   await withFetchStub(
-    [queueRoute([{ text: ndjson(baseline) }, { text: ndjson([]) }])],
-    () => run("compare-periods", {}, ctx),
+    [queueRoute([{ text: ndjson(baseline) }, { text: ndjson(compare) }])],
+    async () => {
+      const err = await assertRejects(
+        () => run("compare-periods", {}, ctx),
+        Error,
+      );
+      assert(
+        err.message.includes("non-numeric baseline total"),
+        "must reject via the NaN guard specifically, not the empty-window guard",
+      );
+    },
   );
-  const rows = written.find((w) => w.spec === "stats")!.payload
-    .stats as Array<
-      { name: string; baseline: number; current: number; status: string }
-    >;
-  const row = rows.find((r) => r.name === "svc-alpha")!;
-  assertEquals(
-    row.baseline,
-    0,
-    "NaN collapsed to 0 via the falsy `|| 0` guard",
-  );
-  assertEquals(row.current, 0);
-  assertEquals(
-    row.status,
-    "NORMAL",
-    "a garbled total silently reads as NORMAL, not as an alertable GONE",
+});
+
+Deno.test("coverage-pin: P6 FIXED — the NaN guard's echoed container_name is length-bounded, never interpolates the full unbounded wire value", async () => {
+  // Round-1 security review: the NaN/empty-window throw messages echo the
+  // offending container_name, which originates from the VictoriaLogs wire
+  // response — it must stay bounded, not interpolate arbitrary wire text.
+  const longName = "svc-" + "x".repeat(500);
+  const baseline = [{ container_name: longName, total: "not-a-number" }];
+  const compare = [{ container_name: "svc-alpha", total: "5" }];
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [queueRoute([{ text: ndjson(baseline) }, { text: ndjson(compare) }])],
+    async () => {
+      const err = await assertRejects(
+        () => run("compare-periods", {}, ctx),
+        Error,
+      );
+      assert(
+        err.message.length < 300,
+        "the echoed container_name must be truncated, not the full 500+ char wire value",
+      );
+    },
   );
 });
 
@@ -292,16 +327,14 @@ Deno.test("coverage-pin: P6 — exact threshold boundaries (comp === base*0.1, c
 });
 
 // ---------------------------------------------------------------------------
-// Found bug (discovered via actual execution, NOT in the original plan's
-// P1-P12 list): P13 — the sort comparator's `order[status] || 9` falsy-
-// collapses GONE's priority value (0) to 9, so GONE sorts LAST instead of
-// first — the most urgent status (a service went silent) is buried at the
-// bottom of the sorted list. Same bug CLASS as P6's NaN-total `|| 0`
-// collapse, applied to the sort priority map instead. Verified via direct
-// execution while authoring this suite (`deno run` repro), not assumed.
+// P13 FIXED — the sort comparator's `order[status] ?? 9` no longer falsy-
+// collapses GONE's priority value (0) to 9, so GONE now sorts FIRST — the
+// most urgent status (a service went silent) leads the sorted list. Same bug
+// CLASS as P6's NaN-total collapse, applied to the sort priority map instead;
+// fixed in the same change.
 // ---------------------------------------------------------------------------
 
-Deno.test("coverage-pin: P13 — GONE's `order[status] || 9` collapse makes GONE sort LAST, not first, among all 5 statuses", async () => {
+Deno.test("coverage-pin: P13 FIXED — GONE now sorts FIRST, not last, among all 5 statuses", async () => {
   // One container per status: base/comp chosen to land on each bucket.
   const baseline = [
     { container_name: "svc-gone", total: "10" }, // -> GONE (absent from compare)
@@ -329,13 +362,11 @@ Deno.test("coverage-pin: P13 — GONE's `order[status] || 9` collapse makes GONE
   assertEquals(byName["svc-normal"], "NORMAL");
   assertEquals(byName["svc-active"], "MUCH_MORE_ACTIVE");
   assertEquals(byName["svc-new"], "NEW");
-  // The regression guard: if this comparator's `|| 9` collapse is ever
-  // "fixed" to correctly prioritize GONE first, this exact ordering will
-  // break — that is the deliberate signal this test protects (a future
-  // fix must update this pin deliberately, not silently).
+  // The regression guard: GONE now correctly sorts FIRST — this is the
+  // deliberate, intended priority order the comparator now produces.
   assertEquals(
     rows.map((r) => r.status),
-    ["MOSTLY_SILENT", "NEW", "MUCH_MORE_ACTIVE", "NORMAL", "GONE"],
+    ["GONE", "MOSTLY_SILENT", "NEW", "MUCH_MORE_ACTIVE", "NORMAL"],
   );
 });
 

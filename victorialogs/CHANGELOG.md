@@ -1,11 +1,62 @@
 # Changelog
 
-## Unreleased
+## 2026.08.01.1
+
+Two HIGH monitoring blind-spots (both false all-clears/storms) are now FIXED,
+plus a trivial same-method sort fold-in. Tracked end-to-end in the LOCAL
+`victorialogs-false-allclear-bugs` issue-lifecycle model — never a Lab issue,
+since this is a `@magistr/*` extension.
+
+1. **P4 — ssh failure swallowed as a false all-clear (HIGH), FIXED** —
+   `getRunningContainers` never checked the ssh subprocess's `output.success`;
+   an ssh FAILURE (e.g. connection refused, host key mismatch) yielded empty
+   stdout, which was decoded unconditionally into `running = []`, so
+   `container-log-status` reported `notLogging: []` — identical to "every
+   running container is logging" even though the check never actually ran. Fixed
+   by checking `output.success` and throwing a distinct ssh-failure error
+   carrying the HOST and EXIT CODE only — never raw stderr, which can leak
+   internal topology (host-key/gateway names).
+2. **P6 — compare-periods empty-window/NaN alarm storm (HIGH), FIXED** —
+   `compare-periods` had no guard for an empty baseline or comparison window: an
+   empty baseline classified every container as `NEW`, an empty comparison
+   window classified every container as `GONE` (a fleet-wide false-alarm storm).
+   Separately, `parseInt(e.total)` with no radix silently produced `NaN` for a
+   garbled `total` value, which the `|| 0` fallback collapsed to 0 — masking
+   what should read as "this container had SOME volume" and silently landing a
+   real disappearance on `NORMAL` instead of an alertable `GONE`. Fixed by
+   throwing distinct errors when either window is empty (checked immediately
+   after the `Promise.all` fetch, so both fetches still complete before either
+   guard fires) and by detecting `Number.isNaN` at the baseline/comparison map
+   ingest (now with explicit radix 10) and throwing instead of silently
+   collapsing to 0.
+3. **P13 — sort comparator falsy-collapse (fold-in, same method/bug class)** —
+   the `compare-periods` sort comparator's
+   `(order[a.status] || 9) -
+   (order[b.status] || 9)` treated `GONE`'s
+   priority value of `0` as falsy, collapsing it to the unmapped-status fallback
+   of `9` — the most urgent alert (a service went silent) sorted LAST instead of
+   first. Found during the wave-2b review, outside the original P4/P6 scope but
+   trivial and on the same edited lines; fixed by switching to `?? 9` (nullish
+   coalescing), which only substitutes on `null`/`undefined`, not on `0`.
+
+- `model.version` (`extensions/models/victorialogs.ts`) and `manifest.yaml` both
+  bump to `2026.08.01.1`, in sync.
+- Flipped ~15 characterization pins across the three affected suites
+  (`victorialogs_methods_test.ts`, `victorialogs_adversarial_test.ts`,
+  `victorialogs_coverage_test.ts`, `victorialogs_property_test.ts`) from pinning
+  the buggy behavior to asserting the fixed rejection/ordering; constrained the
+  property suite's non-degenerate `arbWindow` to `minKeys: 1` and fed the
+  methods suite's default-window test non-empty bodies so neither trips the new
+  empty-window guard. Every other pin (P1/P2/P3/P5/P7/P8/P9/ P10/P11/P12, and
+  all legit-path happy/failure characterizations) is unchanged.
+
+## Test backfill (prior to 2026.08.01.1, no version bump at the time)
 
 Test backfill to the STANDARD.md five-suite quality bar (wave 2b, full build of
 the extension-quality backfill program, `ext-quality-test-backfill`). No
-behavior change — `victorialogs.ts` is unmodified and the model `version` stays
-`2026.07.16.2`.
+behavior change at the time — `victorialogs.ts` was unmodified and the model
+`version` stayed `2026.07.16.2`; `manifest.yaml` was unchanged. The
+`2026.08.01.1` fixes above build directly on this test suite.
 
 - Added `extensions/models/victorialogs_test.ts` (contract-fixture),
   `victorialogs_methods_test.ts` (methods), `victorialogs_adversarial_test.ts`
