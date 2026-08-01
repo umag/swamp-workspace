@@ -19,7 +19,7 @@ import {
 
 const CFG: LinkCliConfig = {
   binPath: "/opt/link-cli/link-cli",
-  version: "0.9.0",
+  version: "0.10.1",
   test: true,
 };
 

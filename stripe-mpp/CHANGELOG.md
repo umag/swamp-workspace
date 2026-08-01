@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026.08.01.1
+
+Dependency bump: `mppx@0.8.12 → 0.8.14` (patch, preview channel, bundled runtime
+dep) + `linkCliVersion` drift-detection default `0.9.0 → 0.10.1`
+(fixture/default only, no bundle impact).
+
+- **mppx**: NO-OP on the fiat/SPT wire contract, confirmed on durable evidence.
+  `deno task check` stayed clean (no method signature the model calls moved) and
+  the full offline suite (121 tests) + the 10000-run property soak pass
+  **UNMODIFIED**, including the byte-exact `stripe_mpp_test.ts` golden-vector
+  test — the Challenge / Credential / Receipt codec, HMAC challenge-id binding,
+  key derivation, and domain separators are unchanged. The 0.8.13/0.8.14 deltas
+  are Tempo/SQLite/stablecoin patch changes plus additive APIs this fiat/SPT
+  model does not import.
+  - **Watch item**: 0.8.14 marks the legacy combined payment-verification hooks
+    DEPRECATED (not removed, not yet used by this model) — a future mppx major
+    that removes them will need re-verification, not just a version bump.
+- **link-cli**: `@stripe/link-cli` re-pinned `0.9.0 → 0.10.1` on **release-notes
+  evidence only** (additive/security changes, no documented stdio-MCP contract
+  change) — **not live-verified**, Link is still US-only and the maintainer's
+  account is EU (`stripe_mpp_live_test.ts` stays `ignore`d). The bump is
+  required regardless: the drift-detection preflight (`lib/link_cli.ts`) rejects
+  a real 0.10.1 binary unless `linkCliVersion` is bumped to match. Updated the
+  three fixture literals (`lib/link_cli.test.ts`, `stripe_mpp_methods_test.ts`,
+  `stripe_mpp_live_test.ts`) alongside the default; the `mpp_pay` /
+  `paySpendRequest` spend-by-reference path stays on the same watch list as the
+  rest of the consumer-buyer surface for the next real observation.
+- Transitive drift from the lockfile regeneration: `viem 2.55.4 → 2.55.10`, `ox`
+  gains a `0.14.33` peer variant alongside the existing `0.14.30` (mppx/viem
+  resolve different ox ranges), `mppx` picks up the matching `viem@2.55.10` peer
+  combination. `stripe` stays `22.4.0-beta.1` and `@stripe/stripe-js` stays
+  `9.9.0` (both unchanged); the crypto primitives are byte-identical in the
+  regenerated lock (`@noble/hashes@1.8.0`, `@noble/curves@1.9.1`,
+  `@scure/base@1.2.6`, `@scure/bip32@1.7.0`, `@scure/bip39@1.6.0`) and every dep
+  keeps its sha512 integrity hash.
+- Re-bundle republishes with `0.8.14` inlined (extension deps are bundled at
+  build time). All fixtures stay synthetic (RFC 2606 hosts, `_test_fixture_`
+  ids) — no vectors were re-derived, since the golden test passed unmodified.
+
 ## 2026.07.21.2
 
 Dependency bump: `mppx@0.8.6 → 0.8.12` (patch, preview channel). No breaking

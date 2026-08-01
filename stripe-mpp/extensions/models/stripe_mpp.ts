@@ -39,8 +39,8 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.12";
-import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.12/server";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.8.14";
+import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.14/server";
 import Stripe from "npm:stripe@22.4.0-beta.1";
 import { callTool, type LinkCliConfig } from "./lib/link_cli.ts";
 
@@ -97,7 +97,7 @@ const GlobalArgsSchema = z.object({
       "executable runs. Requires an authenticated link-cli device session " +
       "(`link-cli auth login`, US Link account) on the same host.",
   ),
-  linkCliVersion: z.string().default("0.9.0").describe(
+  linkCliVersion: z.string().default("0.10.1").describe(
     "Pinned link-cli version. The MCP initialize serverInfo.version is " +
       "checked against it as DRIFT DETECTION only (a shadow binary can spoof " +
       "it — this is not an integrity guarantee).",
@@ -978,7 +978,7 @@ async function retrievePaymentIntent(
  * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.07.21.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     challenge: {

@@ -19,7 +19,7 @@ import {
   assertMatch,
   assertRejects,
 } from "jsr:@std/assert@1";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.12";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.8.14";
 import { model } from "./stripe_mpp.ts";
 import {
   _resetMcpTransport,
@@ -645,7 +645,7 @@ Deno.test("createTestGrantedToken: refuses outside test mode", async () => {
 const CONSUMER_ARGS = {
   ...GLOBAL_ARGS,
   linkCliPath: "/opt/link-cli/link-cli",
-  linkCliVersion: "0.9.0",
+  linkCliVersion: "0.10.1",
   allowLiveGrants: false,
 };
 
