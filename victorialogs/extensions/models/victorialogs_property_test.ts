@@ -6,6 +6,15 @@
  * stubbed Deno.Command for container-log-status) and reading back the
  * written resource, per the approved plan.
  *
+ * FIXED (2026.08.01.1): P6 (compare-periods now guards empty windows and
+ * non-numeric totals, throwing instead of silently collapsing) and P13 (the
+ * sort comparator's `?? 9` no longer falsy-collapses GONE's priority). The
+ * non-degenerate totality property's `arbWindow` is now constrained to
+ * `minKeys: 1` so it never trips the new empty-window guard, and its
+ * `STATUS_ORDER` reflects GONE's now-correct priority of 0. The two named
+ * degenerate-collapse examples below are now GREEN tests proving the
+ * rejections.
+ *
  * Properties:
  *  (a) query round-trip — `entries.length == totalEntries` for any generated
  *      NDJSON, and every entry's message is truncated to <=500 chars while
@@ -13,13 +22,14 @@
  *  (b) compare-periods classification is a TOTAL function (exactly one of
  *      the 5 statuses per container) and rows are sorted by the defined
  *      status priority — stated over the NON-DEGENERATE subset (positive
- *      integer totals only). The NaN/garbled-total collapse is excluded here
- *      and pinned as an explicit named example instead (and more fully in
- *      the coverage suite), per the porkbun injectivity-modulo precedent.
+ *      integer totals only, at least one key per window). The NaN/garbled-
+ *      total collapse and the empty-window guard are excluded here and
+ *      pinned as explicit named examples instead (and more fully in the
+ *      coverage suite), per the porkbun injectivity-modulo precedent.
  *  (c) container-log-status invariant: `notLogging == running \ loggingSet`
  *      for arbitrary running/logging subsets, including either side empty.
  */
-import { assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
 import { model } from "./victorialogs.ts";
 
@@ -173,28 +183,29 @@ Deno.test("property: query — totalEntries == entries.length, message truncated
 
 const NAME_POOL = ["svc-a", "svc-b", "svc-c", "svc-d", "svc-e", "svc-f"];
 
+// minKeys: 1 — an empty window (0 keys on either side) now throws (P6 fix),
+// and this property is stated over the non-degenerate subset; the empty-
+// window guard is pinned separately as an explicit named example below.
 const arbWindow = fc.dictionary(
   fc.constantFrom(...NAME_POOL),
   fc.integer({ min: 1, max: 100000 }),
-  { maxKeys: NAME_POOL.length },
+  { minKeys: 1, maxKeys: NAME_POOL.length },
 );
 
-// pin: P13 — the model's own sort comparator is
-// `(order[a.status] || 9) - (order[b.status] || 9)` with order.GONE = 0. Since
-// 0 is FALSY, `0 || 9` collapses GONE's priority to 9 (the same slot an
-// unmapped status would fall into), so GONE sorts LAST, not first, despite
-// the code comment's stated intent. This constant reflects the ACTUAL
-// (buggy) runtime priority, not the intended one — see the explicit named
-// collapse test below and the methods suite's happy-path pin.
+// P13 FIXED — the model's sort comparator is now
+// `(order[a.status] ?? 9) - (order[b.status] ?? 9)` with order.GONE = 0.
+// Nullish coalescing no longer collapses that 0 to the unmapped-status
+// fallback of 9, so GONE now correctly sorts FIRST. This constant reflects
+// the model's actual (fixed) runtime priority.
 const STATUS_ORDER: Record<string, number> = {
+  GONE: 0,
   MOSTLY_SILENT: 1,
   NEW: 2,
   MUCH_MORE_ACTIVE: 3,
   NORMAL: 4,
-  GONE: 9,
 };
 
-Deno.test("property: compare-periods classification is a TOTAL function (exactly one of 5 statuses per container), rows sorted by the ACTUAL (falsy-collapsed) status priority — non-degenerate subset", async () => {
+Deno.test("property: compare-periods classification is a TOTAL function (exactly one of 5 statuses per container), rows sorted by the fixed status priority — non-degenerate subset", async () => {
   await fc.assert(
     fc.asyncProperty(
       arbWindow,
@@ -236,21 +247,29 @@ Deno.test("property: compare-periods classification is a TOTAL function (exactly
 
 // --- Explicit named degenerate collapse (excluded from the property above) -
 
-Deno.test("collapse: a non-numeric total (parseInt -> NaN) collapses to baseline 0 via the falsy `|| 0` guard, landing on NORMAL — full characterization lives in the coverage suite", async () => {
+Deno.test("collapse: P6 FIXED — a non-numeric total (parseInt -> NaN) now REJECTS instead of collapsing to baseline 0/NORMAL — full characterization lives in the coverage suite", async () => {
+  // compare MUST be non-empty — an empty comparison window trips the P6
+  // empty-window guard before the NaN check ever runs, which would make
+  // this test pass for the wrong reason (found in review).
   const baseline = [{ container_name: "svc-a", total: "garbled" }];
-  const { ctx, written } = makeCtx();
+  const compare = [{ container_name: "svc-a", total: "5" }];
+  const { ctx } = makeCtx();
   await withFetchStub(
-    [queueRoute([{ text: ndjson(baseline) }, { text: ndjson([]) }])],
-    () => run("compare-periods", {}, ctx),
+    [queueRoute([{ text: ndjson(baseline) }, { text: ndjson(compare) }])],
+    async () => {
+      const err = await assertRejects(
+        () => run("compare-periods", {}, ctx),
+        Error,
+      );
+      assert(
+        err.message.includes("non-numeric baseline total"),
+        "must reject via the NaN guard specifically, not the empty-window guard",
+      );
+    },
   );
-  const row = (written.find((w) => w.spec === "stats")!.payload
-    .stats as Array<{ name: string; baseline: number; status: string }>)
-    .find((r) => r.name === "svc-a")!;
-  assertEquals(row.baseline, 0);
-  assertEquals(row.status, "NORMAL");
 });
 
-Deno.test("collapse: P13 — GONE's sort-order value (0) is falsy-collapsed by `|| 9`, so a GONE row sorts LAST among GONE/NEW/NORMAL, not first", async () => {
+Deno.test("collapse: P13 FIXED — GONE's sort-order value (0) is no longer falsy-collapsed by `?? 9`, so a GONE row sorts FIRST among GONE/NEW/NORMAL", async () => {
   const baseline = [
     { container_name: "svc-a", total: "10" }, // -> GONE (absent from compare)
   ];
@@ -274,7 +293,7 @@ Deno.test("collapse: P13 — GONE's sort-order value (0) is falsy-collapsed by `
   );
   const rows = written.find((w) => w.spec === "stats")!.payload
     .stats as Array<{ name: string; status: string }>;
-  assertEquals(rows.map((r) => r.status), ["NEW", "NORMAL", "GONE"]);
+  assertEquals(rows.map((r) => r.status), ["GONE", "NEW", "NORMAL"]);
 });
 
 // ---------------------------------------------------------------------------

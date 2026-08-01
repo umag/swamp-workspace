@@ -6,11 +6,14 @@
  * `globalThis.fetch`, a stubbed `Deno.Command` (container-log-status only),
  * and a fake context.
  *
- * victorialogs.ts is UNMODIFIED by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior, including behavior that is arguably buggy (see the adversarial
- * and coverage suites for the found-bug write-ups; this file pins the happy
- * and ordinary-failure paths).
+ * FIXED (2026.08.01.1): P4 (ssh `output.success` is now checked —
+ * `getRunningContainers` throws host+exit-code on failure instead of a false
+ * all-clear) and P13 (the compare-periods sort comparator now uses
+ * `order[status] ?? 9`, so GONE correctly sorts first). Both are now GREEN
+ * tests proving the fix, not pins of buggy behavior. Every other
+ * characterization (ordinary happy/failure paths, the ENOENT-style spawn
+ * rejection, the empty-VLOGS-stats storm sibling) is unchanged — see the
+ * adversarial and coverage suites for the remaining found-bug write-ups.
  *
  * Fixture provenance: fixtures/*.json are pure doc-derived synthetic NDJSON
  * rows (see fixtures/PROVENANCE.md) — no live call was ever made against the
@@ -423,13 +426,11 @@ Deno.test("container-log-status: no method arg reaches the ssh Deno.Command args
   }
 });
 
-Deno.test("pin: P4 — ssh failure (success:false) is swallowed as running=[] -> notLogging=[] -> FALSE all-clear", async () => {
-  // getRunningContainers never checks output.success; it blindly decodes
-  // stdout. An ssh failure typically yields empty stdout (the error went to
-  // stderr), so `running` becomes [] and notLogging becomes [] — a FALSE
-  // ALL-CLEAR that looks identical to "every running container is logging",
-  // even though the check never actually ran. Documented gap (found bug,
-  // HIGH per the alert-baseline lesson), NOT fixed here.
+Deno.test("P4 FIXED — an ssh failure (success:false) now REJECTS container-log-status instead of a false all-clear", async () => {
+  // getRunningContainers now checks output.success and throws a distinct
+  // ssh-failure error (host + exit code) instead of blindly decoding stdout.
+  // An ssh failure no longer produces the SAME notLogging:[] shape as a
+  // healthy fleet — it surfaces as a rejection.
   const cmdStub = installCmdStub([
     {
       success: false,
@@ -438,26 +439,23 @@ Deno.test("pin: P4 — ssh failure (success:false) is swallowed as running=[] ->
         "ssh: connect to host vlogs.example.test port 22: Connection refused",
     },
   ]);
-  const { ctx, written } = makeCtx();
+  const { ctx } = makeCtx();
   try {
     await withFetchStub(
       [queueRoute([{ text: ndjson(containerStatsFixture) }])],
       async () => {
-        await run("container-log-status", {}, ctx);
+        await assertRejects(
+          () => run("container-log-status", {}, ctx),
+          Error,
+        );
       },
     );
   } finally {
     cmdStub.restore();
   }
-  const res = written.find((w) => w.spec === "containerStatus")!;
-  assertEquals(
-    res.payload.notLogging,
-    [],
-    "an ssh failure produces the SAME notLogging:[] shape as a healthy fleet",
-  );
 });
 
-Deno.test("pin: an ssh spawn failure (ENOENT-style, .output() rejects) propagates as a method rejection — unlike the success:false swallow above", async () => {
+Deno.test("pin: an ssh spawn failure (ENOENT-style, .output() rejects) propagates as a method rejection too", async () => {
   const cmdStub = installThrowingCmdStub(
     "No such file or directory (os error 2)",
   );
@@ -594,23 +592,24 @@ Deno.test("compare-periods: happy path — baseline THEN comparison fetched, cla
   assertEquals(byName["svc-alpha"].status, "NORMAL");
   assertEquals(byName["svc-beta"].status, "GONE");
   assertEquals(byName["svc-gamma"].status, "NEW");
-  // pin: P13 — the sort comparator is `(order[a.status] || 9) - (order[b.status] || 9)`.
-  // GONE maps to 0, which is FALSY, so `0 || 9` collapses to 9 — the same
-  // class of bug as compare-periods' own NaN-total `|| 0` collapse (P6), but
-  // here it hits the SORT PRIORITY itself. The intended order comment says
-  // "GONE, MOSTLY_SILENT, NEW, MUCH_MORE_ACTIVE, NORMAL" but GONE actually
-  // sorts LAST (tied with any truly-unmapped status), not first — the most
-  // urgent alert (a service went silent) is buried at the bottom of the
-  // list. Found bug, NOT in the original plan's P1-P12 list — pinned here,
-  // not fixed (victorialogs.ts stays byte-frozen).
-  assertEquals(rows.map((r) => r.status), ["NEW", "NORMAL", "GONE"]);
+  // P13 FIXED — the sort comparator now uses `(order[a.status] ?? 9) - (order[b.status] ?? 9)`.
+  // GONE maps to 0; nullish coalescing no longer collapses that 0 to the
+  // unmapped-status fallback of 9, so GONE (the most urgent alert — a
+  // service went silent) now correctly sorts FIRST.
+  assertEquals(rows.map((r) => r.status), ["GONE", "NEW", "NORMAL"]);
   assertTimestampedName(res.name, "compare");
 });
 
 Deno.test("compare-periods: default baseline window is the frozen calendar range 2026-01-07..2026-01-21", async () => {
+  // Non-empty bodies on both sides — an empty baseline or comparison window
+  // now throws (P6 fix); this test only exercises the request-param shape,
+  // so it must not trip that guard.
   const { ctx } = makeCtx();
   await withFetchStub(
-    [queueRoute([{ text: "" }, { text: "" }])],
+    [queueRoute([
+      { text: ndjson([{ container_name: "svc-alpha", total: "10" }]) },
+      { text: ndjson([{ container_name: "svc-alpha", total: "12" }]) },
+    ])],
     async (calls) => {
       await run("compare-periods", {}, ctx);
       const baselineParams = await requestParams(calls[0]);

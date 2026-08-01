@@ -95,6 +95,11 @@ async function getRunningContainers(host) {
     stderr: "piped",
   });
   const output = await cmd.output();
+  if (!output.success) {
+    throw new Error(
+      `ssh to ${host} failed while listing running containers (exit code ${output.code})`,
+    );
+  }
   return new TextDecoder().decode(output.stdout).trim().split("\n").filter(
     (l) => l.trim(),
   );
@@ -103,7 +108,7 @@ async function getRunningContainers(host) {
 /** VictoriaLogs query model: runs LogsQL queries, stats, and container/error analytics against a VictoriaLogs HTTP endpoint. */
 export const model = {
   type: "@magistr/victorialogs",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     "queryResult": {
@@ -341,13 +346,40 @@ export const model = {
           vlogsStats(host, port, statsQuery, compareParams),
         ]);
 
+        if (baseline.length === 0) {
+          throw new Error(
+            "compare-periods: baseline window returned no data — refusing to classify every container as NEW (empty baseline window)",
+          );
+        }
+        if (compare.length === 0) {
+          throw new Error(
+            "compare-periods: comparison window returned no data — refusing to classify every container as GONE (empty comparison window)",
+          );
+        }
+
         const baselineMap: Record<string, number> = {};
         for (const e of baseline) {
-          baselineMap[e.container_name] = parseInt(e.total);
+          const total = parseInt(e.total, 10);
+          if (Number.isNaN(total)) {
+            throw new Error(
+              `compare-periods: non-numeric baseline total for container "${
+                String(e.container_name).slice(0, 100)
+              }"`,
+            );
+          }
+          baselineMap[e.container_name] = total;
         }
         const compareMap: Record<string, number> = {};
         for (const e of compare) {
-          compareMap[e.container_name] = parseInt(e.total);
+          const total = parseInt(e.total, 10);
+          if (Number.isNaN(total)) {
+            throw new Error(
+              `compare-periods: non-numeric comparison total for container "${
+                String(e.container_name).slice(0, 100)
+              }"`,
+            );
+          }
+          compareMap[e.container_name] = total;
         }
 
         const allContainers = new Set([
@@ -380,7 +412,7 @@ export const model = {
             MUCH_MORE_ACTIVE: 3,
             NORMAL: 4,
           };
-          return (order[a.status] || 9) - (order[b.status] || 9);
+          return (order[a.status] ?? 9) - (order[b.status] ?? 9);
         });
 
         const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);

@@ -7,9 +7,13 @@
  * victorialogs/fixtures/*.json — including free-text log MESSAGE bodies, not
  * just the structured `container_name` field.
  *
- * victorialogs.ts is UNMODIFIED — every test here PINS current behavior
- * (including behavior that is arguably risky) rather than proposing a fix.
- * Where a test documents a real gap, it is labeled "pin" and says so.
+ * FIXED (2026.08.01.1): P4 — `getRunningContainers` now checks
+ * `output.success` and throws a distinct ssh-failure error (host + exit code
+ * only, never raw stderr) instead of swallowing the failure as a false
+ * all-clear. The P4 pin below is now a GREEN test proving both the rejection
+ * AND that the sensitive stderr text never leaks into the thrown error.
+ * Every other characterization (P1/P2/P3/P8/P9/P10/P11/P12) is unchanged —
+ * where a test documents a real gap, it is labeled "pin" and says so.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./victorialogs.ts";
@@ -426,27 +430,34 @@ Deno.test("pin: P9 — the ssh invocation carries MITM-permissive options (Stric
   assert(args.includes("UserKnownHostsFile=/dev/null"));
 });
 
-Deno.test("pin: P4 — ssh stderr content is swallowed entirely — it never appears in the written containerStatus payload", async () => {
+Deno.test("P4 FIXED — an ssh failure now REJECTS container-log-status, and the sensitive stderr text never appears in the thrown error", async () => {
   const sensitiveStderr =
     "ssh: handshake failed: host key verification error for internal-gateway";
   const cmdStub = installCmdStub([
     { success: false, stdout: "", stderr: sensitiveStderr },
   ]);
-  const { ctx, written } = makeCtx();
+  const { ctx } = makeCtx();
   try {
     await withFetchStub(
       [queueRoute([{ text: ndjson(containerStatsFixture) }])],
-      () => run("container-log-status", {}, ctx),
+      async () => {
+        const err = await assertRejects(
+          () => run("container-log-status", {}, ctx),
+          Error,
+        );
+        assert(
+          !err.message.includes(sensitiveStderr),
+          "stderr text must not leak into the thrown error (it is also never surfaced anywhere else)",
+        );
+        assert(
+          err.message.includes(GLOBAL_ARGS.host),
+          "the thrown error must still carry the host, so the failure is distinct/actionable, not just generically swallowed",
+        );
+      },
     );
   } finally {
     cmdStub.restore();
   }
-  const res = written.find((w) => w.spec === "containerStatus")!;
-  const serialized = JSON.stringify(res.payload);
-  assert(
-    !serialized.includes(sensitiveStderr),
-    "stderr text must not leak into the written resource (it is also never surfaced anywhere else)",
-  );
 });
 
 // =============================================================================
