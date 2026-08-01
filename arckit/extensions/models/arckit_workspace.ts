@@ -878,7 +878,7 @@ const TEMPLATES_DIR = "templates";
  */
 export const model = {
   type: "@magistr/arckit/workspace",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     workspace: {
@@ -1055,6 +1055,11 @@ export const model = {
         }
         if (parsed.isGlobal) {
           throw new Error("000 is reserved for the global project");
+        }
+        if (!/^\d{3}-[a-z0-9-]+$/.test(dir)) {
+          throw new Error(
+            `Project dir must be a single NNN-slug segment (letters, digits, hyphens only) (got "${dir}")`,
+          );
         }
         const prior = await readProjectState(context, dir);
         if (prior && prior.state !== "abandoned") {
