@@ -1,5 +1,67 @@
 # Changelog
 
+## 2026.08.01.1
+
+Fixes the HIGH-severity path-traversal / arbitrary-file-read finding (LB1) in
+`validateFile`, tracked in the LOCAL `jscad-stl-validator-latent-bugs`
+issue-lifecycle model (NEVER a swamp.club Lab issue). `validateFile` is an
+operator-supplied-absolute-path method by design; this fix is defense in depth
+for any future less-trusted exposure.
+
+**Behavior change:** `validateFile` now rejects any `filePath` that is not
+absolute, and any `filePath` containing a literal `.` or `..` path segment —
+previously such a path (e.g. a traversal-shaped path) was read verbatim with no
+confinement at all. The traversal/absolute-path check runs BEFORE any filesystem
+access, so a traversal attempt against a nonexistent target is still refused as
+a policy violation, never silently masked by a "file not found" error.
+Legitimate callers passing a clean absolute path (as shown in this README's
+examples) are unaffected.
+
+- Added `extensions/models/jscad/safe_path.ts` — a new infrastructure guard,
+  `resolveStlPath`, implementing the always-on checks above plus
+  canonicalization via `Deno.realPath`. The pure domain service
+  `jscad/stl_validator.ts` stays BYTE-FROZEN; path safety is an infrastructure
+  concern, kept out of the domain service.
+- Added an OPT-IN `allowedRoots` global argument (default `[]`, read via
+  `context.globalArgs` — never the per-call arguments) that confines
+  `validateFile` to one or more operator-set root directories, using
+  canonicalized (`Deno.realPath`'d) separator-boundary prefix matching so a
+  sibling directory sharing a name prefix (`/rootFOO` vs. `/root`) or a
+  symlinked root cannot be mistaken for containment. Empty `allowedRoots` (the
+  default) preserves the historical unconfined contract.
+- `extensions/models/jscad_stl_validator.ts`: `validateFile` now resolves
+  `args.filePath` through `resolveStlPath` before calling `Deno.readFile`. Error
+  messages still key to the ORIGINAL `args.filePath` (not the canonicalized
+  path), so the existing missing-file/directory-path `Cannot read "<path>"`
+  throw-tests stay green; policy violations get a distinct
+  `Refusing to read "<path>": ...` message. Model `version` bumped to
+  `2026.08.01.1`.
+- `manifest.yaml` version bumped to `2026.08.01.1` in sync; added
+  `extensions/models/jscad/safe_path_test.ts` to `additionalFiles`.
+  `deno.json`'s `check` task extended to typecheck `jscad/safe_path.ts` +
+  `jscad/safe_path_test.ts`.
+- Test suite: added `extensions/models/jscad/safe_path_test.ts` (11 unit tests
+  covering reject-relative, reject-`.`/`..`-segment including the
+  nonexistent-traversal-target ordering guarantee, accept-clean-absolute,
+  `allowedRoots` accept/reject, separator-boundary `/rootFOO`-vs-`/root`,
+  symlink-escape rejection, and root/target canonicalization). Flipped the LB1
+  "`../` traversal path read verbatim" pin in
+  `jscad_stl_validator_adversarial_test.ts` to assert rejection; relabeled the
+  "no base dir, two unrelated roots both succeed" pin from a HIGH bug-pin to a
+  `regression:`-prefixed default-contract test (still asserts both calls succeed
+  — that is the intended behavior when `allowedRoots` is not configured). Added
+  `allowedRoots` accept/deny cases plus a test proving a smuggled per-call
+  `args.allowedRoots` has no effect to `jscad_stl_validator_methods_test.ts`.
+  All prior binary/ASCII happy paths and the missing-file/directory-path
+  throw-path tests are unchanged and still green.
+- README.md: documented the `validateFile` operator-trust boundary and the
+  opt-in `allowedRoots` confinement, including the residual "report reflects
+  file bytes" oracle risk to keep in mind when narrowing `allowedRoots`.
+- LB2/LB3/LB4/LB5 remain pinned as characterized (not fixed) latent bugs — out
+  of scope for this fix, tracked in the same issue-lifecycle model. The sibling
+  `jscad-stl-slicer` extension shares the same unconfined-path pattern;
+  deliberately NOT fixed here — tracked as its own follow-up.
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4c

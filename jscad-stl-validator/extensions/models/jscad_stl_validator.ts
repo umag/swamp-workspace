@@ -4,6 +4,7 @@
 
 import { z } from "npm:zod@4";
 import { StlValidator } from "./jscad/stl_validator.ts";
+import { PathPolicyError, resolveStlPath } from "./jscad/safe_path.ts";
 
 const reportSchema = z.object({
   valid: z.boolean(),
@@ -24,7 +25,17 @@ const reportSchema = z.object({
 /** Swamp model that validates STL geometry from a @magistr/jscad-cad model output or a file on disk. */
 export const model = {
   type: "@magistr/jscad-stl-validator",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
+
+  globalArguments: z.object({
+    allowedRoots: z.array(z.string()).default([]).describe(
+      "Optional operator-set confinement roots for validateFile. When " +
+        "non-empty, validateFile only reads files whose canonicalized path " +
+        "falls under one of these roots. Empty (default) preserves the " +
+        "historical unconfined contract — validateFile is an " +
+        "operator-supplied-absolute-path method by design.",
+    ),
+  }),
 
   resources: {
     report: {
@@ -89,9 +100,23 @@ export const model = {
         ),
       }),
       execute: async (args, context) => {
+        const allowedRoots = context.globalArgs?.allowedRoots ?? [];
+
+        let resolvedPath: string;
+        try {
+          resolvedPath = await resolveStlPath(args.filePath, allowedRoots);
+        } catch (err) {
+          if (err instanceof PathPolicyError) {
+            throw err;
+          }
+          throw new Error(
+            `Cannot read "${args.filePath}": ${(err as Error).message}`,
+          );
+        }
+
         let bytes: Uint8Array;
         try {
-          bytes = await Deno.readFile(args.filePath);
+          bytes = await Deno.readFile(resolvedPath);
         } catch (err) {
           throw new Error(
             `Cannot read "${args.filePath}": ${(err as Error).message}`,
