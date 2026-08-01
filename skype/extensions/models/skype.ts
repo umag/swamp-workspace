@@ -1,4 +1,5 @@
 import { z } from "npm:zod@4";
+import { isAbsolute, relative, resolve } from "jsr:@std/path@1";
 
 // Skype message database reader
 // Reads SQLite main.db files from Skype profile directories
@@ -45,12 +46,21 @@ const ContactSchema = z.object({
 
 // --- SQLite helper via Deno Command ---
 
+// sqlite3's "-separator" (TSV) list mode does NOT escape an embedded
+// newline/tab byte inside a TEXT value, so a body_xml containing either one
+// corrupts row/column framing (fabricated rows, shifted columns). "-ascii"
+// mode instead frames columns with 0x1F (unit separator) and rows with 0x1E
+// (record separator) -- bytes that never occur in ordinary text -- so the
+// transport is lossless regardless of what the data contains.
+const ASCII_UNIT_SEP = "\x1F";
+const ASCII_RECORD_SEP = "\x1E";
+
 async function queryDb(
   dbPath: string,
   sql: string,
 ): Promise<string[][]> {
   const cmd = new Deno.Command("sqlite3", {
-    args: ["-separator", "\t", dbPath, sql],
+    args: ["-ascii", dbPath, sql],
     stdout: "piped",
     stderr: "piped",
   });
@@ -61,7 +71,12 @@ async function queryDb(
   }
   const text = new TextDecoder().decode(output.stdout).trim();
   if (!text) return [];
-  return text.split("\n").map((line) => line.split("\t"));
+  const records = text.split(ASCII_RECORD_SEP);
+  // sqlite3 terminates EVERY record with 0x1E, including the last one, so a
+  // naive split always leaves a trailing empty record -- drop it, or every
+  // query fabricates one spurious blank row.
+  if (records[records.length - 1] === "") records.pop();
+  return records.map((record) => record.split(ASCII_UNIT_SEP));
 }
 
 function stripXml(body: string): string {
@@ -74,6 +89,26 @@ function stripXml(body: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n)));
+}
+
+// Resolve `root` joined with `segments` and reject any result that escapes
+// `root` -- e.g. a `folder` or `profile` argument containing "../" or an
+// absolute override. Lexical resolution does not follow symlinks: a
+// pre-existing symlink inside the vault pointing outward could still let a
+// write escape (residual, acceptable for this local-user threat model -- see
+// CHANGELOG). This module joins paths with "/" throughout (POSIX-only), so
+// the containment check is POSIX-only too, matching the rest of the file.
+function resolveWithin(root: string, ...segments: string[]): string {
+  const target = resolve(root, ...segments);
+  const rel = relative(root, target);
+  if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
+    throw new Error(
+      `Refusing to write outside vault: '${
+        segments.join("/")
+      }' resolves to '${target}', which escapes '${root}'`,
+    );
+  }
+  return target;
 }
 
 function tsToIso(ts: string | number): string {
@@ -91,7 +126,7 @@ function tsToIso(ts: string | number): string {
 /** Swamp model that reads a Skype SQLite `main.db` to list profiles, conversations and contacts, search messages, and export chat logs to Obsidian notes. */
 export const model = {
   type: "@magistr/skype",
-  version: "2026.07.16.2",
+  version: "2026.08.01.1",
   globalArguments: GlobalArgsSchema,
 
   resources: {
@@ -523,7 +558,6 @@ export const model = {
         const dbPath =
           `${context.globalArgs.basePath}/${context.globalArgs.profile}/main.db`;
         const profile = context.globalArgs.profile;
-        const subfolder = `${args.folder}/${profile}`;
 
         // Get all conversations
         const convRows = await queryDb(
@@ -622,7 +656,10 @@ export const model = {
             .replace(/\.+$/, "")
             .trim()
             .slice(0, 80);
-          const noteDir = `${args.vaultPath}/${subfolder}`;
+          // Guard the write boundary: folder AND profile are both
+          // attacker-influenced (BUG #2 -- path traversal), so both must be
+          // contained inside vaultPath before anything is written.
+          const noteDir = resolveWithin(args.vaultPath, args.folder, profile);
           const notePath = `${noteDir}/${safeFile}.md`;
 
           try {

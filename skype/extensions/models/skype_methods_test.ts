@@ -11,9 +11,12 @@
  * subprocess is ever spawned and no network call is made. `importToObsidian`
  * writes into a REAL temp vault directory read back by the test.
  *
- * skype.ts is UNMODIFIED by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * Since 2026.08.01.1, `sqlite3` stdout is stubbed in the real `-ascii` wire
+ * shape (0x1F column / 0x1E record separator, via the local `asciiTable()`
+ * helper) — queryDb no longer parses TSV framing (BUG #1 fix, see the
+ * adversarial suite). Every test here is otherwise a characterization test
+ * that PINS the model's current, already-shipped behavior. It is not
+ * red-green TDD: there is no new behavior to drive out.
  *
  * Toolchain rule (deno 2.8.3 in CI): the `Deno.Command` seam is installed via
  * `(globalThis as any).Deno.Command = FakeCommand`, never a
@@ -141,6 +144,15 @@ function byTable(
   };
 }
 
+/** Frame rows the way real `sqlite3 -ascii` does: columns joined by 0x1F
+ * (unit separator), every record (including the last) terminated by 0x1E
+ * (record separator). Mirrors queryDb's own parse exactly. */
+function asciiTable(rows: string[][]): string {
+  const US = "\x1F";
+  const RS = "\x1E";
+  return rows.map((r) => r.join(US) + RS).join("");
+}
+
 // ---------------------------------------------------------------------------
 // listProfiles — real filesystem, no Deno.Command involved
 // ---------------------------------------------------------------------------
@@ -240,7 +252,9 @@ Deno.test("listContacts: happy path — filters WHERE is_permanent = 1, orders b
 // ---------------------------------------------------------------------------
 
 Deno.test("readConversation: happy path — found by identity OR displayname, writes conv_<safeKey>", async () => {
-  const conversations = "1\tlive:.cid.fake0001\tAna Synthetic\n";
+  const conversations = asciiTable([
+    ["1", "live:.cid.fake0001", "Ana Synthetic"],
+  ]);
   const messages = await loadFixture("messages_read.tsv");
   const { ctx, written } = makeCtx();
   await withSqliteStub(
@@ -254,7 +268,9 @@ Deno.test("readConversation: happy path — found by identity OR displayname, wr
 });
 
 Deno.test("readConversation: default limit=500/offset=0 are interpolated when omitted", async () => {
-  const conversations = "1\tlive:.cid.fake0001\tAna Synthetic\n";
+  const conversations = asciiTable([
+    ["1", "live:.cid.fake0001", "Ana Synthetic"],
+  ]);
   const { ctx } = makeCtx();
   await withSqliteStub(
     byTable({ conversations, messages: "" }),
@@ -267,7 +283,9 @@ Deno.test("readConversation: default limit=500/offset=0 are interpolated when om
 });
 
 Deno.test("readConversation: explicit limit/offset are interpolated verbatim", async () => {
-  const conversations = "1\tlive:.cid.fake0001\tAna Synthetic\n";
+  const conversations = asciiTable([
+    ["1", "live:.cid.fake0001", "Ana Synthetic"],
+  ]);
   const { ctx } = makeCtx();
   await withSqliteStub(
     byTable({ conversations, messages: "" }),

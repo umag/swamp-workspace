@@ -138,6 +138,15 @@ function byTable(
   };
 }
 
+/** Frame rows the way real `sqlite3 -ascii` does: columns joined by 0x1F
+ * (unit separator), every record (including the last) terminated by 0x1E
+ * (record separator). Mirrors queryDb's own parse exactly. */
+function asciiTable(rows: string[][]): string {
+  const US = "\x1F";
+  const RS = "\x1E";
+  return rows.map((r) => r.join(US) + RS).join("");
+}
+
 // ---------------------------------------------------------------------------
 // (a) contacts round-trip
 // ---------------------------------------------------------------------------
@@ -163,9 +172,11 @@ const arbContactRow = fc.record({
 });
 
 function contactsTsv(rows: Array<Record<string, unknown>>): string {
-  return rows.map((r) =>
-    [r.id, r.skypename, r.fullname, r.city, r.country].join("\t")
-  ).join("\n") + (rows.length ? "\n" : "");
+  return asciiTable(
+    rows.map((r) =>
+      [r.id, r.skypename, r.fullname, r.city, r.country].map(String)
+    ),
+  );
 }
 
 Deno.test("property: listContacts preserves every generated contact row, IN ORDER, with count == length", async () => {
@@ -205,8 +216,17 @@ Deno.test("property: any ts in (0, 4102444800] produces a valid, parseable ISO d
       fc.integer({ min: 1, max: 4102444800 }),
       async (ts) => {
         const { ctx, written } = makeCtx();
-        const conversations =
-          `1\tlive:.cid.fake0001\tFixture\t1\t1\t${ts}\t${ts}\n`;
+        const conversations = asciiTable([
+          [
+            "1",
+            "live:.cid.fake0001",
+            "Fixture",
+            "1",
+            "1",
+            String(ts),
+            String(ts),
+          ],
+        ]);
         await withSqliteStub(
           byTable({ conversations }),
           () => run("listConversations", {}, ctx),
@@ -231,8 +251,17 @@ Deno.test("property: any ts <= 0 or > 4102444800 always produces ''", async () =
   await fc.assert(
     fc.asyncProperty(arbOutOfRange, async (ts) => {
       const { ctx, written } = makeCtx();
-      const conversations =
-        `1\tlive:.cid.fake0001\tFixture\t1\t1\t${ts}\t${ts}\n`;
+      const conversations = asciiTable([
+        [
+          "1",
+          "live:.cid.fake0001",
+          "Fixture",
+          "1",
+          "1",
+          String(ts),
+          String(ts),
+        ],
+      ]);
       await withSqliteStub(
         byTable({ conversations }),
         () => run("listConversations", {}, ctx),
@@ -325,8 +354,9 @@ Deno.test("property flow: listProfiles finds a real profile dir -> listConversat
           if (!profileNames.includes(profile)) return false;
           if (profileNames.includes(`${profile}-no-db`)) return false;
 
-          const conversations =
-            `1\t${identity}\t${displayname}\t1\t1\t1700000000\t1700000000\n`;
+          const conversations = asciiTable([
+            ["1", identity, displayname, "1", "1", "1700000000", "1700000000"],
+          ]);
           const { ctx: convCtx, written: convWritten } = makeCtx({
             basePath: root,
             profile,
@@ -342,7 +372,7 @@ Deno.test("property flow: listProfiles finds a real profile dir -> listConversat
             return false;
           }
 
-          const lookupRow = `1\t${identity}\t${displayname}\n`;
+          const lookupRow = asciiTable([["1", identity, displayname]]);
           const { ctx: readCtx, written: readWritten } = makeCtx({
             basePath: root,
             profile,

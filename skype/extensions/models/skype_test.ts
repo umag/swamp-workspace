@@ -1,18 +1,22 @@
 /**
- * Contract-fixture suite: pins the CONCRETE `sqlite3 -separator "\t" <db>
- * <sql>` wire contract from skype/fixtures/*.tsv directly — the column
- * order -> object mapping for each of the four query shapes, `stripXml`'s tag
- * strip + entity decode, `tsToIso`'s cap/empty branches, and the baseline
- * (non-hostile) TSV split. Independent of any live `sqlite3` invocation or
- * real `main.db`.
+ * Contract-fixture suite: pins the CONCRETE `sqlite3 -ascii <db> <sql>` wire
+ * contract from skype/fixtures/*.tsv directly — the column order -> object
+ * mapping for each of the four query shapes, `stripXml`'s tag strip + entity
+ * decode, `tsToIso`'s cap/empty branches, and the baseline (non-hostile)
+ * ascii-framed split. Independent of any live `sqlite3` invocation or real
+ * `main.db`.
+ *
+ * Since 2026.08.01.1 (BUG #1 fix) the fixtures are framed with 0x1F
+ * (column)/0x1E (record) bytes, not tab/newline — see fixtures/PROVENANCE.md
+ * and CHANGELOG.md.
  *
  * All fixtures are PURE hand-authored synthetic data — see
  * fixtures/PROVENANCE.md. Every test here is offline: the `Deno.Command`
  * constructor is stubbed for the duration of each test, so no subprocess is
  * ever actually spawned.
  *
- * skype.ts is BYTE-FROZEN by this change — every test characterizes
- * already-shipped behavior. It is not red-green TDD.
+ * skype.ts is otherwise BYTE-FROZEN by this change — every test here
+ * characterizes already-shipped behavior. It is not red-green TDD.
  *
  * Toolchain rule (deno 2.8.3 in CI): the `Deno.Command` seam is installed via
  * `(globalThis as any).Deno.Command = FakeCommand`, never a
@@ -141,6 +145,15 @@ function isoOf(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString();
 }
 
+/** Frame rows the way real `sqlite3 -ascii` does: columns joined by 0x1F
+ * (unit separator), every record (including the last) terminated by 0x1E
+ * (record separator). Mirrors queryDb's own parse exactly. */
+function asciiTable(rows: string[][]): string {
+  const US = "\x1F";
+  const RS = "\x1E";
+  return rows.map((r) => r.join(US) + RS).join("");
+}
+
 // ---------------------------------------------------------------------------
 // listConversations — conversations.tsv (7 columns)
 // ---------------------------------------------------------------------------
@@ -216,7 +229,9 @@ Deno.test("contract: listContacts pins the 5-column -> object mapping, incl. mis
 // ---------------------------------------------------------------------------
 
 Deno.test("contract: readConversation pins the 9-column -> object mapping, authorDisplay fallback, and stripXml tag+entity decode", async () => {
-  const conversations = "1\tlive:.cid.fake0001\tAna Synthetic\n";
+  const conversations = asciiTable([
+    ["1", "live:.cid.fake0001", "Ana Synthetic"],
+  ]);
   const messages = await loadFixture("messages_read.tsv");
   const { ctx, written } = makeCtx();
   await withSqliteStub(
@@ -337,8 +352,17 @@ Deno.test("contract: exportToObsidian pins the note shape and formats the 4-colu
 // ---------------------------------------------------------------------------
 
 Deno.test("contract: tsToIso — non-numeric timestamp string yields ''", async () => {
-  const conversations =
-    "9\tlive:.cid.fake0009\tNaN Fixture\t1\t1\tnot-a-number\tnot-a-number\n";
+  const conversations = asciiTable([
+    [
+      "9",
+      "live:.cid.fake0009",
+      "NaN Fixture",
+      "1",
+      "1",
+      "not-a-number",
+      "not-a-number",
+    ],
+  ]);
   const { ctx, written } = makeCtx();
   await withSqliteStub(
     byTable({ conversations }),
