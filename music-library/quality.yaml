@@ -3,10 +3,10 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-music-library,
-# wave-4 batch-4b of the Phase D extension-quality backfill). music_library.ts
-# is BYTE-FROZEN — every suite drives model.methods.<m>.execute() against a
-# stubbed Deno.Command (the sshRun ssh subprocess) + fake context,
-# characterizing already-shipped behavior.
+# wave-4 batch-4b of the Phase D extension-quality backfill), then real-fixed
+# in 2026.08.02.1 (music-library-latent-bugs LB1-LB6). Every suite drives
+# model.methods.<m>.execute() against a stubbed Deno.Command (the sshRun ssh
+# subprocess) + fake context.
 #
 # Role map (each test file assigned to exactly ONE honest role, per
 # STANDARD.md's "named by ROLE, never by filename convention"):

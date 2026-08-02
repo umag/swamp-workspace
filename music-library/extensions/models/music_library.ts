@@ -55,6 +55,14 @@ const GlobalArgsSchema = z.object({
     .describe(
       "Charsets tag-encoding recovery may re-decode, in preference order (jschardet names)",
     ),
+  ffmpegDecodeTimeoutSec: z
+    .number()
+    .int()
+    .min(0)
+    .default(600)
+    .describe(
+      "Per-file guard around verify's remote ffmpeg decode (0 = no timeout): wrapped with the shell `timeout` command so a single wedged/oversized file is recorded as failed and the worker's chunk keeps going, instead of hanging forever. Also sizes the client-side transport-ceiling AbortController on each worker's ssh call (a generous multiple of this, so it only fires if the remote timeout itself failed or ssh/network wedged)",
+    ),
 });
 
 // --- SSH helpers ---
@@ -68,48 +76,112 @@ async function sshRun(
   sshUser: string,
   command: string,
   stdinText?: string,
+  timeoutMs?: number,
 ): Promise<string> {
-  const cmd = new Deno.Command("ssh", {
-    args: [
-      "-o",
-      "StrictHostKeyChecking=no",
-      "-o",
-      "UserKnownHostsFile=/dev/null",
-      "-o",
-      "ConnectTimeout=10",
-      "-o",
-      "BatchMode=yes",
-      // Keep multi-hour sessions (whole-library bpm/verify runs) from being
-      // torn down by an idle-NAT timeout or a brief network blip: probe every
-      // 20s, tolerate ~2min of silence before giving up.
-      "-o",
-      "ServerAliveInterval=20",
-      "-o",
-      "ServerAliveCountMax=6",
-      `${sshUser}@${host}`,
-      command,
-    ],
-    stdin: stdinText === undefined ? "null" : "piped",
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const proc = cmd.spawn();
-  if (stdinText !== undefined) {
-    const writer = proc.stdin.getWriter();
-    await writer.write(new TextEncoder().encode(stdinText));
-    await writer.close();
+  // Transport-ceiling AbortController: bounds the WHOLE ssh call (not a
+  // per-file guard — that lives in the remote shell `timeout` command
+  // instead, see verify's fullScript/quickScript). Only actually fires when a
+  // caller passes a positive timeoutMs; the timer is always cleared in
+  // `finally` (never AbortSignal.timeout()) so it can never leak and trip
+  // Deno's test op-sanitizer.
+  const ac = new AbortController();
+  const timer = timeoutMs && timeoutMs > 0
+    ? setTimeout(() => ac.abort(), timeoutMs)
+    : undefined;
+  try {
+    const cmd = new Deno.Command("ssh", {
+      args: [
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "BatchMode=yes",
+        // Keep multi-hour sessions (whole-library bpm/verify runs) from being
+        // torn down by an idle-NAT timeout or a brief network blip: probe every
+        // 20s, tolerate ~2min of silence before giving up.
+        "-o",
+        "ServerAliveInterval=20",
+        "-o",
+        "ServerAliveCountMax=6",
+        `${sshUser}@${host}`,
+        command,
+      ],
+      stdin: stdinText === undefined ? "null" : "piped",
+      stdout: "piped",
+      stderr: "piped",
+      signal: ac.signal,
+    });
+    const proc = cmd.spawn();
+    if (stdinText !== undefined) {
+      const writer = proc.stdin.getWriter();
+      await writer.write(new TextEncoder().encode(stdinText));
+      await writer.close();
+    }
+    const output = await proc.output();
+    const stdout = new TextDecoder().decode(output.stdout);
+    const stderr = new TextDecoder().decode(output.stderr);
+    if (!output.success) {
+      const real = stderr
+        .split("\n")
+        .filter((l) => !l.includes("Warning: Permanently added") && l.trim())
+        .join("\n");
+      throw new Error(`ssh command failed: ${real || stdout}`);
+    }
+    return stdout;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
-  const output = await proc.output();
-  const stdout = new TextDecoder().decode(output.stdout);
-  const stderr = new TextDecoder().decode(output.stderr);
-  if (!output.success) {
-    const real = stderr
-      .split("\n")
-      .filter((l) => !l.includes("Warning: Permanently added") && l.trim())
-      .join("\n");
-    throw new Error(`ssh command failed: ${real || stdout}`);
+}
+
+/**
+ * Split a path into normalized segments: drop `.`/empty segments, pop the
+ * previous segment on `..`, and throw when a `..` would pop past the root.
+ * Splits on BOTH `/` and `\` so a backslash cannot smuggle a traversal
+ * sequence past a forward-slash-only splitter (mirrors obsidian-vault's
+ * segment guard).
+ */
+export function normalizeSegments(path: string): string[] {
+  const segments: string[] = [];
+  for (const raw of path.split(/[/\\]/)) {
+    if (!raw || raw === ".") continue;
+    if (raw === "..") {
+      if (segments.length === 0) {
+        throw new Error(`Path escapes music root: ${path}`);
+      }
+      segments.pop();
+      continue;
+    }
+    segments.push(raw);
   }
-  return stdout;
+  return segments;
+}
+
+/**
+ * Resolve a caller-supplied `path` argument (library-relative, or an
+ * absolute host/container path) to a container path confined under
+ * `containerMusicRoot`. Shared by verify/bpm/probe's single-`path` branch —
+ * the previous per-method inline block only stripped LEADING slashes, so
+ * `../` escaped the root verbatim; this normalizes the remainder against
+ * `containerMusicRoot` and throws rather than resolving outside it.
+ */
+export function confineContainerPath(
+  hostMusicRoot: string,
+  containerMusicRoot: string,
+  requested: string,
+): string {
+  let p = requested;
+  if (p.startsWith(hostMusicRoot + "/")) {
+    p = containerMusicRoot + p.slice(hostMusicRoot.length);
+  } else if (!p.startsWith(containerMusicRoot + "/")) {
+    p = containerMusicRoot + "/" + p.replace(/^\/+/, "");
+  }
+  const rest = p.slice(containerMusicRoot.length + 1);
+  const segments = normalizeSegments(rest);
+  return containerMusicRoot +
+    (segments.length ? "/" + segments.join("/") : "");
 }
 
 async function sqliteJson(
@@ -1734,6 +1806,21 @@ export function bpmResourceName(path: string, pathPrefix: string): string {
   return "bpm-library";
 }
 
+/**
+ * Statistical median of an ALREADY-SORTED-ASCENDING array of numbers; `null`
+ * for an empty array. An even-length array averages the two middle values
+ * rather than picking the upper of the two (bpms[Math.floor(n / 2)] is the
+ * upper-middle value, not the median).
+ */
+export function median(sortedAscending: number[]): number | null {
+  const n = sortedAscending.length;
+  if (n === 0) return null;
+  const mid = n >> 1;
+  return n % 2 === 1
+    ? sortedAscending[mid]
+    : (sortedAscending[mid - 1] + sortedAscending[mid]) / 2;
+}
+
 /** Distribution of analyzed tracks across 10-bpm buckets. */
 export function bpmHistogram(tracks: BpmTrack[]): Record<string, number> {
   const hist: Record<string, number> = {};
@@ -1929,6 +2016,7 @@ const BpmSchema = z.object({
     maxLengthSec: z.number(),
     perFileTimeoutSec: z.number(),
     reanalyze: z.boolean(),
+    maxTracks: z.number(),
   }),
   analyzed: z.number(),
   carriedOver: z.number(),
@@ -1944,6 +2032,8 @@ const BpmSchema = z.object({
     bpmHistogram: z.record(z.string(), z.number()),
     analysisRateX: z.number().nullable(),
   }),
+  tracksTruncated: z.boolean(),
+  failuresTruncated: z.boolean(),
   tracks: z.array(
     z.object({
       path: z.string(),
@@ -2063,7 +2153,16 @@ ORDER BY a.left_path, a.right_path, t.filename;`;
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.07.17.1",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.17.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "Fix all 6 music-library-latent-bugs (verify per-file ffmpeg timeout + transport ceiling, path-traversal confinement, empty-ffprobe/JSON typed errors, RS-safe record framing, correct even-count median, bounded bpm tracks/failures) -- adds defaulted ffmpegDecodeTimeoutSec global arg + bpm maxTracks method arg; additive bpm schema fields only",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   reports: ["@magistr/music-verify-triage", "@magistr/music-bpm-running"],
   globalArguments: GlobalArgsSchema,
   resources: {
@@ -2344,6 +2443,7 @@ export const model = {
           container,
           containerMusicRoot,
           hostMusicRoot,
+          ffmpegDecodeTimeoutSec,
         } = context.globalArgs;
         const startedAt = new Date();
 
@@ -2354,12 +2454,11 @@ export const model = {
           expectedSec: number | null;
         }[] = [];
         if (args.path) {
-          let p = args.path;
-          if (p.startsWith(hostMusicRoot + "/")) {
-            p = containerMusicRoot + p.slice(hostMusicRoot.length);
-          } else if (!p.startsWith(containerMusicRoot + "/")) {
-            p = containerMusicRoot + "/" + p.replace(/^\/+/, "");
-          }
+          const p = confineContainerPath(
+            hostMusicRoot,
+            containerMusicRoot,
+            args.path,
+          );
           files.push({
             cpath: p,
             rel: p.slice(containerMusicRoot.length + 1),
@@ -2389,12 +2488,24 @@ export const model = {
 
         // one serial decode loop per SSH worker; stdin carries the file
         // list, so ffmpeg needs -nostdin. Records: path US rc US output RS.
+        // Per-file guard (LB1): wrap the ffmpeg invocation with the shell
+        // `timeout` command when ffmpegDecodeTimeoutSec > 0 — detected once
+        // per worker (`command -v timeout`), degrading gracefully if the
+        // container lacks it. On expiry `timeout` returns 124, the loop
+        // records that file's result and CONTINUES to the next one instead
+        // of hanging the rest of the chunk forever.
+        const timeoutPrefix = ffmpegDecodeTimeoutSec > 0
+          ? `if command -v timeout >/dev/null 2>&1; then TO="timeout ${ffmpegDecodeTimeoutSec}"; else TO=""; fi; `
+          : "";
+        const ffmpegInvocation = ffmpegDecodeTimeoutSec > 0
+          ? "$TO ffmpeg"
+          : "ffmpeg";
         const fullScript =
-          'while IFS= read -r f; do out=$(ffmpeg -nostdin -v error -stats -i "$f" -map 0:a -f null - 2>&1); rc=$?; printf "%s\\037%s\\037%s\\036" "$f" "$rc" "$out"; done';
+          `${timeoutPrefix}while IFS= read -r f; do out=$(${ffmpegInvocation} -nostdin -v error -stats -i "$f" -map 0:a -f null - 2>&1); rc=$?; printf "%s\\037%s\\037%s\\036" "$f" "$rc" "$out"; done`;
         // default IFS here: the first word is the seek offset, the rest of
         // the line (spaces included) lands in $f
         const quickScript =
-          'while read -r off f; do out=$(ffmpeg -nostdin -v error -stats -ss "$off" -i "$f" -map 0:a -f null - 2>&1); rc=$?; printf "%s\\037%s\\037%s\\036" "$f" "$rc" "$out"; done';
+          `${timeoutPrefix}while read -r off f; do out=$(${ffmpegInvocation} -nostdin -v error -stats -ss "$off" -i "$f" -map 0:a -f null - 2>&1); rc=$?; printf "%s\\037%s\\037%s\\036" "$f" "$rc" "$out"; done`;
         const script = mode === "quick" ? quickScript : fullScript;
         const remoteCmd = `docker exec -i ${shQuote(container)} sh -c ${
           shQuote(script)
@@ -2419,7 +2530,13 @@ export const model = {
               } ${f.cpath}`
               : f.cpath
           ).join("\n") + "\n";
-          return sshRun(host, sshUser, remoteCmd, stdin);
+          // Transport ceiling (LB1): generously sized per worker so it only
+          // fires if the remote `timeout` itself failed or ssh/network
+          // wedged — the remote per-file `timeout` above is the real guard.
+          const transportTimeoutMs = ffmpegDecodeTimeoutSec > 0
+            ? (ffmpegDecodeTimeoutSec * chunk.length + 60) * 1000
+            : undefined;
+          return sshRun(host, sshUser, remoteCmd, stdin, transportTimeoutMs);
         }));
 
         const byPath = new Map(safe.map((f) => [f.cpath, f]));
@@ -2430,8 +2547,25 @@ export const model = {
         let truncatedCount = 0;
         const problems: VerifyProblem[] = [];
         for (const out of outputs) {
-          for (const rec of out.split("\x1e")) {
-            if (!rec.trim()) continue;
+          // RS-safe reassembly (LB4): the `safe` filter above only screens
+          // INPUT filenames for control bytes — it never touches ffmpeg's
+          // OWN captured stderr/stdout text, which can itself contain a
+          // stray RS (0x1e) byte and split one real record in two. A
+          // fragment's leading US-delimited field is a real record only when
+          // it matches a KNOWN cpath; otherwise it is the tail of the
+          // PREVIOUS record's ffmpeg output, so restore the RS and fold it
+          // back rather than treating it as an unmatchable orphan record.
+          const frags: string[] = [];
+          for (const frag of out.split("\x1e")) {
+            if (!frag.trim()) continue;
+            const head = frag.split("\x1f", 1)[0];
+            if (frags.length > 0 && !byPath.has(head)) {
+              frags[frags.length - 1] += "\x1e" + frag;
+            } else {
+              frags.push(frag);
+            }
+          }
+          for (const rec of frags) {
             const parts = rec.split("\x1f");
             const f = byPath.get(parts[0]);
             if (!f) continue;
@@ -2576,6 +2710,14 @@ export const model = {
           .describe(
             "Re-analyze tracks already present in the previous run instead of carrying their results over",
           ),
+        maxTracks: z
+          .number()
+          .int()
+          .min(0)
+          .default(50000)
+          .describe(
+            "Cap the tracks/failures arrays STORED in the resource (0 = no cap). Stats (median, histogram, confidence bands) are always computed over the FULL set before any truncation. Defaults high (unlike verify's 2000) because a low cap degrades bpm's resume carry-over and the `running` method's input — pass a smaller value only for test/debug runs, or 0 to guarantee full resume fidelity on a very large library",
+          ),
       }),
       execute: async (args, context) => {
         const {
@@ -2595,12 +2737,11 @@ export const model = {
         let files: { cpath: string; rel: string; lengthSec: number | null }[] =
           [];
         if (args.path) {
-          let p = args.path;
-          if (p.startsWith(hostMusicRoot + "/")) {
-            p = containerMusicRoot + p.slice(hostMusicRoot.length);
-          } else if (!p.startsWith(containerMusicRoot + "/")) {
-            p = containerMusicRoot + "/" + p.replace(/^\/+/, "");
-          }
+          const p = confineContainerPath(
+            hostMusicRoot,
+            containerMusicRoot,
+            args.path,
+          );
           files.push({ cpath: p, rel: relOf(p), lengthSec: null });
         } else {
           const rows = await sqliteJson(host, sshUser, dbPath, VERIFY_SQL);
@@ -2710,9 +2851,8 @@ export const model = {
           .map((t) => t.bpm)
           .filter((b): b is number => b !== null)
           .sort((a, b) => a - b);
-        const bpmMedian = bpms.length > 0
-          ? Math.round(bpms[Math.floor(bpms.length / 2)] * 100) / 100
-          : null;
+        const med = median(bpms);
+        const bpmMedian = med === null ? null : Math.round(med * 100) / 100;
         const confidenceBands: Record<string, number> = {};
         for (const t of all) {
           confidenceBands[t.confidenceBand] =
@@ -2724,6 +2864,24 @@ export const model = {
         const analysisRateX = cpuSec > 0
           ? Math.round((audioSec / cpuSec) * 10) / 10
           : null;
+
+        // Bound the STORED arrays (LB6) — stats above are already computed
+        // over the FULL `all`/`failures` before this point, so a cap here
+        // never affects bpmMedian/confidenceBands/bpmHistogram. Mirrors
+        // verify's `problems: problemsTruncated ? problems.slice(0, 2000) :
+        // problems`, but defaults far higher (see maxTracks' description):
+        // capping the stored array low would degrade resume carry-over and
+        // the `running` method's input on a library bigger than the cap.
+        const tracksTruncated = args.maxTracks > 0 &&
+          all.length > args.maxTracks;
+        const storedTracks = tracksTruncated
+          ? all.slice(0, args.maxTracks)
+          : all;
+        const failuresTruncated = args.maxTracks > 0 &&
+          failures.length > args.maxTracks;
+        const storedFailures = failuresTruncated
+          ? failures.slice(0, args.maxTracks)
+          : failures;
 
         const handle = await context.writeResource("bpm", reportName, {
           kind: "bpm",
@@ -2740,6 +2898,7 @@ export const model = {
             maxLengthSec: args.maxLengthSec,
             perFileTimeoutSec: args.perFileTimeoutSec,
             reanalyze: args.reanalyze,
+            maxTracks: args.maxTracks,
           },
           analyzed: tracks.length,
           carriedOver: carried.length,
@@ -2755,8 +2914,10 @@ export const model = {
             bpmHistogram: bpmHistogram(all),
             analysisRateX,
           },
-          tracks: all,
-          failures,
+          tracksTruncated,
+          failuresTruncated,
+          tracks: storedTracks,
+          failures: storedFailures,
         });
         return { dataHandles: [handle] };
       },
@@ -2886,12 +3047,11 @@ export const model = {
         } = context.globalArgs;
         const allowed = new Set<string>(legacyEncodings);
 
-        let p = args.path;
-        if (p.startsWith(hostMusicRoot + "/")) {
-          p = containerMusicRoot + p.slice(hostMusicRoot.length);
-        } else if (!p.startsWith(containerMusicRoot + "/")) {
-          p = containerMusicRoot + "/" + p.replace(/^\/+/, "");
-        }
+        const p = confineContainerPath(
+          hostMusicRoot,
+          containerMusicRoot,
+          args.path,
+        );
 
         const out = await sshRun(
           host,
@@ -2899,7 +3059,19 @@ export const model = {
           `docker exec ${shQuote(container)} ffprobe -v quiet ` +
             `-print_format json -show_format -show_streams ${shQuote(p)}`,
         );
-        const probe = JSON.parse(out);
+        if (!out.trim()) {
+          throw new Error(
+            `ffprobe returned no output for ${args.path} — the file may not exist inside the container, or ffprobe crashed silently`,
+          );
+        }
+        let probe;
+        try {
+          probe = JSON.parse(out);
+        } catch {
+          throw new Error(
+            `ffprobe returned invalid JSON for ${args.path} — output was not parseable`,
+          );
+        }
         const audioStream = (probe.streams || []).find(
           (s) => s.codec_type === "audio",
         ) || null;

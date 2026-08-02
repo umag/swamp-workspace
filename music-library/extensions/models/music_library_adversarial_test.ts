@@ -3,37 +3,39 @@
  * characterization of the model's real injection/robustness surface, plus a
  * mechanical fixtures secret-scan.
  *
- * music_library.ts is BYTE-FROZEN — every "pin: KNOWN BUG" test here
- * characterizes a REAL, already-shipped gap rather than proposing a fix (a
- * fix is out of scope for this test-only backfill). Six latent bugs found
- * during this backfill, filed against the LOCAL
- * `music-library-latent-bugs` issue-lifecycle model (never the Lab):
+ * Six latent bugs found during the original test-only backfill (filed
+ * against the LOCAL `music-library-latent-bugs` issue-lifecycle model, never
+ * the Lab) are now REAL-FIXED in `music_library.ts` — the six
+ * `pin: KNOWN BUG` tests below were flipped to `pin: fixed` assertions of
+ * the corrected behavior in the same change that shipped the fixes
+ * (model version `2026.08.02.1`):
  *
- *   LB1 (MEDIUM) — verify's remote ffmpeg decode loop has NO per-file
- *        timeout (contrast with bpm's ANALYZE_PY, which wraps every file in
- *        `signal.alarm(timeout)`): a single wedged/huge file hangs the rest
- *        of that worker's chunk forever.
- *   LB2 (MEDIUM) — verify/bpm/probe's `path` argument only strips LEADING
- *        slashes (`replace(/^\/+/, "")`), never `../` — a hostile `path`
- *        traverses outside `containerMusicRoot` verbatim.
+ *   LB1 (MEDIUM) — verify's remote ffmpeg decode loop now wraps every file
+ *        in the shell `timeout` command (sized from the new defaulted
+ *        `ffmpegDecodeTimeoutSec` global arg), mirroring bpm's ANALYZE_PY
+ *        `signal.alarm(timeout)`; `sshRun` also gained a client-side
+ *        AbortController transport ceiling as a belt-and-suspenders guard.
+ *   LB2 (MEDIUM) — verify/bpm/probe's `path` argument now resolves through
+ *        the shared `confineContainerPath`/`normalizeSegments` helpers,
+ *        which throw rather than letting `../` escape `containerMusicRoot`.
  *   LB3 (LOW) — `probe` on an ffprobe call that exits 0 with empty stdout
- *        crashes with a raw, unwrapped `SyntaxError` from `JSON.parse("")`
- *        instead of a clean, actionable error.
- *   LB4 (LOW) — `verify`'s US(0x1f)/RS(0x1e) record framing is not RS-safe:
- *        the `safe` filter only screens INPUT filenames for control bytes,
- *        never ffmpeg's OWN captured stderr/stdout text. An embedded RS byte
- *        in that text splits one real record into two, and the genuine
- *        error content can land in the discarded half — silently
- *        MISCLASSIFYING a corrupt file as "ok".
- *   LB5 (LOW) — `bpmMedian` on an EVEN track count returns the UPPER of the
- *        two middle values (`bpms[Math.floor(n/2)]`) instead of averaging
- *        them.
- *   LB6 (LOW) — `bpm`'s carried-over `tracks`/`failures` arrays have NO size
- *        cap or truncation flag, unlike `verify`'s explicit
- *        `problems.slice(0, 2000)` + `problemsTruncated`.
+ *        now throws a clean, actionable `Error` (never a raw `SyntaxError`).
+ *   LB4 (LOW) — `verify`'s US(0x1f)/RS(0x1e) record framing now re-folds any
+ *        fragment whose leading field is not a known cpath into the
+ *        previous record before parsing, so a stray RS byte inside ffmpeg's
+ *        OWN captured output can no longer split one real record in two.
+ *   LB5 (LOW) — `bpmMedian` now averages the two middle values on an EVEN
+ *        track count instead of returning the upper of the two
+ *        (`bpms[Math.floor(n/2)]`).
+ *   LB6 (LOW) — `bpm` now has a `maxTracks` method arg (default 50000) that
+ *        caps the STORED `tracks`/`failures` arrays and sets
+ *        `tracksTruncated`/`failuresTruncated`, mirroring verify's
+ *        `problems.slice(0, 2000)` + `problemsTruncated` — while stats
+ *        (median, histogram, confidence bands) stay computed over the FULL
+ *        set before any truncation.
  *
  * PLUS two regression-pinned POSITIVES (deliberately checked and confirmed
- * to hold, not just assumed):
+ * to hold, not just assumed — UNCHANGED by the LB1-LB6 fixes):
  *   P1 — TRACKS_SQL/GENRES_SQL/VERIFY_SQL are fully static constants; no
  *        method argument or global argument is EVER concatenated into SQL
  *        text — so there is no SQL-injection surface at all.
@@ -112,6 +114,7 @@ interface CapturedCall {
   binary: string;
   args: string[];
   stdin: string;
+  signal?: AbortSignal;
 }
 interface CommandResult {
   success: boolean;
@@ -142,6 +145,7 @@ function installSshStub(router: Router) {
         binary,
         args: (opts.args as string[] | undefined) ?? [],
         stdin: "",
+        signal: opts.signal as AbortSignal | undefined,
       };
       calls.push(this.#call);
     }
@@ -289,7 +293,7 @@ const [vOk1] = V;
 // LB1 (MEDIUM) — verify has no per-file decode timeout
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: KNOWN BUG (MEDIUM, music-library-latent-bugs LB1) — verify's remote ffmpeg loop has NO per-file decode timeout, unlike bpm's essentia analyzer", async () => {
+Deno.test("fixed (music-library-latent-bugs LB1) — verify's remote ffmpeg loop (full mode) wraps every file in the shell `timeout` command, mirroring bpm's essentia analyzer", async () => {
   const { ctx } = makeCtx();
   await withSshStub(
     makeRouter({ verifyRows: [vOk1] }),
@@ -299,11 +303,63 @@ Deno.test("pin: KNOWN BUG (MEDIUM, music-library-latent-bugs LB1) — verify's r
         .find((c) => c.args.join(" ").includes("ffmpeg"))!
         .args.join(" ");
       assert(
-        !/\btimeout\b/.test(script),
-        "no `timeout` wrapper appears anywhere around the remote ffmpeg " +
-          "invocation — a single wedged or oversized file blocks that " +
-          "worker's ENTIRE remaining chunk forever (contrast with bpm's " +
-          "ANALYZE_PY, which wraps every file in signal.alarm(timeout))",
+        /\btimeout\b/.test(script),
+        "a `timeout` wrapper now appears around the remote ffmpeg " +
+          "invocation — a wedged or oversized file is recorded as failed " +
+          "(rc=124) and the worker's chunk continues, instead of hanging " +
+          "forever (mirrors bpm's ANALYZE_PY signal.alarm(timeout))",
+      );
+    },
+  );
+});
+
+Deno.test("fixed (music-library-latent-bugs LB1) — the same `timeout` wrapper is present in quick mode's script too", async () => {
+  const { ctx } = makeCtx();
+  await withSshStub(
+    makeRouter({ verifyRows: [vOk1] }),
+    async (stub) => {
+      await run("verify", { mode: "quick" }, ctx);
+      const script = stub.calls
+        .find((c) => c.args.join(" ").includes("ffmpeg"))!
+        .args.join(" ");
+      assert(/\btimeout\b/.test(script));
+    },
+  );
+});
+
+Deno.test("fixed (music-library-latent-bugs LB1) — sshRun passes an AbortSignal transport ceiling on verify's ssh call", async () => {
+  const { ctx } = makeCtx();
+  await withSshStub(
+    makeRouter({ verifyRows: [vOk1] }),
+    async (stub) => {
+      await run("verify", {}, ctx);
+      const ffmpegCall = stub.calls.find((c) =>
+        c.args.join(" ").includes("ffmpeg")
+      )!;
+      assert(
+        ffmpegCall.signal instanceof AbortSignal,
+        "sshRun must pass an AbortSignal as the worker/transport ceiling",
+      );
+      assert(
+        !ffmpegCall.signal!.aborted,
+        "the ceiling must not already be tripped on a fast, successful call",
+      );
+    },
+  );
+});
+
+Deno.test("fixed (music-library-latent-bugs LB1) — ffmpegDecodeTimeoutSec=0 disables both the remote `timeout` wrapper and the transport ceiling", async () => {
+  const { ctx } = makeCtx({ ffmpegDecodeTimeoutSec: 0 });
+  await withSshStub(
+    makeRouter({ verifyRows: [vOk1] }),
+    async (stub) => {
+      await run("verify", {}, ctx);
+      const ffmpegCall = stub.calls.find((c) =>
+        c.args.join(" ").includes("ffmpeg")
+      )!;
+      assert(
+        !/\btimeout\b/.test(ffmpegCall.args.join(" ")),
+        "0 must skip the `timeout` wrapper entirely, not wrap with `timeout 0`",
       );
     },
   );
@@ -315,52 +371,76 @@ Deno.test("pin: KNOWN BUG (MEDIUM, music-library-latent-bugs LB1) — verify's r
 
 const TRAVERSAL = "../../../etc/passwd";
 
-Deno.test("pin: KNOWN BUG (MEDIUM, music-library-latent-bugs LB2) — verify's `path` argument strips only LEADING slashes, so '../' traverses outside containerMusicRoot", async () => {
+Deno.test("fixed (music-library-latent-bugs LB2) — verify's `path` argument now rejects a '../' traversal instead of letting it escape containerMusicRoot", async () => {
   const { ctx } = makeCtx();
   await withSshStub(
     makeRouter({}),
-    async (stub) => {
-      await run("verify", { path: TRAVERSAL }, ctx);
-      const ffmpegCall = stub.calls.find((c) =>
-        c.args.join(" ").includes("ffmpeg")
-      )!;
-      assertEquals(
-        ffmpegCall.stdin.trim(),
-        `${CROOT}/${TRAVERSAL}`,
-        "the '../' sequence survives verbatim into the container path fed " +
-          "to ffmpeg — containerMusicRoot is never actually enforced as a " +
-          "traversal boundary, only prepended as a string",
-      );
-    },
+    () =>
+      assertRejects(
+        () => run("verify", { path: TRAVERSAL }, ctx),
+        Error,
+        "escapes",
+      ),
   );
 });
 
-Deno.test("pin: KNOWN BUG (MEDIUM, music-library-latent-bugs LB2 sibling) — bpm's `path` argument has the identical traversal gap", async () => {
+Deno.test("fixed (music-library-latent-bugs LB2 sibling) — bpm's `path` argument now rejects the identical traversal", async () => {
   const { ctx } = makeCtx();
   await withSshStub(
     makeRouter({}),
-    async (stub) => {
-      await run("bpm", { path: TRAVERSAL }, ctx);
-      const essentiaCall = stub.calls.find((c) =>
-        c.args.join(" ").includes("python3")
-      )!;
-      assertEquals(essentiaCall.stdin.trim(), `${CROOT}/${TRAVERSAL}`);
-    },
+    () =>
+      assertRejects(
+        () => run("bpm", { path: TRAVERSAL }, ctx),
+        Error,
+        "escapes",
+      ),
   );
 });
 
-Deno.test("pin: KNOWN BUG (MEDIUM, music-library-latent-bugs LB2 sibling) — probe's `path` argument has the identical traversal gap", async () => {
+Deno.test("fixed (music-library-latent-bugs LB2 sibling) — probe's `path` argument now rejects the identical traversal", async () => {
   const { ctx } = makeCtx();
   await withSshStub(
     makeRouter({ probe: probeFixture }),
+    () =>
+      assertRejects(
+        () => run("probe", { path: TRAVERSAL }, ctx),
+        Error,
+        "escapes",
+      ),
+  );
+});
+
+Deno.test("fixed (music-library-latent-bugs LB2, anti-over-rejection) — a clean, well-formed relative `path` still resolves under containerMusicRoot unchanged for verify/bpm/probe", async () => {
+  const clean = relOfRow(vOk1);
+  const { ctx: verifyCtx } = makeCtx();
+  await withSshStub(
+    makeRouter({}),
     async (stub) => {
-      await run("probe", { path: TRAVERSAL }, ctx);
+      await run("verify", { path: clean }, verifyCtx);
+      const ffmpegCall = stub.calls.find((c) =>
+        c.args.join(" ").includes("ffmpeg")
+      )!;
+      assertEquals(ffmpegCall.stdin.trim(), `${CROOT}/${clean}`);
+    },
+  );
+  const { ctx: bpmCtx } = makeCtx();
+  await withSshStub(
+    makeRouter({}),
+    async (stub) => {
+      await run("bpm", { path: clean }, bpmCtx);
+      const essentiaCall = stub.calls.find((c) =>
+        c.args.join(" ").includes("python3")
+      )!;
+      assertEquals(essentiaCall.stdin.trim(), `${CROOT}/${clean}`);
+    },
+  );
+  const { ctx: probeCtx } = makeCtx();
+  await withSshStub(
+    makeRouter({ probe: probeFixture }),
+    async (stub) => {
+      await run("probe", { path: clean }, probeCtx);
       const cmd = stub.calls[0].args.join(" ");
-      assert(
-        cmd.includes(`${CROOT}/${TRAVERSAL}`),
-        "the traversal path is embedded verbatim (only shQuote-escaped, " +
-          "never validated) into the ffprobe command",
-      );
+      assert(cmd.includes(`${CROOT}/${clean}`));
     },
   );
 });
@@ -369,15 +449,36 @@ Deno.test("pin: KNOWN BUG (MEDIUM, music-library-latent-bugs LB2 sibling) — pr
 // LB3 (LOW) — probe crashes with a raw SyntaxError on empty ffprobe stdout
 // ---------------------------------------------------------------------------
 
-Deno.test('pin: KNOWN BUG (LOW, music-library-latent-bugs LB3) — probe on an ffprobe call that exits 0 with EMPTY stdout crashes with a raw, unwrapped SyntaxError from JSON.parse("")', async () => {
+Deno.test('fixed (music-library-latent-bugs LB3) — probe on an ffprobe call that exits 0 with EMPTY stdout now throws a clean, actionable Error (never a raw SyntaxError from JSON.parse(""))', async () => {
   const { ctx } = makeCtx();
   await withSshStub(
     () => ({ success: true, stdout: "", stderr: "" }),
-    () =>
-      assertRejects(
+    async () => {
+      const err = await assertRejects(
         () => run("probe", { path: "any/file.mp3" }, ctx),
-        SyntaxError,
-      ),
+        Error,
+        "no output",
+      );
+      assert(
+        !(err instanceof SyntaxError),
+        "must be a clean domain Error, not a raw SyntaxError",
+      );
+    },
+  );
+});
+
+Deno.test("fixed (music-library-latent-bugs LB3 sibling) — probe on an ffprobe call that exits 0 with UNPARSEABLE (non-empty, non-JSON) stdout also throws a clean, actionable Error, never a raw SyntaxError", async () => {
+  const { ctx } = makeCtx();
+  await withSshStub(
+    () => ({ success: true, stdout: "not json at all", stderr: "" }),
+    async () => {
+      const err = await assertRejects(
+        () => run("probe", { path: "any/file.mp3" }, ctx),
+        Error,
+        "invalid JSON",
+      );
+      assert(!(err instanceof SyntaxError));
+    },
   );
 });
 
@@ -385,15 +486,16 @@ Deno.test('pin: KNOWN BUG (LOW, music-library-latent-bugs LB3) — probe on an f
 // LB4 (LOW) — verify's US/RS record framing is not RS-safe
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: KNOWN BUG (LOW, music-library-latent-bugs LB4) — an RS(0x1e) byte embedded in ffmpeg's OWN captured output splits one real record in two, silently MISCLASSIFYING a corrupt file as ok", async () => {
+Deno.test("fixed (music-library-latent-bugs LB4) — an RS(0x1e) byte embedded in ffmpeg's OWN captured output no longer splits one real record in two; the file is correctly classified as errored, not silently accepted as ok", async () => {
   const cpath = cpathOfRow(vOk1);
   // Only the file LIST fed to ffmpeg is filtered for control bytes (the
-  // `safe` filter, applied to args.path/pathPrefix-derived paths) — nothing
-  // filters or escapes ffmpeg's OWN stderr/stdout text ($out) before it is
-  // embedded into the printf-framed record. A clean-looking progress line
-  // BEFORE the embedded RS byte, followed by the file's REAL corruption
-  // report AFTER it, demonstrates the file being wrongly accepted as "ok"
-  // while the genuine error text is silently discarded.
+  // `safe` filter, applied to args.path/pathPrefix-derived paths) — ffmpeg's
+  // OWN stderr/stdout text ($out) is never itself filtered or escaped before
+  // it is embedded into the printf-framed record. A clean-looking progress
+  // line BEFORE the embedded RS byte, followed by the file's REAL corruption
+  // report AFTER it, is exactly the shape that used to be silently
+  // misclassified as "ok" — the RS-safe fragment reassembly now re-folds it
+  // back into one record before parsing.
   const hostileBody = "size=N/A time=00:04:05.00 bitrate=N/A speed=300x" +
     "\x1e[mp3float @ 0x1] Header missing\n" +
     "Error while decoding stream #0:0: Invalid data found\n";
@@ -415,23 +517,30 @@ Deno.test("pin: KNOWN BUG (LOW, music-library-latent-bugs LB4) — an RS(0x1e) b
   const res = written.find((w) => w.spec === "verify")!;
   assertEquals(
     res.payload.ok,
-    1,
-    "the file is (WRONGLY) counted as ok — the RS byte truncated the " +
-      "record to just the clean-looking progress line before it",
+    0,
+    "the file is no longer counted as ok — the reassembled record carries " +
+      "the genuine decode-error line",
   );
-  assertEquals(res.payload.errors, 0);
+  assertEquals(res.payload.errors, 1);
   assertEquals(res.payload.failed, 0);
   assertEquals(
     res.payload.missingRecords,
     0,
-    "the file IS seen — just misclassified, not lost outright",
+    "the file IS seen — correctly classified, not lost outright",
+  );
+  const problems = res.payload.problems as Array<{ errors: string[] }>;
+  assert(
+    problems.some((p) =>
+      p.errors.some((e) => e.includes("Invalid data found"))
+    ),
+    "the genuine post-RS error line ('Invalid data found'/'Error while " +
+      "decoding') is now surfaced in the written resource",
   );
   assert(
     !JSON.stringify(res.payload).includes("Header missing"),
-    "the file's REAL decode error ('Header missing') never appears " +
-      "anywhere in the written resource — it landed in the second, " +
-      "orphaned half of the split record, whose parts[0] does not match " +
-      "any known cpath and is therefore silently dropped",
+    "'Header missing' still never appears — in this fixture it is glued " +
+      "onto the time= progress line, which parseFfmpegVerifyOutput always " +
+      "filters regardless of the RS fix",
   );
 });
 
@@ -439,7 +548,7 @@ Deno.test("pin: KNOWN BUG (LOW, music-library-latent-bugs LB4) — an RS(0x1e) b
 // LB5 (LOW) — bpmMedian off-by-one on an even track count
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: KNOWN BUG (LOW, music-library-latent-bugs LB5) — bpmMedian on an EVEN track count returns the UPPER-middle value instead of averaging the two middle values", async () => {
+Deno.test("fixed (music-library-latent-bugs LB5) — bpmMedian on an EVEN track count now averages the two middle values instead of returning the upper one", async () => {
   const V2 = V.slice(0, 2);
   const { ctx, written } = makeCtx();
   await withSshStub(
@@ -455,10 +564,9 @@ Deno.test("pin: KNOWN BUG (LOW, music-library-latent-bugs LB5) — bpmMedian on 
   const res = written.find((w) => w.spec === "bpm")!;
   assertEquals(
     (res.payload.stats as { bpmMedian: number }).bpmMedian,
-    200,
-    "the mathematically correct median of [100, 200] is 150; " +
-      "bpms[Math.floor(n / 2)] instead indexes the UPPER of the two " +
-      "middle sorted values for any even-length bpm array",
+    150,
+    "the mathematically correct median of [100, 200] is 150 — the average " +
+      "of the two middle sorted values, not the upper one",
   );
 });
 
@@ -466,7 +574,7 @@ Deno.test("pin: KNOWN BUG (LOW, music-library-latent-bugs LB5) — bpmMedian on 
 // LB6 (LOW) — bpm's carried tracks/failures arrays have no size cap
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: KNOWN BUG (LOW, music-library-latent-bugs LB6) — bpm's carried-over tracks array has NO size cap or truncation flag, unlike verify's explicit 2000-entry cap", async () => {
+Deno.test("fixed (music-library-latent-bugs LB6) — an explicit maxTracks now caps bpm's STORED tracks array and sets tracksTruncated, while stats stay computed over the FULL set", async () => {
   const bigCarried = Array.from({ length: 2500 }, (_, i) => ({
     path: `synthetic/track-${i}.mp3`,
     bpm: 120,
@@ -492,23 +600,47 @@ Deno.test("pin: KNOWN BUG (LOW, music-library-latent-bugs LB6) — bpm's carried
       verifyRows: [vOk1],
       bpmRecords: { [cpathOfRow(vOk1)]: bpmRecord(vOk1) },
     }),
-    () => run("bpm", {}, ctx),
+    () => run("bpm", { maxTracks: 2000 }, ctx),
   );
   const res = written.find((w) => w.spec === "bpm")!;
   const tracks = res.payload.tracks as unknown[];
   assertEquals(
     tracks.length,
-    2501,
-    "all 2500 carried tracks plus the 1 newly analyzed one are written " +
-      "back verbatim into a SINGLE resource — BpmSchema has no cap field " +
-      "and the code applies no .slice(...) anywhere, contrast with " +
+    2000,
+    "an explicit maxTracks caps the STORED tracks array, mirroring " +
       "verify's `problems: problemsTruncated ? problems.slice(0, 2000) : " +
       "problems`",
   );
-  assertEquals(
-    "tracksTruncated" in (res.payload as Record<string, unknown>),
-    false,
+  assertEquals(res.payload.tracksTruncated, true);
+  assertEquals(res.payload.failuresTruncated, false);
+  const confidenceBands =
+    (res.payload.stats as { confidenceBands: Record<string, number> })
+      .confidenceBands;
+  const totalBanded = Object.values(confidenceBands).reduce(
+    (a, b) => a + b,
+    0,
   );
+  assertEquals(
+    totalBanded,
+    2501,
+    "stats (confidenceBands here) are computed over the FULL 2501 tracks " +
+      "BEFORE truncation, not just the 2000 that end up stored",
+  );
+});
+
+Deno.test("fixed (music-library-latent-bugs LB6, default) — the default maxTracks (50000) does not truncate a realistic run and leaves tracksTruncated=false", async () => {
+  const { ctx, written } = makeCtx();
+  await withSshStub(
+    makeRouter({
+      verifyRows: [vOk1],
+      bpmRecords: { [cpathOfRow(vOk1)]: bpmRecord(vOk1) },
+    }),
+    () => run("bpm", {}, ctx),
+  );
+  const res = written.find((w) => w.spec === "bpm")!;
+  assertEquals(res.payload.tracksTruncated, false);
+  assertEquals(res.payload.failuresTruncated, false);
+  assertEquals((res.payload.tracks as unknown[]).length, 1);
 });
 
 // ---------------------------------------------------------------------------

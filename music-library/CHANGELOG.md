@@ -1,11 +1,78 @@
 # Changelog
 
-## Unreleased
+## 2026.08.02.1
+
+Real-fixes all 6 latent bugs characterized by the test-only backfill below
+(tracked locally as `music-library-latent-bugs`, never filed to the Lab).
+`music_library.ts` is no longer byte-frozen; the model `version` and
+`manifest.yaml` both bump to `2026.08.02.1`, with an identity `upgrades[]` entry
+(`upgradeAttributes: (old) => old` — no stored resource is reshaped, since every
+change is either a defaulted global/method argument or an additive `BpmSchema`
+field).
+
+- **LB1 (MEDIUM) fixed** — `verify`'s remote ffmpeg decode loop now wraps every
+  file in the shell `timeout` command (sized from the new defaulted
+  `ffmpegDecodeTimeoutSec` global arg, default 600s; 0 = no timeout), detected
+  once per worker via `command -v timeout` so it degrades gracefully if the
+  container lacks it — mirrors bpm's ANALYZE_PY `signal.alarm(timeout)`.
+  `sshRun` also gained an optional client-side `AbortController` transport
+  ceiling (timer always cleared in `finally`, never `AbortSignal.timeout()`) as
+  a belt-and-suspenders guard sized generously per worker so it only fires if
+  the remote `timeout` itself failed or ssh/network wedged.
+- **LB2 (MEDIUM) fixed** — `verify`/`bpm`/`probe`'s single-`path` argument now
+  resolves through two new shared, exported helpers — `normalizeSegments` (split
+  on `/`/`\`, drop `.`/empty, pop on `..`, throw when `..` would escape the root
+  — ported in spirit from obsidian-vault's segment guard) and
+  `confineContainerPath` — instead of the old `replace(/^\/+/, "")` that
+  stripped only leading slashes. A `../` traversal now throws
+  `Error("Path escapes music root: …")` instead of resolving outside
+  `containerMusicRoot`; a clean relative/absolute path still resolves
+  identically to before.
+- **LB3 (LOW) fixed** — `probe` now guards `JSON.parse` on the ffprobe output:
+  empty stdout throws a clean `Error` naming the file instead of a raw
+  `JSON.parse("")` `SyntaxError`, and unparseable non-empty stdout is caught and
+  rethrown as a typed `Error` too (mirrors juick's `JSON.parse` → typed-error
+  pattern).
+- **LB4 (LOW) fixed** — `verify`'s US(0x1f)/RS(0x1e) record framing is now
+  RS-safe: before splitting on `\x1f`, any `\x1e`-delimited fragment whose
+  leading field is not a KNOWN cpath is treated as the tail of the previous
+  record's ffmpeg output (which happened to contain a stray RS byte) and
+  re-folded back onto it, rather than being parsed as an unmatchable orphan
+  record. A corrupt file whose ffmpeg output embeds an RS byte is now correctly
+  classified as `errors` instead of silently passing as `ok`.
+- **LB5 (LOW) fixed** — `bpmMedian` now uses a proper median (new exported
+  `median()` helper): an even-length bpm array averages the two middle sorted
+  values instead of returning the upper one (`bpms[Math.floor(n / 2)]`).
+- **LB6 (LOW) fixed** — `bpm` gained a `maxTracks` method arg (default
+  **50000**, deliberately far higher than verify's 2000 — see below) plus
+  `tracksTruncated`/`failuresTruncated` on `BpmSchema`. All stats (`bpmMedian`,
+  `confidenceBands`, `bpmHistogram`) are computed over the FULL carried-over +
+  newly-analyzed set BEFORE any truncation; only the STORED `tracks`/`failures`
+  arrays are capped, mirroring verify's
+  `problems: problemsTruncated ? problems.slice(0, 2000) : problems`. The
+  default is high (not verify's 2000) because capping the stored array degrades
+  bpm's resume carry-over (a library bigger than the cap would re-analyze the
+  overflow every run) and the `running` method's input; pass `maxTracks: 0` for
+  full resume fidelity on a very large library.
+- Pin flips in `music_library_adversarial_test.ts`: all 6 `pin: KNOWN BUG` tests
+  are now `fixed (music-library-latent-bugs LBn)` assertions of the corrected
+  behavior (LB1 also gained a quick-mode variant, an
+  AbortSignal-transport-ceiling check, and a `ffmpegDecodeTimeoutSec=0` disable
+  check; LB2 gained a clean-relative-path anti-over-rejection positive; LB6
+  gained a default-does-not-truncate companion test). The 2 regression-pinned
+  positives (P1 static-SQL, P2 shQuote + control-byte filename filtering), the
+  hostile host/sshUser safety test, and both fixtures-secret-scan tests are
+  UNCHANGED (byte-identical). New direct unit tests for
+  `normalizeSegments`/`confineContainerPath`/`median` were added to
+  `music_library_coverage_test.ts`.
+
+## Unreleased (superseded by 2026.08.02.1 above)
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4b of the
 extension-quality backfill program, `ext-quality-test-backfill`). No behavior
-change — `music_library.ts` is BYTE-FROZEN and the model `version` stays
-`2026.07.17.1`; `manifest.yaml` is unchanged (no version bump).
+change at the time — `music_library.ts` was BYTE-FROZEN and the model `version`
+stayed `2026.07.17.1`; `manifest.yaml` was unchanged (no version bump). (The 6
+latent bugs characterized here were real-fixed in `2026.08.02.1` above.)
 
 - Added `extensions/models/music_library_methods_test.ts` (methods),
   `music_library_adversarial_test.ts` (adversarial),
