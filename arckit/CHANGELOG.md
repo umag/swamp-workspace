@@ -1,5 +1,102 @@
 # Changelog
 
+## 2026.08.02.1
+
+Real-fix pass closing all six remaining latent bugs tracked on the LOCAL
+`arckit-latent-bugs` issue-lifecycle model (NEVER filed to the swamp.club Lab) —
+LB2 (MEDIUM) and LB3..LB7 (LOW). `arckit_workspace.ts` was no longer byte-frozen
+after the LB1 fix in `2026.08.01.1`; this is the second production change.
+
+- **LB2 (MEDIUM) — `migrateClassification apply=true` non-atomic overwrite, no
+  backup.** The apply branch now copies the pre-migration content to a
+  `<artifact>.bak` recovery sibling, writes the proposed text to a sibling temp
+  file, then `Deno.rename`s it over the artifact — an atomic replace on the same
+  filesystem, so a reader always sees the whole old or whole new file, never a
+  truncated partial, and a crash mid-write leaves the artifact intact plus a
+  recoverable `.tmp` orphan.
+- **LB3 (LOW) — unbounded `readTextFile` in `template` /
+  `migrateClassification`.** Added a defaulted global arg `maxFileBytes`
+  (default 10 MiB) to `GlobalArgsSchema`. `migrateClassification` cap-checks via
+  the scan snapshot's `sizeBytes` WITHOUT reading, recording an oversize
+  artifact in the new `skipped[]` field (`reason: "oversize"`) in both report
+  and apply modes; `template` `Deno.stat`s the bundled file and rejects before
+  reading if it exceeds the cap.
+- **LB4 (LOW) — non-enum `projectState.state` vacuously satisfies the gate.**
+  `ProjectStateSchema.state` is now `z.enum(PROJECT_STATES)` (`PHASES` plus
+  `complete`/`abandoned`) instead of `z.string()` — a schema seam change only.
+  `readProjectState` (the sole reader for
+  `status`/`advance`/`skipPhase`/`abandon`) now rethrows a friendly
+  `Corrupted project state for <dir>: ...` error instead of a raw ZodError when
+  a hand-edited/datastore-restored state falls outside the enum, so `advance`
+  can no longer auto-complete a bogus phase. `nextPhase` and
+  `gateFor`/`evaluateGate` are UNCHANGED pure functions — the frozen
+  contract-fixture (`nextPhase("bogus") === "complete"`) and
+  `coverage_test.ts`'s `gateFor`/`evaluateGate` bogus-phase assertions stay
+  byte-behaviorally identical; the schema simply makes them unreachable from the
+  public API. Trade-off: `abandon` on a corrupted record now also rejects
+  (fail-closed, cannot rescue a corrupted record via abandon) — accepted for a
+  LOW corruption-recovery path.
+- **LB5 (LOW) — project-id allocation breaks past 999.** `parseProjectDir`'s
+  regex and the `startProject` allowlist guard both widen `\d{3}` to `\d{3,}`
+  (3-OR-MORE digits); `nextProjectDir`'s `padStart(3, "0")` is unchanged, so ids
+  `<=999` keep their existing 3-digit zero-padding and ids `>=1000` widen
+  naturally. The guard's character class still forbids `/`, `\`, `.`, so every
+  LB1 traversal payload stays rejected; `ARTIFACT_RE` (artifact filename ids) is
+  untouched and stays 3-digit.
+- **LB6 (LOW/info) — `templates` vs `provisionTemplates` inventory divergence.**
+  `templates` now additionally walks the bundled `templates/` directory (the
+  same source `provisionTemplates` copies) and surfaces any file with no
+  `TEMPLATE_MAP` command in a new defaulted `unmappedFiles: string[]` field on
+  `TemplateCatalogSchema`, reconciling the two methods' inventories.
+  `templateCount` and the `sizeBytes:0` missing-file behavior are unchanged.
+- **LB7 (LOW/info) — symlinked artifacts silently skipped.**
+  `listFilesRecursive` and `scanWorkspace` now resolve a symlink entry's target
+  kind via `Deno.stat` — a symlinked artifact or project directory is
+  inventoried like a real one (bounded by the existing depth cap). Write-safety
+  cross-cut with LB1/LB2: `migrateClassification`'s apply branch `Deno.lstat`s
+  before writing and skips (reason `"symlink"`, reusing the LB3 `skipped[]`
+  field) rather than writing through a symlink to a target outside the
+  workspace; report-only mode still reads through the symlink and proposes.
+
+`extensions/models/arckit_workspace.ts`: all six fixes land in a single
+consolidated ordered block inside `migrateClassification`'s per-file apply loop
+(LB3 cap-check → read+propose → LB7 symlink skip / LB2 backup+atomic write),
+plus the schema/regex/directory-walk changes above.
+`manifest.yaml`/`model.version` bumped `2026.08.01.1` → `2026.08.02.1` in
+lockstep. Added `upgrades[]` (previously absent on this model) with identity
+`upgradeAttributes: (old) => old` entries — `maxFileBytes` is a defaulted global
+arg and `skipped`/`unmappedFiles` are defaulted resource-schema arrays, so no
+stored data needs transformation.
+
+- `extensions/models/arckit_workspace_adversarial_test.ts`: flipped LB2
+  (`:121`), LB4 (`:197`, `:221`), LB5 (`:251`), LB6 (`:270`), and LB7 (`:306`)
+  from `pin (arckit-latent-bugs LBN, SEVERITY):`-titled current-behavior pins to
+  `fix regression (arckit-latent-bugs LBN,
+  SEVERITY):`-titled POST-fix
+  assertions; relabeled the two LB3 500 KB pins from "no size cap" to "under the
+  default 10 MiB cap, round-trips whole". Added: LB2 crash-safety (`.bak` + no
+  `.tmp` orphan) and idempotent-second-run cases; LB3 oversize-skip cases for
+  both `migrateClassification` and `template` (via a small overridden
+  `maxFileBytes`); LB7 symlinked-directory and symlinked-artifact-write-skip
+  cases.
+- `extensions/models/arckit_workspace_coverage_test.ts`: flipped the LB5
+  boundary pin (`:416`) to assert `parseProjectDir("1000-new")` now parses;
+  relabeled the LB4 `gateFor`/`evaluateGate` reinforcement (`:406`, unchanged
+  pure-function behavior) and the LB6 `templateCount` reinforcement (`:432`,
+  extended with an `unmappedFiles` assertion for the three seeded orphans).
+- `extensions/models/arckit_workspace_property_test.ts`: broadened property
+  (c)'s `nextProjectDir`/`parseProjectDir` arbitrary from `<=998` to `<=9998`,
+  verifying the monotonic + round-trip invariant ACROSS the former 999 boundary
+  instead of excluding it; property (g) re-verified to still reach `complete`
+  for every profile.
+- `extensions/models/fixtures/workspace.ts`: widened `FakeContext.globalArgs` to
+  `{ path: string; maxFileBytes?: number }` (additive/optional — every existing
+  call site stays valid).
+- Full `deno task check` / `test` / `fmt:check` / `lint` all green; property
+  suite re-verified at `FC_NUM_RUNS=10000`. The four LB1 fix-regression pins and
+  the frozen contract-fixture (`arckit_workspace_test.ts`) are unchanged and
+  stay green.
+
 ## 2026.08.01.1
 
 Security fix: `startProject`'s `dir` argument is no longer trusted verbatim.

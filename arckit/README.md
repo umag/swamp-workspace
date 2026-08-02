@@ -14,9 +14,10 @@ disk) and the **material** (65 bundled arc-kit templates served on demand).
 
 ## Model type: `@magistr/arckit/workspace`
 
-| Global argument | Description                                                       |
-| --------------- | ----------------------------------------------------------------- |
-| `path`          | Absolute path to the ArcKit workspace root (contains `projects/`) |
+| Global argument | Description                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| `path`          | Absolute path to the ArcKit workspace root (contains `projects/`)                         |
+| `maxFileBytes`  | Cap (bytes) on any single artifact/template file read whole — default 10 MiB (10,485,760) |
 
 ### Lifecycle (state machine, driven by the bundled `arckit` skill)
 

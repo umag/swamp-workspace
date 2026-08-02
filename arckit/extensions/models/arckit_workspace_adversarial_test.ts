@@ -1,18 +1,19 @@
 /**
  * Adversarial suite: hostile/malformed inputs. `arckit_workspace.ts` was
- * BYTE-FROZEN when this suite was first authored; the LB1 (HIGH,
- * path-traversal in `startProject`) fix is the first production change to
- * land here, so its two blocks below are now FIX-REGRESSION tests — they
- * assert the guarded, POST-fix behavior (rejection), not a current-behavior
- * pin. Every remaining `pin (arckit-latent-bugs LBN, SEVERITY):`-titled test
- * still asserts what the shipped code ACTUALLY does today for LB2..LB7 — see
- * the LOCAL `arckit-latent-bugs` issue-lifecycle model (NEVER a swamp.club Lab
- * issue) for the full write-up; these tests are the reproduction.
+ * BYTE-FROZEN when this suite was first authored; LB1 (HIGH, path-traversal
+ * in `startProject`) was the first production change to land here, and its
+ * two blocks are FIX-REGRESSION tests — they assert the guarded, POST-fix
+ * behavior (rejection), not a current-behavior pin. LB2..LB7 (tracked in the
+ * LOCAL `arckit-latent-bugs` issue-lifecycle model, NEVER a swamp.club Lab
+ * issue) are now ALSO fixed: every former `pin (arckit-latent-bugs LBN,
+ * SEVERITY):`-titled test below is a `fix regression (arckit-latent-bugs
+ * LBN, SEVERITY):`-titled test asserting the guarded, POST-fix behavior,
+ * plus new positive/negative coverage for each fix.
  *
  * No test in this suite ever writes outside its own `Deno.makeTempDir()`
  * tree (the datastore/no-escape rule) — LB1's synthetic traversal payloads
- * (now all REJECTED inputs that create nothing) and LB2's apply-overwrite
- * both resolve strictly INSIDE the temp root.
+ * (all REJECTED inputs that create nothing), LB2's apply-overwrite, and
+ * LB7's symlink targets all resolve strictly INSIDE the temp root.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./arckit_workspace.ts";
@@ -114,16 +115,18 @@ Deno.test("fix regression (arckit-latent-bugs LB1, HIGH): synthetic traversal pa
 });
 
 // ---------------------------------------------------------------------------
-// pin (arckit-latent-bugs LB2, MEDIUM): migrateClassification apply=true is a
-// non-atomic in-place overwrite with no backup — arckit_workspace.ts:1461
+// fix regression (arckit-latent-bugs LB2, MEDIUM): migrateClassification
+// apply=true now writes via backup + temp-then-rename, never a bare in-place
+// overwrite — arckit_workspace.ts migrateClassification.execute, apply branch.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin (arckit-latent-bugs LB2, MEDIUM): migrateClassification apply=true overwrites the artifact directly via writeTextFile — no temp-then-rename, no backup sibling left behind", async () => {
+Deno.test("fix regression (arckit-latent-bugs LB2, MEDIUM): migrateClassification apply=true writes the new content atomically, leaving a .bak recovery sibling with the ORIGINAL content and no .tmp orphan", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
+    const artifact = arcFilename("001", "REQ");
     const full = await writeArtifact(
       root,
       "001-x",
-      arcFilename("001", "REQ"),
+      artifact,
       docControlContent("OFFICIAL-SENSITIVE"),
     );
     const { ctx } = makeCtx(root, templatesDir);
@@ -131,25 +134,59 @@ Deno.test("pin (arckit-latent-bugs LB2, MEDIUM): migrateClassification apply=tru
 
     const onDisk = await Deno.readTextFile(full);
     assert(onDisk.includes("| **Classification** | Confidential |"));
-    // No backup/temp sibling of any kind is left in the project directory —
-    // characterizing the ABSENCE of the safety net a temp-then-rename would
-    // leave evidence of.
+    const backup = await Deno.readTextFile(`${full}.bak`);
+    assert(backup.includes("| **Classification** | OFFICIAL-SENSITIVE |"));
+    // Exactly the artifact + its .bak recovery sibling — no .tmp orphan.
     const siblings: string[] = [];
     for await (const e of Deno.readDir(`${root}/projects/001-x`)) {
       siblings.push(e.name);
     }
-    assertEquals(siblings, [arcFilename("001", "REQ")]);
+    assertEquals(siblings.sort(), [artifact, `${artifact}.bak`].sort());
+  });
+});
+
+Deno.test("fix regression (arckit-latent-bugs LB2, MEDIUM): a second apply run that finds zero real changes performs no write and creates no new .bak", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    const artifact = arcFilename("001", "REQ");
+    const full = await writeArtifact(
+      root,
+      "001-x",
+      artifact,
+      docControlContent("OFFICIAL-SENSITIVE"),
+    );
+    const { ctx: ctx1 } = makeCtx(root, templatesDir);
+    await run(model, "migrateClassification", { apply: true }, ctx1);
+    const afterFirst = await Deno.readTextFile(full);
+    const bakAfterFirst = await Deno.readTextFile(`${full}.bak`);
+
+    const { ctx: ctx2, written } = makeCtx(root, templatesDir);
+    await run(model, "migrateClassification", { apply: true }, ctx2);
+    assertEquals(written[0].payload.totalChanges, 0);
+    assertEquals(written[0].payload.files, []);
+
+    // Idempotent: the artifact and its .bak are byte-identical to right
+    // after the first run — the second run touched neither.
+    assertEquals(await Deno.readTextFile(full), afterFirst);
+    assertEquals(await Deno.readTextFile(`${full}.bak`), bakAfterFirst);
+    const siblings: string[] = [];
+    for await (const e of Deno.readDir(`${root}/projects/001-x`)) {
+      siblings.push(e.name);
+    }
+    assertEquals(siblings.sort(), [artifact, `${artifact}.bak`].sort());
   });
 });
 
 // ---------------------------------------------------------------------------
-// pin (arckit-latent-bugs LB3, LOW): unbounded readTextFile in
-// migrateClassification / template — no size cap anywhere.
+// regression (arckit-latent-bugs LB3 fixed, LOW): a defaulted maxFileBytes
+// global arg (10 MiB) now caps migrateClassification / template. A file
+// UNDER the cap still round-trips whole — see the new oversize-skip cases
+// below for the cap actually biting.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin (arckit-latent-bugs LB3, LOW): migrateClassification reads and rewrites a large artifact whole, with no size cap", async () => {
+Deno.test("regression (arckit-latent-bugs LB3 fixed, LOW): migrateClassification reads and rewrites a large-but-under-cap artifact whole (default 10 MiB cap, 500 KB file)", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
-    // ~500KB — large enough to demonstrate "no cap", small enough for fast CI.
+    // ~500KB — comfortably under the default 10 MiB cap, small enough for
+    // fast CI, and large enough to demonstrate a genuine whole round-trip.
     const filler = "x".repeat(500_000);
     const content = `${filler}\n${docControlContent("PUBLIC")}`;
     const full = await writeArtifact(
@@ -161,6 +198,7 @@ Deno.test("pin (arckit-latent-bugs LB3, LOW): migrateClassification reads and re
     const { ctx, written } = makeCtx(root, templatesDir);
     await run(model, "migrateClassification", { apply: true }, ctx);
     assertEquals(written[0].payload.totalChanges, 1);
+    assertEquals(written[0].payload.skipped, []);
     const onDisk = await Deno.readTextFile(full);
     // Full round-trip, nothing truncated: the 500K filler survives intact
     // (unaffected by the classification substitution that follows it), and
@@ -175,7 +213,7 @@ Deno.test("pin (arckit-latent-bugs LB3, LOW): migrateClassification reads and re
   });
 });
 
-Deno.test("pin (arckit-latent-bugs LB3, LOW): template serves a large bundled file's FULL content, with no size cap", async () => {
+Deno.test("regression (arckit-latent-bugs LB3 fixed, LOW): template serves a large-but-under-cap bundled file's FULL content (default 10 MiB cap, 500 KB file)", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
     const big = "# Requirements\n" + "y".repeat(500_000);
     await writeTemplateFile(templatesDir, "requirements-template.md", big);
@@ -185,43 +223,87 @@ Deno.test("pin (arckit-latent-bugs LB3, LOW): template serves a large bundled fi
   });
 });
 
+Deno.test("fix regression (arckit-latent-bugs LB3, LOW): migrateClassification skips an oversize artifact via a small overridden maxFileBytes — not read, not written, recorded in skipped with reason 'oversize'", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    const content = docControlContent("OFFICIAL");
+    const full = await writeArtifact(
+      root,
+      "001-x",
+      arcFilename("001", "REQ"),
+      content,
+    );
+    const { ctx, written } = makeCtx(root, templatesDir);
+    ctx.globalArgs.maxFileBytes = 10; // far below the artifact's real size
+    await run(model, "migrateClassification", { apply: true }, ctx);
+    const payload = written[0].payload;
+    assertEquals(payload.totalChanges, 0);
+    assertEquals(payload.files, []);
+    assertEquals(payload.skipped, [{
+      relPath: `001-x/${arcFilename("001", "REQ")}`,
+      reason: "oversize",
+    }]);
+    // Untouched on disk — the cap-check happens before any read, so the
+    // classification value is never even inspected.
+    assertEquals(await Deno.readTextFile(full), content);
+  });
+});
+
+Deno.test("fix regression (arckit-latent-bugs LB3, LOW): template rejects a bundled file over a small overridden maxFileBytes, before any read", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    await writeTemplateFile(
+      templatesDir,
+      "requirements-template.md",
+      "# Requirements\n" + "y".repeat(1000),
+    );
+    const { ctx } = makeCtx(root, templatesDir);
+    ctx.globalArgs.maxFileBytes = 10;
+    await assertRejects(
+      () => run(model, "template", { command: "requirements" }, ctx),
+      Error,
+      "exceeds max size",
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
-// pin (arckit-latent-bugs LB4, LOW): non-enum projectState.state auto-
-// completes an unknown-phase gate — arckit_workspace.ts:396 (ProjectStateSchema
-// z.string()) + gateFor/evaluateGate/nextPhase. NOT reachable via the public
-// API (startProject only ever writes a value from PHASES); this pins the
-// corrupted/hand-edited/datastore-restored scenario by seeding the resource
-// directly, bypassing startProject.
+// fix regression (arckit-latent-bugs LB4, LOW): `projectState.state` is now
+// a closed enum (PROJECT_STATES) — arckit_workspace.ts ProjectStateSchema +
+// readProjectState, the sole reader used by status/advance/skipPhase/abandon.
+// A corrupted/hand-edited/datastore-restored unknown-phase value now fails
+// to parse instead of silently reaching gateFor/nextPhase. NOT reachable via
+// the public API (startProject only ever writes a value from PHASES); these
+// tests seed the resource directly, bypassing startProject, to simulate the
+// corruption scenario.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin (arckit-latent-bugs LB4, LOW): status on a project whose state is an unknown phase reports gateSatisfied=true vacuously (zero gate groups)", async () => {
+Deno.test("fix regression (arckit-latent-bugs LB4, LOW): status on a project whose state is an unknown phase now REJECTS with 'Corrupted project state' (no vacuous gateSatisfied=true)", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
     await Deno.mkdir(`${root}/projects/001-x`, { recursive: true });
-    const { ctx, written } = makeCtx(root, templatesDir);
+    const { ctx } = makeCtx(root, templatesDir);
     const at = new Date().toISOString();
     await ctx.writeResource("projectState", "001-x", {
       projectDir: "001-x",
       id: "001",
       title: "corrupted",
       profile: "standard",
-      state: "totally-bogus-phase", // outside the PHASES enum entirely
+      state: "totally-bogus-phase", // outside PROJECT_STATES entirely
       skipped: [],
       history: [],
       createdAt: at,
       updatedAt: at,
     });
-    await run(model, "status", { project: "001-x" }, ctx);
-    const status = written[written.length - 1].payload;
-    assertEquals(status.gate, []); // gateFor returns [] for an unknown phase
-    assertEquals(status.gateSatisfied, true); // [].every(...) is vacuously true
-    assertEquals(status.nextAction, undefined);
+    await assertRejects(
+      () => run(model, "status", { project: "001-x" }, ctx),
+      Error,
+      "Corrupted project state",
+    );
   });
 });
 
-Deno.test("pin (arckit-latent-bugs LB4, LOW): advance on a project whose state is an unknown phase jumps straight to complete", async () => {
+Deno.test("fix regression (arckit-latent-bugs LB4, LOW): advance on a project whose state is an unknown phase now REJECTS (no auto-complete)", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
     await Deno.mkdir(`${root}/projects/001-x`, { recursive: true });
-    const { ctx, written } = makeCtx(root, templatesDir);
+    const { ctx } = makeCtx(root, templatesDir);
     const at = new Date().toISOString();
     await ctx.writeResource("projectState", "001-x", {
       projectDir: "001-x",
@@ -234,40 +316,42 @@ Deno.test("pin (arckit-latent-bugs LB4, LOW): advance on a project whose state i
       createdAt: at,
       updatedAt: at,
     });
-    await run(model, "advance", { project: "001-x" }, ctx);
-    const state = written[written.length - 1].payload;
-    assertEquals(state.state, "complete");
-    const history = state.history as Array<Record<string, unknown>>;
-    assertEquals(history[history.length - 1].from, "totally-bogus-phase");
-    assertEquals(history[history.length - 1].to, "complete");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// pin (arckit-latent-bugs LB5, LOW): project-id allocation boundary breaks
-// past 999 — arckit_workspace.ts nextProjectDir / parseProjectDir.
-// ---------------------------------------------------------------------------
-
-Deno.test("pin (arckit-latent-bugs LB5, LOW): startProject throws once the highest existing project id is 999 — nextProjectDir yields a 4-digit '1000-slug' that parseProjectDir then rejects", async () => {
-  await withTempWorkspace(async (root, templatesDir) => {
-    await Deno.mkdir(`${root}/projects/999-last`, { recursive: true });
-    const { ctx } = makeCtx(root, templatesDir);
     await assertRejects(
-      () => run(model, "startProject", { title: "one too many" }, ctx),
+      () => run(model, "advance", { project: "001-x" }, ctx),
       Error,
-      'Project dir must match NNN-slug (got "1000-one-too-many")',
+      "Corrupted project state",
     );
   });
 });
 
 // ---------------------------------------------------------------------------
-// pin (arckit-latent-bugs LB6, LOW/info): templates vs provisionTemplates
-// inventory divergence — templates() only enumerates TEMPLATE_MAP's 61 known
-// commands; provisionTemplates() copies EVERY bundled file. Four real
-// arc-kit template files are bundled but have no TEMPLATE_MAP entry.
+// fix regression (arckit-latent-bugs LB5, LOW): project-id allocation no
+// longer breaks past 999 — arckit_workspace.ts nextProjectDir /
+// parseProjectDir / the startProject allowlist guard all widen to `\d{3,}`.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin (arckit-latent-bugs LB6, LOW/info): a bundled template file with no TEMPLATE_MAP entry is invisible to templates() but IS copied by provisionTemplates()", async () => {
+Deno.test("fix regression (arckit-latent-bugs LB5, LOW): startProject SUCCEEDS once the highest existing project id is 999 — allocates '1000-slug' and writes a projectState with id '1000'", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    await Deno.mkdir(`${root}/projects/999-last`, { recursive: true });
+    const { ctx, written } = makeCtx(root, templatesDir);
+    await run(model, "startProject", { title: "one too many" }, ctx);
+    assertEquals(written[0].name, "1000-one-too-many");
+    assertEquals(written[0].payload.projectDir, "1000-one-too-many");
+    assertEquals(written[0].payload.id, "1000");
+    const stat = await Deno.stat(`${root}/projects/1000-one-too-many`);
+    assert(stat.isDirectory);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fix regression (arckit-latent-bugs LB6, LOW/info): templates() and
+// provisionTemplates() are now reconciled — a bundled file with no
+// TEMPLATE_MAP command still has no command (correct — it isn't one), but
+// it now surfaces in templates()'s new `unmappedFiles[]`, so the two
+// methods agree on the full set of bundled files instead of diverging.
+// ---------------------------------------------------------------------------
+
+Deno.test("fix regression (arckit-latent-bugs LB6, LOW/info): a bundled template file with no TEMPLATE_MAP entry is absent from templates()'s templates[] (correct — no command) but now VISIBLE in unmappedFiles[], and is still copied by provisionTemplates()", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
     // One of the four real orphans named in the latent-bug write-up.
     await writeTemplateFile(
@@ -280,8 +364,11 @@ Deno.test("pin (arckit-latent-bugs LB6, LOW/info): a bundled template file with 
     const templates = w1[0].payload.templates as Array<Record<string, unknown>>;
     assert(
       !templates.some((t) => t.file === "framework-overview-template.md"),
-      "templates() must not surface a file with no TEMPLATE_MAP command",
+      "templates() must not surface a file with no TEMPLATE_MAP command as a command entry",
     );
+    assertEquals(w1[0].payload.unmappedFiles, [
+      "framework-overview-template.md",
+    ]);
 
     const { ctx: ctx2, written: w2 } = makeCtx(root, templatesDir);
     await run(model, "provisionTemplates", {}, ctx2);
@@ -299,11 +386,14 @@ Deno.test("pin (arckit-latent-bugs LB6, LOW/info): a bundled template file with 
 });
 
 // ---------------------------------------------------------------------------
-// pin (arckit-latent-bugs LB7, LOW/info): symlinked artifacts silently
-// skipped — listFilesRecursive/scanWorkspace only count isFile || isDirectory.
+// fix regression (arckit-latent-bugs LB7, LOW/info): symlinked artifacts and
+// project directories are now surfaced by scan — listFilesRecursive /
+// scanWorkspace resolve a symlink entry's target kind via Deno.stat. Write
+// safety is guarded separately: migrateClassification's apply branch skips
+// (never writes through) a symlinked artifact — see the second test below.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin (arckit-latent-bugs LB7, LOW/info): a symlinked ARC-* artifact is invisible to scan — isFile and isDirectory are both false for a symlink entry", async () => {
+Deno.test("fix regression (arckit-latent-bugs LB7, LOW/info): a symlinked ARC-* artifact is now VISIBLE to scan — both the symlinked REQ and the ordinary RISK are inventoried", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
     await Deno.mkdir(`${root}/projects/001-x`, { recursive: true });
     await Deno.writeTextFile(`${root}/outside-real-target.md`, "# real\n");
@@ -312,7 +402,7 @@ Deno.test("pin (arckit-latent-bugs LB7, LOW/info): a symlinked ARC-* artifact is
       `${root}/projects/001-x/${arcFilename("001", "REQ")}`,
     );
     // A second, ordinary (non-symlink) artifact in the same project proves
-    // the scan otherwise works — the symlink is the ONLY thing missing.
+    // the scan otherwise works.
     await writeArtifact(root, "001-x", arcFilename("001", "RISK"));
 
     const { ctx, written } = makeCtx(root, templatesDir);
@@ -321,10 +411,65 @@ Deno.test("pin (arckit-latent-bugs LB7, LOW/info): a symlinked ARC-* artifact is
       Record<string, unknown>
     >;
     const p = projects.find((x) => x.dir === "001-x")!;
-    assertEquals(p.artifactCount, 1); // only RISK; the symlinked REQ is invisible
+    assertEquals(p.artifactCount, 2); // both REQ (symlinked) and RISK
     const artifacts = p.artifacts as Array<Record<string, unknown>>;
-    assert(!artifacts.some((a) => a.docType === "REQ"));
+    assert(artifacts.some((a) => a.docType === "REQ"));
     assert(artifacts.some((a) => a.docType === "RISK"));
+  });
+});
+
+Deno.test("fix regression (arckit-latent-bugs LB7, LOW/info): a symlinked project DIRECTORY is now inventoried by scan", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    const realDir = `${root}/outside-real-project`;
+    await Deno.mkdir(realDir, { recursive: true });
+    await Deno.writeTextFile(
+      `${realDir}/${arcFilename("002", "REQ")}`,
+      "# requirements\n",
+    );
+    await Deno.mkdir(`${root}/projects`, { recursive: true });
+    await Deno.symlink(realDir, `${root}/projects/002-linked`);
+
+    const { ctx, written } = makeCtx(root, templatesDir);
+    await run(model, "scan", {}, ctx);
+    const projects = written[0].payload.projects as Array<
+      Record<string, unknown>
+    >;
+    const p = projects.find((x) => x.dir === "002-linked");
+    assert(p, "symlinked project directory must be inventoried");
+    assertEquals(p!.artifactCount, 1);
+    const artifacts = p!.artifacts as Array<Record<string, unknown>>;
+    assertEquals(artifacts[0].docType, "REQ");
+  });
+});
+
+Deno.test("fix regression (arckit-latent-bugs LB7, LOW/info): migrateClassification apply=true over a symlinked artifact records it in skipped with reason 'symlink' and leaves the symlink target unwritten; report-only still proposes the change", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    await Deno.mkdir(`${root}/projects/001-x`, { recursive: true });
+    const targetPath = `${root}/outside-real-target.md`;
+    await Deno.writeTextFile(targetPath, docControlContent("OFFICIAL"));
+    const linkPath = `${root}/projects/001-x/${arcFilename("001", "REQ")}`;
+    await Deno.symlink(targetPath, linkPath);
+
+    // Report-only: reads through the symlink and still proposes the change
+    // (read is safe — confinement only matters for writes).
+    const { ctx: ctx1, written: w1 } = makeCtx(root, templatesDir);
+    await run(model, "migrateClassification", {}, ctx1);
+    assertEquals(w1[0].payload.totalChanges, 1);
+    assertEquals(w1[0].payload.skipped, []);
+
+    // apply=true: skipped, not written — the symlink target is confined
+    // (this is the write-safety cross-cut with LB1/LB2).
+    const { ctx: ctx2, written: w2 } = makeCtx(root, templatesDir);
+    await run(model, "migrateClassification", { apply: true }, ctx2);
+    const payload = w2[0].payload;
+    assertEquals(payload.totalChanges, 0);
+    assertEquals(payload.files, []);
+    assertEquals(payload.skipped, [{
+      relPath: `001-x/${arcFilename("001", "REQ")}`,
+      reason: "symlink",
+    }]);
+    const onDisk = await Deno.readTextFile(targetPath);
+    assert(onDisk.includes("OFFICIAL")); // symlink target unwritten
   });
 });
 

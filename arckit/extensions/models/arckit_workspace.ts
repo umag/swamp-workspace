@@ -12,10 +12,17 @@ import { z } from "npm:zod@4";
 // and the standard critical path.
 // =============================================================================
 
+/** Default cap (bytes) on any single file read whole into memory. */
+const DEFAULT_MAX_FILE_BYTES = 10_485_760; // 10 MiB
+
 const GlobalArgsSchema = z.object({
   path: z.string().describe(
     "Absolute path to the ArcKit workspace root (the directory containing projects/)",
   ),
+  maxFileBytes: z.number().int().positive().default(DEFAULT_MAX_FILE_BYTES)
+    .describe(
+      "Reject/skip any single artifact or bundled template file larger than this many bytes (default 10 MiB)",
+    ),
 });
 
 // ---------- Reference tables (derived from arc-kit docs/DEPENDENCY-MATRIX.md
@@ -256,6 +263,14 @@ export const PHASES = [
 ] as const;
 
 /**
+ * Every value `projectState.state` may legitimately hold: the phases plus
+ * the two terminal states. Constrains the schema seam (LB4) so a corrupted,
+ * hand-edited, or datastore-restored unknown-phase value fails to parse
+ * instead of silently vacuously satisfying every gate downstream.
+ */
+export const PROJECT_STATES = [...PHASES, "complete", "abandoned"] as const;
+
+/**
  * Gate per phase: every group must be satisfied; a group is satisfied when
  * ANY of its commands has an artifact on disk (000-global artifacts count).
  * Skippable phases can be bypassed with an explicit recorded reason.
@@ -398,7 +413,7 @@ const ProjectStateSchema = z.object({
   id: z.string(),
   title: z.string(),
   profile: z.enum(PROFILES),
-  state: z.string(),
+  state: z.enum(PROJECT_STATES),
   skipped: z.array(z.object({
     phase: z.string(),
     reason: z.string(),
@@ -462,6 +477,7 @@ const TemplateCatalogSchema = z.object({
     sizeBytes: z.number(),
   })),
   partials: z.array(z.string()),
+  unmappedFiles: z.array(z.string()).default([]),
   listedAt: z.string(),
 });
 
@@ -493,6 +509,8 @@ const MigrationSchema = z.object({
     changes: z.array(z.object({ from: z.string(), to: z.string() })),
   })),
   totalChanges: z.number(),
+  skipped: z.array(z.object({ relPath: z.string(), reason: z.string() }))
+    .default([]),
   ranAt: z.string(),
 });
 
@@ -548,7 +566,10 @@ export function parseArtifactFilename(filename: string): {
 export function parseProjectDir(
   dirname: string,
 ): { id: string; name: string; isGlobal: boolean } | null {
-  const m = dirname.match(/^(\d{3})-(.+)$/);
+  // LB5: `\d{3,}` (3-OR-MORE) — nextProjectDir's zero-padding stays 3-digit
+  // for ids <=999, but this parser must also accept the 4+ digit ids that
+  // padStart naturally produces once the allocation counter passes 999.
+  const m = dirname.match(/^(\d{3,})-(.+)$/);
   if (!m) return null;
   return { id: m[1], name: m[2], isGlobal: m[1] === "000" };
 }
@@ -703,13 +724,32 @@ async function listFilesRecursive(
   for await (const entry of Deno.readDir(dir)) {
     if (entry.name.startsWith(".")) continue;
     const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+    const entryPath = `${dir}/${entry.name}`;
     if (entry.isDirectory) {
       if (entry.name === "node_modules" || depth >= 6) continue;
       out.push(
-        ...await listFilesRecursive(`${dir}/${entry.name}`, relPath, depth + 1),
+        ...await listFilesRecursive(entryPath, relPath, depth + 1),
       );
     } else if (entry.isFile) {
       out.push(relPath);
+    } else if (entry.isSymlink) {
+      // LB7: a symlinked artifact/directory must not be silently dropped.
+      // Deno.stat follows the link to resolve the target's kind; the depth
+      // cap above also bounds a symlink cycle when the target is a dir.
+      let target: Deno.FileInfo;
+      try {
+        target = await Deno.stat(entryPath);
+      } catch {
+        continue; // broken symlink — nothing to inventory
+      }
+      if (target.isDirectory) {
+        if (entry.name === "node_modules" || depth >= 6) continue;
+        out.push(
+          ...await listFilesRecursive(entryPath, relPath, depth + 1),
+        );
+      } else if (target.isFile) {
+        out.push(relPath);
+      }
     }
   }
   return out;
@@ -733,7 +773,18 @@ async function scanWorkspace(root: string) {
   }
 
   for await (const entry of entries) {
-    if (!entry.isDirectory) continue;
+    if (!entry.isDirectory && !entry.isSymlink) continue;
+    if (entry.isSymlink) {
+      // LB7: accept a symlinked project directory — confirm it resolves to
+      // a directory before treating it as one (a symlinked FILE at this
+      // level, or a broken link, is not a project).
+      try {
+        const target = await Deno.stat(`${projectsDir}/${entry.name}`);
+        if (!target.isDirectory) continue;
+      } catch {
+        continue; // broken symlink
+      }
+    }
     const parsed = parseProjectDir(entry.name);
     if (!parsed) continue;
 
@@ -804,10 +855,22 @@ const GITKEEP_DIRS = [
 ];
 
 // Read a project's persisted lifecycle state (data name = project dir).
+// LB4: `state` is now a closed enum (PROJECT_STATES) — a corrupted,
+// hand-edited, or datastore-restored value outside it fails to parse here,
+// the SOLE reader used by status/advance/skipPhase/abandon, rather than
+// silently reaching gateFor/nextPhase and vacuously satisfying every gate.
 async function readProjectState(context, projectDir: string) {
   const raw = await context.readResource!(projectDir);
   if (!raw) return null;
-  return ProjectStateSchema.parse(raw);
+  try {
+    return ProjectStateSchema.parse(raw);
+  } catch (e) {
+    const badState = (raw as Record<string, unknown>)?.state;
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Corrupted project state for ${projectDir}: invalid state "${badState}" (${detail})`,
+    );
+  }
 }
 
 // Commands present on disk for one project, with 000-global artifacts
@@ -878,7 +941,23 @@ const TEMPLATES_DIR = "templates";
  */
 export const model = {
   type: "@magistr/arckit/workspace",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.01.1",
+      description:
+        "LB1 startProject path-traversal confinement + five-suite characterization backfill; no resource-schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.01.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "LB2 atomic write + backup; LB3 defaulted maxFileBytes size cap; LB4 projectState.state enum; LB5 >999 id width; LB6 templates/provisionTemplates reconciliation (unmappedFiles); LB7 surface + write-guard symlinked artifacts. Defaulted global arg + defaulted resource-schema additions only; no data transformation.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     workspace: {
@@ -1056,7 +1135,10 @@ export const model = {
         if (parsed.isGlobal) {
           throw new Error("000 is reserved for the global project");
         }
-        if (!/^\d{3}-[a-z0-9-]+$/.test(dir)) {
+        // LB5: `\d{3,}` widens past the 999 boundary in lockstep with
+        // parseProjectDir — the character class still forbids `/`, `\`,
+        // `.`, so every LB1 traversal payload stays rejected.
+        if (!/^\d{3,}-[a-z0-9-]+$/.test(dir)) {
           throw new Error(
             `Project dir must be a single NNN-slug segment (letters, digits, hyphens only) (got "${dir}")`,
           );
@@ -1329,6 +1411,23 @@ export const model = {
         } catch {
           // no partials bundled
         }
+        // LB6: reconcile against provisionTemplates(), which copies EVERY
+        // bundled file — walk the same source dir and surface any bundled
+        // file with no TEMPLATE_MAP command (dotfiles and _partials/ are
+        // not "orphan commands", so they're excluded here).
+        const mapped = new Set(Object.values(TEMPLATE_MAP));
+        const unmappedFiles: string[] = [];
+        try {
+          for await (
+            const e of Deno.readDir(context.extensionFile(TEMPLATES_DIR))
+          ) {
+            if (!e.isFile) continue;
+            if (e.name.startsWith(".")) continue;
+            if (!mapped.has(e.name)) unmappedFiles.push(e.name);
+          }
+        } catch {
+          // bundled templates dir missing entirely — nothing to reconcile
+        }
         const handle = await context.writeResource(
           "templateCatalog",
           "templates",
@@ -1336,6 +1435,7 @@ export const model = {
             templateCount: templates.length,
             templates,
             partials: partials.sort(),
+            unmappedFiles: unmappedFiles.sort(),
             listedAt: new Date().toISOString(),
           },
         );
@@ -1363,9 +1463,15 @@ export const model = {
             }`,
           );
         }
-        const content = await Deno.readTextFile(
-          context.extensionFile(`${TEMPLATES_DIR}/${file}`),
-        );
+        const cap = context.globalArgs.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+        const templatePath = context.extensionFile(`${TEMPLATES_DIR}/${file}`);
+        const st = await Deno.stat(templatePath);
+        if (st.size > cap) {
+          throw new Error(
+            `Template file "${file}" (${st.size} bytes) exceeds max size ${cap} bytes`,
+          );
+        }
+        const content = await Deno.readTextFile(templatePath);
         const docCode = COMMAND_TO_CODE[args.command];
         const projectId = args.project
           ? parseProjectDir(args.project)?.id
@@ -1446,31 +1552,64 @@ export const model = {
       }),
       execute: async (args, context) => {
         const root = context.globalArgs.path;
+        // Defensive `??`: a fake test context can bypass the zod default.
+        const cap = context.globalArgs.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
         const snapshot = await scanWorkspace(root);
         const files: Array<{
           relPath: string;
           changes: Array<{ from: string; to: string }>;
         }> = [];
+        const skipped: Array<{ relPath: string; reason: string }> = [];
         let scannedFiles = 0;
         let totalChanges = 0;
         for (const p of snapshot.projects) {
           for (const a of p.artifacts) {
             if (a.format !== "md") continue;
             scannedFiles++;
-            const full = `${root}/projects/${p.dir}/${a.relPath}`;
+            const relPath = `${p.dir}/${a.relPath}`;
+            const full = `${root}/projects/${relPath}`;
+            // LB3: cap-check via the scan snapshot's sizeBytes, WITHOUT
+            // reading the file — applies in both report and apply modes.
+            if (a.sizeBytes > cap) {
+              skipped.push({ relPath, reason: "oversize" });
+              continue;
+            }
             const text = await Deno.readTextFile(full);
             const { newText, changes } = proposeClassification(text);
             if (!changes.length) continue;
             const real = changes.filter((c) => c.from !== c.to);
             if (!real.length) continue;
-            if (args.apply) await Deno.writeTextFile(full, newText);
-            files.push({ relPath: `${p.dir}/${a.relPath}`, changes: real });
+            if (args.apply) {
+              // LB7: never write THROUGH a symlink — that could clobber a
+              // target outside the workspace, undercutting LB1 confinement.
+              // Report-only mode may still read through it and propose.
+              const li = await Deno.lstat(full);
+              if (li.isSymlink) {
+                skipped.push({ relPath, reason: "symlink" });
+                continue;
+              }
+              // LB2: never clobber in place. Best-effort recovery backup of
+              // the pre-migration content, then write-temp + atomic rename
+              // so a reader always sees the whole old or whole new file,
+              // never a truncated partial; a crash mid-write leaves `full`
+              // intact plus a recoverable `.tmp` orphan.
+              await Deno.copyFile(full, `${full}.bak`);
+              const tmp = `${full}.${crypto.randomUUID()}.tmp`;
+              await Deno.writeTextFile(tmp, newText);
+              await Deno.rename(tmp, full);
+            }
+            files.push({ relPath, changes: real });
             totalChanges += real.length;
           }
         }
         context.logger.info(
-          "Classification migration: {n} changes in {f} files (apply={apply})",
-          { n: totalChanges, f: files.length, apply: args.apply },
+          "Classification migration: {n} changes in {f} files, {s} skipped (apply={apply})",
+          {
+            n: totalChanges,
+            f: files.length,
+            s: skipped.length,
+            apply: args.apply,
+          },
         );
         const handle = await context.writeResource(
           "classificationMigration",
@@ -1481,6 +1620,7 @@ export const model = {
             scannedFiles,
             files,
             totalChanges,
+            skipped,
             ranAt: new Date().toISOString(),
           },
         );

@@ -16,22 +16,42 @@
 # is the first production change to arckit_workspace.ts since the backfill;
 # it is no longer byte-frozen. manifest.yaml and model.version bumped in
 # lockstep. The two LB1 pins in the adversarial suite are now fix-regression
-# tests (rejection), not current-behavior pins; LB2..LB7 remain deferred
-# pins, untouched.
+# tests (rejection), not current-behavior pins.
+#
+# 2026.08.02.1: fixed the remaining six latent bugs (LB2 MEDIUM, LB3..LB7
+# LOW, same LOCAL `arckit-latent-bugs` model) in one pass — migrateClassification
+# atomic write + `.bak` backup (LB2); defaulted `maxFileBytes` global-arg size
+# cap on `migrateClassification`/`template` (LB3); `projectState.state` closed
+# to `z.enum(PROJECT_STATES)` with a friendly "Corrupted project state" error
+# from `readProjectState` (LB4, schema seam only — `nextPhase`/`gateFor` stay
+# byte-behaviorally identical); `parseProjectDir`/the startProject guard
+# widened `\d{3}` -> `\d{3,}` past the 999 boundary (LB5); `templates()` gets
+# a new defaulted `unmappedFiles[]` reconciling it against
+# `provisionTemplates()` (LB6); `listFilesRecursive`/`scanWorkspace` resolve
+# symlinked artifacts/directories, with a write-side symlink skip-guard in
+# `migrateClassification` (LB7). `arckit_workspace.ts` remains non-frozen —
+# this is the second production change since the ext-quality-bf-arckit
+# backfill. manifest.yaml and model.version bumped in lockstep; a new
+# `upgrades[]` array was added (identity `upgradeAttributes` — `maxFileBytes`
+# is a defaulted global arg, `skipped`/`unmappedFiles` are defaulted resource
+# fields, so no data transformation is needed). All six former
+# `pin (arckit-latent-bugs LBN, ...)`-titled tests in the adversarial suite
+# are now `fix regression (arckit-latent-bugs LBN, ...)`-titled POST-fix
+# assertions, plus new positive/negative coverage per bug.
 #
 # Role map (each file assigned to exactly ONE honest role):
 #   contract-fixture        -> arckit_workspace_test.ts (unchanged — pins
 #                               behavior against the REAL bundled templates/
 #                               corpus + pure reference-table logic)
-#   methods                 -> arckit_workspace_methods_test.ts (new — all 12
+#   methods                 -> arckit_workspace_methods_test.ts (all 12
 #                               methods, synthetic Deno.makeTempDir workspace)
-#   adversarial              -> arckit_workspace_adversarial_test.ts (new —
-#                               hostile inputs + LB1..LB7 pins)
-#   coverage                 -> arckit_workspace_coverage_test.ts (new —
-#                               profile-extra gates, terminal states, LB4/LB5/
-#                               LB6 reinforcement)
-#   property-invariant-flow -> arckit_workspace_property_test.ts (new —
-#                               fast-check@4.8.0, restricted arbitraries)
+#   adversarial              -> arckit_workspace_adversarial_test.ts (hostile
+#                               inputs + LB1..LB7 fix-regression tests)
+#   coverage                 -> arckit_workspace_coverage_test.ts
+#                               (profile-extra gates, terminal states, LB4/
+#                               LB5/LB6 fix reinforcement)
+#   property-invariant-flow -> arckit_workspace_property_test.ts
+#                               (fast-check@4.8.0, restricted arbitraries)
 schemaVersion: 1
 extension: arckit
 tests:

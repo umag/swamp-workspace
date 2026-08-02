@@ -1,9 +1,9 @@
 /**
  * Property-based tests (fast-check) for @magistr/arckit/workspace
- * (arckit_workspace.ts, BYTE-FROZEN). Honors `FC_NUM_RUNS` for the nightly
- * soak (`deno task test:soak`). Every arbitrary is RESTRICTED to the region
- * where the invariant genuinely holds, per this backfill's property
- * discipline (two flaky property tests already cost master-CI reds):
+ * (arckit_workspace.ts). Honors `FC_NUM_RUNS` for the nightly soak (`deno
+ * task test:soak`). Every arbitrary is RESTRICTED to the region where the
+ * invariant genuinely holds, per this backfill's property discipline (two
+ * flaky property tests already cost master-CI reds):
  *
  *  (a) slugify — for ANY string: non-empty, only [a-z0-9-]+, and idempotent
  *      (slugify(slugify(x)) === slugify(x)).
@@ -13,10 +13,11 @@
  *      across ALL 62 real codes before writing this property (the
  *      longest-match-first scan never picks a WRONG code for a
  *      code-derived filename).
- *  (c) nextProjectDir monotonic + boundary-safe — ids restricted to <=998 so
- *      the 3-digit invariant holds; LB5 (arckit-latent-bugs) is the >999
- *      boundary and is EXCLUDED here (pinned separately in the adversarial
- *      and coverage suites).
+ *  (c) nextProjectDir monotonic + boundary-safe — ids now cover 0..9998
+ *      (LB5, arckit-latent-bugs, fixed: nextProjectDir/parseProjectDir/the
+ *      startProject allowlist guard all widened `\d{3}` to `\d{3,}`), so the
+ *      monotonic + round-trip invariant is verified ACROSS the former 999
+ *      boundary rather than excluding it.
  *  (d) evaluateGate monotonicity — adding MORE present commands never turns
  *      a satisfied gate unsatisfied, for any phase/profile.
  *  (e) computeGaps counting invariants — violationCount === violations.length,
@@ -122,13 +123,14 @@ Deno.test("property: parseArtifactFilename round-trips ARC-{id}-{code}[-{instanc
 });
 
 // ---------------------------------------------------------------------------
-// (c) nextProjectDir — monotonic + boundary-safe for ids <= 998 (LB5's >999
-// boundary is excluded here; see arckit-latent-bugs LB5, pinned separately)
+// (c) nextProjectDir — monotonic + boundary-safe across 0..9998 (LB5,
+// arckit-latent-bugs, FIXED: the former >999 boundary is now covered by the
+// invariant instead of excluded from it)
 // ---------------------------------------------------------------------------
 
-const safeIdArb = fc.integer({ min: 0, max: 998 });
+const safeIdArb = fc.integer({ min: 0, max: 9998 });
 
-Deno.test("property: nextProjectDir(existing, slug) always allocates max(existing)+1, round-trippable by parseProjectDir, for any set of ids <= 998", () => {
+Deno.test("property: nextProjectDir(existing, slug) always allocates max(existing)+1, round-trippable by parseProjectDir, for any set of ids <= 9998 (spans the former LB5 999 boundary)", () => {
   fc.assert(
     fc.property(
       fc.array(safeIdArb, { maxLength: 15 }),

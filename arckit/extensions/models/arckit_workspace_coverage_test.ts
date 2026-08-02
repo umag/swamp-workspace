@@ -3,9 +3,11 @@
  * extras, skippable/non-skippable phase table, terminal states, the
  * templates/provisionTemplates split, migrateClassification's genuine no-op
  * path, and a handful of pure-function-level reinforcements of the
- * `arckit-latent-bugs` LB4/LB5/LB6 pins whose primary characterization lives
- * in `arckit_workspace_adversarial_test.ts`. `arckit_workspace.ts` is
- * BYTE-FROZEN; every test here PINS existing behavior.
+ * `arckit-latent-bugs` LB4/LB5/LB6 fixes whose primary method-level
+ * characterization lives in `arckit_workspace_adversarial_test.ts`.
+ * `arckit_workspace.ts` is no longer byte-frozen (LB1..LB7 all fixed); tests
+ * here now assert the POST-fix behavior for LB4/LB5/LB6, and continue to pin
+ * everything else that was never a latent bug.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import {
@@ -397,13 +399,15 @@ Deno.test("coverage: scan() surfaces an unrecognized doc code in workspace-level
 });
 
 // ---------------------------------------------------------------------------
-// Pure-function reinforcement of LB4 (bogus-phase gate) and LB5 (>999
-// boundary) — the primary method-level characterization lives in
-// arckit_workspace_adversarial_test.ts; these pin the same findings at the
-// underlying pure-function level.
+// LB4 fixed: gateFor stays defensively permissive but ProjectStateSchema now
+// prevents any bogus state from ever reaching it — gateFor/evaluateGate are
+// unchanged pure functions (they still accept any raw string), the schema
+// enum makes them simply unreachable from the public API. See the
+// method-level fix-regression tests in arckit_workspace_adversarial_test.ts
+// for the enum rejection itself.
 // ---------------------------------------------------------------------------
 
-Deno.test("coverage (reinforces arckit-latent-bugs LB4): gateFor returns an empty group list for any phase name outside PHASES, for every profile", () => {
+Deno.test("coverage (LB4 fixed): gateFor returns an empty group list for any phase name outside PHASES, for every profile — unchanged pure-function behavior, now unreachable via projectState.state", () => {
   for (const profile of ["standard", "uk-gov", "mod", "ai"] as const) {
     assertEquals(gateFor("totally-bogus-phase", profile), []);
     assertEquals(evaluateGate(["anything"], "totally-bogus-phase", profile), {
@@ -413,10 +417,19 @@ Deno.test("coverage (reinforces arckit-latent-bugs LB4): gateFor returns an empt
   }
 });
 
-Deno.test("coverage (reinforces arckit-latent-bugs LB5): nextProjectDir at the 999 boundary yields a 4-digit id that parseProjectDir rejects", () => {
+// ---------------------------------------------------------------------------
+// LB5 fixed: project-id allocation no longer breaks past 999 —
+// nextProjectDir's zero-padding stays 3-digit for ids <=999; parseProjectDir
+// (`\d{3,}`) now accepts the 4+ digit ids padStart naturally produces past
+// the boundary instead of rejecting them.
+// ---------------------------------------------------------------------------
+
+Deno.test("coverage (LB5 fixed): nextProjectDir at the 999 boundary yields a 4-digit id that parseProjectDir now ACCEPTS", () => {
   assertEquals(nextProjectDir(["999-last"], "new"), "1000-new");
-  assertEquals(parseProjectDir("1000-new"), null);
-  // one below the boundary still round-trips cleanly
+  const parsed = parseProjectDir("1000-new");
+  assert(parsed);
+  assertEquals(parsed, { id: "1000", name: "new", isGlobal: false });
+  // one below the boundary still round-trips cleanly, unchanged
   assertEquals(nextProjectDir(["998-last"], "new"), "999-new");
   const p = parseProjectDir("999-new");
   assert(p);
@@ -424,12 +437,12 @@ Deno.test("coverage (reinforces arckit-latent-bugs LB5): nextProjectDir at the 9
 });
 
 // ---------------------------------------------------------------------------
-// Pure-function reinforcement of LB6 (templates/provisionTemplates
-// divergence) — the TEMPLATE_MAP command set is exactly what templates()
-// enumerates, independent of what's physically bundled.
+// LB6 reconciled: the TEMPLATE_MAP command set is exactly what templates()
+// enumerates as commands, independent of what's physically bundled — but
+// every bundled orphan now additionally surfaces in unmappedFiles[].
 // ---------------------------------------------------------------------------
 
-Deno.test("coverage (reinforces arckit-latent-bugs LB6): templates() always enumerates exactly Object.keys(TEMPLATE_MAP).length entries, regardless of extra bundled files present", async () => {
+Deno.test("coverage (LB6 reconciled): templates() always enumerates exactly Object.keys(TEMPLATE_MAP).length command entries regardless of extra bundled files present, and the extra bundled orphans now show up in unmappedFiles", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
     await writeTemplateFile(templatesDir, "tech-note-template.md"); // orphan #2
     await writeTemplateFile(templatesDir, "vendor-scoring-template.md"); // orphan #3
@@ -440,5 +453,10 @@ Deno.test("coverage (reinforces arckit-latent-bugs LB6): templates() always enum
       written[0].payload.templateCount,
       Object.keys(TEMPLATE_MAP).length,
     );
+    assertEquals(written[0].payload.unmappedFiles, [
+      "data-source-profile-template.md",
+      "tech-note-template.md",
+      "vendor-scoring-template.md",
+    ]);
   });
 });
