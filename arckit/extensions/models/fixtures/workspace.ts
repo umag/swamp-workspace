@@ -17,7 +17,7 @@
 
 /** Minimal shape of the runtime `context` the model's `execute()` bodies use. */
 export interface FakeContext {
-  globalArgs: { path: string };
+  globalArgs: { path: string; maxFileBytes?: number };
   logger: { info: (msg: string, fields?: Record<string, unknown>) => void };
   writeResource: (
     spec: string,
