@@ -1,0 +1,37 @@
+{
+  "topalbums": {
+    "@attr": {
+      "user": "fixtureuser",
+      "page": "1",
+      "perPage": "50",
+      "totalPages": "1",
+      "total": "2"
+    },
+    "album": [
+      {
+        "@attr": { "rank": "1" },
+        "name": "First Album",
+        "playcount": "230",
+        "mbid": "00000000-0000-4000-8000-000000000002",
+        "url": "https://lastfm.example/music/Testband/First+Album",
+        "artist": {
+          "name": "Testband",
+          "mbid": "00000000-0000-4000-8000-000000000001",
+          "url": "https://lastfm.example/music/Testband"
+        }
+      },
+      {
+        "@attr": { "rank": "2" },
+        "name": "Second Album",
+        "playcount": "44",
+        "mbid": "",
+        "url": "https://lastfm.example/music/Otherband/Second+Album",
+        "artist": {
+          "name": "Otherband",
+          "mbid": "",
+          "url": "https://lastfm.example/music/Otherband"
+        }
+      }
+    ]
+  }
+}

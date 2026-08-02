@@ -1,0 +1,51 @@
+manifestVersion: 1
+name: "@magistr/lastfm"
+version: "2026.07.27.1"
+description: |
+  Last.fm for swamp — read a user's scrobble history and listening statistics
+  from the Last.fm 2.0 web API. Read-only: every method used here is an
+  unauthenticated `user.*` / `artist.*` / `album.*` / `track.*` read that needs
+  only an API key, so there is no OAuth dance and no MD5 request signing.
+
+  Model:
+  - `@magistr/lastfm` — `profile` (user.getInfo), `loved-tracks`,
+    `artist-info` / `album-info` / `track-info`, the six-period charts
+    (`top-artists`, `top-albums`, `top-tracks` over
+    overall|7day|1month|3month|6month|12month), the weekly chart range list
+    and the three weekly charts, and `sync-history` — an idempotent fan-out
+    that pages `user.getRecentTracks` into one `scrobbles.<year>` resource per
+    calendar year.
+
+  Report:
+  - `@magistr/lastfm-stats` — a model-scope report over the synced history
+    that derives what the API's six fixed periods cannot: per-year, per-month,
+    per-weekday and per-hour distributions, unique artist/album/track counts,
+    listening streaks, and top lists over an arbitrary date window.
+
+  The API key is marked sensitive and is never persisted into a resource. It
+  travels as a query parameter (Last.fm offers no header auth), so the base
+  URL is pinned to HTTPS, non-https overrides are rejected, and every URL is
+  redacted before it can reach an error message, a log line, or a fixture.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/lastfm.ts
+
+reports:
+  - extensions/reports/lastfm_stats.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - music
+  - lastfm
+  - scrobbles
+  - listening
+  - statistics

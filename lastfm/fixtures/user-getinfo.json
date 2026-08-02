@@ -1,0 +1,19 @@
+{
+  "user": {
+    "name": "fixtureuser",
+    "realname": "Fixture User",
+    "country": "Netherlands",
+    "url": "https://lastfm.example/user/fixtureuser",
+    "playcount": "4212",
+    "artist_count": "310",
+    "album_count": "455",
+    "track_count": "1180",
+    "registered": { "unixtime": "1173116542", "#text": 1173116542 },
+    "image": [
+      { "#text": "https://lastfm.example/i/small.png", "size": "small" },
+      { "#text": "https://lastfm.example/i/medium.png", "size": "medium" },
+      { "#text": "https://lastfm.example/i/large.png", "size": "large" },
+      { "#text": "https://lastfm.example/i/xlarge.png", "size": "extralarge" }
+    ]
+  }
+}

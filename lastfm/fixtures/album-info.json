@@ -1,0 +1,20 @@
+{
+  "album": {
+    "name": "First Album",
+    "artist": "Testband",
+    "mbid": "00000000-0000-4000-8000-000000000002",
+    "url": "https://lastfm.example/music/Testband/First+Album",
+    "listeners": "842",
+    "playcount": "5510",
+    "userplaycount": "230",
+    "tags": {
+      "tag": [
+        { "name": "ambient", "url": "https://lastfm.example/tag/ambient" }
+      ]
+    },
+    "wiki": {
+      "summary": "First Album is a synthetic release used only in fixture data.",
+      "content": "First Album is a synthetic release used only in fixture data."
+    }
+  }
+}

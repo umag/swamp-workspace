@@ -1,0 +1,74 @@
+# Quality record for @magistr/lastfm — see STANDARD.md and
+# scripts/quality/schema.ts (the enforced shape).
+#
+# Born compliant: this extension was authored after the five-suite standard
+# landed, so every suite is `present` from its first release and it carries no
+# backlog debt on any allowlist-gated block — it is deliberately absent from
+# quality-allowlist.txt.
+#
+# Role map (each file assigned exactly ONE honest role):
+#   contract-fixture        -> lastfm_test.ts (replays the synthetic corpus
+#                              under fixtures/ through the model's own methods;
+#                              see fixtures/PROVENANCE.md for the standing
+#                              no-live-capture prohibition)
+#   methods                 -> lastfm_methods_test.ts (all 13 methods)
+#   adversarial             -> lastfm_adversarial_test.ts
+#   coverage                -> lastfm_coverage_test.ts
+#   property-invariant-flow -> lastfm_property_test.ts, plus the report's own
+#                              lastfm_stats_test.ts (bucket reconciliation and
+#                              the data-version/deleted-handle invariants)
+schemaVersion: 1
+extension: lastfm
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/lastfm_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/lastfm_methods_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/lastfm_adversarial_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/lastfm_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/lastfm_property_test.ts
+      - extensions/reports/lastfm_stats_test.ts
+watch:
+  state: backlog
+  justification: >-
+    release-watch not yet wired — Last.fm publishes no versioned API changelog
+    to subscribe to, so the source shape needs deciding alongside Phase B;
+    tracked in ext-quality-test-backfill
+canary:
+  state: backlog
+  justification: >-
+    live canary deferred to Phase C — a live my-lastfm instance exists, but
+    fixtures/PROVENANCE.md forbids capturing from it, so the canary needs Phase
+    C's redaction contract before it can be defined; tracked in
+    ext-quality-test-backfill
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: na
+    justification: >-
+      lastfm bundles no Claude skill — it is a read-only API model plus a
+      model-scope report, with nothing skill-shaped to document
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"

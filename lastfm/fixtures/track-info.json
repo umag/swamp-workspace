@@ -1,0 +1,30 @@
+{
+  "track": {
+    "name": "Opening Track",
+    "mbid": "00000000-0000-4000-8000-000000000003",
+    "url": "https://lastfm.example/music/Testband/_/Opening+Track",
+    "duration": "215000",
+    "listeners": "731",
+    "playcount": "3120",
+    "userplaycount": "188",
+    "artist": {
+      "name": "Testband",
+      "mbid": "00000000-0000-4000-8000-000000000001",
+      "url": "https://lastfm.example/music/Testband"
+    },
+    "album": {
+      "artist": "Testband",
+      "title": "First Album",
+      "mbid": "00000000-0000-4000-8000-000000000002",
+      "url": "https://lastfm.example/music/Testband/First+Album"
+    },
+    "toptags": {
+      "tag": [
+        { "name": "ambient", "url": "https://lastfm.example/tag/ambient" }
+      ]
+    },
+    "wiki": {
+      "summary": "Opening Track is a synthetic recording used only in fixture data."
+    }
+  }
+}

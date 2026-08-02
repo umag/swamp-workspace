@@ -1,0 +1,39 @@
+{
+  "toptracks": {
+    "@attr": {
+      "user": "fixtureuser",
+      "page": "1",
+      "perPage": "50",
+      "totalPages": "1",
+      "total": "2"
+    },
+    "track": [
+      {
+        "@attr": { "rank": "1" },
+        "name": "Opening Track",
+        "playcount": "188",
+        "mbid": "00000000-0000-4000-8000-000000000003",
+        "url": "https://lastfm.example/music/Testband/_/Opening+Track",
+        "duration": "215",
+        "artist": {
+          "name": "Testband",
+          "mbid": "00000000-0000-4000-8000-000000000001",
+          "url": "https://lastfm.example/music/Testband"
+        }
+      },
+      {
+        "@attr": { "rank": "2" },
+        "name": "Second Track",
+        "playcount": "31",
+        "mbid": "",
+        "url": "https://lastfm.example/music/Otherband/_/Second+Track",
+        "duration": "0",
+        "artist": {
+          "name": "Otherband",
+          "mbid": "",
+          "url": "https://lastfm.example/music/Otherband"
+        }
+      }
+    ]
+  }
+}

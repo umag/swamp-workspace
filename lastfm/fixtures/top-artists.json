@@ -1,0 +1,29 @@
+{
+  "topartists": {
+    "@attr": {
+      "user": "fixtureuser",
+      "page": "1",
+      "perPage": "50",
+      "totalPages": "2",
+      "total": "310"
+    },
+    "artist": [
+      {
+        "@attr": { "rank": "1" },
+        "name": "Testband",
+        "playcount": "412",
+        "mbid": "00000000-0000-4000-8000-000000000001",
+        "url": "https://lastfm.example/music/Testband",
+        "streamable": "0"
+      },
+      {
+        "@attr": { "rank": "2" },
+        "name": "Otherband",
+        "playcount": "97",
+        "mbid": "",
+        "url": "https://lastfm.example/music/Otherband",
+        "streamable": "0"
+      }
+    ]
+  }
+}
