@@ -16,8 +16,11 @@
  * lookup-by-title's slug-key construction (case, special chars, length cap);
  * and model/resource shape sanity.
  *
- * seadex.ts is UNMODIFIED; every test here PINS existing behavior. seadex.ts
- * exports no pure helpers, so every guard is observed by driving
+ * This repo's real-fix change addressed 8 tracked latent bugs (LB1–LB8) in
+ * `seadex.ts`; every guard test in this suite is unaffected and stays
+ * byte-frozen, EXCEPT the model-shape sanity check at the bottom, which now
+ * expects the new `upgradeFilter` resource (LB1) alongside `entry`/`summary`.
+ * seadex.ts exports no pure helpers, so every guard is observed by driving
  * `model.methods.<m>.execute()` against a stubbed fetch, per the plan.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
@@ -516,8 +519,12 @@ Deno.test("slug key: a title longer than 40 characters is truncated to exactly 4
 // Sanity: model / resource shape
 // ---------------------------------------------------------------------------
 
-Deno.test("sanity: model.resources exposes exactly entry + summary", () => {
-  assertEquals(Object.keys(model.resources).sort(), ["entry", "summary"]);
+Deno.test("sanity: model.resources exposes exactly entry + summary + upgradeFilter (LB1 added upgradeFilter)", () => {
+  assertEquals(Object.keys(model.resources).sort(), [
+    "entry",
+    "summary",
+    "upgradeFilter",
+  ]);
 });
 
 Deno.test("sanity: every method has a non-empty description", () => {

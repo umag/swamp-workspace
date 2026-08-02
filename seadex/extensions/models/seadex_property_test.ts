@@ -26,6 +26,11 @@
  *      and injectivity over a canonical subset (infoHash varies, everything
  *      else fixed -> distinct infoHash in, distinct infoHash out — verbatim
  *      passthrough, never collapsed/hashed/case-folded).
+ *  (e) NEW (LB8 fix): infoHash normalization (trim + lowercase) is
+ *      idempotent and deterministic over a SEPARATE arb that varies case and
+ *      surrounding whitespace — added alongside (d), which is left
+ *      untouched (its arb is already lowercase/unpadded, so (d)'s
+ *      determinism/injectivity claims hold unchanged post-fix).
  */
 import { assertEquals } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
@@ -357,5 +362,31 @@ Deno.test("property: infoHash passthrough is INJECTIVE — distinct inputs alway
       return a === b ? outA === outB : outA !== outB;
     }),
     { numRuns: NIGHT(150) },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// (e) NEW (LB8 fix): infoHash normalization (trim + lowercase) is idempotent
+//     and deterministic, over a SEPARATE arb that varies case + whitespace
+// ---------------------------------------------------------------------------
+
+const arbInfoHashMixedCaseWs = fc
+  .stringMatching(/^[a-fA-F0-9]{40}$/)
+  .chain((hex) =>
+    fc.tuple(
+      fc.constantFrom("", " ", "  ", "\t"),
+      fc.constantFrom("", " ", "  ", "\t"),
+    ).map(([pre, post]) => pre + hex + post)
+  );
+
+Deno.test("property: FIXED (LB8) — infoHash normalization is idempotent and always yields the trim+lowercase form, over mixed-case/whitespace-padded inputs", async () => {
+  await fc.assert(
+    fc.asyncProperty(arbInfoHashMixedCaseWs, async (raw) => {
+      const once = await normalisedInfoHashFor(raw);
+      const expected = raw.trim().toLowerCase();
+      const twice = await normalisedInfoHashFor(once);
+      return once === expected && twice === once;
+    }),
+    FC_RUNS,
   );
 });

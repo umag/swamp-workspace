@@ -5,9 +5,13 @@
  * `model.methods.<m>.arguments.parse()` + `.execute()` against a stubbed
  * `globalThis.fetch` and a fake context.
  *
- * seadex.ts is UNMODIFIED by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * This repo's real-fix change addressed all 8 tracked latent bugs (LB1–LB8)
+ * in `seadex.ts`. Most tests below stay byte-frozen characterizations of
+ * already-shipped behavior; the render-upgrades tests are flipped (LB1, see
+ * below) and a small set of lookup-many tests gained new assertions for
+ * LB4/LB5 (see the adversarial suite for the full pin-flip narrative on those
+ * two). It is not red-green TDD: most of this suite has no new behavior to
+ * drive out.
  *
  * lookup-by-title is TWO-HOP (AniList resolve, then Pocketbase fetch) and has
  * THREE distinct outcomes, all three pinned here (the middle one is the
@@ -18,9 +22,11 @@
  *      key al-<id> (NOT q-<slug>), title = the AniList-resolved title
  *   3. AniList no match              -> found:false, alID=0, key q-<slug>
  *
- * render-upgrades is a no-op stub: every call writes the identical all-zero
- * summary marker regardless of its (accepted-but-ignored) filter arguments —
- * pinned as-is, not fixed.
+ * render-upgrades WAS a no-op stub that wrote an identical all-zero
+ * `summary` marker regardless of its filter arguments. LB1 (HIGH) fixes
+ * this: it now writes a new `upgradeFilter` resource whose year/status/
+ * minScore/title fields ECHO the caller's arguments (null when omitted) —
+ * a non-vacuous, real effect a caller can observe.
  */
 import {
   assert,
@@ -198,10 +204,11 @@ Deno.test("lookup-by-anilist-id: anilistId must be a positive integer (schema gu
 });
 
 // ---------------------------------------------------------------------------
-// render-upgrades — no-op stub, pinned all-zero marker regardless of args
+// render-upgrades — FIXED (LB1, HIGH): now writes a real upgradeFilter
+// marker whose fields echo the caller's filter arguments
 // ---------------------------------------------------------------------------
 
-Deno.test("render-upgrades: writes the all-zero summary marker with no arguments", async () => {
+Deno.test("render-upgrades: writes the upgradeFilter marker with all filters null when none are given", async () => {
   const { ctx, written } = makeCtx();
   const out = await run("render-upgrades", {}, ctx) as {
     dataHandles: unknown[];
@@ -209,31 +216,42 @@ Deno.test("render-upgrades: writes the all-zero summary marker with no arguments
   assertEquals(out.dataHandles.length, 1);
   const res = written.find((w) => w.name === "render-upgrades")!;
   assert(res);
+  assertEquals(res.spec, "upgradeFilter");
   assertEquals(res.payload, {
-    total: 0,
-    found: 0,
-    withBestReleases: 0,
-    incomplete: 0,
-    notInSeadex: [],
+    year: null,
+    status: null,
+    minScore: null,
+    title: null,
     timestamp: res.payload.timestamp,
   });
   assert(typeof res.payload.timestamp === "string");
 });
 
-Deno.test("render-upgrades: PIN — year/status/minScore/title filter arguments are accepted but have NO effect on the written marker (a no-op stub)", async () => {
+Deno.test("render-upgrades: FIXED (LB1) — year/status/minScore/title filter arguments are now ECHOED into the written upgradeFilter marker (non-vacuous: was a permanent no-op before)", async () => {
   const { ctx, written } = makeCtx();
   await run("render-upgrades", {
     year: 2026,
     status: "COMPLETED",
     minScore: 80,
-    title: "ignored note",
+    title: "note",
   }, ctx);
   const res = written.find((w) => w.name === "render-upgrades")!;
-  assertEquals(res.payload.total, 0);
-  assertEquals(res.payload.found, 0);
-  assertEquals(res.payload.withBestReleases, 0);
-  assertEquals(res.payload.incomplete, 0);
-  assertEquals(res.payload.notInSeadex, []);
+  assertEquals(res.spec, "upgradeFilter");
+  assertEquals(res.payload.year, 2026);
+  assertEquals(res.payload.status, "COMPLETED");
+  assertEquals(res.payload.minScore, 80);
+  assertEquals(res.payload.title, "note");
+});
+
+Deno.test("render-upgrades: partial filter (year only) -> year echoed, the rest stay null", async () => {
+  const { ctx, written } = makeCtx();
+  await run("render-upgrades", { year: 2025 }, ctx);
+  const res = written.find((w) => w.name === "render-upgrades")!;
+  assertEquals(res.spec, "upgradeFilter");
+  assertEquals(res.payload.year, 2025);
+  assertEquals(res.payload.status, null);
+  assertEquals(res.payload.minScore, null);
+  assertEquals(res.payload.title, null);
 });
 
 Deno.test("render-upgrades: makes NO network call at all", async () => {
