@@ -10,9 +10,14 @@ from MusicBrainz.
 
 ## Configuration
 
-The model has a single required global argument, `userAgent`. MusicBrainz
+The model has one required global argument, `userAgent`. MusicBrainz
 **requires** a descriptive, application-identifying User-Agent string that
 includes a contact address; requests without one may be blocked.
+
+An optional `maxPages` argument caps how many 100-per-page release-group pages
+`find-missing`/`seed-all-missing` will walk before stopping, even if every page
+came back full (defaults to 50 — plenty for any real artist discography, and a
+hard ceiling against a misbehaving endpoint that never returns a short page).
 
 ```yaml
 type: "@magistr/musicbrainz"
@@ -20,6 +25,7 @@ typeVersion: "2026.05.25.1"
 name: musicbrainz
 globalArguments:
   userAgent: "MyApp/1.0.0 (contact@example.com)"
+  # maxPages: 50 # optional, defaults to 50
 methods: {}
 ```
 

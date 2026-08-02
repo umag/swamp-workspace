@@ -16,17 +16,22 @@
  *      porkbun applies here too) — plus explicit named collapse pins.
  *  (c) normalizeTitle collision property: two titles are predicted to
  *      collide using a LOCAL mirror of the (unexported) normalization rule
- *      read from source (`s.toLowerCase().replace(/[^a-z0-9]/g, "")`), then
- *      find-missing's actual match/missing classification is asserted
- *      against that prediction for every generated pair — never calling the
- *      private function directly, only observing its effect through
- *      execute().
- *  (d) a multi-step find-missing FLOW test under FakeTime pinning the
- *      BOUNDED paginated release-group walk (offset 0->100->200-><100,
- *      asserting the offset progression) — the flow stub MUST terminate
- *      pagination with a <100 page or the source's `while(true)` never
- *      ends and the FakeTime drain would hang; the unbounded-loop gap
- *      itself is documented, never exercised to infinity.
+ *      read from source, post-LB5-fix (NFKD-decompose, strip the resulting
+ *      combining marks, lowercase, collapse non-letter/non-number Unicode
+ *      runs to a space, trim), then find-missing's actual match/missing
+ *      classification is asserted against that prediction for every
+ *      generated pair — never calling the private function directly, only
+ *      observing its effect through execute().
+ *  (d) two multi-step find-missing FLOW tests under FakeTime: the original
+ *      pins the BOUNDED paginated release-group walk terminating on a
+ *      naturally short page (offset 0->100->200-><100, asserting the offset
+ *      progression) — the flow stub MUST terminate pagination with a <100
+ *      page or the source's bounded loop would need its full `maxPages`
+ *      iterations to stop. The second (LB4 FIX) proves the NEW `maxPages`
+ *      cap terminates the walk even when EVERY page is full (would have
+ *      looped forever pre-fix), by setting `globalArgs.maxPages: 2` against
+ *      an always-full-page stub and asserting the walk stops after exactly
+ *      2 pages.
  */
 import { assertEquals } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
@@ -430,12 +435,19 @@ Deno.test("collapse: durationMs=0 (PT0S) vs NO duration at all produce the IDENT
 // ---------------------------------------------------------------------------
 
 /** Mirrors musicbrainz.ts's module-private `normalizeTitle` EXACTLY (read
- * from source: `s.toLowerCase().replace(/[^a-z0-9]/g, "")`). Used only to
- * PREDICT whether two generated titles should collide — the actual
- * assertion always goes through `run("find-missing", ...)`, never calling
- * this mirror as if it were the source under test. */
+ * from source, post-LB5-fix: NFKD-decompose, strip the combining diacritical
+ * marks NFKD leaves behind (U+0300-U+036F), lowercase, collapse any run of
+ * non-letter/non-number Unicode codepoints to a single space, then trim).
+ * Used only to PREDICT whether two generated titles should collide — the
+ * actual assertion always goes through `run("find-missing", ...)`, never
+ * calling this mirror as if it were the source under test. */
 function predictNormalize(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return s
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
 }
 
 const arbTitlePair = fc.tuple(
@@ -575,4 +587,74 @@ Deno.test("FLOW: find-missing's release-group pagination walks offset 0->100->20
     "the bandcamp album title never matches any of the 230 generated MB titles",
   );
   assertEquals(missing.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// LB4 FIX: `maxPages` caps the walk even when every page is FULL — the old
+// `while (true)` would never terminate against this stub; the new bounded
+// `for` loop stops after exactly `maxPages` iterations regardless.
+// ---------------------------------------------------------------------------
+
+Deno.test("LB4 FIX: globalArgs.maxPages=2 stops find-missing's pagination after offsets 0,100 even though EVERY page is full (would loop forever pre-fix)", async () => {
+  // Uses the file-level shared `time`.
+  const written: Array<
+    { spec: string; name: string; payload: Record<string, unknown> }
+  > = [];
+  const ctx = {
+    globalArgs: { ...GLOBAL_ARGS, maxPages: 2 },
+    writeResource: (spec: string, name: string, payload: unknown) => {
+      written.push({ spec, name, payload: payload as Record<string, unknown> });
+      return Promise.resolve({ spec, name });
+    },
+    logger: { info: () => {}, warning: () => {} },
+  };
+  const offsetsSeen: string[] = [];
+  const artistPageHtml = `<!doctype html><html><head></head><body>
+<p id="band-name-location"><span class="title">Fixture MaxPages Artist</span></p>
+<div id="music-grid"><ol>
+  <li class="music-grid-item"><a href="/album/keep"><p class="title">MaxPages Keeper Album</p></a></li>
+</ol></div>
+</body></html>`;
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(artistPageHtml) : undefined),
+      (req) => {
+        if (!isMbHost(req)) return undefined;
+        const url = new URL(req.url);
+        if (url.pathname === "/ws/2/artist/") {
+          return json({
+            artists: [{
+              id: "00000000-0000-0000-0000-000000000001",
+              name: "Fixture MaxPages Artist",
+            }],
+          });
+        }
+        const offset = url.searchParams.get("offset") ?? "0";
+        offsetsSeen.push(offset);
+        const off = Number(offset);
+        // ALWAYS a full page (100 items), never a short one — a naive
+        // `while (true)` walk would never stop against this stub.
+        return json(page(100, off, "MaxPages Page Title "));
+      },
+    ],
+    () =>
+      drainAndAwait(
+        time,
+        run("find-missing", {
+          bandcampUrl: "https://fixturemaxpagesartist.bandcamp.com",
+          artistMbid: "00000000-0000-0000-0000-000000000001",
+        }, ctx),
+      ),
+  );
+  assertEquals(
+    offsetsSeen,
+    ["0", "100"],
+    "maxPages=2 caps the walk at exactly 2 pages despite every page being full",
+  );
+  const res = written.find((w) => w.spec === "missingReleases")!;
+  assertEquals(
+    res.payload.mbReleaseCount,
+    200,
+    "2 full pages of 100 = 200, capped by maxPages rather than a natural short-page stop",
+  );
 });
