@@ -3,13 +3,14 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-jscad-cad, wave-4
-# batch-4c of the Phase D extension-quality backfill). jscad_cad.ts,
-# jscad/script_evaluator.ts, and jscad/types.ts are BYTE-FROZEN — every suite
-# drives ScriptEvaluator.evaluateAndSerialize and/or
+# batch-4c of the Phase D extension-quality backfill), then real-fixed twice:
+# B1/B2 (HIGH) in 2026.08.01.1 and B3/B4/B5 (MEDIUM/LOW) in 2026.08.02.1.
+# jscad_cad.ts and jscad/script_evaluator.ts are NO LONGER byte-frozen —
+# every suite drives ScriptEvaluator.evaluateAndSerialize and/or
 # model.methods.run.execute() against a stubbed globalThis.Deno.Command (the
-# nested `deno run` eval subprocess) + a fake swamp context, characterizing
-# already-shipped behavior. The kept jscad/script_evaluator_test.ts remains
-# the SOLE test allowed to spawn a real deno+network subprocess.
+# nested `deno run` eval subprocess) + a fake swamp context; jscad/types.ts
+# remains unchanged/byte-frozen. The kept jscad/script_evaluator_test.ts
+# remains the SOLE test allowed to spawn a real deno+network subprocess.
 #
 # Role map (each file assigned to exactly ONE honest role, per STANDARD.md's
 # "named by ROLE, never by filename convention"):
@@ -69,15 +70,19 @@ ratchet:
   baselinePercentage: 0
   label: >-
     UNSCORABLE — swamp extension quality errors on script_evaluator.ts's
-    template-literal `import * as serializer from "${pkg}";` (line 64,
-    inside buildEvalScript): the scorer's static import-specifier scanner
-    misreads the runtime-interpolated `"${pkg}"` as an unresolvable bare
-    specifier and refuses to score the extension at all. This predates the
-    backfill and script_evaluator.ts is byte-frozen here so it cannot be
-    repaired in this change — the same class of scorer blind spot as
-    seanime's broken-version-chain unscorable case. score_ratchet.ts reports
-    an unscorable extension as SKIPPED, not a CI failure. Tracked in
-    jscad-cad-latent-bugs (N3 — the same naive-scanner-evasion pattern is
-    also the root cause of latent bug B1) and in
+    template-literal `import * as serializer from "${pkg}";` (inside
+    buildEvalScript's returned eval-script source): the scorer's static
+    import-specifier scanner misreads the runtime-interpolated `"${pkg}"` as
+    an unresolvable bare specifier and refuses to score the extension at
+    all. This predates the backfill and is intentionally left intact by the
+    2026.08.02.1 B3/B4/B5 real-fix (out of scope; de-obfuscating it would
+    restore no score, since the extension is unscorable for this reason
+    alone) — the same class of scorer blind spot as seanime's
+    broken-version-chain unscorable case. score_ratchet.ts reports an
+    unscorable extension as SKIPPED, not a CI failure. The naive-scanner-
+    evasion pattern behind this false positive is the SAME PATTERN as N3
+    (the `globalThis["Func"+"tion"]` split, tracked as an accepted-residual
+    in jscad-cad-latent-bugs, no longer characterized as "root cause of open
+    B1" now that B1 is fixed and contained) and is separately tracked in
     workspace-ratchet-scorer-blockers; do not attempt to fix the scanner or
     the import here.

@@ -47,6 +47,11 @@ function serializeOpts(format: OutputFormat): string {
 // Kept generous enough to clear cold npm-cache warm-up on the first render.
 const EVAL_TIMEOUT_MS = 30_000;
 
+// Default bound on how large the serialized output may grow before the
+// subprocess refuses to write it. Generous for CAD models; tunable via the
+// optional maxOutputBytes parameter on evaluateAndSerialize.
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+
 // Build the subprocess evaluator script as a string.
 // The subprocess imports @jscad/modeling, evaluates the user-provided CadScript
 // via dynamic code construction, serializes geometry, and writes output.
@@ -55,6 +60,7 @@ function buildEvalScript(
   paramsJson: string,
   format: OutputFormat,
   outputPath: string,
+  maxOutputBytes: number,
 ): string {
   const binary = format === "stl" || format === "3mf";
   const pkg = serializerPackage(format);
@@ -96,24 +102,39 @@ if (raw == null) {
   Deno.exit(1);
 }
 const shapes = Array.isArray(raw) ? raw : [raw];
+if (shapes.length === 0) {
+  console.error("CadScript main() returned an empty geometry array — Geometry must contain at least one shape");
+  Deno.exit(1);
+}
 const parts = serializer.serialize(${opts}, ...shapes);
 const objectCount = shapes.length;
+const MAX_OUTPUT_BYTES = ${maxOutputBytes};
 ${
     binary
       ? `
 const views = parts.map(p => p instanceof Uint8Array ? p : new Uint8Array(p));
 const total = views.reduce((n, p) => n + p.byteLength, 0);
+if (total > MAX_OUTPUT_BYTES) {
+  console.error("CadScript output exceeds " + MAX_OUTPUT_BYTES + "-byte cap");
+  Deno.exit(1);
+}
 const out = new Uint8Array(total);
 let off = 0;
 for (const p of views) { out.set(p, off); off += p.byteLength; }
 Deno.writeFileSync(${JSON.stringify(outputPath)}, out);
 `
       : `
+const total = parts.reduce((n, p) => n + p.length, 0);
+if (total > MAX_OUTPUT_BYTES) {
+  console.error("CadScript output exceeds " + MAX_OUTPUT_BYTES + "-byte cap");
+  Deno.exit(1);
+}
 const txt = parts.join("");
 Deno.writeTextFileSync(${JSON.stringify(outputPath)}, txt);
 `
   }
 console.log(JSON.stringify({ objectCount }));
+Deno.exit(0);
 `;
 }
 
@@ -127,6 +148,7 @@ export const ScriptEvaluator = {
     params: ScriptParameters,
     format: OutputFormat,
     timeoutMs: number = EVAL_TIMEOUT_MS,
+    maxOutputBytes: number = MAX_OUTPUT_BYTES,
   ): Promise<{ serialized: SerializedModel; objectCount: number }> {
     const source = stripMarkdownFences(script.source);
     const paramsJson = JSON.stringify(params.values);
@@ -136,7 +158,13 @@ export const ScriptEvaluator = {
     try {
       Deno.writeTextFileSync(
         evalPath,
-        buildEvalScript(source, paramsJson, format, outputPath),
+        buildEvalScript(
+          source,
+          paramsJson,
+          format,
+          outputPath,
+          maxOutputBytes,
+        ),
       );
 
       const signal = AbortSignal.timeout(timeoutMs);
@@ -170,7 +198,25 @@ export const ScriptEvaluator = {
       }
 
       const stdout = new TextDecoder().decode(result.stdout).trim();
-      const meta = JSON.parse(stdout) as { objectCount: number };
+      const lastLine = stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0)
+        .at(-1);
+      if (lastLine === undefined) {
+        throw new Error(
+          "CadScript evaluation produced no object-count metadata on stdout",
+        );
+      }
+      const meta = JSON.parse(lastLine) as { objectCount: number };
+
+      const outputSize = Deno.statSync(outputPath).size;
+      if (outputSize > maxOutputBytes) {
+        throw new Error(
+          "CadScript output exceeds " + maxOutputBytes +
+            "-byte cap (" + outputSize + " bytes on disk)",
+        );
+      }
       const bytes = Deno.readFileSync(outputPath);
 
       return {

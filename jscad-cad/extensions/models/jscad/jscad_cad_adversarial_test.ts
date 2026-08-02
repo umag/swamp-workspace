@@ -2,7 +2,8 @@
  * Adversarial suite: attacker's-perspective tests for @magistr/jscad-cad's
  * eval-subprocess seam. Originally pinned the latent bug catalog tracked in
  * the LOCAL `jscad-cad-latent-bugs` issue-lifecycle model (never the Lab);
- * B1 and B2 are now FIXED (2026.08.01.1) and this suite asserts the fix:
+ * B1/B2 were fixed in 2026.08.01.1 and B3/B4/B5 are now fixed in
+ * 2026.08.02.1 — this suite asserts the fix for all five:
  *
  *   B1 (HIGH, FIXED)   `--allow-read` is now scoped to the generated eval
  *               script's own temp path (`--allow-read=<evalPath>`) instead of
@@ -18,17 +19,20 @@
  *               Deno.Command constructor options — no test here spawns or
  *               simulates a real hang (the live negative lives in
  *               script_evaluator_test.ts).
- *   B3 (MEDIUM) the subprocess's single stdout stream carries both its own
- *               final `console.log(JSON.stringify({objectCount}))` and
- *               anything the user's CadScript itself logs, so a script that
- *               calls console.log corrupts the trailing JSON.parse. Still
- *               open — out of scope for this fix.
- *   B4 (LOW)    a main() returning [] yields objectCount 0 silently. Still
- *               open — out of scope for this fix.
- *   B5 (LOW)    unbounded in-memory output — pinned structurally (no
- *               truncation/chunking logic exists in the generated script;
- *               no large fixture is ever allocated here). Still open — out
- *               of scope for this fix.
+ *   B3 (MEDIUM, FIXED) the parent now extracts only the LAST non-empty line
+ *               of stdout and parses only that; the subprocess forces
+ *               `Deno.exit(0)` immediately after its own meta
+ *               `console.log(JSON.stringify({objectCount}))`, so a user
+ *               CadScript that itself calls console.log can no longer
+ *               corrupt the trailing JSON.parse.
+ *   B4 (LOW, FIXED)    the generated eval script now guards an explicit
+ *               empty-array main() result (`shapes.length === 0`) with a
+ *               clear error mirroring types.ts's own `Geometry.of([])`
+ *               message, instead of silently yielding objectCount 0.
+ *   B5 (LOW, FIXED)    the generated eval script now embeds a
+ *               `MAX_OUTPUT_BYTES` cap checked before allocation (rejects,
+ *               never truncates); the parent adds a belt-and-suspenders
+ *               `Deno.statSync` guard on the output file before reading it.
  *
  * Covered negatives (verified to currently hold, pinned as holding):
  *   N1  no shell/argv command-injection surface — the user's script content
@@ -36,18 +40,19 @@
  *       the eval-script FILE.
  *   N2  no output/eval path traversal — outputPath/evalPath come
  *       exclusively from Deno.makeTempFileSync, never from user input.
- *   N3  the eval script obtains the Function constructor via
- *       `globalThis["Func"+"tion"]` specifically to evade static scanners
- *       that grep the literal "new Function" — this was the ROOT CAUSE of
- *       B1's arbitrary-code-execution surface (now scoped, not eliminated —
- *       CadScript execution is arbitrary-by-design), and the same class of
+ *   N3  (accepted-residual, no code change) the eval script obtains the
+ *       Function constructor via `globalThis["Func"+"tion"]` specifically to
+ *       evade static scanners that grep the literal "new Function" — this
+ *       is the by-design execution mechanism for user CadScript main()
+ *       (arbitrary-by-design), whose blast radius is now contained by B1's
+ *       scoped read/write and B2's timeout, and is the same class of
  *       naive-scanner evasion that produces the quality-scorer's own
  *       bare-import false positive on the template-literal
- *       `import * as serializer from "${pkg}";`.
+ *       `import * as serializer from "${pkg}";` (Lab #1490).
  *
- * script_evaluator.ts is no longer byte-frozen for B1/B2 — this suite now
- * asserts the FIXED behavior for those two; B3/B4/B5/N1/N2/N3 remain
- * characterization pins of already-shipped (unfixed) behavior. No test in
+ * script_evaluator.ts is no longer byte-frozen for B1/B2/B3/B4/B5 — this
+ * suite now asserts the FIXED behavior for all five; N1/N2/N3 remain
+ * characterization pins of already-shipped (accepted) behavior. No test in
  * this file spawns a real subprocess, hits the network, hangs, or allocates
  * an oversized fixture — those live cases are covered by the SOLE live e2e
  * suite, script_evaluator_test.ts.
@@ -249,7 +254,7 @@ Deno.test("B2 fix: Deno.Command options carry a real AbortSignal (bounded execut
 // B3 (MEDIUM): user stdout corrupts the trailing JSON.parse
 // ---------------------------------------------------------------------------
 
-Deno.test("B3 pin: user console.log output ahead of the JSON line corrupts JSON.parse, even though the subprocess 'succeeded' and wrote valid output bytes", async () => {
+Deno.test("B3 fix: user console.log output ahead of the JSON meta line no longer corrupts JSON.parse — only the LAST line is parsed", async () => {
   await withCommandStub(
     {
       success: true,
@@ -257,15 +262,13 @@ Deno.test("B3 pin: user console.log output ahead of the JSON line corrupts JSON.
       outputBytes: new Uint8Array([1, 2, 3]),
     },
     async () => {
-      await assertRejects(
-        () =>
-          ScriptEvaluator.evaluateAndSerialize(
-            CadScript.of(SIMPLE_SCRIPT),
-            ScriptParameters.empty(),
-            "stl",
-          ),
-        SyntaxError,
+      const out = await ScriptEvaluator.evaluateAndSerialize(
+        CadScript.of(SIMPLE_SCRIPT),
+        ScriptParameters.empty(),
+        "stl",
       );
+      assertEquals(out.objectCount, 1);
+      assertEquals(out.serialized.bytes, new Uint8Array([1, 2, 3]));
     },
   );
 });
@@ -274,17 +277,31 @@ Deno.test("B3 pin: user console.log output ahead of the JSON line corrupts JSON.
 // B4 (LOW): empty-array geometry -> silent objectCount 0
 // ---------------------------------------------------------------------------
 
-Deno.test("B4 pin: an empty-array result from main() yields a clean success with objectCount 0 (no error anywhere)", async () => {
+Deno.test("B4 fix: the generated eval script now guards an empty-array main() result with a clear error (mirrors types.ts's Geometry.of message)", async () => {
+  let captured = "";
   await withCommandStub(
-    { success: true, objectCount: 0, outputBytes: new Uint8Array([0]) },
-    async () => {
-      const out = await ScriptEvaluator.evaluateAndSerialize(
-        CadScript.of("const main = () => [];"),
+    {
+      success: true,
+      objectCount: 1,
+      outputBytes: new Uint8Array([1]),
+      onOutputSync: (_argv, evalScript) => {
+        captured = evalScript;
+      },
+    },
+    () =>
+      ScriptEvaluator.evaluateAndSerialize(
+        CadScript.of(SIMPLE_SCRIPT),
         ScriptParameters.empty(),
         "stl",
-      );
-      assertEquals(out.objectCount, 0);
-    },
+      ),
+  );
+  assert(
+    /shapes\.length\s*===\s*0/.test(captured),
+    `expected the generated eval script to guard shapes.length === 0, got:\n${captured}`,
+  );
+  assert(
+    captured.includes("at least one shape"),
+    "expected the empty-geometry guard message to mirror types.ts's Geometry.of error",
   );
 });
 
@@ -300,52 +317,52 @@ Deno.test("B4 contrast: types.ts's OWN Geometry.of([]) guard DOES throw — it i
 // B5 (LOW): unbounded in-memory output — structural pin only
 // ---------------------------------------------------------------------------
 
-Deno.test("B5 pin: the generated eval script contains no size cap / truncation / chunking logic for serializer output", async () => {
-  const capturedScripts: string[] = [];
-  const encoder = new TextEncoder();
-  // deno-lint-ignore no-explicit-any
-  const g = globalThis as any;
-  const original = g.Deno.Command;
-  class FakeCommand {
-    #argv: string[];
-    constructor(_cmd: string, options: { args?: string[] } = {}) {
-      this.#argv = options.args ?? [];
-    }
-    outputSync() {
-      const evalPath = this.#argv[this.#argv.length - 1];
-      capturedScripts.push(Deno.readTextFileSync(evalPath));
-      const writeArg = this.#argv.find((a) => a.startsWith("--allow-write="));
-      const outputPath = writeArg
-        ? writeArg.slice("--allow-write=".length)
-        : "";
-      if (outputPath) Deno.writeFileSync(outputPath, new Uint8Array([1]));
-      return {
-        success: true,
-        code: 0,
-        stdout: encoder.encode(JSON.stringify({ objectCount: 1 })),
-        stderr: new Uint8Array(),
-      };
-    }
-    output() {
-      return Promise.resolve(this.outputSync());
-    }
-  }
-  g.Deno.Command = FakeCommand;
-  try {
-    await ScriptEvaluator.evaluateAndSerialize(
-      CadScript.of(SIMPLE_SCRIPT),
-      ScriptParameters.empty(),
-      "stl",
-    );
-  } finally {
-    g.Deno.Command = original;
-  }
-  const script = capturedScripts[0];
-  assert(
-    !/\.slice\(\s*0\s*,/.test(script),
-    "expected no truncating .slice(0, N) call",
+Deno.test("B5 fix: the generated eval script now embeds a MAX_OUTPUT_BYTES size-cap guard for serializer output (rejects, never truncates)", async () => {
+  let captured = "";
+  await withCommandStub(
+    {
+      success: true,
+      objectCount: 1,
+      outputBytes: new Uint8Array([1]),
+      onOutputSync: (_argv, evalScript) => {
+        captured = evalScript;
+      },
+    },
+    () =>
+      ScriptEvaluator.evaluateAndSerialize(
+        CadScript.of(SIMPLE_SCRIPT),
+        ScriptParameters.empty(),
+        "stl",
+      ),
   );
-  assert(!/MAX_(BYTES|SIZE|LEN)/.test(script), "expected no size-cap constant");
+  assert(
+    /MAX_OUTPUT_BYTES/.test(captured),
+    `expected the generated eval script to embed a MAX_OUTPUT_BYTES size cap, got:\n${captured}`,
+  );
+  assert(
+    !/\.slice\(\s*0\s*,/.test(captured),
+    "expected no truncating .slice(0, N) call — the cap rejects, it never silently truncates",
+  );
+});
+
+Deno.test("B5 fix: the parent's belt-and-suspenders statSync guard rejects an output file over a (small, test-only) maxOutputBytes cap before reading it — no oversized fixture needed", async () => {
+  await withCommandStub(
+    { success: true, objectCount: 1, outputBytes: new Uint8Array([1, 2, 3]) },
+    async () => {
+      await assertRejects(
+        () =>
+          ScriptEvaluator.evaluateAndSerialize(
+            CadScript.of(SIMPLE_SCRIPT),
+            ScriptParameters.empty(),
+            "stl",
+            undefined,
+            2,
+          ),
+        Error,
+        "exceeds",
+      );
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

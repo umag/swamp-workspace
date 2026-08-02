@@ -1,5 +1,82 @@
 # Changelog
 
+## 2026.08.02.1
+
+Real fix for the three remaining open latent bugs tracked in the LOCAL
+`jscad-cad-latent-bugs` issue-lifecycle model (never a swamp.club Lab issue) —
+B3 (MEDIUM), B4 (LOW), and B5 (LOW) — superseding the "still open" wording
+recorded against them in the 2026.08.01.1 section below (which stays as
+historical record). All three fixes live in the same trust-boundary Domain
+Service (`extensions/models/jscad/script_evaluator.ts`) that B1/B2 hardened;
+`extensions/models/jscad_cad.ts` and `extensions/models/jscad/types.ts` are
+otherwise unchanged (types.ts's own `Geometry.of([])` message is reused
+verbatim, not duplicated logic).
+
+- **B3 (MEDIUM) — trailing JSON.parse corrupted by user console.log output,
+  fixed.** The parent now extracts only the LAST non-empty line of the
+  subprocess's stdout and parses only that line for the `{objectCount}` metadata
+  (throwing a clear "no object-count metadata" error if no line parses); the
+  generated eval script forces `Deno.exit(0)` immediately after its own meta
+  `console.log`, guaranteeing that line is the final one even against
+  user-scheduled async output. A CadScript that itself calls `console.log()`
+  ahead of returning geometry no longer corrupts the parse.
+- **B4 (LOW) — silent objectCount 0 on an empty geometry array, fixed.** The
+  generated eval script now guards an explicit `main() => []` result with
+  `if (shapes.length === 0) { ... Deno.exit(1); }`, surfacing the exact same
+  "Geometry must contain at least one shape" message that `types.ts`'s own
+  `Geometry.of([])` already throws (that guard is simply never reached on the
+  subprocess path — it still isn't; the new guard duplicates its message, not
+  its code).
+- **B5 (LOW) — unbounded in-memory output, fixed.** A new module constant
+  `MAX_OUTPUT_BYTES` (64 MiB default) is checked in the generated eval script
+  BEFORE the binary/text output is allocated (binary: sum of `view.byteLength`;
+  text: sum of `p.length`) — the cap rejects with a clear error, it never
+  truncates. `evaluateAndSerialize` gained an optional 5th positional
+  `maxOutputBytes` parameter (mirrors the existing `timeoutMs` precedent: an
+  internal module-constant default, not a user-facing arg); the parent adds a
+  belt-and-suspenders `Deno.statSync(outputPath).size` check before
+  `readFileSync`, for defense-in-depth against a subprocess that wrote past the
+  cap despite the guard.
+- **N3 (accepted-residual, no code change).** The `globalThis["Func"+"tion"]`
+  scanner-evasion trick that resolves the dynamic-dispatch constructor stays
+  exactly as-is: it is the by-design execution mechanism for user CadScript
+  `main()` (arbitrary-by-design — removing it removes the product), its blast
+  radius is already contained by B1's scoped `--allow-read`/`--allow-write` and
+  B2's `AbortSignal.timeout`, and the one tempting hardening (shadowing
+  `Deno`/`globalThis` inside the user-code Function body) is rejected because it
+  would flip the frozen B1 live-negative pin from a `PermissionDenied` to a
+  `TypeError` for only marginal gain over the existing OS-level read scoping.
+  Re-characterized (comment-only) in `jscad_cad_adversarial_test.ts`'s suite
+  header and N3 pin section; the two N3 assertions and the underlying
+  `"Func" + "tion"` / `"${pkg}"` source stay byte-identical.
+- New tests: `jscad_cad_adversarial_test.ts`'s B3/B4/B5 pins flip from
+  characterizing-the-bug to characterizing-the-fix (B3: asserts success with the
+  correct `objectCount` instead of a `SyntaxError`; B4: asserts the generated
+  script now contains the empty-array guard instead of a silent
+  `objectCount: 0`; B5: asserts the generated script now embeds
+  `MAX_OUTPUT_BYTES` instead of asserting its absence) plus a new B5
+  parent-`statSync`-cap unit test. `script_evaluator_test.ts` (the SOLE live e2e
+  suite) gains three new SYNTHETIC live cases proving all three fixes against a
+  real subprocess, with no oversized fixtures: a B3 positive (`console.log()`
+  then render succeeds), a B4 negative (`main() => []` is rejected with "at
+  least one shape"), and a B5 negative (a real small render against a tiny
+  `maxOutputBytes` cap is rejected by the subprocess guard). The frozen
+  argv/contract/N1/N2/B1/B2 pins across all five suites stay
+  byte-identical/green — no argv shape change, no public `run`-method schema
+  change.
+- `quality.yaml`'s ratchet stays **UNSCORABLE** baseline-0, honestly: the
+  scorer's static import-specifier scanner still hard-errors on
+  script_evaluator.ts's runtime-interpolated
+  `import * as serializer from "${pkg}";` template literal — a separate
+  swamp-PRODUCT bug (Lab #1490 / `workspace-ratchet-scorer-blockers`), left
+  intentionally intact per this fix's scope. The ratchet label is updated to
+  drop the stale "N3 = root cause of open B1" framing (B1 is fixed; N3 is now an
+  accepted-residual) while keeping the UNSCORABLE cause and all five suites
+  `present`.
+- `jscad_cad.ts`'s `model.version` and `manifest.yaml`'s `version` both bump to
+  `2026.08.02.1`; a new identity `upgrades[]` entry is added (this model had
+  none before) since no `globalArguments`/schema changed.
+
 ## 2026.08.01.1
 
 Real fix for two HIGH latent bugs tracked in the LOCAL `jscad-cad-latent-bugs`
