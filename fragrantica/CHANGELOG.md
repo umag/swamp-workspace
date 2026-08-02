@@ -1,5 +1,92 @@
 # Changelog
 
+## 2026.08.02.1
+
+Real-fixes the 9 remaining latent bugs (LB4–LB12) pinned during the wave-3
+quality backfill (tracked in the local `fragrantica-latent-bugs`
+@magistr/issue-lifecycle model — not filed to the swamp.club Lab, per
+CLAUDE.md's Anti-Bypass rule). LB1–LB3 (closed in `2026.07.31.1`) are untouched
+and stay green.
+
+Adds three optional, code-defaulted global args — `timeoutMs` (default 15000),
+`maxNotes` (default 20), `imageBaseUrl` (default `https://fimgs.net`) — so every
+existing caller stays byte-identical unless it opts in to an override. No
+resource-schema change.
+
+**MEDIUM:**
+
+- **LB4, redirect-follow bypasses host intent, closed** — `fetchPage`'s
+  `fetch()` now passes `redirect: "manual"` and follows redirects itself in a
+  loop bounded to 5 hops, re-validating each `Location` target against the host
+  allowlist (`assertHostAllowed`) before ever fetching it. An
+  opaque/locationless redirect throws instead of being silently followed.
+- **LB5, second-order SSRF via DuckDuckGo poisoning, closed** —
+  `resolveNoteUrl`'s and `list-by-designer`'s DuckDuckGo-resolved hit is now
+  host-allowlisted before use, reusing the same `assertHostAllowed` guard as
+  LB1/LB4. The stale "#4/#5 deferred" comments are removed throughout.
+- **LB6, unbounded note fan-out, closed** — `find-by-notes` now caps `notes[]`
+  at a `maxNotes` global arg (default 20), throwing before any fetch when
+  exceeded.
+- **LB7, no fetch timeout, closed** — `fetchPage` and `duckDuckGo` now run under
+  a shared `withTimeout` helper: one `AbortController` + `setTimeout` per call
+  (spanning every redirect hop for `fetchPage`), `clearTimeout` always in
+  `finally`. Governed by the new `timeoutMs` global arg (default 15000ms).
+- **LB8, duplicate-note double-count, closed** — `find-by-notes` now dedups by
+  the RESOLVED note URL (a repeated note is fetched at most once) and computes
+  its `mode=all` threshold from the distinct note count, not
+  `args.notes.length`.
+
+**LOW:**
+
+- **LB9, instanceSlug resource-name collision, closed** — `instanceSlug` now
+  appends a deterministic 8-hex-char FNV-1a hash of the RAW (pre-slugify) input,
+  so distinct inputs that used to collapse to the same lossy slug (e.g. `"A/B"`
+  vs `"A B"`) get distinct `writeResource` instance names. Injective and
+  deterministic, not merely idempotent — the property test was rewritten
+  accordingly.
+- **LB10, unclamped accord strength, closed (with an accepted residual)** —
+  `parseAccords` now clamps strength to `[0, 100]`. The false-positive selector
+  match (matching ANY colored `width:` div, not just real accord-bar markup) is
+  a SEPARATE, accepted residual — it isn't separable from synthetic markup
+  without breaking the byte-frozen `perfume.html` accords contract pin, so it
+  stays pinned as a documented, un-fixed risk.
+- **LB11, hardcoded fimgs.net thumbnail, closed** — `refFromPerfumeUrl` /
+  `collectPerfumeRefs` / `parsePerfume` now thread an optional `imageBase`
+  parameter (default `https://fimgs.net`, driven by the new `imageBaseUrl`
+  global arg) through to the thumbnail URL. The default stays byte-identical
+  everywhere the override isn't set.
+- **LB12, unsanitized stored values, accepted by decision (not fixed)** —
+  `parsePerfume` still stores parsed text (brand/notes/description) VERBATIM.
+  This is now documented as an intentional lossless-storage contract (see
+  `parsePerfume`'s doc comment in `fragrantica.ts`): sanitizing at storage time
+  would corrupt legitimate brand/note names, and this model never renders its
+  stored data — encoding is a render-time responsibility for whichever
+  downstream consumer displays it.
+
+Model `version` and `manifest.yaml` bumped `2026.07.31.1` -> `2026.08.02.1` (in
+sync), with an `upgrades` entry (`upgradeAttributes: (old) => old` — no
+resource-schema change).
+
+Test flips: `fragrantica_adversarial_test.ts` — 9 pins flipped from
+pinned-broken to pinned-fixed (LB4/LB5/LB6/LB7/LB8/LB9/LB10/LB11) plus 6 new
+tests (2 non-vacuous LB4 redirect tests, 1 symmetric LB5 list-by-designer test,
+2 LB6 boundary/override tests, 1 LB11 unchanged-default test); LB10's
+false-positive-selector pin and LB12's verbatim-storage pin stay as documented,
+un-fixed/accepted residuals (retitled, same assertions).
+`fragrantica_contract_test.ts` — the `accord-over-100.html` pin flips 120
+-> 100. `fragrantica_coverage_test.ts` — the two `instanceSlug` tests updated
+for the new hash-suffixed shape. `fragrantica_methods_test.ts` — the
+`expectedSlug` mirror updated to match `instanceSlug`'s new algorithm (the 4
+tests that call it need no other changes). `fragrantica_property_test.ts` —
+property (a) adds a `<=100` clamp assertion; property (d) rewritten from
+"idempotent" to "deterministic + injective". `fragrantica_test.ts` and all
+LB1–LB3 pins stay unchanged and green.
+
+`quality.yaml`: re-measured against the real-fix; ratchet stays
+`rubricVersion: 3` / `baselinePercentage: 100` / Grade A. The stale
+BYTE-FROZEN/no-bump/deferred header comment is rewritten to reflect this
+real-fix change.
+
 ## 2026.07.31.1
 
 Fixes the three HIGH latent bugs pinned during the wave-3 quality backfill

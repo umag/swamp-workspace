@@ -4,10 +4,13 @@
  * so deleting any one of these guards turns a test red (STANDARD.md's
  * coverage role — a behavioral regression guard, not a numeric percentage).
  *
- * fragrantica.ts is UNMODIFIED; every test PINS existing behavior. Private
- * helpers (normalizePerfumeUrl, resolveNoteUrl, collectPerfumeRefs, ...) are
- * swept THROUGH model.methods.<m>.execute() against a stubbed fetch — never
- * by exporting them (byte-freeze forbids new exports).
+ * fragrantica.ts's LB4–LB12 real-fix changed `instanceSlug` (appends a
+ * deterministic 8-hex FNV-1a hash of the raw input, fragrantica-latent-bugs
+ * #9) — the two instanceSlug tests below were updated to match; every other
+ * test PINS unaffected, already-shipped behavior. Private helpers
+ * (normalizePerfumeUrl, resolveNoteUrl, collectPerfumeRefs, ...) are swept
+ * THROUGH model.methods.<m>.execute() against a stubbed fetch — never by
+ * exporting them (byte-freeze forbids new exports).
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./fragrantica.ts";
@@ -607,16 +610,23 @@ Deno.test("find-by-notes: results are sorted by matchedNotes desc, then name asc
 // instanceSlug — symbol-only input + 80-char truncation (via search)
 // ---------------------------------------------------------------------------
 
-Deno.test("instanceSlug: an all-symbol query collapses to the literal fallback 'result'", async () => {
+Deno.test("instanceSlug: an all-symbol query collapses to the 'result' base, disambiguated by an appended hash", async () => {
+  // fragrantica-latent-bugs #9, closed: instanceSlug now always appends
+  // "-<8hex FNV-1a of the raw input>", so the all-symbol fallback base
+  // ("result") is followed by a hash suffix rather than being the literal
+  // written name.
   const { ctx, written } = makeCtx();
   await withFetchStub([duckDuckGoRoute(() => ddgPage([]))], async () => {
     await run("search", { query: "!!!///???" }, ctx);
   });
   const res = written.find((w) => w.spec === "search")!;
-  assertEquals(res.name, "result");
+  assert(
+    /^result-[0-9a-f]{8}$/.test(res.name),
+    `expected "result-<8hex>", got "${res.name}"`,
+  );
 });
 
-Deno.test("instanceSlug: output is truncated to 80 characters", async () => {
+Deno.test("instanceSlug: output is truncated to 80 characters total (base + '-' + 8-hex hash)", async () => {
   const longQuery = "word ".repeat(40); // far more than 80 chars once slugified
   const { ctx, written } = makeCtx();
   await withFetchStub([duckDuckGoRoute(() => ddgPage([]))], async () => {
@@ -627,4 +637,5 @@ Deno.test("instanceSlug: output is truncated to 80 characters", async () => {
     res.name.length <= 80,
     `slug must be <=80 chars, got ${res.name.length}`,
   );
+  assert(/-[0-9a-f]{8}$/.test(res.name), "slug ends with the 8-hex hash");
 });

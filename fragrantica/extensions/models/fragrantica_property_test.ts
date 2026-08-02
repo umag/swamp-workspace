@@ -1,10 +1,13 @@
 /**
  * Property-based tests (fast-check) for @magistr/fragrantica.
  *
- * fragrantica.ts is UNMODIFIED — every property here observes already-shipped
- * behavior, either directly on the four exported pures or (for private
- * helpers) by driving `model.methods.<m>.execute()` against a stubbed fetch
- * and reading back the written resource.
+ * fragrantica.ts's LB4–LB12 real-fix touched `parseAccords` (clamps strength
+ * to 100, fragrantica-latent-bugs #10) and `instanceSlug` (appends a
+ * deterministic hash, fragrantica-latent-bugs #9) — properties (a) and (d)
+ * below were updated accordingly; everything else observes unaffected,
+ * already-shipped behavior, either directly on the four exported pures or
+ * (for private helpers) by driving `model.methods.<m>.execute()` against a
+ * stubbed fetch and reading back the written resource.
  *
  * Arbitraries are RESTRICTED to a safe charset (letters/digits/spaces/hyphens)
  * throughout, kept even though slugToText/refFromPerfumeUrl are now total
@@ -21,16 +24,19 @@
  *     that guard.
  *
  * Properties:
- *  (a) parseAccords — strength is always a non-negative integer, every name
- *      is 1..40 chars, results are deduped by name, and the list never
- *      exceeds the 30-item cap.
+ *  (a) parseAccords — strength is always a non-negative integer clamped to
+ *      <=100, every name is 1..40 chars, results are deduped by name, and
+ *      the list never exceeds the 30-item cap (fragrantica-latent-bugs #10,
+ *      closed).
  *  (b) parseNotes — always returns exactly {top,middle,base,general} string
  *      arrays and never throws over safe-charset pyramid HTML.
  *  (c) refFromPerfumeUrl — total over safe-charset (non-%) slugs: name is a
  *      string, id matches the generated numeric suffix, thumbnail is
  *      id-derived.
  *  (d) instanceSlug (private, observed via search's written resource name) —
- *      idempotent: slugifying an already-slug-shaped string is a no-op.
+ *      deterministic (same raw input always yields the same slug) and
+ *      injective (two different raw inputs, even ones that collapse to the
+ *      same lossy base, never collide) — fragrantica-latent-bugs #9, closed.
  *  (e) get-perfume's written payload always matches the PerfumeDetail shape.
  *  (f) collectPerfumeRefs (private, observed via list-by-designer) — output
  *      length never exceeds the 500-item cap and every URL is unique.
@@ -162,7 +168,7 @@ function accordsHtml(bars: Array<{ name: string; pct: number }>): string {
   return `<!doctype html><html><body>${body}</body></html>`;
 }
 
-Deno.test("property: parseAccords — strength is always a non-negative integer, names 1..40 chars, deduped, capped at 30", () => {
+Deno.test("property: parseAccords — strength is always a non-negative integer <=100, names 1..40 chars, deduped, capped at 30", () => {
   fc.assert(
     fc.property(
       fc.array(arbAccordBar, { minLength: 0, maxLength: 40 }),
@@ -179,6 +185,12 @@ Deno.test("property: parseAccords — strength is always a non-negative integer,
           assert(
             a.strength >= 0,
             "strength must be non-negative (Math.round of a >=0 pct)",
+          );
+          assert(
+            a.strength <= 100,
+            // fragrantica-latent-bugs #10, closed: clamped even when the
+            // generated pct (up to 500) exceeds 100.
+            `strength ${a.strength} must be clamped to <=100`,
           );
           assert(a.name.length >= 1 && a.name.length <= 40);
           assert(
@@ -316,25 +328,31 @@ Deno.test("property: refFromPerfumeUrl on a non-perfume-shaped, digit-free path 
 });
 
 // ---------------------------------------------------------------------------
-// (d) instanceSlug idempotency — observed via search's written resource name
+// (d) instanceSlug — deterministic + injective, observed via search's
+// written resource name (fragrantica-latent-bugs #9, closed)
 // ---------------------------------------------------------------------------
 
-Deno.test("property: instanceSlug is idempotent — re-slugifying an already-slug-shaped query is a no-op", async () => {
+const arbSlugInput = fc.stringMatching(/^[A-Za-z0-9 /_.-]{1,40}$/);
+
+async function writtenSearchSlug(query: string): Promise<string> {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([emptyDdg], async () => {
+    await run("search", { query }, ctx);
+  });
+  return written.find((w) => w.spec === "search")!.name;
+}
+
+Deno.test("property: instanceSlug is deterministic (same input -> same slug every time) and injective (two DIFFERENT inputs never collide)", async () => {
   await fc.assert(
     fc.asyncProperty(
-      fc.stringMatching(/^[A-Za-z0-9]{1,20}(-[A-Za-z0-9]{1,20}){0,4}$/),
-      async (alreadySlug) => {
-        const { ctx: ctx1, written: w1 } = makeCtx();
-        await withFetchStub([emptyDdg], async () => {
-          await run("search", { query: alreadySlug }, ctx1);
-        });
-        const { ctx: ctx2, written: w2 } = makeCtx();
-        const onceMore = w1.find((w) => w.spec === "search")!.name;
-        await withFetchStub([emptyDdg], async () => {
-          await run("search", { query: onceMore }, ctx2);
-        });
-        const twice = w2.find((w) => w.spec === "search")!.name;
-        return onceMore === twice;
+      arbSlugInput,
+      arbSlugInput,
+      async (a, b) => {
+        fc.pre(a !== b);
+        const slugA1 = await writtenSearchSlug(a);
+        const slugA2 = await writtenSearchSlug(a);
+        const slugB = await writtenSearchSlug(b);
+        return slugA1 === slugA2 && slugA1 !== slugB;
       },
     ),
     FC_RUNS,

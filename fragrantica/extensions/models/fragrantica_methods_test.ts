@@ -6,9 +6,12 @@
  * a MULTI-ROUTE stubbed `globalThis.fetch` (DuckDuckGo POST vs Fragrantica
  * page GET, routed separately) and a fake capturing context.
  *
- * fragrantica.ts is UNMODIFIED by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * Every test here is a characterization test that PINS the model's current
+ * behavior. fragrantica.ts's LB4–LB12 real-fix changed `instanceSlug` to
+ * append a deterministic 8-hex FNV-1a hash of the raw input
+ * (fragrantica-latent-bugs #9) — `expectedSlug` below mirrors the new
+ * algorithm, so the 4 name pins that call it need no other changes.
+ * Everything else in this suite is unaffected, already-shipped behavior.
  *
  * All HTML bodies are inline SYNTHETIC strings (never captured from a live
  * fragrantica.com or DuckDuckGo response) — kept inline rather than reading
@@ -68,15 +71,29 @@ function run(name: string, args: Record<string, unknown>, ctx: unknown) {
   return method.execute(method.arguments.parse(args), ctx);
 }
 
-/** Same regex fragrantica.ts's private `instanceSlug` uses — duplicated here
- * (not imported; the helper is private/byte-frozen) purely to derive the
- * EXPECTED written-resource-name pin from a known input. */
+/** Mirror of fragrantica.ts's private `fnv1aHex` (fragrantica-latent-bugs #9,
+ * closed) — duplicated here (not imported; the helper is private) purely to
+ * derive the EXPECTED written-resource-name pin from a known input. */
+function fnv1aHex(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Mirror of fragrantica.ts's private `instanceSlug` — duplicated here (not
+ * imported; the helper is private) purely to derive the EXPECTED
+ * written-resource-name pin from a known input. */
 function expectedSlug(input: string): string {
-  return input
+  const hash = fnv1aHex(input);
+  const base = input
     .replace(/^https?:\/\//, "")
     .replace(/[^a-zA-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "result";
+    .slice(0, 80 - 1 - hash.length) || "result";
+  return `${base}-${hash}`;
 }
 
 type Route = (

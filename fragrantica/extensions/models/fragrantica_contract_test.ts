@@ -8,9 +8,13 @@
  * would also be visible in a diff. It also runs a mechanical secret/host
  * scan over the whole fixture corpus.
  *
- * fragrantica.ts is UNMODIFIED by this change — every test here PINS
- * already-shipped, current behavior. All fixtures are pure hand-authored
- * synthetic data — see fixtures/PROVENANCE.md. No network call is made.
+ * fragrantica.ts's LB4–LB12 real-fix changed `parseAccords` (clamps strength
+ * to 100, fragrantica-latent-bugs #10) and gave `refFromPerfumeUrl` a
+ * defaulted 3rd `imageBase` param (fragrantica-latent-bugs #11) — every
+ * 2-arg call below stays byte-identical, so every pin here except the
+ * accord-over-100 one (flipped 120 -> 100) is unaffected. All fixtures are
+ * pure hand-authored synthetic data — see fixtures/PROVENANCE.md. No network
+ * call is made.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { DOMParser } from "npm:linkedom@0.16.11";
@@ -185,9 +189,9 @@ Deno.test("contract: malformed/bad-percent.html — refFromPerfumeUrl now falls 
 // malformed/accord-over-100.html — parseAccords never clamps strength
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: malformed/accord-over-100.html — parseAccords pins the UNCLAMPED strength (120, not capped at 100)", async () => {
+Deno.test("contract: malformed/accord-over-100.html — parseAccords now CLAMPS the strength to 100 (fragrantica-latent-bugs #10, closed)", async () => {
   const d = doc(await readFixture("malformed/accord-over-100.html"));
-  assertEquals(parseAccords(d), [{ name: "overdriven", strength: 120 }]);
+  assertEquals(parseAccords(d), [{ name: "overdriven", strength: 100 }]);
 });
 
 // ---------------------------------------------------------------------------
