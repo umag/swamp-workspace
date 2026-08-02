@@ -1,11 +1,68 @@
 # Changelog
 
-## Unreleased
+## 2026.08.02.1
+
+Real-fix wave for the eight GP-1..GP-8 bugs pinned by the prior release's
+adversarial suite (same wave as sibling extensions `seadex` and
+`victoriametrics`, both already at `2026.08.02.1`). Model version bumped
+`2026.07.16.2` → `2026.08.02.1` with an `upgrades[]` entry; resource schema
+unchanged (`upgradeAttributes: (old) => old`).
+
+- **GP-1 fixed** (MEDIUM) — `start()` now reads the existing `current` resource
+  before writing. If a plan already exists it throws (naming its
+  `state`/`planVersion`) instead of silently wiping it — pass the new
+  `force: true` argument to intentionally discard an existing plan and start
+  fresh.
+- **GP-2 fixed** (MEDIUM) — `adapt()` now resets the tripwire matching
+  `triggeredBy` back to `"dormant"` when it was `"fired"`, so a stale
+  re-`trigger()` after `adapt()` → `monitor()` correctly rejects with "No fired
+  tripwire" until a fresh `evaluate()` fires it again.
+- **GP-3 fixed** (MEDIUM) — `commitmentSatisfiesSixProperties`'s `byDate` check
+  no longer relies on `Date.parse`'s engine-defined leniency. It now requires a
+  strict ISO-8601 calendar date or date-time (`z.iso.date()` /
+  `z.iso.datetime()`); `"2026"` and `"next quarter"` are both rejected,
+  `"2026-09-01"` still accepted.
+- **GP-4 fixed** (LOW) — `evaluate()` now rejects a mismatched-layer payload
+  (e.g. `timeToCruxWeeks` for a signpost with no matching ceiling) instead of
+  silently dropping it, naming the offending field and the layer it needs.
+- **GP-5 fixed** (LOW) — `commitGateReport`, `governabilityScore`, and
+  `auditDiagnosticQuestions.layer1Visible` now share one `hasLiveAssumption`
+  predicate that excludes `state:"broken"` assumptions. A plan whose every
+  assumption is broken now fails the commit gate and scores Layer-1 absent; a
+  plan with at least one non-broken assumption still scores it present.
+- **GP-6 fixed** (LOW) — `tripwire.pullbackRung` is now bounds-checked against a
+  _non-empty_ `pullbackLadder`: `add_tripwire` rejects a rung past the current
+  ladder length, and `set_pullback_ladder` rejects a ladder too short for an
+  already-referenced rung. A rung recorded before any ladder is set (deferred)
+  and `pullbackRung:0` against an empty ladder both stay legal — required by the
+  frozen contract fixture.
+- **GP-7 fixed** (LOW) — every `add_*` method (`add_assumption`,
+  `add_commitment`, `add_allocation`, `add_ceiling`, `add_tripwire`) is now
+  idempotent: a structurally-identical repeat call is a no-op (still returns a
+  handle); a call differing in even one field still appends normally.
+- **GP-8 fixed** (LOW) — `computeTriggerPoint` and `computeMaxTolerableLoss` now
+  throw on non-finite (`NaN`/`Infinity`) inputs instead of propagating them
+  through the arithmetic. The method-arguments zod boundary already rejected
+  both for plain `z.number()` fields; these two guards close the gap for direct
+  calls to the exported pure helpers.
+- Rewrote the eight GP-* pins in `good_planning_adversarial_test.ts` from
+  "asserts the buggy behavior" to "asserts the fixed behavior", and added
+  idempotence (GP-7), `force:true` (GP-1), strict-date (GP-3), and ladder-bounds
+  (GP-6) positive-path tests alongside them. The frozen contract suite
+  `good_planning.test.ts` and the `methods`/`coverage`/ `property` suites are
+  unchanged (traced call-by-call; every exercised path uses matching-layer
+  payloads, distinct `add_*` args, finite numbers, and a fresh-context `start`).
+- `quality.yaml`: re-stamped from a live `swamp extension quality` run; dropped
+  the prior release's "byte-frozen / no behavior change" wording now that this
+  release ships real fixes. All five suites stay `present`; ratchet stays `100`
+  / `"Grade A"`.
+
+## Unreleased (2026.07.16.2 — superseded by 2026.08.02.1 above)
 
 Test + docs backfill to the STANDARD.md five-suite quality bar (wave-4 batch-4b
 of the extension-quality backfill program, `ext-quality-test-backfill`). No
-behavior change — `extensions/models/good_planning.ts` and `manifest.yaml` are
-byte-frozen; the model `version` stays `2026.07.16.2`.
+behavior change — `extensions/models/good_planning.ts` and `manifest.yaml` were
+byte-frozen at the time; the model `version` stayed `2026.07.16.2`.
 
 - Kept `extensions/models/good_planning.test.ts` (25 tests) verbatim as the
   `contract-fixture` suite — its fake-context harness (in-memory store +
@@ -21,9 +78,10 @@ byte-frozen; the model `version` stays `2026.07.16.2`.
   tests) — zod-boundary rejections (empty required strings, negative numbers)
   and admissions (no upper bound on budgets/string length), injection-shaped
   strings stored inertly (this model has no fetch/shell/HTML sink to inject
-  into), and corrupted-stored-state `ZodError`s on read. Also PINS eight found
-  bugs (characterized, NOT fixed — tracked in the LOCAL
-  `good-planning-latent-bugs` issue-lifecycle model, never filed to the Lab):
+  into), and corrupted-stored-state `ZodError`s on read. Also pinned eight found
+  bugs (characterized, not yet fixed at the time — tracked in the LOCAL
+  `good-planning-latent-bugs` issue-lifecycle model, never filed to the Lab; see
+  the `2026.08.02.1` entry above for the real fixes):
   1. **GP-1** (MEDIUM) — `start()` is unguarded and destructive: re-invoking it
      on an existing committed/monitoring plan silently wipes every layer and all
      history, resetting `planVersion` to 1.
