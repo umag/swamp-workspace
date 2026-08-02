@@ -1,5 +1,70 @@
 # Changelog
 
+## 2026.08.02.1
+
+Real-fixes the remaining 5 latent bugs tracked in the local
+`bandcamp-latent-bugs` issue-lifecycle model (bugs #3-#7 of the 7 characterized
+in the wave-3 test backfill; #1 and #2 already shipped in `2026.07.31.1`; NEVER
+filed to the swamp.club Lab -- see CLAUDE.md's anti-bypass rule). After this
+release all 7 tracked findings are resolved. No resource-schema or
+`globalArguments` change -- model identity is preserved via a no-op `upgrades[]`
+entry.
+
+- **TralbumData `//`-strip corruption (MEDIUM, bandcamp-latent-bugs #3)**:
+  `parseAlbumPage` now tries a direct `JSON.parse` of the TralbumData blob FIRST
+  (real Bandcamp TralbumData is valid JSON). Only on failure does a cleanup
+  fallback run, and that fallback now PROTECTS any `scheme://` value
+  (`.replace(/(^|[^:])\/\/.*$/gm, "$1")`) instead of unconditionally stripping
+  from the first `//` to end-of-line -- the old cleanup truncated the JSON at
+  the first embedded `https://` value, silently losing every track. The
+  trailing-comma cleanups are unchanged and still run on the fallback path.
+- **Silent all-clear on parse failure (MEDIUM, bandcamp-latent-bugs #4)**:
+  `parseAlbumPage` and `parseArtistPage` now accept an optional
+  `warn?: (msg: string) => void` callback, invoked from each of the three empty
+  `catch` blocks (album JSON-LD, album TralbumData, artist JSON-LD) on a GENUINE
+  parse failure (script present, parse threw) -- never when the script is simply
+  absent. The three `get-*` methods pass `(m) => context.logger?.warning?.(m)`.
+  The message is a fixed, generic string naming only the error's `.name` (e.g.
+  `SyntaxError`) -- never the raw blob content or any credential.
+- **No fetch timeout/backoff (MEDIUM, bandcamp-latent-bugs #5)**: added a
+  `timedFetch` helper (`AbortController` + `setTimeout(..., 30_000)`,
+  `clearTimeout` in a `finally` so it fires on success, on a thrown error, AND
+  on every redirect hop) and routed `fetchPage` (per hop), `getToken`, and
+  `bcPost` through it. A hung/slow upstream can no longer block a call -- and
+  the model's lock -- indefinitely.
+- **`instanceName` 60-char truncation collision (LOW, bandcamp-latent-bugs
+  #6)**: `get-artist`/`get-album`/`get-track` now derive the written resource's
+  instance name via a new `urlResourceName` helper: a 47-char sanitized slug
+  plus a 12-hex-char SHA-256 suffix of the FULL source URL (still <= 60 chars
+  total). Two different URLs sharing the same first 47 sanitized characters no
+  longer collide on the identical resource name -- each gets its own
+  collision-resistant suffix. The same URL always hashes to the same suffix, so
+  re-running a `get-*` method against the same URL still idempotently overwrites
+  its own prior resource.
+- **`slice()` surrogate split (LOW, bandcamp-latent-bugs #7)**: `about` and
+  `bio` now truncate by CODE POINT (`Array.from(x).slice(0, 500).join("")`)
+  instead of by UTF-16 code unit, so an astral character (e.g. an emoji)
+  straddling the boundary is kept or dropped WHOLE, never split into a lone
+  unpaired surrogate. Note the invariant changes shape: it is now "<= 500 CODE
+  POINTS", not "<= 500 UTF-16 code units" -- for astral input the returned
+  string's `.length` (code units) can exceed 500.
+- No method contract or wire body changes; no resource-schema or
+  `globalArguments` change. Added a no-op `upgrades[]` entry
+  (`fromVersion: "2026.07.31.1"`, `toVersion: "2026.08.02.1"`,
+  `upgradeAttributes: (old) => old`) documenting the bump.
+- Tests: flipped all 5 remaining `bandcamp-latent-bugs` pins across
+  `bandcamp_test.ts` (contract-fixture, #3's and #6's concrete VALUE pins) and
+  `bandcamp_adversarial_test.ts` (#3 x2, #4 x2, #5 x2, #6, #7 x2) to assert the
+  FIXED behavior; `bandcamp_adversarial_test.ts`'s `makeCtx` now captures logger
+  calls (mirroring `bandcamp_methods_test.ts`'s pattern). Added: a hung-upstream
+  `FakeTime`-driven abort test for #5; a JSON-LD parse-failure leak test and an
+  artist-page parse-failure warning test for #4; an astral-heavy property test
+  for #7 (additive, existing ASCII-only properties untouched). `quality.yaml`'s
+  header comment and this file's/ the adversarial suite's/the methods
+  suite's/`fixtures/PROVENANCE.md`'s "byte-frozen"/"unmodified"/"deferred"
+  wording is updated to reflect that all 7 bugs are now fixed; fixture FILES
+  themselves stay byte-identical.
+
 ## 2026.07.31.1
 
 Fixes the CRITICAL SSRF and HIGH cross-instance OAuth token-cache bleed tracked

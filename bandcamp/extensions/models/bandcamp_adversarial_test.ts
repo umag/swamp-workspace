@@ -3,25 +3,35 @@
  * HTML, non-200 vs wrong-content-type responses, control bytes, and a
  * mechanical fixtures-secret-scan over bandcamp/fixtures/*.
  *
- * As of 2026.07.31.1, bandcamp.ts is FIXED for two of the 7 latent bugs
- * tracked in the LOCAL `bandcamp-latent-bugs` issue-lifecycle model (NEVER
- * filed to the swamp.club Lab -- see CLAUDE.md's anti-bypass rule):
- *   #1 SSRF via url arg (CRITICAL) -- NOW FIXED: fetchPage enforces a
+ * As of 2026.08.02.1, bandcamp.ts is FIXED for all 7 latent bugs tracked in
+ * the LOCAL `bandcamp-latent-bugs` issue-lifecycle model (NEVER filed to the
+ * swamp.club Lab -- see CLAUDE.md's anti-bypass rule):
+ *   #1 SSRF via url arg (CRITICAL) -- fetchPage enforces a
  *   bandcamp.com/*.bandcamp.com host allowlist before every fetch, including
  *   re-validation on every redirect hop.
- *   #2 cross-instance token-cache bleed (HIGH) -- NOW FIXED: the token
- *   cache is keyed on credential identity, so distinct clientId/clientSecret
- *   pairs never share a cached bearer.
- * The remaining 5 are still characterized as failing-would-be-red-if-
- * "fixed" pins, deferred/accepted per the fix plan: #3 TralbumData //-strip
- * corruption (MEDIUM), #4 silent all-clear on parse failure (MEDIUM), #5 no
- * fetch timeout/backoff (MEDIUM), #6 instanceName 60-char truncation
- * collision (LOW), #7 slice() surrogate split (LOW).
+ *   #2 cross-instance token-cache bleed (HIGH) -- the token cache is keyed
+ *   on credential identity, so distinct clientId/clientSecret pairs never
+ *   share a cached bearer.
+ *   #3 TralbumData `//`-strip corruption (MEDIUM) -- a direct JSON.parse is
+ *   tried FIRST (real TralbumData is valid JSON); only on failure does a
+ *   `scheme://`-protected cleanup fallback run, so tracks survive.
+ *   #4 silent all-clear on parse failure (MEDIUM) -- a genuine JSON-LD or
+ *   TralbumData parse failure now calls `context.logger.warning` with a
+ *   generic message (never the raw blob or a credential).
+ *   #5 no fetch timeout/backoff (MEDIUM) -- every fetch site routes through
+ *   a `timedFetch` helper that attaches a bounded `AbortSignal` and clears
+ *   its timer in `finally`.
+ *   #6 instanceName 60-char truncation collision (LOW) -- the resource name
+ *   is now a 47-char slug plus a 12-hex SHA-256 suffix of the full URL, so
+ *   distinct URLs no longer clobber each other.
+ *   #7 slice() surrogate split (LOW) -- `about`/`bio` truncate by CODE POINT
+ *   (`Array.from(...).slice(0,500).join("")`), never splitting a surrogate
+ *   pair.
+ * See CHANGELOG.md's `## 2026.08.02.1` entry for the full per-bug writeup.
  *
  * Every get-artist/get-album/get-track fetch target in this file uses a
- * *.bandcamp.com host (the new allowlist rejects *.example.com); fixture
- * FILE content is untouched (fixtures are parsed data, never a fetch
- * target).
+ * *.bandcamp.com host (the allowlist rejects *.example.com); fixture FILE
+ * content is untouched (fixtures are parsed data, never a fetch target).
  *
  * IMPORTANT -- module-global token cache: Deno isolates module state PER
  * TEST FILE (verified empirically), so `tokenCache` starts empty at the top
@@ -30,6 +40,7 @@
  * -> cache -> reuse sequence without needing FakeTime.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { FakeTime } from "jsr:@std/testing@1/time";
 import { model } from "./bandcamp.ts";
 
 // ---------------------------------------------------------------------------
@@ -37,11 +48,14 @@ import { model } from "./bandcamp.ts";
 // ---------------------------------------------------------------------------
 
 type Written = { spec: string; name: string; payload: Record<string, unknown> };
+type LogCall = { level: "info" | "warning"; args: unknown[] };
 
 function makeCtx(globalArgs: Record<string, unknown> = {}) {
   const written: Written[] = [];
+  const logs: LogCall[] = [];
   return {
     written,
+    logs,
     ctx: {
       globalArgs,
       writeResource: (spec: string, name: string, payload: unknown) => {
@@ -52,7 +66,14 @@ function makeCtx(globalArgs: Record<string, unknown> = {}) {
         });
         return Promise.resolve({ spec, name });
       },
-      logger: { info: () => {}, warning: () => {} },
+      logger: {
+        info: (...args: unknown[]) => {
+          logs.push({ level: "info", args });
+        },
+        warning: (...args: unknown[]) => {
+          logs.push({ level: "warning", args });
+        },
+      },
     },
   };
 }
@@ -328,7 +349,7 @@ Deno.test("FIXED (bandcamp-latent-bugs #2, HIGH): a SECOND bandcamp instance wit
 // concrete VALUE is already pinned in the contract-fixture suite)
 // ===========================================================================
 
-Deno.test("pin (bandcamp-latent-bugs #3, MEDIUM): a TralbumData blob containing an https:// URL is truncated by the //-strip cleanup, losing ALL tracks silently", async () => {
+Deno.test("FIXED (bandcamp-latent-bugs #3, MEDIUM): a TralbumData blob containing an https:// URL is RECOVERED via the scheme-protected fallback strip -- the track survives", async () => {
   const { ctx, written } = makeCtx();
   const html = await readHtml("album_tralbum_dirty.html");
   await withResponse(html, 200, "text/html", async () => {
@@ -342,14 +363,17 @@ Deno.test("pin (bandcamp-latent-bugs #3, MEDIUM): a TralbumData blob containing 
     );
   });
   const res = written.find((w) => w.spec === "albumDetail")!;
-  // No throw anywhere in this path -- the JSON.parse failure is caught and
-  // swallowed; the caller gets a resource that LOOKS successful (all fields
-  // present, just empty) with no signal that TralbumData parsing failed.
-  assertEquals(res.payload.tracks, []);
-  assertEquals(res.payload.trackCount, 0);
+  // A direct JSON.parse of the raw TralbumData blob fails (trailing comma),
+  // so the scheme-protected fallback strip runs: it protects the embedded
+  // "https://" value (never treating it as a `//`-comment) while still
+  // cleaning up the genuine trailing comma, recovering the track.
+  assertEquals(res.payload.tracks, [
+    { position: 1, title: "Fixture Corrupt Track", duration: "3:00", url: "" },
+  ]);
+  assertEquals(res.payload.trackCount, 1);
 });
 
-Deno.test("pin (bandcamp-latent-bugs #3): the SAME //-corruption pin holds for get-track (shares parseAlbumPage)", async () => {
+Deno.test("FIXED (bandcamp-latent-bugs #3): the SAME recovery holds for get-track (shares parseAlbumPage)", async () => {
   const { ctx, written } = makeCtx();
   const html = await readHtml("album_tralbum_dirty.html");
   await withResponse(html, 200, "text/html", async () => {
@@ -363,15 +387,17 @@ Deno.test("pin (bandcamp-latent-bugs #3): the SAME //-corruption pin holds for g
     );
   });
   const res = written.find((w) => w.spec === "albumDetail")!;
-  assertEquals(res.payload.tracks, []);
+  assertEquals(res.payload.tracks, [
+    { position: 1, title: "Fixture Corrupt Track", duration: "3:00", url: "" },
+  ]);
 });
 
 // ===========================================================================
 // #4 Silent all-clear on parse failure -- MEDIUM
 // ===========================================================================
 
-Deno.test("pin (bandcamp-latent-bugs #4, MEDIUM): malformed JSON-LD (unbalanced braces) is swallowed; method resolves 'success' with empty ld-only fields, DOM fallback (if any) still wins for its own fields", async () => {
-  const { ctx, written } = makeCtx();
+Deno.test("FIXED (bandcamp-latent-bugs #4, MEDIUM): malformed JSON-LD (unbalanced braces) is caught AND warned -- method still resolves 'success' with empty ld-only fields, DOM fallback (if any) still wins for its own fields", async () => {
+  const { ctx, written, logs } = makeCtx();
   const html =
     `<html><head><script type="application/ld+json">{"name":"Fixture Truncated" not valid json {{{</script></head>` +
     `<body><h2 class="trackTitle">DOM Fallback Title</h2></body></html>`;
@@ -389,15 +415,20 @@ Deno.test("pin (bandcamp-latent-bugs #4, MEDIUM): malformed JSON-LD (unbalanced 
   });
   assertEquals(threw, undefined, "no throw despite malformed JSON-LD");
   const res = written.find((w) => w.spec === "albumDetail")!;
-  // title falls back to DOM (present) -- but `about`, which has NO DOM
-  // fallback for this fixture, silently resolves to "" with zero signal that
-  // JSON-LD parsing actually failed vs. was simply absent.
+  // title falls back to DOM (present) -- `about`, which has NO DOM fallback
+  // for this fixture, still resolves to "" (there is genuinely no other
+  // source), but the parse failure is no longer silent: a warning fires.
   assertEquals(res.payload.title, "DOM Fallback Title");
   assertEquals(res.payload.about, "");
+  const warnings = logs.filter((l) => l.level === "warning");
+  assertEquals(warnings.length, 1);
+  assertEquals(warnings[0].args, [
+    "bandcamp: album JSON-LD parse failed: SyntaxError",
+  ]);
 });
 
-Deno.test("pin (bandcamp-latent-bugs #4): control bytes inside the JSON-LD script also break JSON.parse silently, no throw", async () => {
-  const { ctx, written } = makeCtx();
+Deno.test("FIXED (bandcamp-latent-bugs #4): control bytes inside the JSON-LD script also break JSON.parse -- no throw, but a warning is now captured", async () => {
+  const { ctx, written, logs } = makeCtx();
   const html =
     `<html><head><script type="application/ld+json">{"name":"Fixture\x00Control\x07Bytes"}</script></head><body></body></html>`;
   let threw: unknown;
@@ -415,6 +446,65 @@ Deno.test("pin (bandcamp-latent-bugs #4): control bytes inside the JSON-LD scrip
   assertEquals(threw, undefined);
   const res = written.find((w) => w.spec === "albumDetail")!;
   assertEquals(res.payload.title, "");
+  const warnings = logs.filter((l) => l.level === "warning");
+  assertEquals(warnings.length, 1);
+  assertEquals(warnings[0].args, [
+    "bandcamp: album JSON-LD parse failed: SyntaxError",
+  ]);
+});
+
+Deno.test("FIXED (bandcamp-latent-bugs #4) LEAK test: a parse-failure warning's message never contains the raw blob's content, even when that blob carries secret-shaped or PII-shaped text", async () => {
+  // Satisfies bandcamp_methods_test.ts's pin charter ('no method calls the
+  // logger today ... a future change that starts logging must add its own
+  // leak test'): #4 is that future change, this is its leak test.
+  const { ctx, logs } = makeCtx();
+  const poisonedBlob =
+    'not-json-at-all client_secret="fixture-super-secret-token-should-never-leak" user@example.com {{{';
+  const html =
+    `<html><head><script type="application/ld+json">${poisonedBlob}</script></head><body></body></html>`;
+  await withResponse(html, 200, "text/html", async () => {
+    await run(
+      "get-album",
+      { url: "https://fixture.bandcamp.com/album/x" },
+      ctx,
+    );
+  });
+  const warnings = logs.filter((l) => l.level === "warning");
+  assertEquals(warnings.length, 1);
+  const message = String(warnings[0].args[0]);
+  assert(
+    !message.includes("fixture-super-secret-token-should-never-leak"),
+    "warning must never interpolate the raw blob content",
+  );
+  assert(!message.includes("user@example.com"));
+  assertEquals(
+    message,
+    "bandcamp: album JSON-LD parse failed: SyntaxError",
+    "the warning message is a fixed generic string, never the raw blob",
+  );
+});
+
+Deno.test("FIXED (bandcamp-latent-bugs #4): malformed JSON-LD on an ARTIST page is also caught AND warned (parseArtistPage's own catch, distinct from parseAlbumPage's)", async () => {
+  const { ctx, written, logs } = makeCtx();
+  const html =
+    `<html><head><script type="application/ld+json">{"name":"Fixture Artist" not valid json {{{</script></head>` +
+    `<body><p id="band-name-location"><span class="title">DOM Fallback Artist</span></p></body></html>`;
+  let threw: unknown;
+  await withResponse(html, 200, "text/html", async () => {
+    try {
+      await run("get-artist", { url: "https://fixture.bandcamp.com" }, ctx);
+    } catch (e) {
+      threw = e;
+    }
+  });
+  assertEquals(threw, undefined, "no throw despite malformed artist JSON-LD");
+  const res = written.find((w) => w.spec === "artistDetail")!;
+  assertEquals(res.payload.name, "DOM Fallback Artist");
+  const warnings = logs.filter((l) => l.level === "warning");
+  assertEquals(warnings.length, 1);
+  assertEquals(warnings[0].args, [
+    "bandcamp: artist JSON-LD parse failed: SyntaxError",
+  ]);
 });
 
 Deno.test("script-injection inside a title element is inert (linkedom parses it as a dead <script>); its textContent is still concatenated into the extracted title", async () => {
@@ -440,7 +530,7 @@ Deno.test("script-injection inside a title element is inert (linkedom parses it 
 // #5 No fetch timeout/backoff -- MEDIUM
 // ===========================================================================
 
-Deno.test("pin (bandcamp-latent-bugs #5, MEDIUM): fetchPage passes NO AbortSignal/timeout to fetch -- a hung upstream would block indefinitely", async () => {
+Deno.test("FIXED (bandcamp-latent-bugs #5, MEDIUM): fetchPage passes an AbortSignal with a bounded timeout to fetch -- a hung upstream can no longer block indefinitely", async () => {
   const { ctx } = makeCtx();
   let capturedInit: RequestInit | undefined;
   const original = globalThis.fetch;
@@ -458,14 +548,13 @@ Deno.test("pin (bandcamp-latent-bugs #5, MEDIUM): fetchPage passes NO AbortSigna
   } finally {
     globalThis.fetch = original;
   }
-  assertEquals(
-    capturedInit?.signal,
-    undefined,
-    "fetchPage passes no AbortSignal",
+  assert(
+    capturedInit?.signal instanceof AbortSignal,
+    "fetchPage passes a bounded AbortSignal",
   );
 });
 
-Deno.test("pin (bandcamp-latent-bugs #5): getToken's POST also carries no AbortSignal/timeout", async () => {
+Deno.test("FIXED (bandcamp-latent-bugs #5): getToken's POST also carries an AbortSignal with a bounded timeout", async () => {
   const { ctx } = makeCtx({ clientId: "cid", clientSecret: "csecret" });
   const captured: (RequestInit | undefined)[] = [];
   const original = globalThis.fetch;
@@ -484,8 +573,37 @@ Deno.test("pin (bandcamp-latent-bugs #5): getToken's POST also carries no AbortS
   } finally {
     globalThis.fetch = original;
   }
+  assert(captured.length > 0);
   for (const init of captured) {
-    assertEquals(init?.signal, undefined);
+    assert(init?.signal instanceof AbortSignal);
+  }
+});
+
+Deno.test("FIXED (bandcamp-latent-bugs #5): a hung upstream is aborted once the fetch timeout elapses, instead of blocking forever", async () => {
+  const time = new FakeTime();
+  try {
+    const { ctx } = makeCtx();
+    await withFetchStub(
+      [(req) =>
+        new Promise<Response>((_resolve, reject) => {
+          req.signal.addEventListener("abort", () => {
+            reject(
+              new DOMException("The signal has been aborted", "AbortError"),
+            );
+          });
+        })],
+      async () => {
+        const rejection = assertRejects(
+          () => run("search-artist", { query: "x" }, ctx),
+          DOMException,
+          "aborted",
+        );
+        await time.tickAsync(30_000);
+        await rejection;
+      },
+    );
+  } finally {
+    time.restore();
   }
 });
 
@@ -493,8 +611,8 @@ Deno.test("pin (bandcamp-latent-bugs #5): getToken's POST also carries no AbortS
 // #6 instanceName 60-char truncation collision -- LOW
 // ===========================================================================
 
-Deno.test("pin (bandcamp-latent-bugs #6, LOW): two distinct album URLs sharing the first 60 sanitized characters collide on the SAME albumDetail resource name", async () => {
-  const sharedPrefix = "a".repeat(70); // comfortably over the 60-char slice boundary
+Deno.test("FIXED (bandcamp-latent-bugs #6, LOW): two distinct album URLs sharing the first 47 sanitized characters NO LONGER collide -- each gets its own resource name via a SHA-256 suffix", async () => {
+  const sharedPrefix = "a".repeat(70); // comfortably over the 47-char slug boundary
   const urlOne = `https://${sharedPrefix}-one.bandcamp.com`;
   const urlTwo = `https://${sharedPrefix}-two.bandcamp.com`;
   const names: string[] = [];
@@ -505,22 +623,35 @@ Deno.test("pin (bandcamp-latent-bugs #6, LOW): two distinct album URLs sharing t
     });
     names.push(written.find((w) => w.spec === "albumDetail")!.name);
   }
-  assertEquals(
-    names[0],
-    names[1],
-    "two DIFFERENT source URLs produced the SAME resource name -- the second call clobbers the first in a real swamp instance (writeResource is keyed on instance name)",
+  assert(
+    names[0] !== names[1],
+    "two DIFFERENT source URLs must no longer clobber each other's resource (writeResource is keyed on instance name)",
   );
-  assertEquals(names[0].length, 60);
+  const SLUG_LENGTH = 47;
+  assertEquals(
+    names[0].slice(0, SLUG_LENGTH),
+    names[1].slice(0, SLUG_LENGTH),
+    "both share the identical (collision-prone) 47-char slug prefix",
+  );
+  for (const name of names) {
+    assert(
+      name.length <= 60,
+      "the full name (slug + hash suffix) stays <= 60 chars",
+    );
+  }
 });
 
 // ===========================================================================
 // #7 slice() surrogate split -- LOW
 // ===========================================================================
 
-Deno.test("pin (bandcamp-latent-bugs #7, LOW): about.slice(0,500) can split a UTF-16 surrogate pair straddling the boundary, emitting a lone high surrogate", async () => {
-  // 499 ASCII chars (indices 0..498) + an emoji (high surrogate at index
-  // 499, low surrogate at index 500) + filler. slice(0,500) keeps indices
-  // 0..499 -- the emoji's high surrogate WITHOUT its low surrogate pair.
+Deno.test("FIXED (bandcamp-latent-bugs #7, LOW): about truncates by CODE POINT, never splitting a UTF-16 surrogate pair straddling the boundary", async () => {
+  // 499 ASCII chars (code points 0..498) + a whole emoji (code point 499) +
+  // filler. A code-point-safe slice(0,500) keeps all 500 code points -- the
+  // 499 ASCII chars AND the emoji intact -- dropping only the filler after
+  // it. Note: the returned string's `.length` (UTF-16 code units) is 501,
+  // not 500 -- the emoji contributes 2 code units for 1 code point. The
+  // invariant is now "<= 500 code points", not "<= 500 code units".
   const text = "A".repeat(499) + "\u{1F600}" +
     "more filler text after the emoji boundary";
   const html =
@@ -535,14 +666,18 @@ Deno.test("pin (bandcamp-latent-bugs #7, LOW): about.slice(0,500) can split a UT
   });
   const about = written.find((w) => w.spec === "albumDetail")!.payload
     .about as string;
-  assertEquals(about.length, 500);
+  assertEquals(Array.from(about).length, 500);
   assert(
-    /[\uD800-\uDBFF]$/.test(about),
-    "the truncated string ends in a LONE (unpaired) high surrogate",
+    about.includes("\u{1F600}"),
+    "the emoji at the boundary survives intact, not split",
+  );
+  assert(
+    !/[\uD800-\uDBFF]$/.test(about),
+    "the truncated string never ends in a LONE (unpaired) high surrogate",
   );
 });
 
-Deno.test("pin (bandcamp-latent-bugs #7): the SAME surrogate-split risk applies to parseArtistPage's bio field", async () => {
+Deno.test("FIXED (bandcamp-latent-bugs #7): the SAME code-point-safe truncation applies to parseArtistPage's bio field", async () => {
   const text = "B".repeat(499) + "\u{1F600}" +
     "more filler text after the emoji boundary";
   const html = `<html><body><div class="bio-text">${text}</div></body></html>`;
@@ -552,8 +687,9 @@ Deno.test("pin (bandcamp-latent-bugs #7): the SAME surrogate-split risk applies 
   });
   const bio = written.find((w) => w.spec === "artistDetail")!.payload
     .bio as string;
-  assertEquals(bio.length, 500);
-  assert(/[\uD800-\uDBFF]$/.test(bio));
+  assertEquals(Array.from(bio).length, 500);
+  assert(bio.includes("\u{1F600}"));
+  assert(!/[\uD800-\uDBFF]$/.test(bio));
 });
 
 // ===========================================================================

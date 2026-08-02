@@ -24,6 +24,9 @@
  *  (d) multi-step flow invariant -- search-artist's first result URL, fed
  *      into get-artist, always yields a well-formed artistDetail resource,
  *      never a throw.
+ *  (e) astral-safe truncation (bandcamp-latent-bugs #7) -- for astral-heavy
+ *      input, `about` never exceeds 500 CODE POINTS and never ends in a
+ *      lone (unpaired) surrogate. Additive alongside (c).
  */
 import { assert } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
@@ -270,6 +273,32 @@ Deno.test("property: about is never longer than 500 characters, for any input le
     fc.asyncProperty(arbAboutText, async (text) => {
       const about = await aboutFor(text);
       return about.length <= 500;
+    }),
+    FC_RUNS,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// (e) astral-safe truncation -- bandcamp-latent-bugs #7's code-point cut.
+// Additive: strengthens (c)/(d) above without touching them. The existing
+// ASCII-only `arbAboutText` never straddles a surrogate pair (code points ==
+// code units for ASCII), so this dedicated astral-heavy arbitrary is needed
+// to actually exercise the boundary the #7 fix changed.
+// ---------------------------------------------------------------------------
+
+const arbAstralHeavyText = fc
+  .array(
+    fc.constantFrom("A", "b", "9", " ", "\u{1F600}", "\u{1F601}", "\u{1F602}"),
+    { maxLength: 900 },
+  )
+  .map((chars) => chars.join(""));
+
+Deno.test("property: about never ends in a lone (unpaired) surrogate and never exceeds 500 CODE POINTS, even for astral-heavy input straddling the truncation boundary", async () => {
+  await fc.assert(
+    fc.asyncProperty(arbAstralHeavyText, async (text) => {
+      const about = await aboutFor(text);
+      return Array.from(about).length <= 500 &&
+        !/[\uD800-\uDBFF]$/.test(about);
     }),
     FC_RUNS,
   );

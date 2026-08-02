@@ -8,10 +8,10 @@
  * parseArtistPage, fetchPage, bcPost, and getToken are module-private. Every
  * test here drives them exclusively through `model.methods.<m>.execute()`
  * against a stubbed `globalThis.fetch` and a fake context, per the approved
- * plan's test seam. bandcamp.ts is UNMODIFIED by this change -- every
- * assertion below was captured by actually running the frozen source against
- * these fixtures (not hand-derived from reading the regex/selector logic),
- * so it pins REAL observed behavior.
+ * plan's test seam. Every assertion below was captured by actually running
+ * the CURRENT (2026.08.02.1) source against these fixtures (not hand-derived
+ * from reading the regex/selector logic), so it pins REAL observed behavior
+ * -- including the bandcamp-latent-bugs #3 and #6 fixes (see CHANGELOG.md).
  *
  * All fixtures are PURE synthetic/hand-authored data -- see
  * fixtures/PROVENANCE.md. Every test here is offline: fixtures are fed
@@ -329,12 +329,12 @@ Deno.test("contract: album_tralbum_fallback.html -- no ld.track -> falls back to
 });
 
 // ---------------------------------------------------------------------------
-// get-album / album_tralbum_dirty.html -- the //-strip corruption VALUE pin
+// get-album / album_tralbum_dirty.html -- the //-strip RECOVERY value pin
 // (bandcamp-latent-bugs #3 -- fuller explanation lives in the adversarial
 // suite; this test pins the concrete resulting VALUE).
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: album_tralbum_dirty.html -- a //-corrupted TralbumData blob resolves to an entirely empty albumDetail, no throw", async () => {
+Deno.test("contract: album_tralbum_dirty.html -- a //-corrupted TralbumData blob is RECOVERED via the scheme-protected fallback strip, no throw", async () => {
   const { ctx, written } = makeCtx();
   await withHtmlFixture(
     "album_tralbum_dirty.html",
@@ -345,11 +345,16 @@ Deno.test("contract: album_tralbum_dirty.html -- a //-corrupted TralbumData blob
       }, ctx) as Promise<void>,
   );
   const res = written.find((w) => w.spec === "albumDetail")!;
+  // No JSON-LD and no DOM fallback exist in this fixture, so title/artist/
+  // tags still resolve to their empty defaults -- but the TralbumData
+  // trackinfo fallback now recovers the track instead of losing it.
   assertEquals(res.payload.title, "");
   assertEquals(res.payload.artist, "");
   assertEquals(res.payload.tags, []);
-  assertEquals(res.payload.tracks, []);
-  assertEquals(res.payload.trackCount, 0);
+  assertEquals(res.payload.tracks, [
+    { position: 1, title: "Fixture Corrupt Track", duration: "3:00", url: "" },
+  ]);
+  assertEquals(res.payload.trackCount, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -457,9 +462,13 @@ Deno.test("contract: get-track reuses parseAlbumPage and writes to the albumDeta
       }, ctx) as Promise<void>,
   );
   const res = written.find((w) => w.spec === "albumDetail")!;
+  // bandcamp-latent-bugs #6: the resource name is now a 47-char sanitized
+  // slug plus a 12-hex SHA-256 suffix of the FULL source URL (not a bare
+  // 60-char slice), so this literal is the slug truncated at 47 chars
+  // (ending mid-word, before "opening-track") followed by "-" + the hash.
   assertEquals(
     res.name,
-    "fixture-aurora-band-bandcamp-com-track-fixture-opening-track",
+    "fixture-aurora-band-bandcamp-com-track-fixture--7d1a1ed0bfc9",
   );
   assertEquals(res.payload.title, "Fixture Static Dreams");
   assertEquals(res.payload.trackCount, 2);

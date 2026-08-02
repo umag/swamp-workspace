@@ -88,13 +88,16 @@ in the first place.
 1. **The Bandcamp `TralbumData` single-line convention.** Real Bandcamp pages
    emit `var TralbumData = {...};` as one long minified line, not pretty-printed
    JSON. `album_tralbum_fallback.html` and `album_tralbum_dirty.html` both
-   preserve this single-line style deliberately: the source's
-   `.replace(/\/\/.*/g, "")` comment-strip cleanup only strips text through the
-   END OF A LINE, so a pretty-printed (multi-line) fixture would dodge the very
-   corruption bug `album_tralbum_dirty.html` exists to pin. Both files are
-   listed in `deno.json`'s `fmt.exclude` so `deno fmt` never reformats them
-   across multiple lines — regenerating either with a JSON pretty-printer would
-   silently defeat the pin.
+   preserve this single-line style deliberately: as of 2026.08.02.1 the source
+   tries a direct `JSON.parse` first and only falls back to a scheme-protected
+   `//`-strip cleanup on failure, but that fallback's
+   `.replace(/(^|[^:])\/\/.*$/gm, "$1")` still only strips text through the END
+   OF A LINE, so a pretty-printed (multi-line) fixture would dodge the
+   `album_tralbum_dirty.html` scenario entirely (the fallback path pins RECOVERY
+   now, not corruption — see CHANGELOG.md's bandcamp-latent-bugs #3 entry). Both
+   files stay listed in `deno.json`'s `fmt.exclude` so `deno fmt` never
+   reformats them across multiple lines — regenerating either with a JSON
+   pretty-printer would silently defeat the pin.
 2. **The subhead "by X from Y" ambiguity.** `search_tracks.html`'s subhead ("by
    Fixture Aurora Band from Fixture Static Dreams") is deliberately shaped to
    exercise a genuine parsing quirk (not one of the 7 tracked latent bugs, but
@@ -105,12 +108,15 @@ in the first place.
 
 ## Latent bugs this corpus exists to pin
 
-Seven already-shipped latent bugs are characterized against this corpus and
-tracked in the LOCAL `bandcamp-latent-bugs` issue-lifecycle model (never filed
-to the swamp.club Lab): SSRF via the `url` argument, cross-instance OAuth
-token-cache bleed, the `TralbumData` `//`-strip corruption
-(`album_tralbum_dirty.html`, above), silent all-clear on JSON-LD/TralbumData
-parse failure, absence of any fetch timeout/backoff, `instanceName` 60-char
-truncation collision, and `slice(0, 500)` surrogate-pair splitting. See
-`../CHANGELOG.md` and the adversarial suite's per-test doc comments for the full
-characterization of each.
+Seven latent bugs were characterized against this corpus and tracked in the
+LOCAL `bandcamp-latent-bugs` issue-lifecycle model (never filed to the
+swamp.club Lab): SSRF via the `url` argument, cross-instance OAuth token-cache
+bleed, the `TralbumData` `//`-strip corruption (`album_tralbum_dirty.html`,
+above), silent all-clear on JSON-LD/TralbumData parse failure, absence of any
+fetch timeout/backoff, `instanceName` 60-char truncation collision, and
+`slice(0, 500)` surrogate-pair splitting. As of 2026.08.02.1 all seven are FIXED
+— see `../CHANGELOG.md` and the adversarial suite's per-test doc comments for
+the full characterization of each. Fixture FILES themselves are unchanged: they
+still isolate each scenario, but the suites now pin the fixed
+(recovered/warned/bounded/collision-free/code-point -safe) behavior instead of
+the original bug.
