@@ -721,61 +721,74 @@ Deno.test("backfill-to-vm: pin — no numeric samples across all entities -> lin
   assertEquals(res.payload.totalSamples, 0);
 });
 
-Deno.test("backfill-to-vm: pin — a per-entity /states failure is SWALLOWED to {} (method still succeeds), but a per-entity WS rejection tears down the WHOLE fan-out", async () => {
-  // Entity 1: WS happy, but its /states REST lookup 500s -> caught, stateResp
-  // becomes {} (friendlyName falls back to the entityId) -- the method does
-  // NOT fail because of this.
-  // Entity 2: WS rejects (auth_invalid) -- unguarded, so the ENTIRE method
-  // rejects, even though entity 1 was otherwise fine. This is the
-  // asymmetry: try/catch around /states, nothing around fetchStatistics.
-  const { ctx } = makeCtx();
-  const routesWithFailingStates: Route[] = [
+Deno.test("fix: backfill-to-vm: a per-entity WS rejection is now GUARDED — the fan-out CONTINUES, recording a redacted `error` on that entity's summary instead of tearing down the WHOLE method (flip of the former whole-fan-out-rejects pin)", async () => {
+  // Entity 1: WS happy, /states succeeds normally -> fully imported.
+  // Entity 2: WS rejects (auth_invalid, echoing the caller's own token) --
+  // NOW guarded: fetchStatistics's rejection is caught, a redacted `error`
+  // is recorded on entity 2's summary (0 points), and the loop CONTINUES
+  // instead of tearing down the whole method (headphones onboard-artists /
+  // seadex summary.errors precedent).
+  const { ctx, written } = makeCtx();
+  const importBodies: string[] = [];
+  const routes: Route[] = [
     (req) => {
       const url = new URL(req.url);
-      if (url.pathname === "/api/states/sensor.example_temperature") {
-        return text("states lookup down", 500);
+      if (
+        url.hostname === "203.0.113.10" && url.pathname === "/api/v1/import"
+      ) {
+        return req.text().then((body) => {
+          importBodies.push(body);
+          return json({ status: "ok" }, 200);
+        });
+      }
+      if (url.pathname.startsWith("/api/states/")) {
+        const entityId = url.pathname.replace("/api/states/", "");
+        const fixture = states.find((s) => s.entity_id === entityId);
+        return fixture
+          ? json(fixture, 200)
+          : json({ message: "not found" }, 404);
       }
       return undefined;
     },
   ];
-  let statesCallSeen = false;
-  const trackedRoutes: Route[] = [
-    (req) => {
-      const url = new URL(req.url);
-      if (url.pathname === "/api/states/sensor.example_temperature") {
-        statesCallSeen = true;
-      }
-      return undefined;
-    },
-    ...routesWithFailingStates,
-  ];
-  await withFetchStub(trackedRoutes, () =>
+  await withFetchStub(routes, () =>
     withWebSocketStub(
       (index: number) =>
-        index === 0
-          ? happySteps("sensor.example_temperature", TEMP_POINTS)
-          : [AUTH_REQUIRED, msg({ type: "auth_invalid", message: "invalid" })],
+        index === 0 ? happySteps("sensor.example_temperature", TEMP_POINTS) : [
+          AUTH_REQUIRED,
+          msg({
+            type: "auth_invalid",
+            message: `bad token: ${FAKE_TOKEN}`,
+          }),
+        ],
       () =>
-        assertRejects(
-          () =>
-            run("backfill-to-vm", {
-              entities: [
-                {
-                  entityId: "sensor.example_temperature",
-                  metricName: "ha_temp",
-                },
-                { entityId: "light.example_lamp", metricName: "ha_lamp" },
-              ],
-              startTime: "2026-01-01T00:00:00Z",
-              endTime: "2026-01-01T03:00:00Z",
-            }, ctx),
-          Error,
-          "Auth invalid: invalid",
-        ),
+        run("backfill-to-vm", {
+          entities: [
+            { entityId: "sensor.example_temperature", metricName: "ha_temp" },
+            { entityId: "light.example_lamp", metricName: "ha_lamp" },
+          ],
+          startTime: "2026-01-01T00:00:00Z",
+          endTime: "2026-01-01T03:00:00Z",
+        }, ctx),
     ));
+  assertEquals(
+    importBodies.length,
+    1,
+    "entity 1's samples still get imported despite entity 2's failure",
+  );
+  const res = written.find((w) => w.spec === "backfill-report")!;
+  const entities = res.payload.entities as Array<
+    { entityId: string; points: number; error?: string }
+  >;
+  const e1 = entities.find((e) => e.entityId === "sensor.example_temperature")!;
+  const e2 = entities.find((e) => e.entityId === "light.example_lamp")!;
+  assertEquals(e1.points, TEMP_POINTS.length, "entity 1 is fully imported");
+  assert(!e1.error, "entity 1 has no error");
+  assertEquals(e2.points, 0, "entity 2 contributes zero points");
+  assert(e2.error, "entity 2's summary carries the recorded error");
   assert(
-    statesCallSeen,
-    "entity 1's /states call must have happened (and been swallowed) before entity 2's WS rejection propagated",
+    !e2.error!.includes(FAKE_TOKEN),
+    "the recorded error must be redacted, never leak the token",
   );
 });
 
@@ -891,7 +904,7 @@ Deno.test("wire assertion: the token appears in EXACTLY the WS auth frame, and N
 // Logger — pin the absence of any logging today
 // ---------------------------------------------------------------------------
 
-Deno.test("no method calls the logger at all today (pin — a future change that starts logging must add its own leak test)", async () => {
+Deno.test("no method calls the logger at all today on the HAPPY path (pin — a future change that starts logging must add its own leak test — see the new LB7 logging test below)", async () => {
   const { ctx, logs } = makeCtx();
   await withOneResponse(states, 200, () => run("list-entities", {}, ctx));
   await withWebSocketStub(
@@ -904,4 +917,50 @@ Deno.test("no method calls the logger at all today (pin — a future change that
       }, ctx),
   );
   assertEquals(logs.length, 0);
+});
+
+Deno.test("new: LB7's per-entity backfill failure DOES log a warning — and that warning is token-redacted, never leaking the raw token (honors the pin above's own contract)", async () => {
+  const { ctx, logs } = makeCtx();
+  await withFetchStub(
+    [(req) => {
+      const url = new URL(req.url);
+      if (url.pathname.startsWith("/api/states/")) {
+        const entityId = url.pathname.replace("/api/states/", "");
+        const fixture = states.find((s) => s.entity_id === entityId);
+        return fixture
+          ? json(fixture, 200)
+          : json({ message: "not found" }, 404);
+      }
+      return undefined;
+    }],
+    () =>
+      withWebSocketStub(
+        [
+          AUTH_REQUIRED,
+          msg({
+            type: "auth_invalid",
+            message: `bad token: ${FAKE_TOKEN}`,
+          }),
+        ],
+        () =>
+          run("backfill-to-vm", {
+            entities: [
+              { entityId: "light.example_lamp", metricName: "ha_lamp" },
+            ],
+            startTime: "2026-01-01T00:00:00Z",
+            endTime: "2026-01-01T03:00:00Z",
+          }, ctx),
+      ),
+  );
+  const warnings = logs.filter((l) => l.level === "warning");
+  assert(
+    warnings.length > 0,
+    "the guarded per-entity failure must log a warning",
+  );
+  for (const l of logs) {
+    assert(
+      !JSON.stringify(l.args).includes(FAKE_TOKEN),
+      "a logger call leaked the raw token",
+    );
+  }
 });

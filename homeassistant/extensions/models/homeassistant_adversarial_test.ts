@@ -389,6 +389,81 @@ Deno.test("pin: a ws.close() failure is swallowed silently by every close() call
   }
 });
 
+Deno.test("fix: a ws.close() failure is now SURFACED via logger.warning (redacted) — the rejection reason is still unchanged, never clobbered by the close-time error", async () => {
+  // Same shape as the pin above, but the close() failure ECHOES the caller's
+  // own token — proving closeQuietly's logger.warning call is redacted, not
+  // just added.
+  const original = globalThis.WebSocket;
+  class ThrowingCloseSocket {
+    url: string;
+    #messageListeners: MessageListener[] = [];
+    constructor(url: string) {
+      this.url = url;
+      queueMicrotask(() => this.#emit({ type: "auth_required" }));
+    }
+    addEventListener(type: "message", listener: MessageListener) {
+      if (type === "message") this.#messageListeners.push(listener);
+    }
+    send(_raw: string) {
+      queueMicrotask(() =>
+        this.#emit({ type: "auth_invalid", message: "bad token" })
+      );
+    }
+    close() {
+      throw new Error(`close failed: leaked token ${FAKE_TOKEN}`);
+    }
+    #emit(frame: WSFrame) {
+      for (const l of this.#messageListeners) {
+        l({ data: JSON.stringify(frame) });
+      }
+    }
+  }
+  // deno-lint-ignore no-explicit-any
+  (globalThis as any).WebSocket = ThrowingCloseSocket;
+  try {
+    const { ctx, logs } = makeCtx();
+    await assertRejects(
+      () => run("get-statistics", statisticsArgs(), ctx),
+      Error,
+      "Auth invalid: bad token",
+    );
+    const warnings = logs.filter((l) => l.level === "warning");
+    assertEquals(warnings.length, 1, "exactly one close-failure warning");
+    const logged = JSON.stringify(warnings[0].args);
+    assert(
+      logged.includes("WebSocket close failed"),
+      "the warning must identify the close failure",
+    );
+    assert(
+      !logged.includes(FAKE_TOKEN),
+      "the close-time error's token echo must be redacted before logging",
+    );
+  } finally {
+    globalThis.WebSocket = original;
+  }
+});
+
+Deno.test("fix: wsTimeoutMs global arg overrides the 60s default — a 1000ms timeout rejects with 'WebSocket timeout after 1s'", async () => {
+  using time = new FakeTime();
+  const { ctx } = makeCtx({
+    host: "ha.example.test",
+    token: FAKE_TOKEN,
+    protocol: "https",
+    wsTimeoutMs: 1000,
+  });
+  const promise = withWebSocketStub(
+    [AUTH_REQUIRED, AUTH_OK, { kind: "none" }],
+    () => run("get-statistics", statisticsArgs(), ctx),
+  );
+  const rejects = assertRejects(
+    () => promise,
+    Error,
+    "WebSocket timeout after 1s",
+  );
+  await time.tickAsync(1000);
+  await rejects;
+});
+
 Deno.test("pin: a native 'error' event rejects with 'WS error: <message>', falling back to the event type when no message is present", async () => {
   const { ctx } = makeCtx();
   await withWebSocketStub(
@@ -412,20 +487,34 @@ Deno.test("pin: a native 'error' event rejects with 'WS error: <message>', falli
   );
 });
 
-Deno.test("pin: a malformed (non-JSON) frame is silently swallowed — no fast error, the caller waits out the full 60s timeout", async () => {
-  using time = new FakeTime();
+Deno.test("fix: a malformed (non-JSON) frame fast-rejects with 'WebSocket received a non-JSON frame' — no 60s wait, no FakeTime needed (flip of the former silent-swallow pin)", async () => {
   const { ctx } = makeCtx();
-  const promise = withWebSocketStub(
+  await withWebSocketStub(
     [{ kind: "raw", data: "not-json{" }],
-    () => run("get-statistics", statisticsArgs(), ctx),
+    () =>
+      assertRejects(
+        () => run("get-statistics", statisticsArgs(), ctx),
+        Error,
+        "WebSocket received a non-JSON frame",
+      ),
   );
-  const rejects = assertRejects(
-    () => promise,
-    Error,
-    "WebSocket timeout after 60s",
+});
+
+Deno.test("fix: a non-JSON frame arriving mid-handshake (after auth_ok) also fast-rejects, not just a first-frame malformed reply", async () => {
+  const { ctx } = makeCtx();
+  const steps: WSStep[] = [AUTH_REQUIRED, AUTH_OK, {
+    kind: "raw",
+    data: "still-not-json",
+  }];
+  await withWebSocketStub(
+    steps,
+    () =>
+      assertRejects(
+        () => run("get-statistics", statisticsArgs(), ctx),
+        Error,
+        "WebSocket received a non-JSON frame",
+      ),
   );
-  await time.tickAsync(60_000);
-  await rejects;
 });
 
 Deno.test("fix: an explicit close before any result rejects fast with 'WebSocket closed before result' — no 60s wait — and registers exactly one close listener", async () => {
@@ -472,7 +561,7 @@ Deno.test("pin: a mid-sequence connection drop (no close, no error, no result) s
   );
 });
 
-Deno.test("pin: a server that echoes the caller's own token back inside auth_invalid.message leaks it into the thrown error, unredacted", async () => {
+Deno.test("fix: a server that echoes the caller's own token back inside auth_invalid.message is now REDACTED in the thrown error (flip of the former token-leak pin)", async () => {
   const { ctx } = makeCtx();
   const steps: WSStep[] = [
     AUTH_REQUIRED,
@@ -486,8 +575,12 @@ Deno.test("pin: a server that echoes the caller's own token back inside auth_inv
       run("get-statistics", statisticsArgs(), ctx)
     );
     assert(
-      String(err).includes(FAKE_TOKEN),
-      "sanity: the fixture actually leaks — the model performs no redaction",
+      !String(err).includes(FAKE_TOKEN),
+      "the token must never appear in the thrown error's message",
+    );
+    assert(
+      String(err).includes("<redacted>"),
+      "the redacted placeholder must stand in for the scrubbed token",
     );
   });
 });
@@ -496,11 +589,11 @@ Deno.test("pin: a server that echoes the caller's own token back inside auth_inv
 // Hostile REST: unencoded path interpolation
 // =============================================================================
 
-Deno.test("pin: get-state interpolates entityId RAW into the URL path — a '/' injects an extra path segment (no encoding)", async () => {
+Deno.test("fix: get-state now encodeURIComponent()s entityId — a '/' is escaped to %2F into ONE opaque path segment, not an extra one (flip of the former no-encoding pin)", async () => {
   // NOTE: a payload using "/../" would be collapsed by the URL parser's own
   // dot-segment normalization (RFC 3986) regardless of what homeassistant.ts
   // does — that would test URL(), not the model. A plain extra "/" segment
-  // (no dot-navigation) isolates the model's lack of encoding specifically.
+  // (no dot-navigation) isolates the model's encoding specifically.
   const { ctx } = makeCtx();
   await withOneResponse(states[0], 200, async (calls) => {
     await run(
@@ -510,12 +603,12 @@ Deno.test("pin: get-state interpolates entityId RAW into the URL path — a '/' 
     );
     assertEquals(
       new URL(calls[0].url).pathname,
-      "/api/states/sensor.example_id/extra_segment",
+      "/api/states/sensor.example_id%2Fextra_segment",
     );
   });
 });
 
-Deno.test("pin: call-service interpolates domain/service RAW into the URL path — no encoding", async () => {
+Deno.test("fix: call-service now encodeURIComponent()s domain/service — a '/' is escaped to %2F (flip of the former no-encoding pin)", async () => {
   const { ctx } = makeCtx();
   await withOneResponse({}, 200, async (calls) => {
     await run(
@@ -525,12 +618,12 @@ Deno.test("pin: call-service interpolates domain/service RAW into the URL path �
     );
     assertEquals(
       new URL(calls[0].url).pathname,
-      "/api/services/light/extra_segment/turn_on",
+      "/api/services/light%2Fextra_segment/turn_on",
     );
   });
 });
 
-Deno.test("pin: get-automation-config / update-automation interpolate automationId RAW into the URL path — no encoding", async () => {
+Deno.test("fix: get-automation-config / update-automation now encodeURIComponent() automationId — a '/' is escaped to %2F (flip of the former no-encoding pin)", async () => {
   const { ctx } = makeCtx();
   await withOneResponse(automationConfig, 200, async (calls) => {
     await run(
@@ -540,7 +633,7 @@ Deno.test("pin: get-automation-config / update-automation interpolate automation
     );
     assertEquals(
       new URL(calls[0].url).pathname,
-      "/api/config/automation/config/1/extra_segment",
+      "/api/config/automation/config/1%2Fextra_segment",
     );
   });
   await withOneResponse({}, 200, async (calls) => {
@@ -551,7 +644,7 @@ Deno.test("pin: get-automation-config / update-automation interpolate automation
     );
     assertEquals(
       new URL(calls[0].url).pathname,
-      "/api/config/automation/config/1/extra_segment",
+      "/api/config/automation/config/1%2Fextra_segment",
     );
   });
 });
@@ -581,7 +674,7 @@ Deno.test("contrast: get-history DOES encodeURIComponent its entityId (and start
 // Hostile REST: a 401 body echoing the token leaks
 // =============================================================================
 
-Deno.test("pin: a hostile 401 response body echoing the caller's token leaks it into the thrown error, unredacted (mirrors the WS auth_invalid.message echo above)", async () => {
+Deno.test("fix: a hostile 401 response body echoing the caller's token is now REDACTED in the thrown error (mirrors the WS auth_invalid.message fix above; flip of the former token-leak pin)", async () => {
   const { ctx } = makeCtx();
   const hostileBody = { message: `Unauthorized: token ${FAKE_TOKEN} rejected` };
   await withOneResponse(hostileBody, 401, async () => {
@@ -589,8 +682,12 @@ Deno.test("pin: a hostile 401 response body echoing the caller's token leaks it 
       () => run("get-state", { entityId: "sensor.example_temperature" }, ctx),
     );
     assert(
-      String(err).includes(FAKE_TOKEN),
-      "sanity: the fixture actually leaks — haFetch performs no redaction on the response body",
+      !String(err).includes(FAKE_TOKEN),
+      "the token must never appear in the thrown error's message",
+    );
+    assert(
+      String(err).includes("<redacted>"),
+      "the redacted placeholder must stand in for the scrubbed token",
     );
   });
 });
