@@ -7,10 +7,13 @@
  * model, out of scope), a fake context, and FakeTime for deterministic
  * `now`.
  *
- * anilist_chart.ts + every lib/*.ts file are UNMODIFIED by this change —
- * every test here is a characterization test that PINS the model's current,
- * already-shipped behavior. It is not red-green TDD: there is no new
- * behavior to drive out.
+ * `2026.08.02.1` REAL-FIXED all 7 latent bugs tracked in the LOCAL
+ * `anilist-chart-latent-bugs` issue-lifecycle model (see CHANGELOG.md). The
+ * tests below that used to PIN a bug (LB1, LB4, LB6) now assert the FIXED
+ * behavior instead; every other test in this file is an unchanged
+ * characterization of already-shipped behavior — most notably the
+ * happy-path render (11 reads / 7 artifacts) and the publish suite, both
+ * byte-identical to before this change.
  *
  * publish() has TWO write branches: a LOCAL filesystem path (Deno.stat sees
  * a real directory -> Deno.writeTextFile + Deno.rename) and an SSH path
@@ -479,14 +482,16 @@ Deno.test("render: no score rows -> refuses before publishing anything (but all 
   }
 });
 
-Deno.test("LB4 (latent, LOW): a malformed freshness timestamp silently disables the staleness anomaly — no crash, no anomaly, no signal at all", async () => {
+Deno.test("LB4 (fixed): a malformed freshness timestamp still renders, and now surfaces an explicit 'unparseable' anomaly instead of a silent gap", async () => {
   const now = new Date("2026-07-21T12:00:00Z");
   const time = new FakeTime(now);
   try {
     const { ctx, written } = makeCtx(GLOBAL_ARGS);
     const ds = dataset(now);
     // Garbage, unparseable timestamp — Date.parse -> NaN -> newestDataAgeMs
-    // coerced to `null` -> the staleness branch (`!== null`) never fires.
+    // coerced to `null` -> the staleness branch (`!== null`) never fires, but
+    // `newestTimestampMalformed` is now computed and passed through, so
+    // evaluateFreshness pushes an explicit "unparseable" anomaly (LB4).
     ds.freshness = { newest: "not-a-timestamp" };
     await withFetchStub([clickhouseRoute(ds)], async () => {
       await run("render", {}, ctx);
@@ -495,19 +500,23 @@ Deno.test("LB4 (latent, LOW): a malformed freshness timestamp silently disables 
     assertEquals(
       runRes.payload.ok,
       true,
-      "still renders — this is a silent gap, not a refusal",
+      "still renders — a malformed timestamp is an anomaly, never a refusal",
     );
     const anomalies = runRes.payload.anomalies as string[];
     assert(
       !anomalies.some((a) => a.includes("publishing last-known-good")),
-      "a garbage timestamp must not spuriously report freshness, but ALSO never reports staleness even if the corpus really is stale",
+      "a garbage timestamp must not spuriously report staleness (that would need a real, parseable, past-window timestamp)",
+    );
+    assert(
+      anomalies.some((a) => a.includes("unparseable")),
+      "the gap must now be SIGNALLED, not silent (LB4 fix)",
     );
   } finally {
     time.restore();
   }
 });
 
-Deno.test("LB1 (latent, MEDIUM): a read-phase ClickHouse failure aborts render() entirely — no renderRun marker, no diagnostic left behind", async () => {
+Deno.test("LB1 (fixed): a read-phase ClickHouse failure still aborts render() (fail loud), but now leaves a diagnostic renderRun marker behind", async () => {
   const now = new Date("2026-07-21T12:00:00Z");
   const time = new FakeTime(now);
   try {
@@ -540,18 +549,25 @@ Deno.test("LB1 (latent, MEDIUM): a read-phase ClickHouse failure aborts render()
         );
       },
     );
-    assertEquals(
-      written.find((w) => w.spec === "renderRun"),
-      undefined,
-      "no renderRun marker is left behind when a mid-flight read throws",
+    const runRes = written.find((w) => w.spec === "renderRun")!;
+    assert(
+      runRes,
+      "a diagnostic renderRun marker must now survive a mid-flight read throw (LB1 fix: write-then-rethrow)",
+    );
+    assertEquals(runRes.payload.ok, false);
+    assertStringIncludes(String(runRes.payload.refuseReason), "read failed");
+    assertStringIncludes(String(runRes.payload.refuseReason), "ClickHouse 503");
+    assert(
+      !JSON.stringify(runRes.payload).includes(SENTINEL_KEY),
+      "the LB1 diagnostic marker must never leak clickhouseKey",
     );
   } finally {
     time.restore();
   }
 });
 
-Deno.test("LB6 (latent, LOW): the ClickHouse error's response body is echoed VERBATIM into the thrown error — but the configured key never is", async () => {
-  const { ctx } = makeCtx(GLOBAL_ARGS);
+Deno.test("LB6 (fixed): the ClickHouse error body is trimmed+redacted (BODY_SENTINEL still survives) — the configured key never appears, and the LB1 diagnostic marker now also carries it, key-free", async () => {
+  const { ctx, written } = makeCtx(GLOBAL_ARGS);
   const BODY_SENTINEL = "Code: 62. DB::Exception: Syntax error near XYZ123";
   await withFetchStub(
     [() => Promise.resolve(new Response(BODY_SENTINEL, { status: 400 }))],
@@ -563,6 +579,17 @@ Deno.test("LB6 (latent, LOW): the ClickHouse error's response body is echoed VER
         "clickhouseKey must never appear in a thrown ClickHouse error",
       );
     },
+  );
+  const runRes = written.find((w) => w.spec === "renderRun")!;
+  assert(
+    runRes,
+    "LB1's write-then-rethrow means a renderRun marker now survives this too",
+  );
+  assertEquals(runRes.payload.ok, false);
+  assertStringIncludes(String(runRes.payload.refuseReason), BODY_SENTINEL);
+  assert(
+    !JSON.stringify(runRes.payload).includes(SENTINEL_KEY),
+    "clickhouseKey must never appear in the renderRun marker either",
   );
 });
 

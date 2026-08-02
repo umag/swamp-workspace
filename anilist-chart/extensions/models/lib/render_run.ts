@@ -43,6 +43,13 @@ export interface FreshnessInput {
   metadataCoverage: number;
   /** now - max(last_updated) in ms; null when unknown. */
   newestDataAgeMs: number | null;
+  /**
+   * True when a freshness timestamp WAS present but failed to parse (as
+   * opposed to genuinely absent). Optional and falsey by default so existing
+   * callers/tests are unaffected; when true, the gap is surfaced as an
+   * anomaly instead of silently skipping the staleness check (LB4).
+   */
+  newestTimestampMalformed?: boolean;
   /** false on the very first run (no prior run marker yet). */
   priorRunExists: boolean;
   staleWindowMs?: number;
@@ -100,6 +107,16 @@ export function evaluateFreshness(input: FreshnessInput): FreshnessVerdict {
     anomalies.push(
       `metadata coverage ${(input.metadataCoverage * 100).toFixed(1)}% below ` +
         `${(tolerance * 100).toFixed(0)}% tolerance`,
+    );
+  }
+
+  // A timestamp that was present but unparseable is an ANOMALY (LB4): the
+  // gap in the staleness check must be SIGNALLED, not silent, even though it
+  // never blocks publication (a genuinely stale-but-parseable corpus is
+  // handled by the branch above).
+  if (input.newestTimestampMalformed) {
+    anomalies.push(
+      "freshness timestamp unparseable; staleness check skipped",
     );
   }
 

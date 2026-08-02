@@ -1,5 +1,97 @@
 # Changelog
 
+## 2026.08.02.1
+
+Real-fix (not byte-frozen) for all 7 latent bugs tracked in the LOCAL
+`anilist-chart-latent-bugs` issue-lifecycle model (3 MED, 4 LOW; 0 CRITICAL/HIGH
+— see the `2026.08.01.1` entry below for the original per-bug writeup, written
+when all 7 were accepted-but-unfixed). `model.version` / `manifest.yaml` bump
+`2026.08.01.1` -> `2026.08.02.1`, with a single `upgrades[]` entry
+(`upgradeAttributes: (old) => old` — the two new global args are DEFAULTED, so
+an old attribute record lacking both keys still reads identically once the zod
+defaults apply).
+
+- **LB1 (MED)** The 11 ClickHouse reads (board, chartScores, distinctIds,
+  chartMeta, six landing aggregates) plus the freshness read ran with no
+  try/catch, so any read throw escaped `execute()` with NO diagnostic marker
+  left behind. They are now wrapped in one try/catch: on any throw, a
+  `renderRun` marker is written (`ok:false`,
+  `refuseReason: "read failed: <message>"`, `anomalies: [<message>]`) THEN the
+  error is re-thrown (write-then-rethrow — the same fail-loud shape as
+  `publish()`'s existing guard), so the workflow step still fails AND the marker
+  now exists for `swamp report get` / `swamp data get` to inspect.
+- **LB2 (MED)** The ssh publish `Deno.Command` spawn carried no
+  `AbortSignal`/timeout, so a hung ssh connection blocked `publish()` forever. A
+  new DEFAULTED global arg `sshTimeoutMs` (default 30000) now bounds the whole
+  spawn/write/output round-trip via `AbortController` + `setTimeout` +
+  `clearTimeout` (NOT `AbortSignal.timeout`, so a fast success cancels the
+  pending timer instead of leaving it to fire after the fact). On abort the
+  child is killed, `output()` rejects, and the existing per-page try/catch in
+  `publishPages` marks just that page failed — the rest still publish.
+- **LB3 (MED)** `ClickHouseClient.query()` buffered the entire response body via
+  `res.text()` with no cap. It now streams the body through
+  `res.body.getReader()`, counting bytes as chunks accumulate, and throws
+  `ClickHouse response exceeds N bytes` the moment the running total passes the
+  cap — freeing the partial buffer early rather than fully buffering an
+  unbounded/misbehaving upstream first. The cap comes from a new DEFAULTED
+  global arg `clickhouseMaxResponseBytes` (default 67108864 = 64MiB), threaded
+  through `configFrom` into `ClickHouseConfig.maxResponseBytes`; a body under
+  the cap still returns every row (a ceiling, not a silent truncator).
+- **LB4 (LOW)** A malformed freshness timestamp (`Date.parse` -> `NaN`) coerced
+  `newestDataAgeMs` to `null`, which silently disabled the staleness anomaly
+  (`evaluateFreshness` only fires staleness when `newestDataAgeMs !== null`).
+  `render()` now distinguishes "raw present but unparseable" from "genuinely
+  absent" and passes a new optional `newestTimestampMalformed` flag into
+  `FreshnessInput`; when true, `evaluateFreshness` pushes an explicit
+  unparseable-timestamp anomaly (staleness check skipped). Still `ok:true`,
+  still no false "publishing last-known-good" — the gap is now SIGNALLED, not
+  silent.
+- **LB5 (LOW)** A non-numeric `media_id` from `distinctMediaIdsQuery` became
+  `NaN`, which `arrayIntParam` truncated to the literal string `"NaN"` — an
+  invalid `Array(Int64)` wire value that a real ClickHouse rejects, aborting the
+  whole render. `render()` now filters `ids` through `.filter(Number.isFinite)`
+  before ever building the array param, so a corrupt id is skipped, never sent
+  (empty `ids` still routes through the existing `[]` branch). `arrayIntParam`
+  also now throws loud on a non-finite input as defense-in-depth, so the
+  poisoned literal can never be constructed even by a future caller — though
+  filtering means that throw never fires in practice.
+- **LB6 (LOW)** A ClickHouse error response's body was echoed verbatim (up to
+  500 chars, including newlines) into the thrown error. The body is now trimmed
+  to 200 chars, whitespace runs collapsed to a single space, and defensively
+  `.replaceAll`'d for the configured key (belt-and-braces — a CH error body
+  never legitimately contains it). Still no credential leak in any thrown error
+  or written resource; confirmed by a new pure adversarial test that stubs a
+  body literally containing a sentinel "key" and asserts it comes back
+  `[redacted]`.
+- **LB7 (LOW)** `arrayStringParam`'s hand-rolled escaping left an embedded NUL
+  byte completely unescaped. A third `.replace()` pass now encodes it as the
+  two-character `\0` escape, running AFTER the backslash-doubling and quote
+  passes (order matters: the new escape's own backslash must not be doubled by
+  an earlier pass). Encode, not reject — this is a URL query-param value, not
+  raw SQL text, matching LB5's "don't abort the render" philosophy.
+
+**Two DEFAULTED global args** (`sshTimeoutMs`, `clickhouseMaxResponseBytes`) are
+the only `globalArguments` change, so the appended `upgrades[]` entry is a
+correct identity `upgradeAttributes: (old) => old`.
+
+**Byte-stability**: the contract-fixture suite (`anilist_chart.test.ts` plus
+every `lib/*.test.ts` oracle-parity file), the property-invariant-flow suite,
+and the live ClickHouse column-parity suite are UNCHANGED. Only the pinned
+characterization of each fixed bug flips from "pins the bug" to "pins the fix":
+in `anilist_chart_methods_test.ts` the LB1, LB4, and LB6 tests; in
+`anilist_chart_adversarial_test.ts` the LB2, LB3, LB5, and LB7 tests, plus its
+malformed-JSONEachRow and 200-status-inline-exception tests (which now also
+assert the LB1 marker survives); and one new unit added to
+`lib/render_run.test.ts` (LB4's `newestTimestampMalformed` branch, additive —
+the 6 pre-existing freshness tests are untouched). The methods happy path (11
+reads, 7 artifacts, `ok:true`, empty refused/failed) and the publish suite are
+byte-identical.
+
+`quality.yaml` re-stamped from a real
+`swamp extension quality manifest.yaml --json` measurement; all five suites stay
+`present`, Grade A. `README.md`'s "Known latent bugs" section is replaced with a
+"Fixed in 2026.08.02.1" note.
+
 ## 2026.08.01.1
 
 Docs-only completion of the quality ratchet: added real JSDoc to the two

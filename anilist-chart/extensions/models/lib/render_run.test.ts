@@ -59,6 +59,16 @@ Deno.test("freshness: low coverage is an anomaly, never a refusal", () => {
   assert(v.anomalies.some((a) => a.includes("coverage")));
 });
 
+Deno.test("freshness (LB4, fixed): a malformed-but-present timestamp still publishes AND now surfaces an explicit 'unparseable' anomaly", () => {
+  const v = evaluateFreshness({ ...fresh, newestTimestampMalformed: true });
+  assertEquals(v.ok, true);
+  assertEquals(v.refuseReason, null);
+  assert(
+    v.anomalies.some((a) => a.includes("unparseable")),
+    "a malformed timestamp must be SIGNALLED, not silently skipped",
+  );
+});
+
 // ── fan-out ─────────────────────────────────────────────────────────────────
 
 Deno.test("one throwing renderer still yields the other five artifacts", () => {

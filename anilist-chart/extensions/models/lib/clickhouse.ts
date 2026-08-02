@@ -7,7 +7,8 @@
 // bound values travel as `param_<name>` query parameters so user input never
 // concatenates into SQL. Table/database identifiers cannot be parameterized, so
 // they pass through a strict allowlist. Every request is bounded by
-// AbortSignal.timeout.
+// AbortSignal.timeout, and every response body read is bounded by
+// maxResponseBytes (streamed, capped early rather than fully buffered first).
 
 export interface ClickHouseConfig {
   url: string; // http(s)://host:port
@@ -15,6 +16,10 @@ export interface ClickHouseConfig {
   key: string;
   database: string;
   timeoutMs?: number;
+  /** Cap on the total bytes read from a query response body; defaults to 64MiB
+   * in `query()`. Exceeding it aborts the read early (streamed, not buffered
+   * first) rather than exhausting memory on an unbounded/misbehaving upstream. */
+  maxResponseBytes?: number;
 }
 
 /** Read config from the environment (needs --allow-env). Throws if incomplete. */
@@ -41,18 +46,85 @@ export function assertIdent(name: string): string {
   return name;
 }
 
-/** Format a string array as a ClickHouse HTTP param value for Array(String). */
+/**
+ * Format a string array as a ClickHouse HTTP param value for Array(String).
+ * Order matters: the backslash-doubling pass must run BEFORE the quote and
+ * NUL passes, so neither of their inserted backslashes is itself doubled.
+ */
 export function arrayStringParam(values: string[]): string {
   return "[" +
     values
-      .map((v) => "'" + v.replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'")
+      .map((v) =>
+        "'" +
+        v
+          .replace(/\\/g, "\\\\")
+          .replace(/'/g, "\\'")
+          .replace(/\0/g, "\\0") +
+        "'"
+      )
       .join(",") +
     "]";
 }
 
-/** Format a number array as a ClickHouse HTTP param value for Array(Int64). */
+/**
+ * Format a number array as a ClickHouse HTTP param value for Array(Int64).
+ * Throws on a non-finite input (NaN/+-Infinity) rather than letting
+ * `Math.trunc` pass it straight through to `String()`, which would otherwise
+ * emit the literal (invalid) array element "NaN"/"Infinity"/"-Infinity".
+ * Callers should filter non-finite ids before building the array (see
+ * render()'s `.filter(Number.isFinite)`); this is defense-in-depth so the
+ * poisoned literal can never be constructed even by a future caller.
+ */
 export function arrayIntParam(values: number[]): string {
-  return "[" + values.map((v) => String(Math.trunc(v))).join(",") + "]";
+  return "[" +
+    values.map((v) => {
+      if (!Number.isFinite(v)) {
+        throw new Error(`arrayIntParam: non-finite value: ${v}`);
+      }
+      return String(Math.trunc(v));
+    }).join(",") +
+    "]";
+}
+
+/**
+ * Read a Response body as text, but abort the read early once the running
+ * byte total exceeds `maxBytes` -- freeing the partial buffer and cancelling
+ * the underlying stream rather than fully buffering an unbounded or
+ * misbehaving upstream body first (LB3). Falls back to `res.text()` on a
+ * runtime that gives no readable stream (`res.body` null), which a real fetch
+ * response with a body never does.
+ */
+async function readCappedText(
+  res: Response,
+  maxBytes: number,
+): Promise<string> {
+  if (!res.body) return await res.text();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel();
+          throw new Error(`ClickHouse response exceeds ${maxBytes} bytes`);
+        }
+        chunks.push(value);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(out);
 }
 
 export class ClickHouseClient {
@@ -90,9 +162,15 @@ export class ClickHouseClient {
       body: sql + "\nFORMAT JSONEachRow",
       signal: AbortSignal.timeout(this.cfg.timeoutMs ?? 30_000),
     });
-    const text = await res.text();
+    const maxBytes = this.cfg.maxResponseBytes ?? 64 * 1024 * 1024;
+    const text = await readCappedText(res, maxBytes);
     if (!res.ok) {
-      throw new Error(`ClickHouse ${res.status}: ${text.slice(0, 500)}`);
+      // Trim + redact: at most 200 chars, whitespace runs collapsed, and the
+      // configured key defensively stripped even though a CH error body never
+      // legitimately contains it (belt-and-braces against a future CH change).
+      const trimmed = text.slice(0, 200).replace(/\s+/g, " ").trim();
+      const redacted = trimmed.replaceAll(this.cfg.key, "[redacted]");
+      throw new Error(`ClickHouse ${res.status}: ${redacted}`);
     }
     const out: T[] = [];
     for (const line of text.split("\n")) {

@@ -89,6 +89,15 @@ const GlobalArgsSchema = z.object({
   outputDir: z.string().optional().describe(
     "Absolute path of the nginx-served output directory on the node. Required for `publish`.",
   ),
+  sshTimeoutMs: z.number().int().positive().default(30000).describe(
+    "Timeout for the ssh publish fallback spawn (per page). A hung ssh connection " +
+      "aborts after this many ms instead of blocking `publish` forever.",
+  ),
+  clickhouseMaxResponseBytes: z.number().int().positive().default(67108864)
+    .describe(
+      "Cap on the total bytes read from a single ClickHouse query response body " +
+        "(default 64MiB). Exceeding it aborts that read rather than exhausting memory.",
+    ),
 });
 
 const SettingsSchema = z.object({
@@ -322,6 +331,7 @@ function configFrom(g: Record<string, unknown>): ClickHouseConfig | null {
     user,
     key,
     database: (g.clickhouseDatabase as string) ?? "default",
+    maxResponseBytes: g.clickhouseMaxResponseBytes as number | undefined,
   };
 }
 
@@ -337,8 +347,18 @@ function configFrom(g: Record<string, unknown>): ClickHouseConfig | null {
  */
 export const model = {
   type: "@magistr/anilist-chart",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
   globalArguments: GlobalArgsSchema,
+  upgrades: [
+    {
+      fromVersion: "2026.08.01.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix LB1-LB7; adds two DEFAULTED global args (sshTimeoutMs, " +
+        "clickhouseMaxResponseBytes) whose defaults preserve every existing config",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   resources: {
     settings: {
       description:
@@ -409,6 +429,7 @@ export const model = {
         const dir = g.outputDir as string | undefined;
         const user = (g.nodeUser as string) ?? "root";
         const target = `${user}@${host ?? "?"}:${dir ?? "?"}`;
+        const sshTimeoutMs = (g.sshTimeoutMs as number) ?? 30000;
 
         if (!host || !dir || !readResource) {
           const handle = await writeResource("publishRun", "publish-run", {
@@ -460,27 +481,39 @@ export const model = {
             await Deno.rename(tmp, `${dir}/${file}`); // atomic swap
             return;
           }
-          const child = new Deno.Command("ssh", {
-            args: [
-              "-o",
-              "BatchMode=yes",
-              `${user}@${host}`,
-              remoteWriteCommand(dir, file),
-            ],
-            stdin: "piped",
-            stdout: "piped",
-            stderr: "piped",
-          }).spawn();
-          const w = child.stdin.getWriter();
-          await w.write(new TextEncoder().encode(content));
-          await w.close();
-          const out = await child.output();
-          if (out.code !== 0) {
-            throw new Error(
-              `ssh exit ${out.code}: ${
-                new TextDecoder().decode(out.stderr).trim()
-              }`,
-            );
+          // Bound the whole spawn/write/output round-trip: a hung ssh (dead
+          // network, stuck host key prompt despite BatchMode) must not block
+          // publish() forever. AbortController + setTimeout + clearTimeout
+          // (NOT AbortSignal.timeout) so a fast success cancels the pending
+          // timer instead of leaving it to fire after the fact.
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), sshTimeoutMs);
+          try {
+            const child = new Deno.Command("ssh", {
+              args: [
+                "-o",
+                "BatchMode=yes",
+                `${user}@${host}`,
+                remoteWriteCommand(dir, file),
+              ],
+              stdin: "piped",
+              stdout: "piped",
+              stderr: "piped",
+              signal: controller.signal,
+            }).spawn();
+            const w = child.stdin.getWriter();
+            await w.write(new TextEncoder().encode(content));
+            await w.close();
+            const out = await child.output();
+            if (out.code !== 0) {
+              throw new Error(
+                `ssh exit ${out.code}: ${
+                  new TextDecoder().decode(out.stderr).trim()
+                }`,
+              );
+            }
+          } finally {
+            clearTimeout(timer);
           }
         });
 
@@ -556,99 +589,149 @@ export const model = {
         const client = new ClickHouseClient(cfg);
         const db = cfg.database;
         const win = seasonWindow(now);
+        const N = (v: unknown) => Number(v ?? 0);
 
         // ── reads ─────────────────────────────────────────────────────────
-        const boardRows = await client.query<RawBoardRow>(boardQuery(db));
-        const chartScores = await client.query<RawChartScore>(
-          chartScoresQuery(db),
-          { names: arrayStringParam(userNames) },
-        );
-        const idRows = await client.query<{ media_id: number | string }>(
-          distinctMediaIdsQuery(db),
-          { names: arrayStringParam(userNames) },
-        );
-        const ids = idRows.map((r) => Number(r.media_id));
-        const chartMeta = ids.length === 0 ? [] : await client.query<
-          RawChartMeta
-        >(chartMetadataQuery(db), { ids: arrayIntParam(ids) });
-
-        const lq = landingQueries(db);
-        const totals = (await client.query(lq.totals))[0] as Record<
-          string,
-          unknown
-        >;
-        const titles = (await client.query(lq.titles))[0] as Record<
-          string,
-          unknown
-        >;
-        const genres = (await client.query(lq.genres))[0] as Record<
-          string,
-          unknown
-        >;
-        const cur = (await client.query(lq.currentSeason, {
-          seasonStart: win.start,
-          seasonEnd: win.end,
-        }))[0] as Record<string, unknown>;
-        const movies = (await client.query(lq.movies))[0] as Record<
-          string,
-          unknown
-        >;
-        const years = (await client.query(lq.years))[0] as Record<
-          string,
-          unknown
-        >;
-
-        const N = (v: unknown) => Number(v ?? 0);
-        const landing: LandingStats = {
-          users: N(totals?.users),
-          rows: N(totals?.rows),
-          rated: N(totals?.rated),
-          titles: N(titles?.titles),
-          genres: N(genres?.genres),
-          cur_titles: N(cur?.cur_titles),
-          cur_users: N(cur?.cur_users),
-          movies: N(movies?.movies),
-          y_min: N(years?.y_min),
-          y_max: N(years?.y_max),
-          season: win.label,
-        };
-
-        // ── freshness gate ────────────────────────────────────────────────
+        // The 11 reads (board, chartScores, distinctIds, chartMeta, six
+        // landing aggregates, freshness) plus the pure freshness-input
+        // computation are wrapped in ONE try/catch: any read throwing (a
+        // non-200 response, a malformed-JSONEachRow parse error, a 200-status
+        // inline exception) previously escaped execute() with NO diagnostic
+        // marker at all. Now the marker is always written on the way out —
+        // write-then-rethrow, mirroring publish()'s existing fail-loud guard —
+        // so the workflow step still fails AND a `renderRun` marker survives
+        // for `swamp report get`/`swamp data get` to inspect (LB1).
+        let boardRows: RawBoardRow[];
+        let chartScores: RawChartScore[];
+        let chartMeta: RawChartMeta[];
+        let landing: LandingStats;
         let priorRunExists = false;
-        if (readResource) {
-          try {
-            priorRunExists = Boolean(
-              await readResource("render-run"),
-            );
-          } catch {
-            priorRunExists = false;
-          }
-        }
-        const referenced = new Set(ids);
-        const withMeta = new Set(chartMeta.map((m) => Number(m.media_id)));
-        const coverage = referenced.size === 0
-          ? 1
-          : [...referenced].filter((id) => withMeta.has(id)).length /
-            referenced.size;
+        let coverage: number;
+        let newestDataAgeMs: number | null;
+        let newestTimestampMalformed = false;
 
-        // max(last_updated) on user_scores -> corpus age, so a frozen ingest is
-        // surfaced as an anomaly rather than silently served. Parsed as UTC; a
-        // few hours of tz skew is irrelevant against a multi-week stale window.
-        const freshRow =
-          (await client.query<{ newest?: string }>(freshnessQuery(db)))[0];
-        const newestRaw = freshRow?.newest;
-        const newestMs = newestRaw && !newestRaw.startsWith("0000")
-          ? Date.parse(String(newestRaw).replace(" ", "T") + "Z")
-          : NaN;
-        const newestDataAgeMs = Number.isFinite(newestMs)
-          ? now.getTime() - newestMs
-          : null;
+        try {
+          boardRows = await client.query<RawBoardRow>(boardQuery(db));
+          chartScores = await client.query<RawChartScore>(
+            chartScoresQuery(db),
+            { names: arrayStringParam(userNames) },
+          );
+          const idRows = await client.query<{ media_id: number | string }>(
+            distinctMediaIdsQuery(db),
+            { names: arrayStringParam(userNames) },
+          );
+          // LB5: a corrupt/non-numeric media_id (Number(...) -> NaN) is
+          // dropped here rather than sent to ClickHouse as the poisoned
+          // literal array element "NaN" (arrayIntParam now throws on it
+          // defensively too, but filtering means that throw never fires in
+          // practice). Empty `ids` still routes through the `[]` branch below.
+          const ids = idRows.map((r) => Number(r.media_id)).filter(
+            Number.isFinite,
+          );
+          chartMeta = ids.length === 0 ? [] : await client.query<
+            RawChartMeta
+          >(chartMetadataQuery(db), { ids: arrayIntParam(ids) });
+
+          const lq = landingQueries(db);
+          const totals = (await client.query(lq.totals))[0] as Record<
+            string,
+            unknown
+          >;
+          const titles = (await client.query(lq.titles))[0] as Record<
+            string,
+            unknown
+          >;
+          const genres = (await client.query(lq.genres))[0] as Record<
+            string,
+            unknown
+          >;
+          const cur = (await client.query(lq.currentSeason, {
+            seasonStart: win.start,
+            seasonEnd: win.end,
+          }))[0] as Record<string, unknown>;
+          const movies = (await client.query(lq.movies))[0] as Record<
+            string,
+            unknown
+          >;
+          const years = (await client.query(lq.years))[0] as Record<
+            string,
+            unknown
+          >;
+
+          landing = {
+            users: N(totals?.users),
+            rows: N(totals?.rows),
+            rated: N(totals?.rated),
+            titles: N(titles?.titles),
+            genres: N(genres?.genres),
+            cur_titles: N(cur?.cur_titles),
+            cur_users: N(cur?.cur_users),
+            movies: N(movies?.movies),
+            y_min: N(years?.y_min),
+            y_max: N(years?.y_max),
+            season: win.label,
+          };
+
+          // ── freshness gate reads ──────────────────────────────────────
+          if (readResource) {
+            try {
+              priorRunExists = Boolean(
+                await readResource("render-run"),
+              );
+            } catch {
+              priorRunExists = false;
+            }
+          }
+          const referenced = new Set(ids);
+          const withMeta = new Set(chartMeta.map((m) => Number(m.media_id)));
+          coverage = referenced.size === 0
+            ? 1
+            : [...referenced].filter((id) => withMeta.has(id)).length /
+              referenced.size;
+
+          // max(last_updated) on user_scores -> corpus age, so a frozen
+          // ingest is surfaced as an anomaly rather than silently served.
+          // Parsed as UTC; a few hours of tz skew is irrelevant against a
+          // multi-week stale window.
+          const freshRow =
+            (await client.query<{ newest?: string }>(freshnessQuery(db)))[0];
+          const newestRaw = freshRow?.newest;
+          const newestPresent = newestRaw != null &&
+            !newestRaw.startsWith("0000");
+          const newestMs = newestPresent
+            ? Date.parse(String(newestRaw).replace(" ", "T") + "Z")
+            : NaN;
+          newestDataAgeMs = Number.isFinite(newestMs)
+            ? now.getTime() - newestMs
+            : null;
+          // LB4: distinguish "raw present but unparseable" from "genuinely
+          // absent" so a garbage timestamp surfaces as an anomaly instead of
+          // silently disabling the staleness check (evaluateFreshness only
+          // fires staleness when newestDataAgeMs !== null).
+          newestTimestampMalformed = newestPresent &&
+            !Number.isFinite(newestMs);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          await writeResource("renderRun", "render-run", {
+            timestamp: nowIso(now),
+            ok: false,
+            refuseReason: `read failed: ${msg}`,
+            published: [],
+            refused: [],
+            failed: [],
+            anomalies: [msg],
+            topK,
+            bayesMinVotes,
+          });
+          throw e;
+        }
 
         const verdict = evaluateFreshness({
-          scoreRowCount: N(totals?.rows),
-          metadataRowCount: N(titles?.titles),
+          scoreRowCount: landing.rows,
+          metadataRowCount: landing.titles,
           metadataCoverage: coverage,
           newestDataAgeMs,
+          newestTimestampMalformed,
           priorRunExists,
         });
 
@@ -670,7 +753,7 @@ export const model = {
         // ── fan-out + publish ─────────────────────────────────────────────
         const { tasks, warn } = buildRenderTasks({
           boardRows,
-          boardNrows: N(totals?.rows),
+          boardNrows: landing.rows,
           chartScores,
           chartMeta,
           landing,

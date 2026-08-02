@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/anilist-chart"
-version: "2026.08.01.1"
+version: "2026.08.02.1"
 description: |
   Read-only render layer for the AniList chat statistics site: turns the
   `anilist_metadata` and `user_scores` ClickHouse tables (written by the
