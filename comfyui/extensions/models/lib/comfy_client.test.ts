@@ -273,4 +273,43 @@ describe("waitForResult", () => {
       "timed out",
     );
   });
+
+  it("rejects when the render is errored and produced no images", async () => {
+    const errored: HistoryEntry = {
+      status: { completed: true, status_str: "error" },
+      outputs: {},
+    };
+    const fetchImpl = () => Promise.resolve(jsonResponse({ pid: errored }));
+    const c = new ComfyClient({
+      baseUrl: "http://host",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await assertRejects(
+      () =>
+        c.waitForResult("pid", {
+          sleep: () => Promise.resolve(),
+        }),
+      Error,
+      "failed",
+    );
+  });
+
+  it("resolves when the render is errored but still produced an image", async () => {
+    const erroredWithImage: HistoryEntry = {
+      status: { completed: true, status_str: "error" },
+      outputs: {
+        "9": { images: [{ filename: "a.png", subfolder: "", type: "output" }] },
+      },
+    };
+    const fetchImpl = () =>
+      Promise.resolve(jsonResponse({ pid: erroredWithImage }));
+    const c = new ComfyClient({
+      baseUrl: "http://host",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const got = await c.waitForResult("pid", {
+      sleep: () => Promise.resolve(),
+    });
+    assertEquals(c.collectImages(got).length, 1);
+  });
 });

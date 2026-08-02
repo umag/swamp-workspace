@@ -2,18 +2,20 @@
  * Adversarial suite: hostile/malformed ComfyUI responses, malformed
  * caption/bbox input, credential-leak assertions (both the standard API-key
  * and Claude Code OAuth-token auth shapes), a fixtures-secret-scan over
- * `comfyui/fixtures/*.json`, and the four found-bug PINS.
+ * `comfyui/fixtures/*.json`, and the four found-bug tests.
  *
- * comfyui.ts is UNMODIFIED — every test here PINS current behavior. The
- * timeout/hung-server case is intentionally NOT re-tested here: it already
- * lives at the ComfyClient lib level in `lib/comfy_client.test.ts` (with an
- * injected no-op sleep). Every case below resolves IMMEDIATELY — none of them
- * enter `waitForResult`'s poll-sleep loop — so no real timers fire and
- * FakeTime is unnecessary.
+ * As of 2026.08.02.1, `comfyui.ts` and `lib/comfy_client.ts` carry real fixes
+ * for all four latent bugs this suite originally characterized; the four
+ * tests below (still labelled "pin:") now assert the CORRECTED behavior
+ * instead of the buggy one. The timeout/hung-server case is intentionally NOT
+ * re-tested here: it already lives at the ComfyClient lib level in
+ * `lib/comfy_client.test.ts` (with an injected no-op sleep). Every case below
+ * resolves IMMEDIATELY — none of them enter `waitForResult`'s poll-sleep loop
+ * — so no real timers fire and FakeTime is unnecessary.
  *
- * Bug pins are labelled "pin:" and assert the ACTUAL (wrong) current output —
- * a future fix must flip these red. They are tracked in the LOCAL
- * `comfyui-latent-bugs` issue-lifecycle model, never filed to the Lab.
+ * Bug pins are labelled "pin:" and now assert the FIXED output — regressions
+ * will flip these red. They are tracked in the LOCAL `comfyui-latent-bugs`
+ * issue-lifecycle model, never filed to the Lab.
  */
 import {
   assert,
@@ -589,13 +591,14 @@ Deno.test("fixtures-secret-scan: sanity — the scanner actually detects an inje
 // `comfyui-latent-bugs` issue-lifecycle model for the fix tracking.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: generate records a seed it never applied when no seedNodeId/template resolves", async () => {
+Deno.test("pin: generate records null (not the caller's seed) when no seedNodeId/template resolves to apply it", async () => {
   // args.seed is set explicitly, but no `template` and no `seedNodeId` are
   // given, so resolveSeedNode() returns seedNodeId=undefined. generate()'s
-  // guard `seed !== undefined && seedNodeId !== undefined` is then false, so
-  // `patched = base` (the seed is NEVER written into the graph) — yet the
-  // generation resource still records `seed: args.seed`, misrepresenting
-  // what was actually rendered. Documented gap #1 (MED), not fixed here.
+  // guard `appliedSeed = seed !== undefined && seedNodeId !== undefined ?
+  // seed : undefined` is then undefined, so `patched = base` (the seed is
+  // NEVER written into the graph) — and the generation resource honestly
+  // records `seed: null` instead of misrepresenting what was actually
+  // rendered. Fixed gap #1 (MED) in `2026.08.02.1`.
   const dir = await Deno.makeTempDir();
   try {
     const { context, captured } = fakeContext({
@@ -644,25 +647,27 @@ Deno.test("pin: generate records a seed it never applied when no seedNodeId/temp
     // pin: the graph actually sent to ComfyUI still carries the ORIGINAL
     // baked-in seed (111) — args.seed=999999 was never applied...
     assertEquals(postedNoiseSeedNode18, 111);
-    // ...yet the generation resource claims 999999 was the render's seed.
-    assertEquals(g.seed, 999999, "pin: misrepresents the actual render");
+    // ...and the generation resource now honestly records null, not the
+    // caller's unapplied seed.
+    assertEquals(g.seed, null, "pin: records null, not the unapplied seed");
     assertNotEquals(
       g.seed,
-      postedNoiseSeedNode18,
-      "pin: recorded seed does not match what was actually posted",
+      999999,
+      "pin: never claims an unapplied seed was the render's seed",
     );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("pin: waitForResult treats completed:true + status:error + no images as done -> empty success, no error surfaced", async () => {
-  // ComfyClient.waitForResult's `done` guard is
-  // `entry.status?.completed === true || collectImages(entry).length > 0`.
-  // A render that ComfyUI itself marked as errored (status_str: "error") but
-  // that ALSO reports completed:true is treated identically to a genuine
-  // success — generate() then returns normally with an empty images/paths
-  // list instead of throwing. Documented gap #2 (MED), not fixed here.
+Deno.test("pin: waitForResult rejects an errored + imageless render instead of returning empty success", async () => {
+  // ComfyClient.waitForResult now checks, before its `done` guard, whether
+  // `status.status_str === "error" && collectImages(entry).length === 0` and
+  // throws in that case. A render that ComfyUI itself marked as errored
+  // (status_str: "error") with completed:true but zero images used to be
+  // treated identically to a genuine success — generate() now rejects
+  // instead of returning an empty images/paths list. Fixed gap #2 (MED) in
+  // `2026.08.02.1`.
   const dir = await Deno.makeTempDir();
   try {
     const { context, captured } = fakeContext({
@@ -693,24 +698,30 @@ Deno.test("pin: waitForResult treats completed:true + status:error + no images a
         const args = model.methods.generate.arguments.parse({
           workflow: { "1": { class_type: "X", inputs: {} } },
         });
-        // pin: this does NOT throw, despite the render having errored.
-        await model.methods.generate.execute(args, context);
+        // pin: this now rejects, surfacing the render's error.
+        await assertRejects(
+          () => model.methods.generate.execute(args, context),
+          Error,
+          "failed",
+        );
       },
     );
-    const gen = captured.find((c) => c.spec === "generation");
-    assert(gen);
-    const g = gen.data as { images: unknown[]; paths: string[] };
-    assertEquals(g.images, [], "pin: empty images, no error surfaced");
-    assertEquals(g.paths, [], "pin: empty paths, no error surfaced");
+    // pin: no generation resource is recorded for a rejected render.
+    assertEquals(
+      captured.find((c) => c.spec === "generation"),
+      undefined,
+      "pin: an errored+empty render leaves no generation resource",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("pin: snapshotServer never checks res.ok — a non-JSON 500 /system_stats throws a raw, unmapped SyntaxError", async () => {
-  // Documented gap #3 (LOW): `snapshotServer` calls `res.json()`
-  // unconditionally. A non-JSON error body on a 500 throws a raw SyntaxError
-  // from JSON parsing, never mapped to a comfyui-domain error.
+Deno.test("pin: snapshotServer now checks res.ok — a non-JSON 500 /system_stats rejects with a mapped Error, not a raw SyntaxError", async () => {
+  // Fixed gap #3 (LOW) in `2026.08.02.1`: `snapshotServer` now checks
+  // `res.ok` before `res.json()`. A non-JSON error body on a 500 rejects with
+  // a domain-mapped `ComfyUI /system_stats failed: 500 ...` Error instead of
+  // a raw SyntaxError from JSON parsing.
   const { context } = fakeContext();
   await withFetchStub(
     [(req) =>
@@ -720,17 +731,18 @@ Deno.test("pin: snapshotServer never checks res.ok — a non-JSON 500 /system_st
     async () => {
       await assertRejects(
         () => model.methods.lookup.execute({}, context),
-        SyntaxError,
+        Error,
+        "/system_stats failed",
       );
     },
   );
 });
 
-Deno.test("pin: snapshotServer accepts a 500 with a well-formed but system-less JSON body, writing comfyuiVersion undefined", async () => {
+Deno.test("pin: snapshotServer rejects a 500 with a well-formed but system-less JSON body instead of silently writing comfyuiVersion undefined", async () => {
   // Same gap as above from the other side: a WELL-FORMED JSON error envelope
-  // on a 500 (no `system` key) is accepted identically to a 200 — no error
-  // is thrown, and the written resource silently carries
-  // `comfyuiVersion: undefined`.
+  // on a 500 (no `system` key) used to be accepted identically to a 200 with
+  // `comfyuiVersion: undefined` silently written. It now rejects before ever
+  // reaching `res.json()`/`writeResource`.
   const { context, captured } = fakeContext();
   await withFetchStub(
     [(req) =>
@@ -738,23 +750,27 @@ Deno.test("pin: snapshotServer accepts a 500 with a well-formed but system-less 
         ? json({ error: "internal error" }, 500)
         : undefined],
     async () => {
-      await model.methods.lookup.execute({}, context); // pin: does not throw
+      await assertRejects(
+        () => model.methods.lookup.execute({}, context),
+        Error,
+        "500",
+      );
     },
   );
-  const server = captured.find((c) => c.spec === "server");
-  assert(server);
+  // pin: no server resource is recorded for a rejected snapshot.
   assertEquals(
-    (server.data as { comfyuiVersion: unknown }).comfyuiVersion,
+    captured.find((c) => c.spec === "server"),
     undefined,
-    "pin: HTTP 500 is ignored; version is silently undefined",
+    "pin: a rejected /system_stats leaves no server resource",
   );
 });
 
-Deno.test("pin: saveImages ignores subfolder — two images sharing a filename in different subfolders collide on disk", async () => {
-  // Documented gap #4 (LOW): `saveImages` writes to
-  // `${outputDir}/${img.filename}`, dropping `img.subfolder` entirely. Two
-  // images that ComfyUI placed in different subfolders but share a filename
-  // silently overwrite each other.
+Deno.test("pin: saveImages joins subfolder — two images sharing a filename in different subfolders no longer collide on disk", async () => {
+  // Fixed gap #4 (LOW) in `2026.08.02.1`: `saveImages` now joins
+  // `${outputDir}/${img.subfolder}/${img.filename}` (creating the subfolder
+  // dir) instead of writing to `${outputDir}/${img.filename}` unconditionally.
+  // Two images that ComfyUI placed in different subfolders but share a
+  // filename now land at distinct paths.
   const dir = await Deno.makeTempDir();
   try {
     const { context, captured } = fakeContext({
@@ -811,18 +827,23 @@ Deno.test("pin: saveImages ignores subfolder — two images sharing a filename i
     const gen = captured.find((c) => c.spec === "generation");
     assert(gen);
     const g = gen.data as { paths: string[] };
-    // pin: TWO paths recorded (as if two distinct files were saved)...
+    // pin: TWO distinct paths recorded, one per subfolder.
     assertEquals(g.paths.length, 2);
-    assertEquals(g.paths[0], g.paths[1], "pin: both paths are IDENTICAL");
-    // ...but only ONE file actually exists, holding whichever image was
-    // written LAST — the "a" subfolder's bytes are gone.
-    const onDisk = await Deno.readFile(g.paths[0]);
-    assertEquals(onDisk, bytesB, "pin: the second write clobbered the first");
-    assertNotEquals(
-      onDisk,
-      bytesA,
-      "pin: subfolder 'a''s image is unrecoverable — silently overwritten",
+    assertNotEquals(g.paths[0], g.paths[1], "pin: paths are now DISTINCT");
+    assert(
+      g.paths[0].endsWith("/a/out.png"),
+      "pin: first path lands under subfolder 'a'",
     );
+    assert(
+      g.paths[1].endsWith("/b/out.png"),
+      "pin: second path lands under subfolder 'b'",
+    );
+    // ...and BOTH files actually exist, each holding its own bytes — no
+    // clobber.
+    const onDiskA = await Deno.readFile(g.paths[0]);
+    const onDiskB = await Deno.readFile(g.paths[1]);
+    assertEquals(onDiskA, bytesA, "pin: subfolder 'a''s image is intact");
+    assertEquals(onDiskB, bytesB, "pin: subfolder 'b''s image is intact");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

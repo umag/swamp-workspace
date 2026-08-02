@@ -311,7 +311,9 @@ async function saveImages(
   const paths: string[] = [];
   for (const img of images) {
     const bytes = await client.fetchImage(img);
-    const path = `${outputDir}/${img.filename}`;
+    const dir = img.subfolder ? `${outputDir}/${img.subfolder}` : outputDir;
+    if (img.subfolder) await Deno.mkdir(dir, { recursive: true });
+    const path = `${dir}/${img.filename}`;
     await Deno.writeFile(path, bytes);
     paths.push(path);
   }
@@ -323,6 +325,11 @@ async function snapshotServer(
 ): Promise<{ dataHandles: never[] }> {
   const { globalArgs } = context;
   const res = await fetch(`${globalArgs.baseUrl}/system_stats`);
+  if (!res.ok) {
+    throw new Error(
+      `ComfyUI /system_stats failed: ${res.status} ${res.statusText}`,
+    );
+  }
   const json = await res.json() as {
     system?: { comfyui_version?: string };
     devices?: unknown;
@@ -342,7 +349,16 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.07.21.1",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.21.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix 4 latent bugs (unapplied-seed record, errored-render silent success, snapshotServer res.ok, saveImages subfolder collision); no globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgs,
   resources: {
     server: {
@@ -484,8 +500,18 @@ export const model = {
         // Otherwise a seedless run would reuse the graph's baked constant.
         const seed = args.seed ??
           (seedNodeId !== undefined ? randomSeed() : undefined);
-        const patched = seed !== undefined && seedNodeId !== undefined
-          ? applyIdeogramOverrides(base, { seed, seedNodeId, seedInputKey })
+        // The seed actually applied to the graph — undefined (recorded as
+        // null) when there is no known seed node to patch it onto, even if
+        // the caller passed an explicit `seed`.
+        const appliedSeed = seed !== undefined && seedNodeId !== undefined
+          ? seed
+          : undefined;
+        const patched = appliedSeed !== undefined
+          ? applyIdeogramOverrides(base, {
+            seed: appliedSeed,
+            seedNodeId,
+            seedInputKey,
+          })
           : base;
 
         const client = new ComfyClient({
@@ -504,7 +530,7 @@ export const model = {
           promptId,
           images,
           paths,
-          seed: seed ?? null,
+          seed: appliedSeed ?? null,
         });
         return { dataHandles: [] };
       },

@@ -3,10 +3,16 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance by ext-quality-bf-comfyui (wave 2c
-# gap-check child of ext-quality-test-backfill). comfyui.ts, its libs, and the
-# bundled workflow JSON are BYTE-FROZEN by this change — every listed test
-# file characterizes/pins already-shipped behavior; no production code
-# changed and no manifest/model version bump.
+# gap-check child of ext-quality-test-backfill); comfyui.ts was byte-frozen
+# at that point (2026.07.21.1).
+#
+# 2026.08.02.1 (fix/comfyui-latent-bugs) real-fixes the four latent bugs that
+# release's adversarial suite characterized: `comfyui.ts` (unapplied-seed
+# record, `snapshotServer` res.ok check, `saveImages` subfolder join) and
+# `lib/comfy_client.ts` (`waitForResult` errored-empty throw) both changed.
+# The four former pins in `comfyui_adversarial_test.ts` now assert the
+# CORRECTED behavior instead of the buggy one; the `tests:` file lists below
+# are unchanged (all edits were made in-place, no files added/removed).
 #
 # Role map (each pre-existing file assigned to exactly ONE honest role — the
 # scaffolder originally dumped all 8 under contract-fixture; this corrects
