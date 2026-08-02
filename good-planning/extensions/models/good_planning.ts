@@ -313,6 +313,24 @@ export const PlanStateSchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 
+/**
+ * Strict ISO-8601 calendar date (e.g. "2026-09-01"). Deliberately narrower
+ * than `Date.parse`, which accepts engine-defined loose formats — a bare
+ * year like "2026" parses under `Date.parse` but is rejected here.
+ *
+ * @internal
+ */
+const ISO_DATE = z.iso.date();
+
+/**
+ * Strict ISO-8601 date-time, reused so `byDate` also accepts a full
+ * timestamp (not just a calendar date) without falling back to
+ * `Date.parse` leniency.
+ *
+ * @internal
+ */
+const ISO_DATETIME = z.iso.datetime();
+
 // ============================================================================
 // Public TypeScript types — these are the shapes consumers should depend on
 // ============================================================================
@@ -643,6 +661,51 @@ export function guardState(
 }
 
 /**
+ * Structural equality for plain JSON-shaped values (objects, arrays,
+ * primitives) — used to detect duplicate `add_*` calls. Not a general
+ * deep-equal: assumes no cycles, functions, or exotic types, which matches
+ * every value this model ever stores.
+ *
+ * @param a  First value.
+ * @param b  Second value.
+ * @returns  `true` iff `a` and `b` are structurally identical.
+ */
+export function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    return a.every((v, i) => deepEqual(v, b[i]));
+  }
+  if (typeof a === "object" && typeof b === "object") {
+    const aRec = a as Record<string, unknown>;
+    const bRec = b as Record<string, unknown>;
+    const aKeys = Object.keys(aRec).sort();
+    const bKeys = Object.keys(bRec).sort();
+    if (aKeys.length !== bKeys.length) return false;
+    return aKeys.every((k, i) => k === bKeys[i] && deepEqual(aRec[k], bRec[k]));
+  }
+  return false;
+}
+
+/**
+ * Append `item` to `arr` unless a structurally-identical element already
+ * exists, in which case `arr` is returned unchanged. Makes every `add_*`
+ * method idempotent for exact-duplicate calls while still allowing repeated
+ * calls that differ in even one field.
+ *
+ * @param arr   Existing array.
+ * @param item  Candidate item to append.
+ * @returns     `arr` unchanged if `item` is a duplicate, else `[...arr, item]`.
+ */
+export function appendUnique<T>(arr: T[], item: T): T[] {
+  return arr.some((existing) => deepEqual(existing, item))
+    ? arr
+    : [...arr, item];
+}
+
+/**
  * Trigger point per the article:
  *   trigger = time_to_hit_crux − lead_time_to_relieve − safety_margin
  * Negative means already late.
@@ -655,6 +718,18 @@ export function computeTriggerPoint(
   ceiling: Pick<Ceiling, "leadTimeWeeks" | "safetyMarginWeeks">,
   timeToCruxWeeks: number,
 ): number {
+  if (
+    !Number.isFinite(timeToCruxWeeks) ||
+    !Number.isFinite(ceiling.leadTimeWeeks) ||
+    !Number.isFinite(ceiling.safetyMarginWeeks)
+  ) {
+    throw new Error(
+      "computeTriggerPoint requires finite inputs — got " +
+        `timeToCruxWeeks=${timeToCruxWeeks}, ` +
+        `leadTimeWeeks=${ceiling.leadTimeWeeks}, ` +
+        `safetyMarginWeeks=${ceiling.safetyMarginWeeks}.`,
+    );
+  }
   return timeToCruxWeeks - ceiling.leadTimeWeeks - ceiling.safetyMarginWeeks;
 }
 
@@ -666,14 +741,27 @@ export function computeTriggerPoint(
  * @returns Total max tolerable loss in USD.
  */
 export function computeMaxTolerableLoss(b: LossBudget): number {
-  return b.sunkCostUsd + b.shutdownCostUsd + b.committedLiabilitiesUsd +
-    b.workingCapitalUnwindUsd + b.tailProvisionsUsd;
+  const components = [
+    b.sunkCostUsd,
+    b.shutdownCostUsd,
+    b.committedLiabilitiesUsd,
+    b.workingCapitalUnwindUsd,
+    b.tailProvisionsUsd,
+  ];
+  if (!components.every((n) => Number.isFinite(n))) {
+    throw new Error(
+      "computeMaxTolerableLoss requires finite loss-budget components — " +
+        `got ${JSON.stringify(b)}.`,
+    );
+  }
+  return components.reduce((sum, n) => sum + n, 0);
 }
 
 /**
  * The article's six properties of a real commitment. Returns the list of
  * property names that are materially missing — empty strings count as
- * missing, and `byDate` must parse as a date string.
+ * missing, and `byDate` must be a strict ISO-8601 calendar date or
+ * date-time (not `Date.parse`'s engine-defined leniency).
  *
  * @param c  The commitment to check.
  * @returns `{ ok, missing }` — empty `missing` means commitment is real.
@@ -684,7 +772,11 @@ export function commitmentSatisfiesSixProperties(
   const missing: string[] = [];
   if (!c.owner.trim()) missing.push("owner");
   if (c.budgetUsd <= 0) missing.push("budgetUsd");
-  if (!c.byDate.trim() || isNaN(Date.parse(c.byDate))) {
+  if (
+    !c.byDate.trim() ||
+    (!ISO_DATE.safeParse(c.byDate).success &&
+      !ISO_DATETIME.safeParse(c.byDate).success)
+  ) {
     missing.push("byDate");
   }
   // dependsOn may legitimately be empty (a top-level commitment).
@@ -716,6 +808,22 @@ export interface LayerGap {
 }
 
 /**
+ * Layer-1 "is there a live assumption" predicate shared by
+ * `commitGateReport`, `governabilityScore`, and
+ * `auditDiagnosticQuestions.layer1Visible`. An assumption whose signpost has
+ * already broken is a materialized failure, not a live model of reality —
+ * it no longer counts as "visible" risk. Keeping this in one place is what
+ * keeps `commitGateReport.ok` and `governabilityScore === 1` in lockstep
+ * (see the property-invariant suite's invariant (d)).
+ *
+ * @param plan  The plan to inspect.
+ * @returns     `true` iff at least one assumption is not `state: "broken"`.
+ */
+export function hasLiveAssumption(plan: PlanState): boolean {
+  return plan.assumptions.some((a) => a.state !== "broken");
+}
+
+/**
  * The commit gate. Returns the structured list of gaps so `commit()` can
  * format a useful error AND tests can assert on the structure without
  * string-matching method bodies.
@@ -730,12 +838,15 @@ export function commitGateReport(plan: PlanState): {
   const gaps: LayerGap[] = [];
 
   // Layer 1: assumption
-  if (plan.assumptions.length === 0) {
+  if (!hasLiveAssumption(plan)) {
     gaps.push({
       layer: "assumption",
-      reason:
-        "No assumptions recorded. The article: 'every plan embeds a model " +
-        "of reality... the question is whether they are visible or buried.'",
+      reason: plan.assumptions.length === 0
+        ? "No assumptions recorded. The article: 'every plan embeds a model " +
+          "of reality... the question is whether they are visible or buried.'"
+        : "Every recorded assumption is 'broken' — all assumptions broken " +
+          "means the plan's model of reality has already failed, not that " +
+          "it is materially present. Revise the plan or record a live one.",
     });
   }
 
@@ -803,7 +914,7 @@ export function commitGateReport(plan: PlanState): {
  */
 export function governabilityScore(plan: PlanState): number {
   let score = 0;
-  if (plan.assumptions.length > 0) score++;
+  if (hasLiveAssumption(plan)) score++;
   if (plan.allocations.length > 0) score++;
   if (
     plan.commitments.length > 0 &&
@@ -850,7 +961,7 @@ export interface DiagnosticAnswers {
 export function auditDiagnosticQuestions(plan: PlanState): DiagnosticAnswers {
   const namedAssumptions = plan.assumptions
     .map((a) => `${a.statement} [signpost: ${a.signpostName}]`);
-  const layer1Visible = plan.assumptions.length > 0;
+  const layer1Visible = hasLiveAssumption(plan);
   const layer1Answer = layer1Visible
     ? `${plan.assumptions.length} assumption(s) with signposts: ${
       namedAssumptions.join("; ")
@@ -950,7 +1061,20 @@ async function readState(ctx: ReadWriteCtx): Promise<PlanState | null> {
  */
 export const model = {
   type: "@magistr/good-planning",
-  version: "2026.07.16.2",
+  version: "2026.08.02.1",
+
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix GP1-GP8 (start guard+force, adapt resets fired tripwire, " +
+        "strict ISO byDate, evaluate mismatched-payload guard, broken-" +
+        "assumption-aware gate/score, pullbackRung bounds-check, add_* " +
+        "dedup, NaN/Infinity guards); no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
 
   globalArguments: z.object({}),
 
@@ -977,21 +1101,46 @@ export const model = {
       description:
         "Create a draft plan with strategicChoice + horizon. Strategy " +
         "chooses; planning commits — this records the choice the plan " +
-        "exists to operationalize.",
+        "exists to operationalize. Refuses to overwrite an existing plan " +
+        "unless force:true is passed.",
       arguments: z.object({
         strategicChoice: z.string().min(1).describe(
           "The where-to-play / how-to-win sentence in one line",
         ),
         horizon: z.string().min(1).describe("e.g. '3y', '12m'"),
         notes: z.string().optional(),
+        force: z.boolean().default(false).describe(
+          "Set true to intentionally replace an existing plan. Without " +
+            "it, start() refuses to overwrite a plan that already exists — " +
+            "call 'revise' to re-plan an existing one, or pass force:true " +
+            "to discard it and start fresh.",
+        ),
       }),
       execute: async (
-        args: { strategicChoice: string; horizon: string; notes?: string },
+        args: {
+          strategicChoice: string;
+          horizon: string;
+          notes?: string;
+          force?: boolean;
+        },
         ctx: DefinitionCtx,
       ) => {
         ctx.logger.info("Drafting plan {choice}", {
           choice: args.strategicChoice,
         });
+        // RAW read (not `readState`, which parses through the schema) so a
+        // corrupted existing resource still blocks an accidental overwrite,
+        // and force:true can still recover past it either way.
+        const existingRaw = await ctx.readResource!("current");
+        if (existingRaw && !args.force) {
+          throw new Error(
+            "A plan already exists for this instance (state: " +
+              `${String(existingRaw.state)}, planVersion: ` +
+              `${String(existingRaw.planVersion)}). start() does not merge ` +
+              "with an existing plan — call 'revise' to re-plan it, or " +
+              "pass force:true to intentionally discard it and start fresh.",
+          );
+        }
         const handle = await ctx.writeResource("state", "current", {
           state: "drafted",
           strategicChoice: args.strategicChoice,
@@ -1048,7 +1197,7 @@ export const model = {
         const newA: Assumption = { ...args, state: "holding" };
         const handle = await ctx.writeResource("state", "current", {
           ...data,
-          assumptions: [...data.assumptions, newA],
+          assumptions: appendUnique(data.assumptions, newA),
           updatedAt: now(),
         });
         return { dataHandles: [handle] };
@@ -1080,7 +1229,7 @@ export const model = {
         }
         const handle = await ctx.writeResource("state", "current", {
           ...data,
-          commitments: [...data.commitments, candidate],
+          commitments: appendUnique(data.commitments, candidate),
           updatedAt: now(),
         });
         return { dataHandles: [handle] };
@@ -1110,7 +1259,7 @@ export const model = {
         const newA: Allocation = { ...args, raidLog: [] };
         const handle = await ctx.writeResource("state", "current", {
           ...data,
-          allocations: [...data.allocations, newA],
+          allocations: appendUnique(data.allocations, newA),
           updatedAt: now(),
         });
         return { dataHandles: [handle] };
@@ -1146,7 +1295,7 @@ export const model = {
         const newC: Ceiling = { ...args, status: "open" };
         const handle = await ctx.writeResource("state", "current", {
           ...data,
-          ceilings: [...data.ceilings, newC],
+          ceilings: appendUnique(data.ceilings, newC),
           updatedAt: now(),
         });
         return { dataHandles: [handle] };
@@ -1176,10 +1325,26 @@ export const model = {
         const data = await readState(ctx);
         if (!data) throw new Error("No plan — run 'start' first");
         guardState(data.state, "drafted", "add_tripwire");
+        // Bounds-check relative to a non-empty ladder only: a ladder that
+        // has never been set (pullbackLadder: []) means the rung is
+        // deferred, not stranded — the frozen contract fixture relies on
+        // pullbackRung:0 with an empty ladder staying legal.
+        if (
+          args.pullbackRung !== undefined &&
+          data.pullbackLadder.length > 0 &&
+          args.pullbackRung >= data.pullbackLadder.length
+        ) {
+          throw new Error(
+            `pullbackRung ${args.pullbackRung} is out of range for the ` +
+              `current pullbackLadder (length ${data.pullbackLadder.length}). ` +
+              "Set a longer ladder via 'set_pullback_ladder' first, or omit " +
+              "pullbackRung to defer the rung assignment.",
+          );
+        }
         const newT: Tripwire = { ...args, state: "dormant" };
         const handle = await ctx.writeResource("state", "current", {
           ...data,
-          tripwires: [...data.tripwires, newT],
+          tripwires: appendUnique(data.tripwires, newT),
           updatedAt: now(),
         });
         return { dataHandles: [handle] };
@@ -1201,6 +1366,20 @@ export const model = {
         const data = await readState(ctx);
         if (!data) throw new Error("No plan — run 'start' first");
         guardState(data.state, "drafted", "set_pullback_ladder");
+        // Catches "tripwire added before the ladder, then a too-short
+        // ladder set" — a tripwire added with no pullbackRung is unaffected.
+        const strandedTripwire = data.tripwires.find((t) =>
+          t.pullbackRung !== undefined && t.pullbackRung >= args.rungs.length
+        );
+        if (strandedTripwire) {
+          throw new Error(
+            `Cannot set a ${args.rungs.length}-rung pullback ladder — ` +
+              `tripwire on signpost '${strandedTripwire.signpostName}' ` +
+              `already references pullbackRung ${strandedTripwire.pullbackRung}, ` +
+              "which would be stranded. Widen the ladder or update the " +
+              "tripwire's pullbackRung first.",
+          );
+        }
         const handle = await ctx.writeResource("state", "current", {
           ...data,
           pullbackLadder: args.rungs,
@@ -1328,6 +1507,40 @@ export const model = {
               `Known: ${known.join(", ") || "(none)"}. ` +
               "Add the signpost to an assumption, ceiling, or tripwire " +
               "before evaluating it.",
+          );
+        }
+
+        // A mismatched-layer payload (e.g. timeToCruxWeeks for a signpost
+        // that has no ceiling) must not silently no-op — that would mask a
+        // typo or a stale reading target just like an unknown signpost does.
+        if (
+          args.assumptionState !== undefined &&
+          !data.assumptions.some((a) => a.signpostName === args.signpostName)
+        ) {
+          throw new Error(
+            `assumptionState was given for signpost ` +
+              `'${args.signpostName}', but no assumption references that ` +
+              "signpost. Add the assumption first, or omit assumptionState.",
+          );
+        }
+        if (
+          args.tripwireState !== undefined &&
+          !data.tripwires.some((t) => t.signpostName === args.signpostName)
+        ) {
+          throw new Error(
+            `tripwireState was given for signpost ` +
+              `'${args.signpostName}', but no tripwire references that ` +
+              "signpost. Add the tripwire first, or omit tripwireState.",
+          );
+        }
+        if (
+          args.timeToCruxWeeks !== undefined &&
+          !data.ceilings.some((c) => c.signpostName === args.signpostName)
+        ) {
+          throw new Error(
+            `timeToCruxWeeks was given for signpost ` +
+              `'${args.signpostName}', but no ceiling references that ` +
+              "signpost. Add the ceiling first, or omit timeToCruxWeeks.",
           );
         }
 
@@ -1484,10 +1697,22 @@ export const model = {
           )
           : data.ceilings;
 
+        // Reset the tripwire that caused this adapt back to "dormant" — a
+        // fired tripwire that never clears would let `trigger()` re-fire on
+        // the same stale reading with no fresh `evaluate()` in between. Only
+        // the tripwire matching `triggeredBy` is touched; a ceiling-crux
+        // `triggeredBy` matches no tripwire and is a no-op here.
+        const tripwires = data.tripwires.map((t) =>
+          t.signpostName === args.triggeredBy && t.state === "fired"
+            ? { ...t, state: "dormant" as const }
+            : t
+        );
+
         const handle = await ctx.writeResource("state", "current", {
           ...data,
           state: "committed",
           ceilings,
+          tripwires,
           adaptHistory: [...data.adaptHistory, event],
           updatedAt: now(),
         });

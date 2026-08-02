@@ -13,10 +13,10 @@
 // approved plan found no security-relevant surface (accepted, byte-frozen).
 //
 // This file ALSO pins GP-1..GP-8 — eight latent bugs found while reading the
-// byte-frozen source, filed to the LOCAL good-planning-latent-bugs
-// issue-lifecycle model (never the swamp.club Lab). Each pin asserts the
-// ACTUAL (current) behavior, not the fixed behavior — a future bug-fix PR is
-// expected to flip these tests red on purpose.
+// then-byte-frozen source, tracked in the LOCAL good-planning-latent-bugs
+// issue-lifecycle model (never the swamp.club Lab). As of 2026.08.02.1 every
+// GP-* pin below asserts the FIXED behavior: these eight bugs were real-fixed
+// in good_planning.ts (see its `upgrades[]` entry), not merely characterized.
 //
 // Own copy of the fake-context harness (established porkbun/comfyui
 // precedent) plus the `run()` real-zod-boundary wrapper from
@@ -373,10 +373,10 @@ Deno.test("hostile: an out-of-enum stored 'state' value throws a ZodError on rea
 });
 
 // ============================================================================
-// GP-1 (MEDIUM) — start() is unguarded/destructive
+// GP-1 (MEDIUM) — start() guards against overwriting an existing plan
 // ============================================================================
 
-Deno.test("pin: GP-1 — re-invoking start() on a committed plan silently wipes it back to an empty drafted plan", async () => {
+Deno.test("pin: GP-1 fixed — re-invoking start() without force on a committed plan throws and leaves the plan untouched", async () => {
   const { ctx, store } = await buildDraftedPlan();
   await run("commit", {}, ctx);
   assertEquals(state(store).state, "committed");
@@ -385,10 +385,29 @@ Deno.test("pin: GP-1 — re-invoking start() on a committed plan silently wipes 
     1,
   );
 
-  // pin: no guard, no read-before-write — start() clobbers everything.
+  // fixed: start() now reads-before-write and refuses to clobber a plan.
+  await assertRejects(
+    () =>
+      run("start", {
+        strategicChoice: "a completely different plan",
+        horizon: "1y",
+      }, ctx),
+    Error,
+    "already exists",
+  );
+  const s = state(store);
+  assertEquals(s.state, "committed");
+  assertEquals((s.commitments as unknown[]).length, 1);
+  assertEquals(s.planVersion, 1);
+});
+
+Deno.test("pin: GP-1 fixed — start(force:true) intentionally replaces an existing plan", async () => {
+  const { ctx, store } = await buildDraftedPlan();
+  await run("commit", {}, ctx);
   await run("start", {
     strategicChoice: "a completely different plan",
     horizon: "1y",
+    force: true,
   }, ctx);
   const s = state(store);
   assertEquals(s.state, "drafted");
@@ -398,10 +417,10 @@ Deno.test("pin: GP-1 — re-invoking start() on a committed plan silently wipes 
 });
 
 // ============================================================================
-// GP-2 (MEDIUM) — stale fired tripwire re-triggers without a fresh reading
+// GP-2 (MEDIUM) — adapt() resets the fired tripwire it responded to
 // ============================================================================
 
-Deno.test("pin: GP-2 — after adapt() -> monitor(), the same tripwire re-triggers with no intervening evaluate()", async () => {
+Deno.test("pin: GP-2 fixed — adapt() resets the triggering tripwire to 'dormant'; a stale re-trigger without a fresh evaluate() rejects", async () => {
   const { ctx, store } = await buildDraftedPlan();
   await run("commit", {}, ctx);
   await run("monitor", {}, ctx);
@@ -419,40 +438,46 @@ Deno.test("pin: GP-2 — after adapt() -> monitor(), the same tripwire re-trigge
     actionTaken: "paused acquisition",
     reason: "first adapt",
   }, ctx);
-  // adapt() never reset the tripwire to "dormant" — it is still "fired".
+  // fixed: adapt() reset the tripwire it responded to back to "dormant".
   assertEquals(
     (state(store).tripwires as Array<Record<string, unknown>>)[0].state,
-    "fired",
+    "dormant",
   );
   await run("monitor", {}, ctx);
-  // pin: trigger() succeeds again with NO evaluate() call in between, because
-  // it only checks `state === "fired"`, which was never cleared.
-  await run("trigger", {
-    signpostName: "self_serve_conversion_pct",
-    reason: "re-fired on stale reading",
-  }, ctx);
-  assertEquals(state(store).state, "adapting");
+  // fixed: no fresh evaluate() happened since adapt() cleared it — rejects.
+  await assertRejects(
+    () =>
+      run("trigger", {
+        signpostName: "self_serve_conversion_pct",
+        reason: "re-fired on stale reading",
+      }, ctx),
+    Error,
+    "No fired tripwire",
+  );
 });
 
 // ============================================================================
-// GP-3 (MEDIUM) — Date.parse leniency in commitmentSatisfiesSixProperties
+// GP-3 (MEDIUM) — commitmentSatisfiesSixProperties requires a strict ISO byDate
 // ============================================================================
 
-Deno.test("pin: GP-3 — byDate '2026' parses (Date.parse leniency) and is NOT flagged missing", async () => {
-  const { context, store } = makeContext();
+Deno.test("pin: GP-3 fixed — byDate '2026' is not a strict ISO date/date-time and IS flagged missing", async () => {
+  const { context } = makeContext();
   await run("start", { strategicChoice: "x", horizon: "1y" }, context);
-  await run("add_commitment", {
-    kind: "commitment",
-    description: "ship",
-    owner: "alice",
-    budgetUsd: 1,
-    byDate: "2026",
-    dependsOn: [],
-    reviewCadence: "weekly",
-    consequenceIfChanged: "delay",
-  }, context);
-  const c = (state(store).commitments as Array<Record<string, unknown>>)[0];
-  assertEquals(c.byDate, "2026");
+  await assertRejects(
+    () =>
+      run("add_commitment", {
+        kind: "commitment",
+        description: "ship",
+        owner: "alice",
+        budgetUsd: 1,
+        byDate: "2026",
+        dependsOn: [],
+        reviewCadence: "weekly",
+        consequenceIfChanged: "delay",
+      }, context),
+    Error,
+    "byDate",
+  );
 });
 
 Deno.test("pin: GP-3 — byDate 'next quarter' does not parse and IS flagged missing", async () => {
@@ -476,30 +501,44 @@ Deno.test("pin: GP-3 — byDate 'next quarter' does not parse and IS flagged mis
 });
 
 // ============================================================================
-// GP-4 (LOW) — evaluate() silently drops mismatched payload
+// GP-4 (LOW) — evaluate() rejects a mismatched-layer payload
 // ============================================================================
 
-Deno.test("pin: GP-4 — timeToCruxWeeks on a signpost with no matching ceiling is silently dropped, no error", async () => {
-  const { ctx, store } = await buildDraftedPlan();
+Deno.test("pin: GP-4 fixed — timeToCruxWeeks on a signpost with no matching ceiling rejects, naming the field", async () => {
+  const { ctx } = await buildDraftedPlan();
   await run("commit", {}, ctx);
   await run("monitor", {}, ctx);
   // self_serve_conversion_pct is on an assumption + tripwire, NOT a ceiling.
+  await assertRejects(
+    () =>
+      run("evaluate", {
+        signpostName: "self_serve_conversion_pct",
+        reading: "5.4",
+        timeToCruxWeeks: 3,
+      }, ctx),
+    Error,
+    "timeToCruxWeeks",
+  );
+});
+
+Deno.test("pin: GP-4 fixed — timeToCruxWeeks on the signpost's real ceiling still applies", async () => {
+  const { ctx, store } = await buildDraftedPlan();
+  await run("commit", {}, ctx);
+  await run("monitor", {}, ctx);
   await run("evaluate", {
-    signpostName: "self_serve_conversion_pct",
-    reading: "5.4",
-    timeToCruxWeeks: 3, // pin: silently unused — no ceiling to apply it to
+    signpostName: "support_ticket_volume",
+    reading: "1200/wk",
+    timeToCruxWeeks: 7,
   }, ctx);
-  const s = state(store);
-  // No error was thrown, and no ceiling gained a lastTimeToCruxWeeks from it.
-  const ceiling = (s.ceilings as Array<Record<string, unknown>>)[0];
-  assertEquals(ceiling.lastTimeToCruxWeeks, undefined);
+  const ceiling = (state(store).ceilings as Array<Record<string, unknown>>)[0];
+  assertEquals(ceiling.lastTimeToCruxWeeks, 7);
 });
 
 // ============================================================================
-// GP-5 (LOW) — commitGateReport / governabilityScore ignore state:"broken"
+// GP-5 (LOW) — commitGateReport / governabilityScore are broken-assumption-aware
 // ============================================================================
 
-Deno.test("pin: GP-5 — a plan whose only assumption is 'broken' still commits and still scores layer-1 present", () => {
+Deno.test("pin: GP-5 fixed — a plan whose only assumption is 'broken' fails the commit gate and scores layer-1 absent", () => {
   const plan: PlanState = PlanStateSchema.parse({
     state: "drafted",
     strategicChoice: "x",
@@ -536,30 +575,66 @@ Deno.test("pin: GP-5 — a plan whose only assumption is 'broken' still commits 
     createdAt: "2026-04-30T00:00:00.000Z",
     updatedAt: "2026-04-30T00:00:00.000Z",
   });
-  // pin: both functions count assumptions by array length only.
-  assertEquals(commitGateReport(plan).ok, true);
-  assertEquals(governabilityScore(plan), 1);
+  // fixed: hasLiveAssumption() treats an all-broken plan as Layer-1 absent,
+  // in lockstep across both commitGateReport and governabilityScore.
+  const report = commitGateReport(plan);
+  assertEquals(report.ok, false);
+  assertEquals(report.gaps.some((g) => g.layer === "assumption"), true);
+  assertEquals(governabilityScore(plan), 0.8);
+});
+
+Deno.test("pin: GP-5 fixed — a plan with one broken and one holding assumption still scores layer-1 present", () => {
+  const plan: PlanState = PlanStateSchema.parse({
+    state: "drafted",
+    strategicChoice: "x",
+    horizon: "1y",
+    assumptions: [
+      {
+        statement: "broken one",
+        impact: "high",
+        vulnerability: "high",
+        signpostName: "s",
+        state: "broken",
+      },
+      {
+        statement: "holding one",
+        impact: "high",
+        vulnerability: "high",
+        signpostName: "s2",
+      },
+    ],
+    createdAt: "2026-04-30T00:00:00.000Z",
+    updatedAt: "2026-04-30T00:00:00.000Z",
+  });
+  assertEquals(
+    commitGateReport(plan).gaps.some((g) => g.layer === "assumption"),
+    false,
+  );
+  assertEquals(governabilityScore(plan), 0.2);
 });
 
 // ============================================================================
-// GP-6 (LOW) — tripwire.pullbackRung is never bounds-checked
+// GP-6 (LOW) — tripwire.pullbackRung is bounds-checked against a non-empty ladder
 // ============================================================================
 
-Deno.test("pin: GP-6 — pullbackRung far beyond pullbackLadder.length is accepted without error", async () => {
-  const { context, store } = makeContext();
+Deno.test("pin: GP-6 fixed — pullbackRung far beyond a non-empty pullbackLadder.length is rejected", async () => {
+  const { context } = makeContext();
   await run("start", { strategicChoice: "x", horizon: "1y" }, context);
   await run("set_pullback_ladder", { rungs: ["only-rung"] }, context);
-  await run("add_tripwire", {
-    signpostName: "s",
-    thresholdExpr: "< 1",
-    preAuthorizedAction: "act",
-    pullbackRung: 99, // pin: dangling index into a 1-rung ladder
-  }, context);
-  const t = (state(store).tripwires as Array<Record<string, unknown>>)[0];
-  assertEquals(t.pullbackRung, 99);
+  await assertRejects(
+    () =>
+      run("add_tripwire", {
+        signpostName: "s",
+        thresholdExpr: "< 1",
+        preAuthorizedAction: "act",
+        pullbackRung: 99, // dangling index into a 1-rung ladder
+      }, context),
+    Error,
+    "pullbackRung",
+  );
 });
 
-Deno.test("pin: GP-6 — pullbackRung is accepted even before set_pullback_ladder is ever called", async () => {
+Deno.test("pin: GP-6 fixed — pullbackRung is still accepted (deferred) before set_pullback_ladder is ever called, but a too-short ladder set afterward is rejected", async () => {
   const { context, store } = makeContext();
   await run("start", { strategicChoice: "x", horizon: "1y" }, context);
   await run("add_tripwire", {
@@ -571,13 +646,46 @@ Deno.test("pin: GP-6 — pullbackRung is accepted even before set_pullback_ladde
   const t = (state(store).tripwires as Array<Record<string, unknown>>)[0];
   assertEquals(t.pullbackRung, 5);
   assertEquals(state(store).pullbackLadder, []);
+  // fixed: a ladder too short to cover the already-deferred rung is rejected.
+  await assertRejects(
+    () => run("set_pullback_ladder", { rungs: ["a", "b"] }, context),
+    Error,
+    "stranded",
+  );
+});
+
+Deno.test("pin: GP-6 fixed — a pullback ladder long enough for an existing rung, plus a matching add_tripwire, both succeed", async () => {
+  const { context, store } = makeContext();
+  await run("start", { strategicChoice: "x", horizon: "1y" }, context);
+  await run("set_pullback_ladder", { rungs: ["a", "b", "c"] }, context);
+  await run("add_tripwire", {
+    signpostName: "s",
+    thresholdExpr: "< 1",
+    preAuthorizedAction: "act",
+    pullbackRung: 2,
+  }, context);
+  const t = (state(store).tripwires as Array<Record<string, unknown>>)[0];
+  assertEquals(t.pullbackRung, 2);
+});
+
+Deno.test("pin: GP-6 fixed — add_tripwire with no pullbackRung is always accepted regardless of ladder length", async () => {
+  const { context, store } = makeContext();
+  await run("start", { strategicChoice: "x", horizon: "1y" }, context);
+  await run("set_pullback_ladder", { rungs: ["a"] }, context);
+  await run("add_tripwire", {
+    signpostName: "s",
+    thresholdExpr: "< 1",
+    preAuthorizedAction: "act",
+  }, context);
+  const t = (state(store).tripwires as Array<Record<string, unknown>>)[0];
+  assertEquals(t.pullbackRung, undefined);
 });
 
 // ============================================================================
-// GP-7 (LOW) — add_* methods perform no dedup (non-idempotent)
+// GP-7 (LOW) — add_* methods dedup identical calls (idempotent)
 // ============================================================================
 
-Deno.test("pin: GP-7 — calling add_assumption twice with identical args appends a duplicate", async () => {
+Deno.test("pin: GP-7 fixed — calling add_assumption twice with identical args is idempotent (length stays 1)", async () => {
   const { context, store } = makeContext();
   await run("start", { strategicChoice: "x", horizon: "1y" }, context);
   const args = {
@@ -588,11 +696,84 @@ Deno.test("pin: GP-7 — calling add_assumption twice with identical args append
   };
   await run("add_assumption", args, context);
   await run("add_assumption", args, context);
+  assertEquals((state(store).assumptions as unknown[]).length, 1);
+});
+
+Deno.test("pin: GP-7 fixed — add_assumption calls that differ in even one field are NOT deduped (length 2)", async () => {
+  const { context, store } = makeContext();
+  await run("start", { strategicChoice: "x", horizon: "1y" }, context);
+  await run("add_assumption", {
+    statement: "same statement",
+    impact: "high",
+    vulnerability: "low",
+    signpostName: "s",
+  }, context);
+  await run("add_assumption", {
+    statement: "same statement",
+    impact: "high",
+    vulnerability: "low",
+    signpostName: "a-different-signpost",
+  }, context);
   assertEquals((state(store).assumptions as unknown[]).length, 2);
 });
 
+Deno.test("pin: GP-7 fixed — add_commitment is idempotent for an identical call", async () => {
+  const { context, store } = makeContext();
+  await run("start", { strategicChoice: "x", horizon: "1y" }, context);
+  const args = {
+    kind: "commitment" as const,
+    description: "ship",
+    owner: "alice",
+    budgetUsd: 1,
+    byDate: "2026-09-01",
+    dependsOn: [],
+    reviewCadence: "weekly",
+    consequenceIfChanged: "delay",
+  };
+  await run("add_commitment", args, context);
+  await run("add_commitment", args, context);
+  assertEquals((state(store).commitments as unknown[]).length, 1);
+});
+
+Deno.test("pin: GP-7 fixed — add_allocation is idempotent for an identical call", async () => {
+  const { context, store } = makeContext();
+  await run("start", { strategicChoice: "x", horizon: "1y" }, context);
+  const args = { priority: "p", protectedBudgetUsd: 1 };
+  await run("add_allocation", args, context);
+  await run("add_allocation", args, context);
+  assertEquals((state(store).allocations as unknown[]).length, 1);
+});
+
+Deno.test("pin: GP-7 fixed — add_ceiling is idempotent for an identical call", async () => {
+  const { context, store } = makeContext();
+  await run("start", { strategicChoice: "x", horizon: "1y" }, context);
+  const args = {
+    crux: "c",
+    leadTimeWeeks: 1,
+    safetyMarginWeeks: 0,
+    signpostName: "s",
+    optionPremiums: [],
+  };
+  await run("add_ceiling", args, context);
+  await run("add_ceiling", args, context);
+  assertEquals((state(store).ceilings as unknown[]).length, 1);
+});
+
+Deno.test("pin: GP-7 fixed — add_tripwire is idempotent for an identical call", async () => {
+  const { context, store } = makeContext();
+  await run("start", { strategicChoice: "x", horizon: "1y" }, context);
+  const args = {
+    signpostName: "s",
+    thresholdExpr: "< 1",
+    preAuthorizedAction: "act",
+  };
+  await run("add_tripwire", args, context);
+  await run("add_tripwire", args, context);
+  assertEquals((state(store).tripwires as unknown[]).length, 1);
+});
+
 // ============================================================================
-// GP-8 (LOW) — numeric helpers propagate NaN/Infinity unguarded
+// GP-8 (LOW) — numeric helpers guard against NaN/Infinity
 // ============================================================================
 
 Deno.test("hostile: the zod boundary rejects BOTH NaN and +Infinity for a plain z.number() field — GP-8 is only reachable by calling the exported pure helpers directly, bypassing this boundary", () => {
@@ -626,27 +807,35 @@ Deno.test("hostile: the zod boundary rejects BOTH NaN and +Infinity for a plain 
   );
 });
 
-Deno.test("pin: GP-8 — computeTriggerPoint propagates Infinity/NaN unguarded", () => {
-  assertEquals(
-    computeTriggerPoint({ leadTimeWeeks: Infinity, safetyMarginWeeks: 0 }, 1),
-    -Infinity,
+Deno.test("pin: GP-8 fixed — computeTriggerPoint throws on non-finite inputs instead of propagating Infinity/NaN", () => {
+  assertThrows(
+    () =>
+      computeTriggerPoint(
+        { leadTimeWeeks: Infinity, safetyMarginWeeks: 0 },
+        1,
+      ),
+    Error,
+    "finite",
   );
-  assertEquals(
-    Number.isNaN(
+  assertThrows(
+    () =>
       computeTriggerPoint(
         { leadTimeWeeks: Infinity, safetyMarginWeeks: 0 },
         Infinity,
       ),
-    ),
-    true, // Infinity - Infinity - 0 = NaN
+    Error,
+    "finite",
   );
 });
 
-Deno.test("pin: GP-8 — computeMaxTolerableLoss propagates Infinity unguarded", () => {
-  const total = computeMaxTolerableLoss({
-    ...emptyLossBudget,
-    sunkCostUsd: Infinity,
-  });
-  assertEquals(total, Infinity);
-  assertEquals(Number.isNaN(total), false); // sanity: it's Infinity, not NaN
+Deno.test("pin: GP-8 fixed — computeMaxTolerableLoss throws on a non-finite component instead of propagating Infinity", () => {
+  assertThrows(
+    () =>
+      computeMaxTolerableLoss({
+        ...emptyLossBudget,
+        sunkCostUsd: Infinity,
+      }),
+    Error,
+    "finite",
+  );
 });

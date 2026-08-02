@@ -2,26 +2,29 @@
 # This file is then HAND-MAINTAINED: the scaffolder never overwrites an
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
-# Backfilled to full five-suite compliance by ext-quality-bf-good-planning
-# (wave-4 batch-4b child of ext-quality-test-backfill). good_planning.ts
-# (1657 LOC, pure logic — no fetch/subprocess/file I/O) and manifest.yaml are
-# BYTE-FROZEN by this change — every listed test file characterizes/pins
-# already-shipped behavior; no production code changed and no model/version
-# bump.
+# Five-suite compliance originally backfilled by ext-quality-bf-good-planning
+# (wave-4 batch-4b child of ext-quality-test-backfill), then real-fixed at
+# 2026.08.02.1: good_planning.ts's eight GP-1..GP-8 latent bugs (pinned by
+# the adversarial suite as "buggy") are now actually fixed — see CHANGELOG.md
+# and the model's `upgrades[]` entry. The GP-* pins in
+# good_planning_adversarial_test.ts now assert the FIXED behavior; the
+# frozen contract suite (good_planning.test.ts) and the methods/coverage/
+# property suites stayed byte-identical/unchanged across this fix.
 #
 # Role map (the scaffolder originally dumped the pre-existing test file
 # under contract-fixture, which is correct here — it stays there; the four
-# new suites below are additive, not a redistribution):
+# other suites are additive, not a redistribution):
 #   contract-fixture        -> good_planning.test.ts (pre-existing, kept
 #                               verbatim; also the fake-context harness every
-#                               new suite file below reuses as its own copy)
-#   methods                  -> good_planning_methods_test.ts (new)
-#   adversarial               -> good_planning_adversarial_test.ts (new;
-#                               also pins GP-1..GP-8, see the LOCAL
-#                               good-planning-latent-bugs issue-lifecycle
-#                               model — never the swamp.club Lab)
-#   coverage                  -> good_planning_coverage_test.ts (new)
-#   property-invariant-flow  -> good_planning_property_test.ts (new)
+#                               other suite file below reuses as its own copy)
+#   methods                  -> good_planning_methods_test.ts
+#   adversarial               -> good_planning_adversarial_test.ts (pins
+#                               GP-1..GP-8, now asserting FIXED behavior; see
+#                               the LOCAL good-planning-latent-bugs
+#                               issue-lifecycle model — never the swamp.club
+#                               Lab)
+#   coverage                  -> good_planning_coverage_test.ts
+#   property-invariant-flow  -> good_planning_property_test.ts
 schemaVersion: 1
 extension: good-planning
 tests:
