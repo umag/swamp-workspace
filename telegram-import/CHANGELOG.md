@@ -1,5 +1,94 @@
 # Changelog
 
+## 2026.08.02.1
+
+Real-fix for all eight remaining latent bugs (**LB-2..LB-9**), all tracked on
+the LOCAL `telegram-import-latent-bugs` issue-lifecycle model (never filed to
+the swamp.club Lab — see CLAUDE.md's anti-bypass rule). `model.version` and
+`manifest.yaml` both bump `2026.08.01.2` -> `2026.08.02.1`. LB-0 and LB-1 (both
+already fixed) are untouched and stay green; every benign/golden/property
+assertion is byte-identical.
+
+- **LB-2 (note-path traversal via `msg.id`, MEDIUM)**: added `assertSafeSlug`,
+  called as the first statement inside the note-create `try` — rejects a slug
+  containing a `/` or a `..` segment before it can reach the CLI
+  `create
+  path=` argument verbatim (the vaultRoot branch was already confined
+  by `resolveVaultPathSafe`; only the CLI branch had no check of its own). A
+  rejection lands in the existing catch: the note for that message is skipped
+  and recorded in `errors[]`, and the post resource is still written. Pinned
+  with a non-vacuity test: a normal numeric-id slug still reaches
+  `create
+  path=` unchanged.
+- **LB-3 (YAML frontmatter injection, MEDIUM)**: added `yamlDq`, escaping
+  backslash/quote/CR/LF/other control characters into a valid single-line YAML
+  double-quoted scalar. Wraps `channel`, `forwarded_from`, and the note `title`
+  — all three are interpolated straight from the Telegram export. An embedded
+  `"` plus CR/LF can no longer break out of the frontmatter block to inject
+  sibling YAML keys. Byte-identical to the previous bare interpolation for any
+  input with no backslash/quote/control character (the common case; the
+  golden-fixture and property suites, which never generate such input, are the
+  guard).
+- **LB-4 (one malformed message aborted the whole import, MEDIUM)**: the entire
+  per-message loop body is now wrapped in its own try/catch. A failure (e.g.
+  `noteSlug` throwing on a non-string `date`) is recorded in `errors[]` as
+  `Skipped message (id …): …` and the loop moves on to the next message, instead
+  of rejecting the whole `import` call uncaught. `writeResource` for the
+  `result` summary is still called only after the loop completes — unchanged —
+  but now it is always reached. Pinned: `totalMessages` still counts all
+  messages (the failure does not zero the import), and the messages before AND
+  after the failing one both get their post resource written.
+- **LB-5 (unvalidated top-level export shape, MEDIUM)**: added `ExportSchema`
+  (`z.object({ name: z.string(), messages: z.array(z.unknown())
+  })`),
+  `safeParse`'d against the freshly-parsed JSON before `data.name`/
+  `data.messages` are trusted, throwing a clear `Invalid Telegram export: …`
+  Error on failure. `data` itself is left as whatever `JSON.parse` returned (not
+  replaced by the parsed/narrowed value) so every per-message field access
+  downstream keeps its prior permissive typing — this is purely a fail-closed
+  shape check, not a schema migration. A missing `messages` array now throws a
+  clear Error instead of an opaque `TypeError`; a missing `name` now fails
+  loudly instead of silently rendering the literal string `"undefined"` into
+  every note's `channel` frontmatter line.
+- **LB-6 (`find` had no timeout, exit code never checked, LOW)**: `find` is now
+  run under an `AbortController` with a 30s timeout (`clearTimeout` in a
+  `finally`, so no timer is ever leaked past the call), and `findOut.success`/
+  `.code` are checked explicitly before reading stdout — a genuinely FAILING
+  find now throws a distinct `find failed (exit N): <stderr>` instead of the
+  generic `No result.json found` an empty-but-successful find produces (both
+  messages stay pinned, one per outcome).
+- **LB-7 (`text.substring(0, 500)` could split a surrogate pair, LOW)**: post
+  text is now truncated with `Array.from(text).slice(0, 500).join("")` —
+  truncation is by Unicode CODE POINT, never cutting a surrogate pair in half.
+  Byte-identical to the old `substring` behavior for any text with no
+  astral-plane characters at the truncation boundary (the property suite's
+  ASCII-only generator never exercises this, so it stays green unmodified).
+- **LB-8 (unbounded `result.json` size, LOW)**: added a `Deno.stat` size check
+  against a new internal `MAX_RESULT_JSON_BYTES` (50 MB) constant, run BEFORE
+  `Deno.readTextFile`/`JSON.parse` ever touch the file — an oversized
+  `result.json` now throws a clear "too large to import" Error instead of being
+  read into memory and parsed regardless of size.
+- **LB-9 (leading-dash `zipPath` positionally ambiguous, LOW)**: a `zipPath`
+  starting with `-` is now normalized to a `./`-relative form (`./${zipPath}`)
+  before being placed in unzip's argv — Info-ZIP's `unzip` does not honor a `--`
+  end-of-options marker, so a real unzip binary would otherwise positionally
+  misread a leading-dash path as a flag. The already-closed command-injection
+  pin (LB-9a: every `Deno.Command` call passes an argv array, never a shell
+  string) is untouched and stays green — normalization only triggers on a
+  literal leading `-`.
+- **Tests**: all eight adversarial pins (`telegram_import_adversarial_test.ts`)
+  flip from characterization (asserting the old bug) to fix-regression
+  (asserting the fix), plus three new non-vacuity/oversize tests (LB-2's
+  numeric-id slug still reaching `create`, LB-6's empty-but-successful find
+  staying on its original message, LB-8's actual oversize-rejection case).
+  `telegram_import_contract_test.ts`'s static-contract test is updated to assert
+  the new `model.version`. Every other suite (methods, coverage,
+  property-invariant-flow) and the golden contract-fixture run are untouched and
+  stay green — none of their fixtures exercise the traversal/injection/
+  malformed-shape/oversize input these fixes guard against.
+- `quality.yaml`: ratchet re-stamped from a real `swamp extension quality` run
+  against the new version; all five suites still present, Grade A.
+
 ## 2026.08.01.2
 
 Adds an optional headless `vaultRoot` filesystem backend to `import`, so the
@@ -136,8 +225,8 @@ swamp.club Lab — see CLAUDE.md's anti-bypass rule). `model.version` and
   `dependency-trust` factor (audited clean).
 - Full `deno task check` / `test` / `fmt:check` / `lint` all green; property
   suite re-verified at `FC_NUM_RUNS=5000`. LB-2 (MEDIUM), LB-3 (MEDIUM), and
-  LB-4..LB-9 (MEDIUM/LOW) remain deferred on the `telegram-import-latent-bugs`
-  model — none share LB-1's fix path.
+  LB-4..LB-9 (MEDIUM/LOW) — none of which share LB-1's fix path — are real-fixed
+  in 2026.08.02.1 below.
 
 ## Unreleased (folded into 2026.08.01.1 above)
 

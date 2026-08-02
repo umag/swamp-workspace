@@ -3,12 +3,14 @@
  *
  * telegram_import.ts was BYTE-FROZEN by ext-quality-bf-telegram-import at
  * authorship time; 2026.08.01.1 (the LB-1 path-containment guard fix + LB-0
- * upgrade-chain repair) was the first production change since then, and
+ * upgrade-chain repair) was the first production change since then,
  * 2026.08.01.2 (swamp-workspace #57: headless vaultRoot filesystem backend,
  * plus upgrading isPathContained/safeCopyMedia's extractDir confinement from
- * lexical-only to realpath-aware) is the second. `model.version` below now
- * tracks that release rather than a frozen constant. This suite still pins
- * two things:
+ * lexical-only to realpath-aware) was the second, and 2026.08.02.1 (real
+ * fixes for the eight remaining latent bugs, LB-2..LB-9, tracked on the LOCAL
+ * `telegram-import-latent-bugs` issue-lifecycle model) is the third.
+ * `model.version` below now tracks that release rather than a frozen
+ * constant. This suite still pins two things:
  *
  *  (a) the STATIC contract: model type/version, the GlobalArgsSchema shape
  *      (required fields + defaults), and the exact method list; and
@@ -48,9 +50,9 @@ import basicFixture from "../../fixtures/basic/result.json" with {
 // (a) Static contract
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: model type is unchanged; version tracks the 2026.08.01.2 vaultRoot/LB-1-residual release", () => {
+Deno.test("contract: model type is unchanged; version tracks the 2026.08.02.1 LB-2..LB-9 real-fix release", () => {
   assertEquals(model.type, "@magistr/telegram/import");
-  assertEquals(model.version, "2026.08.01.2");
+  assertEquals(model.version, "2026.08.02.1");
 });
 
 Deno.test("contract: exposes exactly one method — import", () => {
