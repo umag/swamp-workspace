@@ -14,9 +14,13 @@
  * Every test here is offline: fixtures are fed through a stubbed fetch, no
  * network call is made.
  *
- * victoriametrics.ts is BYTE-FROZEN by this change — every test here
- * characterizes already-shipped behavior, not new behavior driven out by
- * red-green TDD.
+ * As of 2026.08.02.1, victoriametrics.ts has been FIXED (all 11 latent bugs
+ * tracked by victoriametrics-latent-bugs closed — see the adversarial suite
+ * for the flipped pins). Every assertion in THIS file stays BYTE-IDENTICAL —
+ * none of the fixed bugs touch the benign, single-series, well-formed wire
+ * shapes this contract-fixture suite characterizes; the fixes only change
+ * behavior on multi-series/malformed/absent input, which this suite never
+ * feeds it.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";

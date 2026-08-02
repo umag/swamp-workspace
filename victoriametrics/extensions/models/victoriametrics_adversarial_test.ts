@@ -4,11 +4,20 @@
  * ties/empty/negative edges, hostile transport, and a fixtures-secret/
  * real-infra scan over victoriametrics/fixtures/*.json.
  *
- * victoriametrics.ts is UNMODIFIED — every test here PINS current behavior
- * (including behavior that is arguably risky) rather than proposing a fix.
- * Every documented gap is labeled "pin" and says so explicitly. The full set
- * of pinned latent bugs is tracked in the issue `victoriametrics-latent-bugs`
- * — these tests are the pins, not fixes.
+ * victoriametrics.ts is FIXED as of 2026.08.02.1 — all 11 latent bugs tracked
+ * by the local `victoriametrics-latent-bugs` issue are closed (VM2 HIGH
+ * multi-series aggregation via `extractValues.flatMap`, a shared `vmData`
+ * response guard for the three direct single-query methods, series-level
+ * `?? []` guards, `query`'s scalar-resultType dispatch, absence/boot-
+ * unavailable anomaly flags, and a negative-`topN` clamp). Every test below
+ * that used to be labeled "pin" for one of the 11 bugs now asserts the FIXED
+ * behavior instead (see each test's own comment for the before/after) — they
+ * are regression tests for the fix, not pins anymore. Tests still labeled
+ * "pin" document genuinely INTENTIONAL, still-latent quirks that were never
+ * in scope for this fix (tie-order stability, `topN:0` clamping to `[]`,
+ * matrix-fed-into-`query` still mapping to `value:null`, absent-target
+ * omission from `health` without `expectedTargets`, etc.) — those remain
+ * characterization tests, not bugs.
  *
  * TOOLCHAIN NOTE: the fetch stub is bound via a TYPED CONST with NO
  * `as typeof globalThis.fetch` cast. FakeTime drives every timestamp
@@ -210,7 +219,7 @@ Deno.test("injection: query-range — searchParams.get('query') round-trips EXAC
 // Result-type matrix — pins, not fixes
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: query on a SCALAR result produces garbage [{metric:undefined,value:null}, ...] — scalar's [ts,val] tuple has no .metric/.value", async () => {
+Deno.test("fix (VM5): query on a SCALAR result now dispatches on resultType -> [{metric:{}, value:<parsed number>}], not the old garbage [{metric:undefined,value:null},{metric:undefined,value:null}]", async () => {
   const { ctx, written } = makeCtx();
   await withOneResponse(queryScalar, 200, async () => {
     await run("query", { promql: "scalar(7)" }, ctx);
@@ -219,11 +228,9 @@ Deno.test("pin: query on a SCALAR result produces garbage [{metric:undefined,val
   const results = res.payload.results as Array<
     { metric: unknown; value: unknown }
   >;
-  assertEquals(results.length, 2, "the [ts, valueString] tuple has 2 items");
-  for (const r of results) {
-    assertEquals(r.metric, undefined);
-    assertEquals(r.value, null);
-  }
+  assertEquals(results.length, 1, "a scalar result now yields exactly ONE row");
+  assertEquals(results[0].metric, {});
+  assertEquals(results[0].value, 7);
 });
 
 Deno.test("pin: query fed a MATRIX-shaped body maps every series to value:null (no singular .value field on a matrix element)", async () => {
@@ -243,40 +250,50 @@ Deno.test("pin: query fed a MATRIX-shaped body maps every series to value:null (
   assertEquals(results[0].value, null);
 });
 
-Deno.test("pin: query fed a 200 {status:'error'} body with NO `data` field throws an uncaught TypeError — the status field is never inspected", async () => {
+Deno.test("fix (VM6): query fed a 200 {status:'error'} body with NO `data` field now throws a MAPPED Error via vmData(), not an uncaught TypeError", async () => {
   const { ctx } = makeCtx();
   await withOneResponse(errorFixture, 200, async () => {
-    await assertRejects(() => run("query", { promql: "up" }, ctx), TypeError);
-  });
-});
-
-Deno.test("pin: query-range fed a VECTOR-shaped body throws an uncaught TypeError (.values.map on undefined — vector elements have .value, not .values)", async () => {
-  using _time = new FakeTime(FIXED_NOW_MS);
-  const { ctx } = makeCtx();
-  await withOneResponse(queryVector, 200, async () => {
     await assertRejects(
-      () => run("query-range", { promql: "up" }, ctx),
-      TypeError,
+      () => run("query", { promql: "up" }, ctx),
+      Error,
+      "VM query error: invalid parameter",
     );
   });
 });
 
-Deno.test("pin: system-overview — a range query answering with a SCALAR body crashes extractValues (result.data.result[0] is a bare number, .values is undefined)", async () => {
+Deno.test("fix (VM7): query-range fed a VECTOR-shaped body no longer throws — (r.values ?? []) degrades each series to values:[] instead of crashing on .values.map", async () => {
   using _time = new FakeTime(FIXED_NOW_MS);
-  const { ctx } = makeCtx();
+  const { ctx, written } = makeCtx();
+  await withOneResponse(queryVector, 200, async () => {
+    await run("query-range", { promql: "up" }, ctx);
+  });
+  const res = written.find((w) => w.spec === "queryResult")!;
+  assertEquals(res.payload.results, [
+    {
+      metric: { job: "demo-node", instance: "fixture-host-1:9100" },
+      values: [],
+    },
+  ]);
+});
+
+Deno.test("fix (VM2): system-overview — a range query answering with a SCALAR body no longer crashes extractValues; flatMap over the [ts,valString] tuple finds no `.values` on either element and degrades to cpu {0,0,0,0}", async () => {
+  using _time = new FakeTime(FIXED_NOW_MS);
+  const { ctx, written } = makeCtx();
   await withFetchStub(
     [systemOverviewRoute({ [CPU_QUERY]: queryScalar })],
     async () => {
-      await assertRejects(() => run("system-overview", {}, ctx), TypeError);
+      await run("system-overview", {}, ctx);
     },
   );
+  const res = written.find((w) => w.spec === "overview")!;
+  assertEquals(res.payload.cpu, { current: 0, min: 0, max: 0, avg: 0 });
 });
 
 // ---------------------------------------------------------------------------
-// SINGLE-SERIES COLLAPSE (round-1 HIGH) — pin the multi-series drop
+// MULTI-SERIES AGGREGATION (VM2, HIGH — FIXED) — was single-series collapse
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: system-overview's memory stats characterize ONLY series[0] of a multi-series range result — series[1..] are silently dropped", async () => {
+Deno.test("fix (VM2): system-overview's memory stats now AGGREGATE across ALL series of a multi-series range result — series[1]'s spike is no longer silently dropped", async () => {
   using _time = new FakeTime(FIXED_NOW_MS);
   const { ctx, written } = makeCtx();
   const multiSeriesMem = matrixBody([
@@ -289,9 +306,8 @@ Deno.test("pin: system-overview's memory stats characterize ONLY series[0] of a 
       ],
     },
     {
-      // A second series with WILDLY different values. If extractValues
-      // aggregated across series, memStats would reflect this — it must
-      // not, because extractValues reads only result.data.result[0].
+      // A second series with WILDLY different values. extractValues now
+      // flatMaps result.data.result, so memStats reflects BOTH series.
       metric: { instance: "fixture-host-2:9100" },
       values: [
         [1699956800, "95.0"],
@@ -308,14 +324,79 @@ Deno.test("pin: system-overview's memory stats characterize ONLY series[0] of a 
   );
   const res = written.find((w) => w.spec === "overview")!;
   assertEquals(res.payload.memory, {
-    usedPercent: 41.0,
+    usedPercent: 96.0,
     min: 40.0,
-    max: 42.0,
-    avg: 41.0,
+    max: 97.0,
+    avg: 68.5,
   });
   assert(
-    (res.payload.anomalies as string[]).length === 0,
-    "series[1]'s 95-97% values must NOT leak into the anomaly checks",
+    (res.payload.anomalies as string[]).includes("Memory peaked at 97.0%"),
+    "series[1]'s 97% peak must now be visible to the anomaly checks",
+  );
+});
+
+Deno.test("fix (VM2): system-overview's load stats aggregate a 2-series result — series[1]'s spike sets load.max, series[0] still contributes load.min, and the spike anomaly fires", async () => {
+  using _time = new FakeTime(FIXED_NOW_MS);
+  const { ctx, written } = makeCtx();
+  const multiSeriesLoad = matrixBody([
+    {
+      metric: { instance: "fixture-host-1:9100" },
+      values: [[1699956800, "5"], [1699957100, "6"]],
+    },
+    {
+      // series[1] carries the spike — a single point at the SAME first
+      // timestamp as series[0], so the flatten's inter-series boundary
+      // (series[0]'s last ts 1699957100 -> series[1]'s ts 1699956800) is a
+      // BACKWARD jump, never a >600s forward gap.
+      metric: { instance: "fixture-host-2:9100" },
+      values: [[1699956800, "40"]],
+    },
+  ]);
+  await withFetchStub(
+    [systemOverviewRoute({ [LOAD_QUERY]: multiSeriesLoad })],
+    async () => {
+      await run("system-overview", {}, ctx);
+    },
+  );
+  const res = written.find((w) => w.spec === "overview")!;
+  const load = res.payload.load as { min: number; max: number };
+  assertEquals(load.max, 40, "series[1]'s spike sets load.max");
+  assertEquals(load.min, 5, "series[0] still contributes load.min");
+  assert(
+    (res.payload.anomalies as string[]).includes("Load spike to 40.0"),
+    "the aggregated max must cross the >30 spike threshold",
+  );
+});
+
+Deno.test("fix (VM2): a multi-series CPU result whose inter-series boundary is a BACKWARD timestamp jump never spuriously fires the >600s 'Metric gap' reboot detector", async () => {
+  using _time = new FakeTime(FIXED_NOW_MS);
+  const { ctx, written } = makeCtx();
+  const multiSeriesCpu = matrixBody([
+    {
+      metric: { instance: "fixture-host-1:9100" },
+      values: [[1699956800, "10"], [1699957400, "12"]],
+    },
+    {
+      // Concatenated onto series[0] via flatMap, this jumps BACKWARD from
+      // ts 1699957400 to ts 1699956800 (a -600s "gap") — the reboot
+      // detector only fires on a FORWARD gap >600s, so this must stay
+      // silent even though the raw timestamp delta's magnitude is large.
+      metric: { instance: "fixture-host-2:9100" },
+      values: [[1699956800, "11"], [1699957400, "13"]],
+    },
+  ]);
+  await withFetchStub(
+    [systemOverviewRoute({ [CPU_QUERY]: multiSeriesCpu })],
+    async () => {
+      await run("system-overview", {}, ctx);
+    },
+  );
+  const res = written.find((w) => w.spec === "overview")!;
+  assertEquals(res.payload.cpu, { current: 13, min: 10, max: 13, avg: 11.5 });
+  assertEquals(
+    (res.payload.anomalies as string[]).filter((a) => a.includes("Metric gap")),
+    [],
+    "a backward inter-series boundary must never be reported as a reboot gap",
   );
 });
 
@@ -513,7 +594,7 @@ Deno.test("pin: a 600s gap in cpu samples does NOT fire the reboot detector; 601
 // ABSENT metric — missing-metric silent {0,0,0}, not flagged
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: an EMPTY cpu result (no series at all) silently reports {current:0,min:0,max:0,avg:0} — not flagged as missing", async () => {
+Deno.test("fix (VM3): an EMPTY cpu result (no series at all) still reports {current:0,min:0,max:0,avg:0} but is now FLAGGED as absent, no longer indistinguishable from a genuinely idle 0% CPU", async () => {
   using _time = new FakeTime(FIXED_NOW_MS);
   const { ctx, written } = makeCtx();
   await withFetchStub(
@@ -526,8 +607,41 @@ Deno.test("pin: an EMPTY cpu result (no series at all) silently reports {current
   assertEquals(res.payload.cpu, { current: 0, min: 0, max: 0, avg: 0 });
   assertEquals(
     (res.payload.anomalies as string[]).filter((a) => a.includes("CPU")),
-    [],
-    "absence is indistinguishable from a genuinely idle 0% CPU",
+    ["CPU metric absent (no series returned)"],
+  );
+});
+
+Deno.test("fix (VM3): an EMPTY memory result is flagged 'Memory metric absent (no series returned)'", async () => {
+  using _time = new FakeTime(FIXED_NOW_MS);
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [systemOverviewRoute({ [MEM_QUERY]: matrixBody([]) })],
+    async () => {
+      await run("system-overview", {}, ctx);
+    },
+  );
+  const res = written.find((w) => w.spec === "overview")!;
+  assertEquals(res.payload.memory, { usedPercent: 0, min: 0, max: 0, avg: 0 });
+  assertEquals(
+    (res.payload.anomalies as string[]).filter((a) => a.includes("Memory")),
+    ["Memory metric absent (no series returned)"],
+  );
+});
+
+Deno.test("fix (VM3): an EMPTY load result is flagged 'Load metric absent (no series returned)'", async () => {
+  using _time = new FakeTime(FIXED_NOW_MS);
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [systemOverviewRoute({ [LOAD_QUERY]: matrixBody([]) })],
+    async () => {
+      await run("system-overview", {}, ctx);
+    },
+  );
+  const res = written.find((w) => w.spec === "overview")!;
+  assertEquals(res.payload.load, { load1: 0, min: 0, max: 0, avg: 0 });
+  assertEquals(
+    (res.payload.anomalies as string[]).filter((a) => a.includes("Load")),
+    ["Load metric absent (no series returned)"],
   );
 });
 
@@ -555,23 +669,25 @@ Deno.test("pin: a disk series with values:[] (present, empty) computes NaN/-Infi
   );
 });
 
-Deno.test("pin: a disk series MISSING the `values` key entirely throws an uncaught TypeError (r.values.map on undefined)", async () => {
+Deno.test("fix (VM8/VM9): a disk series MISSING the `values` key entirely no longer throws — the pre-filter (Array.isArray(r.values) && r.values.length>0) drops it, disk stays []", async () => {
   using _time = new FakeTime(FIXED_NOW_MS);
-  const { ctx } = makeCtx();
+  const { ctx, written } = makeCtx();
   const diskNoValuesKey = matrixBody([{ metric: { device: "vda" } }]);
   await withFetchStub(
     [systemOverviewRoute({ [DISK_QUERY]: diskNoValuesKey })],
     async () => {
-      await assertRejects(() => run("system-overview", {}, ctx), TypeError);
+      await run("system-overview", {}, ctx);
     },
   );
+  const res = written.find((w) => w.spec === "overview")!;
+  assertEquals(res.payload.disk, []);
 });
 
 // ---------------------------------------------------------------------------
 // Empty boot-time result — 1970 epoch + huge uptime
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: an empty boot-time result falls back to bootTs=0 -> bootTime is the 1970 epoch and uptimeMinutes is enormous", async () => {
+Deno.test("fix (VM4): an empty boot-time result no longer falls back to bootTs=0/the 1970 epoch — bootTime is 'unknown', uptimeMinutes is 0, and 'Boot time unavailable' is flagged", async () => {
   using _time = new FakeTime(FIXED_NOW_MS);
   const { ctx, written } = makeCtx();
   await withFetchStub(
@@ -582,9 +698,12 @@ Deno.test("pin: an empty boot-time result falls back to bootTs=0 -> bootTime is 
   );
   const res = written.find((w) => w.spec === "overview")!;
   assertEquals(res.payload.uptime, {
-    bootTime: new Date(0).toISOString(),
-    uptimeMinutes: Math.round(FIXED_EPOCH_S / 60),
+    bootTime: "unknown",
+    uptimeMinutes: 0,
   });
+  assert(
+    (res.payload.anomalies as string[]).includes("Boot time unavailable"),
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -662,8 +781,30 @@ Deno.test("pin: a target present in `up` with value 0 is reported 'down'; a targ
   assertEquals(
     (res.payload.targets as unknown[]).length,
     1,
-    "an absent target contributes NOTHING to targets[] — it is not reported down",
+    "an absent target contributes NOTHING to targets[] — it is not reported down (unchanged: this is opt-in via expectedTargets, see the VM1 fix test below)",
   );
+});
+
+Deno.test("fix (VM1): passing expectedTargets now surfaces an absent target explicitly as status:'unknown' instead of silent omission", async () => {
+  const { ctx, written } = makeCtx();
+  const body = vectorBody([
+    {
+      metric: { job: "demo-node", instance: "fixture-host-1:9100" },
+      value: [FIXED_EPOCH_S, "1"],
+    },
+  ]);
+  await withOneResponse(body, 200, async () => {
+    await run(
+      "health",
+      { expectedTargets: ["demo-node (fixture-host-2:9100)"] },
+      ctx,
+    );
+  });
+  const res = written.find((w) => w.spec === "health")!;
+  assertEquals(res.payload.targets, [
+    { name: "demo-node (fixture-host-1:9100)", status: "up" },
+    { name: "demo-node (fixture-host-2:9100)", status: "unknown" },
+  ]);
 });
 
 Deno.test("pin: a series missing job/instance labels renders name 'undefined (undefined)'", async () => {
@@ -678,16 +819,16 @@ Deno.test("pin: a series missing job/instance labels renders name 'undefined (un
   ]);
 });
 
-Deno.test("pin: a series MISSING the `value` field entirely throws an uncaught TypeError (r.value[1] on undefined) — same unguarded-access shape as the disk/container `.values` pins", async () => {
-  // health()'s mapper does `parseFloat(r.value[1])` with no guard — a
-  // partial/hostile `up` response that omits `value` for a series crashes,
-  // exactly like the disk-loop and container-memory `.values` pins
-  // (round-1 MED shape) but on the SINGULAR `.value` field instead.
-  const { ctx } = makeCtx();
+Deno.test("fix (VM8): a series MISSING the `value` field entirely no longer throws — it now degrades to status:'unknown' instead of crashing (r.value ? ... : \"unknown\")", async () => {
+  const { ctx, written } = makeCtx();
   const body = vectorBody([{ metric: { job: "demo-node", instance: "x" } }]);
   await withOneResponse(body, 200, async () => {
-    await assertRejects(() => run("health", {}, ctx), TypeError);
+    await run("health", {}, ctx);
   });
+  const res = written.find((w) => w.spec === "health")!;
+  assertEquals(res.payload.targets, [
+    { name: "demo-node (x)", status: "unknown" },
+  ]);
 });
 
 // ---------------------------------------------------------------------------
@@ -737,7 +878,7 @@ Deno.test("pin: topN=0 -> containers is [] (slice(0,0))", async () => {
   assertEquals(res.payload.containers, []);
 });
 
-Deno.test("pin: NEGATIVE topN uses slice(0,-n) — drops from the END of the already-desc-sorted array, not 'the smallest n'", async () => {
+Deno.test("fix (VM10): NEGATIVE topN is now clamped via Math.max(0,args.topN) -> containers is [], no longer slice(0,-n) dropping from the END of the desc-sorted array", async () => {
   using _time = new FakeTime(FIXED_NOW_MS);
   const { ctx, written } = makeCtx();
   const three = matrixBody([
@@ -749,11 +890,10 @@ Deno.test("pin: NEGATIVE topN uses slice(0,-n) — drops from the END of the alr
     await run("container-memory", { topN: -1 }, ctx);
   });
   const res = written.find((w) => w.spec === "containerMemory")!;
-  const containers = res.payload.containers as Array<{ name: string }>;
   assertEquals(
-    containers.map((c) => c.name),
-    ["big", "mid"],
-    "slice(0,-1) drops the LAST (smallest, since desc-sorted) element",
+    res.payload.containers,
+    [],
+    "Math.max(0,-1)===0 -> slice(0,0) -> [], regardless of how many qualify",
   );
 });
 
@@ -773,16 +913,15 @@ Deno.test("pin: a series whose values are ALL <=0 (filtered by v>0) is skipped e
   assertEquals(res.payload.containers, []);
 });
 
-Deno.test("pin: a container series MISSING the `values` key entirely throws an uncaught TypeError (r.values.map on undefined)", async () => {
+Deno.test("fix (VM8): a container series MISSING the `values` key entirely no longer throws — (r.values ?? []) yields an empty vals array, the !vals.length guard skips it, containers stays []", async () => {
   using _time = new FakeTime(FIXED_NOW_MS);
-  const { ctx } = makeCtx();
+  const { ctx, written } = makeCtx();
   const noValuesKey = matrixBody([{ metric: { name: "web" } }]);
   await withOneResponse(noValuesKey, 200, async () => {
-    await assertRejects(
-      () => run("container-memory", {}, ctx),
-      TypeError,
-    );
+    await run("container-memory", {}, ctx);
   });
+  const res = written.find((w) => w.spec === "containerMemory")!;
+  assertEquals(res.payload.containers, []);
 });
 
 // ---------------------------------------------------------------------------
@@ -808,11 +947,56 @@ Deno.test("pin: a non-ok HTTP response (500 + HTML body) throws 'VM query failed
   );
 });
 
-Deno.test("pin: a 200 response carrying {status:'error',...} (error.json — no `data` field) is NOT inspected by status — it crashes with a TypeError instead of a mapped error", async () => {
+Deno.test("fix (VM6): a 200 response carrying {status:'error',...} (error.json — no `data` field) is now inspected via vmData() and throws a mapped Error instead of a TypeError", async () => {
   const { ctx } = makeCtx();
   await withOneResponse(errorFixture, 200, async () => {
-    await assertRejects(() => run("query", { promql: "up" }, ctx), TypeError);
+    await assertRejects(
+      () => run("query", { promql: "up" }, ctx),
+      Error,
+      "VM query error: invalid parameter",
+    );
   });
+});
+
+// ---------------------------------------------------------------------------
+// Generic vmData() mapped-error coverage (VM6+VM11) — across all three
+// direct single-query methods, not just the error.json fixture shape
+// ---------------------------------------------------------------------------
+
+const DIRECT_METHODS: Array<{ name: string; args: Record<string, unknown> }> = [
+  { name: "query", args: { promql: "up" } },
+  { name: "query-range", args: { promql: "up" } },
+  { name: "health", args: {} },
+];
+
+Deno.test("fix (VM6+VM11): a generic {status:'error',error:'boom'} response maps to Error('VM query error: boom') across query/query-range/health", async () => {
+  for (const { name, args } of DIRECT_METHODS) {
+    const { ctx } = makeCtx();
+    await withOneResponse(
+      { status: "error", error: "boom" },
+      200,
+      async () => {
+        await assertRejects(
+          () => run(name, args, ctx),
+          Error,
+          "VM query error: boom",
+        );
+      },
+    );
+  }
+});
+
+Deno.test("fix (VM6+VM11): a 200 data-less body {} maps to Error('VM query error: response missing data') across query/query-range/health", async () => {
+  for (const { name, args } of DIRECT_METHODS) {
+    const { ctx } = makeCtx();
+    await withOneResponse({}, 200, async () => {
+      await assertRejects(
+        () => run(name, args, ctx),
+        Error,
+        "VM query error: response missing data",
+      );
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

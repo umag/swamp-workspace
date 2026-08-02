@@ -4,14 +4,20 @@
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-victoriametrics,
 # wave-2b full build of the Phase D extension-quality backfill).
-# victoriametrics.ts is UNMODIFIED — every suite drives
-# model.methods.<m>.execute() against a stubbed fetch (+ FakeTime for every
-# start/end/uptime/timestamp) and a fake context, characterizing already-
-# shipped behavior. Real product bugs found during grounding (single-series
-# collapse, unguarded inner .values/.value accesses, missing-metric silent
-# zeros, up==0-vs-absent conflation, negative-topN end-slice, 200-with-
-# status:error uninspected) are PINNED as characterization tests, not fixed —
-# tracked by the follow-up issue victoriametrics-latent-bugs.
+# Every suite drives model.methods.<m>.execute() against a stubbed fetch
+# (+ FakeTime for every start/end/uptime/timestamp) and a fake context.
+#
+# 2026.08.02.1 fixes all 11 latent bugs found during the original grounding
+# pass (VM1-VM11: single-series collapse [VM2, HIGH], no expected-target
+# tracking [VM1], absent-metric silent zeros [VM3], boot-time epoch fallback
+# [VM4], scalar-query garbage-mapping [VM5], uninspected status:error
+# responses [VM6+VM11], query-range vector-body crash [VM7], unguarded inner
+# .values/.value accesses [VM8], disk NaN/-Infinity [VM9, folds into VM8],
+# and negative-topN end-slice [VM10]) — tracked by the local
+# victoriametrics-latent-bugs issue-lifecycle model (never filed to the
+# swamp.club Lab). victoriametrics_adversarial_test.ts flips those pins to
+# assert the CORRECTED behavior instead of merely characterizing the bug —
+# see CHANGELOG.md for the full per-bug breakdown.
 schemaVersion: 1
 extension: victoriametrics
 tests:
@@ -56,4 +62,12 @@ docs:
 ratchet:
   rubricVersion: 3
   baselinePercentage: 100
-  label: "Grade A"
+  label: >-
+    Grade A — re-stamped after the 2026.08.02.1 real-fix batch (all 11
+    victoriametrics-latent-bugs closed, an identity upgrades[] entry
+    appended, no resource schema change). `swamp extension quality
+    manifest.yaml --json` emits a real score: 14/14 points (100%),
+    rubricVersion 3, allPassed true, dependencyTrust passed (no runtime
+    dependency besides zod, which the dependency-trust factor excludes).
+    Stamped directly from that tool output, not guessed — unchanged from the
+    prior 2026.07.16.2 stamp since the fix batch added no new dependency.

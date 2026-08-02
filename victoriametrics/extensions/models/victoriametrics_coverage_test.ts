@@ -7,9 +7,15 @@
  *
  * Also adds the single-series-collapse guard's GREEN complement (a genuine
  * single-series range result computes correct stats) as the positive
- * counterpart to the adversarial suite's multi-series pin.
+ * counterpart to the adversarial suite's multi-series pin, plus (as of
+ * 2026.08.02.1) a TWO-series green complement now that VM2 aggregates across
+ * series instead of collapsing to series[0].
  *
- * victoriametrics.ts is UNMODIFIED; every test PINS existing behavior.
+ * As of 2026.08.02.1, victoriametrics.ts has been FIXED (all 11 latent bugs
+ * tracked by victoriametrics-latent-bugs closed — see the adversarial suite
+ * for the flipped pins). Every EXISTING test in this file stays
+ * BYTE-IDENTICAL — each drives a single well-formed series per metric with
+ * every guard/key present, so none of the 11 fixes change their outcome.
  */
 import { assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
@@ -408,5 +414,41 @@ Deno.test("green complement: a single-series memory range result computes correc
     min: 40.0,
     max: 42.0,
     avg: 41.0,
+  });
+});
+
+Deno.test("green complement (VM2 fix): a TWO-series memory range result AGGREGATES across both series — min/max/avg/current reflect the full combined set, not just series[0]", async () => {
+  using _time = new FakeTime(FIXED_NOW_MS);
+  const { ctx, written } = makeCtx();
+  const twoSeriesMem = matrixBody([
+    {
+      metric: { instance: "fixture-host-1:9100" },
+      values: [
+        [1699956800, "40.0"],
+        [1699957100, "42.0"],
+        [1699957400, "41.0"],
+      ],
+    },
+    {
+      metric: { instance: "fixture-host-2:9100" },
+      values: [
+        [1699957700, "50.0"],
+        [1699958000, "52.0"],
+        [1699958300, "51.0"],
+      ],
+    },
+  ]);
+  await withFetchStub(
+    [systemOverviewRoute({ [MEM_QUERY]: twoSeriesMem })],
+    async () => {
+      await run("system-overview", {}, ctx);
+    },
+  );
+  const res = written.find((w) => w.spec === "overview")!;
+  assertEquals(res.payload.memory, {
+    usedPercent: 51.0,
+    min: 40.0,
+    max: 52.0,
+    avg: 46.0,
   });
 });
