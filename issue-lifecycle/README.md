@@ -31,8 +31,10 @@ harvested ──[complete]──> complete
 ```
 
 `approve_plan` requires full matrix coverage AND zero open CRITICAL AND zero
-open HIGH findings. `close` works from any state. `hydrate` reads from any state
-without mutating it.
+open HIGH findings AND no reviewer FAIL verdict. `close` works from any state.
+`hydrate` reads from any state without mutating it. `start` refuses to overwrite
+an in-flight issue (any state other than complete/closed) unless `force: true`
+is passed.
 
 ## Using with Claude Code (recommended)
 
@@ -151,28 +153,28 @@ swamp data get issue-42 hydrate --json
 
 ## Methods
 
-| Method                | Description                                                             | State Transition                               |
-| --------------------- | ----------------------------------------------------------------------- | ---------------------------------------------- |
-| `start`               | File a new issue                                                        | -> `filed`                                     |
-| `triage`              | Classify with optional detail                                           | `filed` -> `triaged`                           |
-| `record_prior_art`    | Record existing UAT/KB entries                                          | no change                                      |
-| `record_reproduction` | Record/update bug-reproduction outcome (optional; re-call overwrites)   | no change (`triaged` or `planned`)             |
-| `plan`                | Create/revise plan (bumps planVersion)                                  | `triaged`\|`planned` -> `planned`              |
-| `review_plan`         | Enter plan review phase                                                 | `planned` -> `reviewing`                       |
-| `record_review`       | Record one reviewer's findings                                          | no change                                      |
-| `approve_plan`        | Approve (gated on coverage + zero blocking)                             | `reviewing` -> `approved`                      |
-| `reject_plan`         | Reject with auto/human source                                           | `reviewing` -> `planned`                       |
-| `implement`           | Start TDD on a branch — enter writing_tests                             | `approved` -> `writing_tests`                  |
-| `review_tests`        | Enter test review phase                                                 | `writing_tests` -> `reviewing_tests`           |
-| `iterate_tests`       | Loop back on test-review findings                                       | `reviewing_tests` -> `writing_tests`           |
-| `tests_approved`      | Tests clean — proceed to code (autonomous, or human override after cap) | `reviewing_tests` -> `implementing`            |
-| `review_code`         | Enter code review phase                                                 | `implementing` -> `code_reviewing`             |
-| `resolve_findings`    | Record resolutions, snapshot round                                      | `code_reviewing` -> `resolved`                 |
-| `iterate`             | Return to implementation                                                | `resolved`\|`code_reviewing` -> `implementing` |
-| `harvest`             | Record UAT/KB improvement proposals                                     | `resolved` -> `harvested`                      |
-| `complete`            | Mark done                                                               | `resolved`\|`harvested` -> `complete`          |
-| `close`               | Abandon from any state                                                  | any -> `closed`                                |
-| `hydrate`             | Write compact summary (no state mutation)                               | no change                                      |
+| Method                | Description                                                               | State Transition                               |
+| --------------------- | ------------------------------------------------------------------------- | ---------------------------------------------- |
+| `start`               | File a new issue (refuses to overwrite an in-flight issue unless `force`) | -> `filed`                                     |
+| `triage`              | Classify with optional detail                                             | `filed` -> `triaged`                           |
+| `record_prior_art`    | Record existing UAT/KB entries                                            | no change                                      |
+| `record_reproduction` | Record/update bug-reproduction outcome (optional; re-call overwrites)     | no change (`triaged` or `planned`)             |
+| `plan`                | Create/revise plan (bumps planVersion)                                    | `triaged`\|`planned` -> `planned`              |
+| `review_plan`         | Enter plan review phase                                                   | `planned` -> `reviewing`                       |
+| `record_review`       | Record one reviewer's findings                                            | no change                                      |
+| `approve_plan`        | Approve (gated on coverage + zero blocking + no FAIL verdict)             | `reviewing` -> `approved`                      |
+| `reject_plan`         | Reject with auto/human source                                             | `reviewing` -> `planned`                       |
+| `implement`           | Start TDD on a branch — enter writing_tests                               | `approved` -> `writing_tests`                  |
+| `review_tests`        | Enter test review phase                                                   | `writing_tests` -> `reviewing_tests`           |
+| `iterate_tests`       | Loop back on test-review findings                                         | `reviewing_tests` -> `writing_tests`           |
+| `tests_approved`      | Tests clean — proceed to code (autonomous, or human override after cap)   | `reviewing_tests` -> `implementing`            |
+| `review_code`         | Enter code review phase                                                   | `implementing` -> `code_reviewing`             |
+| `resolve_findings`    | Record resolutions (keyed per matching reviewer), snapshot round          | `code_reviewing` -> `resolved`                 |
+| `iterate`             | Return to implementation                                                  | `resolved`\|`code_reviewing` -> `implementing` |
+| `harvest`             | Record UAT/KB improvement proposals                                       | `resolved` -> `harvested`                      |
+| `complete`            | Mark done                                                                 | `resolved`\|`harvested` -> `complete`          |
+| `close`               | Abandon from any state                                                    | any -> `closed`                                |
+| `hydrate`             | Write compact summary (no state mutation)                                 | no change                                      |
 
 ## Data stored
 
@@ -183,11 +185,12 @@ swamp data get issue-42 hydrate --json
 
 ## Approval gate
 
-`approve_plan` enforces all three conditions:
+`approve_plan` enforces all four conditions:
 
 1. Every reviewer listed in `reviewMatrix` has recorded a `ReviewResult`
 2. Zero open `CRITICAL` findings
 3. Zero open `HIGH` findings
+4. No reviewer recorded a `FAIL` verdict (even with zero/non-blocking findings)
 
 ## Bundled skills
 

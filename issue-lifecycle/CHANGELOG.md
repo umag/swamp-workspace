@@ -3,13 +3,65 @@
 All notable changes to `@magistr/issue-lifecycle`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
-## Unreleased — five-suite quality backfill (ext-quality-bf-issue-lifecycle)
+## 2026.08.02.1 — latent-bug fixes (IL-1/2/4/7) + five-suite quality
 
-Test + docs backfill only. **No model schema/method changes — model type version
-stays `2026.07.16.2`.** `issue_lifecycle.ts` and `manifest.yaml` are BYTE-FROZEN
-by this change (wave-4 batch-4d, final batch of the extension quality program).
+**Model behavior change — model type version bumped to `2026.08.02.1`** (first
+release since the `2026.07.16.2` five-suite quality backfill). Real fixes for
+four of the seven latent bugs triaged in the LOCAL issue-lifecycle model
+`issue-lifecycle-latent-bugs`; three are explicitly re-affirmed as intentional
+behavior, not fixed. No `globalArguments` or resource-schema change — the
+version bump ships as an identity `upgrades[]` migration.
 
-- New `extensions/models/issue_lifecycle_methods_test.ts` — success + exact
+### Fixed
+
+- **IL-1** — `start` used to overwrite whatever `current` held with no
+  read-before-write — approved plans, review history, everything — with no guard
+  or confirmation. It now reads existing state first: a fresh instance (no
+  `current` yet) or one already in a terminal state (`complete`/`closed`)
+  proceeds as before; anything else throws unless the new `force: boolean`
+  argument (default `false`) is passed.
+- **IL-2** — `approve_plan`/`tests_approved` gated only on `hasBlockingFindings`
+  (open CRITICAL/HIGH count), so a reviewer could post `verdict: "FAIL"` with
+  zero findings (or all findings resolved/non-blocking) and approval would still
+  succeed. Both methods now also call the new `failingReviewers()` helper and
+  block if any reviewer's verdict is FAIL, **after** the existing
+  blocking-findings check (gate order preserved so "N CRITICAL and M HIGH" fires
+  first when both conditions hold). `tests_approved`'s `override_reason` now
+  bypasses both gates together, as before. `SUGGEST_CHANGES` remains
+  non-blocking by design — only `FAIL` hard blocks, so the autonomous
+  zero-CRITICAL/zero-HIGH loop can still converge without a human override.
+- **IL-4** — `resolutions` is a flat `Record<string, string>` keyed by finding
+  description text; two different reviewers whose findings happened to share
+  description text collapsed into one entry. `resolve_findings` now expands each
+  supplied key against the current round's findings: every reviewer whose
+  finding matches that description gets its own
+  `` `${reviewer} :: ${description}` `` composite key. A key matching no finding
+  is stored verbatim (legacy-safe; unaffected: empty-map callers).
+- **IL-7** — `record_review` appended every submission unconditionally, so
+  recording the same reviewer twice in one round double-counted their open
+  findings in the blocking gate. It now replaces (last-write-wins) the
+  reviewer's earlier entry in place instead of appending a duplicate.
+
+### Kept as designed (re-affirmed, not fixed)
+
+- **IL-3** — no model-enforced iteration cap on `iterate`/`iterate_tests`.
+  `MAX_CODE_ITERATIONS`/`MAX_TEST_ITERATIONS` stay skill-layer policy; enforcing
+  a cap in the pure model would couple it to skill policy and could break the
+  human `override_reason` escape hatch.
+- **IL-5** — `close` has no `guardState` call and works from any state,
+  including terminal ones. This is intentional: `close` is the abandon/escape
+  hatch (manifest.yaml has always documented "works from any state") and an
+  escape hatch must never itself be blockable.
+- **IL-6** — `hydrate`'s `summary.snapshotAt` is stamped fresh via `now()` on
+  every call, so two calls produce two different values even though `current` is
+  never mutated. `snapshotAt` is a wall-clock capture stamp — it should differ
+  per call; the property suite already proves non-mutation of `current` by
+  freezing the clock (`@std/testing` `FakeTime`), which is the invariant that
+  actually matters here.
+
+### Five-suite quality (carried from the `2026.07.16.2` backfill, updated)
+
+- `extensions/models/issue_lifecycle_methods_test.ts` — success + exact
   guardState-throw-message regression for each of the 20 model methods, a sweep
   pinning "No issue state found — run 'start' first" on every method but
   `start`, and a sweep pinning the REAL (not assumed) unknown-key behavior of
@@ -17,56 +69,46 @@ by this change (wave-4 batch-4d, final batch of the extension quality program).
   renders `additionalProperties: false` (its own JSON-Schema view), but none of
   the 20 methods call `.strict()`, so a bare `.parse()` silently strips an
   unrecognized key rather than throwing.
-- New `extensions/models/issue_lifecycle_adversarial_test.ts` — illegal
-  out-of-order transitions from varied source states, malformed reviewer input
-  (bad severity/verdict enums rejected by zod), hostile approve_plan gate
+- `extensions/models/issue_lifecycle_adversarial_test.ts` — illegal out-of-order
+  transitions from varied source states, malformed reviewer input (bad
+  severity/verdict enums rejected by zod), hostile approve_plan gate
   combinations (missing-matrix-reviewer, combined CRITICAL+HIGH counts),
   corrupted-stored-state pins for the "no plan found" branches in
   `approve_plan`/`tests_approved`, whitespace `override_reason` still gated, and
-  pins for the locally-triaged latent bugs IL-1 (`start` overwrites an in-flight
-  issue with no guard or confirmation), IL-2 (the approve gate ignores reviewer
-  `verdict` — a FAIL verdict with zero open findings still approves), IL-3 (no
-  model-enforced iteration cap), IL-4 (`resolutions` keyed by finding
-  description text collides across reviewers), IL-5 (`close` is guardless and
-  terminal-agnostic), and IL-7 (recording the same reviewer twice in one round
-  double-counts its open findings in the blocking gate — tightens the gate,
-  never loosens it).
-- New `extensions/models/issue_lifecycle_coverage_test.ts` — branch fill for
+  pins asserting the FIXED IL-1/IL-2/IL-4/IL-7 behavior above plus the
+  re-affirmed IL-3/IL-5 by-design behavior.
+- `extensions/models/issue_lifecycle_coverage_test.ts` — branch fill for
   `allMatrixReviewersRecorded` across the security/ux/skill matrix dimensions,
   `hasBlockingFindings`'s full status filter (open / resolved / accepted /
-  wontfix), both branches of `iterate`'s double-snapshot guard, the zod `source`
-  default (`"human"`) on `reject_plan`/`iterate`/ `iterate_tests`,
-  `record_reproduction`'s create-vs-merge branches, `plan`'s planVersion-bump
-  predicate (keyed on `data.plan` presence, not on which of the two guarded
-  states the call came from), and `complete`'s silently discarded `summary`
-  argument.
-- New `extensions/models/issue_lifecycle_property_test.ts` —
-  `npm:fast-check@4.8.0` gated by `FC_NUM_RUNS` (`--allow-env=FC_NUM_RUNS`, new
-  `test:soak` task at 10000 runs): P1 no illegal (state, method) pair ever
-  succeeds, P2 `hasBlockingFindings` totals are monotone non-decreasing under
-  additional findings, P3 a randomized-but-legal walk (reject-then-replan /
+  wontfix), the new `failingReviewers` pure-function coverage, both branches of
+  `iterate`'s double-snapshot guard, the zod `source` default (`"human"`) on
+  `reject_plan`/`iterate`/`iterate_tests`, `record_reproduction`'s
+  create-vs-merge branches, `plan`'s planVersion-bump predicate (keyed on
+  `data.plan` presence, not on which of the two guarded states the call came
+  from), and `complete`'s silently discarded `summary` argument.
+- `extensions/models/issue_lifecycle_property_test.ts` — `npm:fast-check@4.8.0`
+  gated by `FC_NUM_RUNS` (`--allow-env=FC_NUM_RUNS`, `test:soak` task at 10000
+  runs): P1 no illegal (state, method) pair ever succeeds, P2
+  `hasBlockingFindings` totals are monotone non-decreasing under additional
+  findings, P3 a randomized-but-legal walk (reject-then-replan /
   iterate_tests-then-retry / iterate-then-retry / harvest-or-skip, each an
   independent branch) always ends in `complete` with matching reviewHistory
   phase counts, P4 `hydrate` never mutates `current` (IL-6's
   `summary.snapshotAt` is excluded from being a flakiness source by freezing
   `now()` with `@std/testing` `FakeTime` for the whole property, not by
-  hand-excluding a field), P5 the `approve_plan` gate holds in both directions
-  under full matrix coverage.
-- `issue-lifecycle/quality.yaml` — all five suites now `present`; `docs.readme`,
+  hand-excluding a field), P5 (rewritten for the fixed gate) the `approve_plan`
+  gate throws iff `hasBlockingFindings(...).total > 0` **OR** any reviewer's
+  verdict is FAIL, and succeeds iff neither holds — verdict is now drawn
+  independently of finding severity/status so both gate dimensions are exercised
+  in every combination.
+- `issue-lifecycle/quality.yaml` — all five suites `present`; `docs.readme`,
   `docs.changelog`, and `docs.skill` (`.claude/skills/issue-lifecycle/SKILL.md`,
   already bundled) `present`; `watch`/`canary` stay `backlog` (justification:
   seeded offender at CI-gate rollout — backfill tracked in
   `ext-quality-test-backfill`); ratchet
-  `{rubricVersion: 3, baselinePercentage:
-  100, label: "Grade A"}`.
-- `deno.json` — `test` task gains `--allow-env=FC_NUM_RUNS`; new `test:soak`
-  task; `check` task now globs `extensions/models/*.ts`.
-- Removed `issue-lifecycle` from the repo-root `quality-allowlist.txt`
-  (`quality-offenders.baseline.txt` is immutable and unchanged).
-
-Latent bugs found while characterizing the source (IL-1 through IL-7) are PINNED
-as-is — never fixed here — and filed to the LOCAL issue-lifecycle model
-`issue-lifecycle-latent-bugs`, never the swamp.club Lab.
+  `{rubricVersion: 3, baselinePercentage: 100, label: "Grade A"}`.
+- `deno.json` — `test` task gains `--allow-env=FC_NUM_RUNS`; `test:soak` task;
+  `check` task globs `extensions/models/*.ts`.
 
 ## 2026.06.12.3 — eval scenario-9: resume-dispatch from the TDD sub-cycle
 

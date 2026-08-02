@@ -19,10 +19,13 @@
 //      one intentionally time-dependent field; @std/testing FakeTime
 //      freezes `now()` for the whole test so the comparison can be a full
 //      deep-equality without excluding anything by hand).
-// P5 — the approve_plan gate holds in both directions: given full matrix
-//      coverage, it throws iff hasBlockingFindings(...).total > 0 and
-//      succeeds iff it is exactly 0 (covers zero-open-CRITICAL/HIGH and the
-//      open-CRITICAL/HIGH-blocks direction with the same generator).
+// P5 — the approve_plan gate holds in both directions under the FIXED gate
+//      (2026.08.02.1, IL-2): given full matrix coverage, it throws iff
+//      hasBlockingFindings(...).total > 0 OR any reviewer's verdict is
+//      FAIL, and succeeds iff neither holds. verdict is drawn independently
+//      of finding severity/status so the two gate dimensions
+//      (blocking-findings and FAIL-verdict) are exercised in every
+//      combination, not just the one where they happen to coincide.
 //
 // Every arbitrary below is restricted to the domain where the invariant
 // genuinely holds — see the comment on each property. FC_NUM_RUNS
@@ -37,6 +40,7 @@ import fc from "npm:fast-check@4.8.0";
 import { FakeTime } from "jsr:@std/testing@1/time";
 
 import {
+  failingReviewers,
   type Finding,
   hasBlockingFindings,
   type IssueState,
@@ -525,27 +529,41 @@ Deno.test("P4: hydrate never mutates current (frozen clock excludes IL-6's snaps
 // P5 — the approve_plan gate holds in both directions
 // ============================================================================
 
-const gatedFindingArb = fc.record({
-  owner: fc.constantFrom("review-code", "review-adversarial"),
-  severity: fc.constantFrom<Finding["severity"]>(
-    "CRITICAL",
-    "HIGH",
-    "MEDIUM",
-    "LOW",
+// verdict is drawn INDEPENDENTLY of severity/status (unlike the pre-fix
+// generator, which derived verdict solely from `findings.length > 0`) so the
+// two gate dimensions — hasBlockingFindings and failingReviewers — are each
+// exercised on their own and in combination.
+const gatedReviewArb = fc.record({
+  verdict: fc.constantFrom<"PASS" | "FAIL" | "SUGGEST_CHANGES">(
+    "PASS",
+    "FAIL",
+    "SUGGEST_CHANGES",
   ),
-  status: fc.constantFrom<Finding["status"]>(
-    "open",
-    "resolved",
-    "accepted",
-    "wontfix",
+  findings: fc.array(
+    fc.record({
+      severity: fc.constantFrom<Finding["severity"]>(
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+      ),
+      status: fc.constantFrom<Finding["status"]>(
+        "open",
+        "resolved",
+        "accepted",
+        "wontfix",
+      ),
+    }),
+    { maxLength: 4 },
   ),
 });
 
-Deno.test("P5: approve_plan throws iff open CRITICAL/HIGH findings exist, and succeeds iff there are none (full matrix coverage always held constant)", async () => {
+Deno.test("P5: approve_plan throws iff blocking findings exist OR any reviewer's verdict is FAIL (full matrix coverage always held constant)", async () => {
   await fc.assert(
     fc.asyncProperty(
-      fc.array(gatedFindingArb, { maxLength: 6 }),
-      async (descriptors) => {
+      gatedReviewArb,
+      gatedReviewArb,
+      async (codeDraw, adversarialDraw) => {
         const h = createHarness();
         await run(
           "start",
@@ -565,24 +583,28 @@ Deno.test("P5: approve_plan throws iff open CRITICAL/HIGH findings exist, and su
         await run("plan", defaultPlanArgs(), h.ctx);
         await run("review_plan", {}, h.ctx);
 
-        const forReviewer = (owner: string): Finding[] =>
-          descriptors
-            .filter((d) => d.owner === owner)
-            .map((d, i) => ({
-              reviewer: owner,
-              severity: d.severity,
-              description: `f${i}`,
-              status: d.status,
-            }));
+        const forReviewer = (
+          owner: string,
+          draw: typeof codeDraw,
+        ): Finding[] =>
+          draw.findings.map((d, i) => ({
+            reviewer: owner,
+            severity: d.severity,
+            description: `f${i}`,
+            status: d.status,
+          }));
 
-        const codeFindings = forReviewer("review-code");
-        const adversarialFindings = forReviewer("review-adversarial");
+        const codeFindings = forReviewer("review-code", codeDraw);
+        const adversarialFindings = forReviewer(
+          "review-adversarial",
+          adversarialDraw,
+        );
 
         await run(
           "record_review",
           {
             reviewer: "review-code",
-            verdict: codeFindings.length > 0 ? "FAIL" : "PASS",
+            verdict: codeDraw.verdict,
             findings: codeFindings,
           },
           h.ctx,
@@ -591,26 +613,29 @@ Deno.test("P5: approve_plan throws iff open CRITICAL/HIGH findings exist, and su
           "record_review",
           {
             reviewer: "review-adversarial",
-            verdict: adversarialFindings.length > 0 ? "FAIL" : "PASS",
+            verdict: adversarialDraw.verdict,
             findings: adversarialFindings,
           },
           h.ctx,
         );
 
-        const expectedBlocking = hasBlockingFindings([
+        const reviews: ReviewResult[] = [
           {
             reviewer: "review-code",
-            verdict: "FAIL",
+            verdict: codeDraw.verdict,
             findings: codeFindings,
             timestamp: FIXED_TS,
           },
           {
             reviewer: "review-adversarial",
-            verdict: "FAIL",
+            verdict: adversarialDraw.verdict,
             findings: adversarialFindings,
             timestamp: FIXED_TS,
           },
-        ]).total;
+        ];
+        const expectedBlocking = hasBlockingFindings(reviews).total;
+        const expectedFailingVerdict = failingReviewers(reviews).length > 0;
+        const expectThrow = expectedBlocking > 0 || expectedFailingVerdict;
 
         let threw = false;
         try {
@@ -619,7 +644,7 @@ Deno.test("P5: approve_plan throws iff open CRITICAL/HIGH findings exist, and su
           threw = true;
         }
 
-        if (expectedBlocking > 0) {
+        if (expectThrow) {
           return threw;
         }
         return !threw && h.getState()!.state === "approved";

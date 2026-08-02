@@ -724,6 +724,20 @@ export function hasBlockingFindings(
 }
 
 /**
+ * List reviewers whose recorded verdict in the current round is `FAIL`.
+ * `hasBlockingFindings` only inspects `findings` — a reviewer can post
+ * `verdict: "FAIL"` with zero findings (or findings that are all
+ * non-open/non-blocking) and it would sail through undetected. Used by
+ * `approve_plan` and `tests_approved` alongside `hasBlockingFindings` so a
+ * FAIL verdict always blocks approval regardless of what findings (if any)
+ * accompany it (IL-2). Since `record_review` now keeps at most one entry per
+ * reviewer per round, the result is already de-duplicated by reviewer.
+ */
+export function failingReviewers(reviews: ReviewResult[]): string[] {
+  return reviews.filter((r) => r.verdict === "FAIL").map((r) => r.reviewer);
+}
+
+/**
  * Verify every reviewer in the matrix has recorded a result.
  * Matrix entry `security: true` requires a review from `review-security`.
  * Used by approve_plan to enforce full coverage before approval.
@@ -796,6 +810,41 @@ export function snapshotReviewRound(
   };
 }
 
+/**
+ * Expand a `description -> action` resolutions map into per-reviewer
+ * composite keys before merging into the cumulative `resolutions` record
+ * (IL-4). `resolutions` is a flat `Record<string, string>` keyed by finding
+ * description text; two different reviewers whose findings happen to share
+ * description text used to collapse into a single entry. For every
+ * current-round finding whose `description` matches a supplied key, this
+ * rewrites the key to `` `${reviewer} :: ${description}` `` — one entry per
+ * matching reviewer. A key that matches no current-round finding is kept
+ * verbatim (legacy-safe: callers passing hand-written keys unrelated to a
+ * specific finding still work).
+ */
+function expandResolutionKeys(
+  resolutions: Record<string, string>,
+  reviews: ReviewResult[],
+): Record<string, string> {
+  const expanded: Record<string, string> = {};
+  for (const [description, action] of Object.entries(resolutions)) {
+    const reviewers = new Set<string>();
+    for (const r of reviews) {
+      for (const f of r.findings) {
+        if (f.description === description) reviewers.add(f.reviewer);
+      }
+    }
+    if (reviewers.size === 0) {
+      expanded[description] = action;
+    } else {
+      for (const reviewer of reviewers) {
+        expanded[`${reviewer} :: ${description}`] = action;
+      }
+    }
+  }
+  return expanded;
+}
+
 // ============================================================================
 // Model
 // ============================================================================
@@ -839,7 +888,20 @@ async function readState(
  */
 export const model = {
   type: "@magistr/issue-lifecycle",
-  version: "2026.07.16.2",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Latent-bug fixes IL-1 (guard start against overwriting an " +
+        "in-flight issue; force opt-out), IL-2 (approve_plan/tests_approved " +
+        "now block on a FAIL reviewer verdict), IL-4 (resolutions keyed " +
+        "per-reviewer), IL-7 (record_review reviewer dedup). No " +
+        "globalArguments or resource-schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
 
   globalArguments: z.object({}),
 
@@ -863,16 +925,49 @@ export const model = {
 
   methods: {
     start: {
-      description: "File a new issue — creates initial state",
+      description:
+        "File a new issue — creates initial state. Refuses to overwrite an " +
+        "in-flight issue (any state other than complete/closed) unless " +
+        "force:true is passed; a fresh instance or one already " +
+        "complete/closed always proceeds.",
       arguments: z.object({
         title: z.string(),
         description: z.string(),
         labels: z.array(z.string()).default([]),
+        force: z.boolean().default(false).describe(
+          "Overwrite an in-flight issue (any state other than " +
+            "complete/closed) even though it has not reached a terminal " +
+            "state. Required to re-file over an active issue; never " +
+            "required for a fresh instance or one already complete/closed.",
+        ),
       }),
       execute: async (
-        args: { title: string; description: string; labels: string[] },
+        args: {
+          title: string;
+          description: string;
+          labels: string[];
+          force: boolean;
+        },
         context: DefinitionCtx,
       ) => {
+        // Read-before-write guard (IL-1): a bare `start` used to overwrite
+        // whatever was there — approved plans, review history, everything —
+        // with no confirmation. A fresh instance (no `current` yet) or one
+        // already in a terminal state (complete/closed) always proceeds;
+        // anything else requires an explicit force:true.
+        const existing = await readState(context);
+        if (existing) {
+          const isTerminal = existing.state === "complete" ||
+            existing.state === "closed";
+          if (!isTerminal && !args.force) {
+            throw new Error(
+              `Cannot start: an issue already exists in state ` +
+                `'${existing.state}'. Pass force:true to overwrite it, or ` +
+                `close/complete it first.`,
+            );
+          }
+        }
+
         context.logger.info("Filing issue {title}", { title: args.title });
 
         const handle = await context.writeResource("state", "current", {
@@ -1190,9 +1285,21 @@ export const model = {
           timestamp: now(),
         };
 
+        // Last-write-wins: a second submission from a reviewer that already
+        // recorded a result this round REPLACES the earlier entry in place
+        // rather than appending a duplicate. Without this, the same
+        // reviewer's stale findings stick around and hasBlockingFindings
+        // double-counts them in the approval gate (IL-7).
+        const alreadyRecorded = data.reviews.some(
+          (r) => r.reviewer === args.reviewer,
+        );
+        const reviews = alreadyRecorded
+          ? data.reviews.map((r) => r.reviewer === args.reviewer ? review : r)
+          : [...data.reviews, review];
+
         const handle = await context.writeResource("state", "current", {
           ...data,
-          reviews: [...data.reviews, review],
+          reviews,
           updatedAt: now(),
         });
 
@@ -1203,8 +1310,10 @@ export const model = {
     approve_plan: {
       description:
         "Approve the plan. Requires (a) all reviewers in the matrix have " +
-        "recorded a result for this round AND (b) zero open CRITICAL and " +
-        "zero open HIGH findings. NEVER auto-call — human must explicitly approve.",
+        "recorded a result for this round, (b) zero open CRITICAL and " +
+        "zero open HIGH findings, AND (c) no reviewer recorded a FAIL " +
+        "verdict (even with zero/non-blocking findings). NEVER auto-call " +
+        "— human must explicitly approve.",
       arguments: z.object({}),
       execute: async (
         _args: Record<string, never>,
@@ -1231,6 +1340,16 @@ export const model = {
           throw new Error(
             `Cannot approve: ${blocking.critical} CRITICAL and ${blocking.high} HIGH findings still open. ` +
               `Resolve them or reject the plan and iterate.`,
+          );
+        }
+
+        const failing = failingReviewers(data.reviews);
+        if (failing.length > 0) {
+          throw new Error(
+            `Cannot approve: reviewer(s) ${
+              failing.join(", ")
+            } recorded a FAIL verdict. ` +
+              `Resolve their concerns, have them re-review with a clean verdict, or reject the plan and iterate.`,
           );
         }
 
@@ -1458,11 +1577,13 @@ export const model = {
         "Tests pass review — transition reviewing_tests → implementing so " +
         "code can be written against the approved tests. Default (autonomous) " +
         "gate: full matrix coverage AND zero open CRITICAL AND zero open HIGH " +
-        "findings. Pass `override_reason` to force-approve (human override) " +
-        "when the autonomous loop has hit the iteration cap and the human " +
-        "judges the remaining findings acceptable. Override still requires " +
-        "matrix coverage. Snapshots outcome=clean (autonomous) or " +
-        "outcome=human_override (with the supplied reason).",
+        "findings AND no reviewer FAIL verdict. Pass `override_reason` to " +
+        "force-approve (human override) when the autonomous loop has hit " +
+        "the iteration cap and the human judges the remaining findings " +
+        "(or FAIL verdict) acceptable. Override still requires matrix " +
+        "coverage and bypasses both the findings gate and the verdict gate. " +
+        "Snapshots outcome=clean (autonomous) or outcome=human_override " +
+        "(with the supplied reason).",
       arguments: z.object({
         override_reason: z.string().optional().describe(
           "When set, bypasses the blocking-findings gate as an explicit " +
@@ -1503,6 +1624,17 @@ export const model = {
           throw new Error(
             `Cannot approve tests: ${blocking.critical} CRITICAL and ${blocking.high} HIGH findings still open. ` +
               `Resolve them via iterate_tests and rewrite the tests, or pass ` +
+              `override_reason to force-approve as a human override.`,
+          );
+        }
+
+        const failing = failingReviewers(data.reviews);
+        if (failing.length > 0 && !isOverride) {
+          throw new Error(
+            `Cannot approve tests: reviewer(s) ${
+              failing.join(", ")
+            } recorded a FAIL verdict. ` +
+              `Resolve their concerns via iterate_tests and rewrite the tests, or pass ` +
               `override_reason to force-approve as a human override.`,
           );
         }
@@ -1599,7 +1731,10 @@ export const model = {
     resolve_findings: {
       description:
         "Record resolution for review findings. Merges into cumulative " +
-        "resolutions map. Transitions code_reviewing → resolved.",
+        "resolutions map, keyed per reviewer where the description matches " +
+        "a current-round finding (IL-4 fix — two different reviewers' " +
+        "findings sharing description text no longer collapse into one " +
+        "entry). Transitions code_reviewing → resolved.",
       arguments: z.object({
         resolutions: z.record(z.string(), z.string()).describe(
           "Map of finding description → resolution action",
@@ -1613,8 +1748,13 @@ export const model = {
         if (!data) throw new Error("No issue state found — run 'start' first");
         guardState(data.state, "code_reviewing", "resolve_findings");
 
+        const expandedResolutions = expandResolutionKeys(
+          args.resolutions,
+          data.reviews,
+        );
+
         context.logger.info("Recording {count} finding resolutions", {
-          count: Object.keys(args.resolutions).length,
+          count: Object.keys(expandedResolutions).length,
         });
 
         const historyEntry = snapshotReviewRound(
@@ -1628,7 +1768,7 @@ export const model = {
         const handle = await context.writeResource("state", "current", {
           ...data,
           state: "resolved",
-          resolutions: { ...data.resolutions, ...args.resolutions },
+          resolutions: { ...data.resolutions, ...expandedResolutions },
           reviewHistory: [...data.reviewHistory, historyEntry],
           reviewRoundStartedAt: undefined,
           updatedAt: now(),

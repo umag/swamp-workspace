@@ -1,9 +1,11 @@
 // Copyright 2026 magistr.
 // SPDX-License-Identifier: MIT
 //
-// METHODS suite (ext-quality-bf-issue-lifecycle, wave-4 batch-4d).
-// issue_lifecycle.ts is BYTE-FROZEN by this change — every test here
-// characterizes already-shipped behavior of the 20 model methods (start,
+// METHODS suite (ext-quality-bf-issue-lifecycle, wave-4 batch-4d; latent-bug
+// real-fix in 2026.08.02.1 touched `start`, `approve_plan`, `tests_approved`,
+// `resolve_findings`, and `record_review` — see issue_lifecycle_adversarial_
+// test.ts for the IL-1/2/4/7 fix pins). Every test here characterizes the
+// shipped behavior of the 20 model methods (start,
 // triage, record_prior_art, record_reproduction, plan, review_plan,
 // record_review, approve_plan, reject_plan, implement, review_tests,
 // iterate_tests, tests_approved, review_code, resolve_findings, iterate,
@@ -221,7 +223,9 @@ async function withResolved(h: Harness): Promise<void> {
 }
 
 // ============================================================================
-// start — no guard, always writes fresh state
+// start — guards against overwriting an in-flight issue (2026.08.02.1, IL-1
+// fix); an empty harness has no `current` yet, so the guard is a no-op here
+// and start still always writes fresh state on first call
 // ============================================================================
 
 Deno.test("methods: start succeeds from empty harness", async () => {

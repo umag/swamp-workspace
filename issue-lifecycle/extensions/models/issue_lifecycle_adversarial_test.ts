@@ -1,18 +1,33 @@
 // Copyright 2026 magistr.
 // SPDX-License-Identifier: MIT
 //
-// ADVERSARIAL suite (ext-quality-bf-issue-lifecycle, wave-4 batch-4d).
-// issue_lifecycle.ts is BYTE-FROZEN by this change. This suite assumes the
-// source is broken until proven otherwise: illegal transitions from varied
-// source states, malformed reviewer input (bad severity/verdict enums),
-// hostile approve_plan / tests_approved gate combinations, corrupted stored
-// state, and pins for the LOCAL latent bugs IL-1 (start overwrites an
-// in-flight issue), IL-2 (approve gate ignores verdict — a FAIL verdict with
-// zero open findings still approves), IL-3 (no model-enforced iteration
-// cap), IL-4 (resolutions keyed by description text collide across
-// reviewers), and IL-5 (close is guardless and terminal-agnostic). See the
-// LOCAL issue-lifecycle-latent-bugs issue-lifecycle model for the full
-// triage — never the swamp.club Lab.
+// ADVERSARIAL suite (ext-quality-bf-issue-lifecycle, wave-4 batch-4d;
+// latent-bug real-fix in 2026.08.02.1). This suite assumes the source is
+// broken until proven otherwise: illegal transitions from varied source
+// states, malformed reviewer input (bad severity/verdict enums), hostile
+// approve_plan / tests_approved gate combinations, corrupted stored state,
+// and pins for the LOCAL latent bugs IL-1 through IL-7 (see the LOCAL
+// issue-lifecycle-latent-bugs issue-lifecycle model for the full triage —
+// never the swamp.club Lab).
+//
+// Four bugs are FIXED as of 2026.08.02.1 — the pins below assert the FIXED
+// behavior, not the original bug:
+//   IL-1 (fixed) — start refuses to overwrite an in-flight issue (any state
+//     other than complete/closed) unless force:true is passed.
+//   IL-2 (fixed) — approve_plan/tests_approved also block on a reviewer FAIL
+//     verdict, even with zero open/blocking findings.
+//   IL-4 (fixed) — resolve_findings keys resolutions per matching reviewer,
+//     so two different reviewers' findings sharing description text no
+//     longer collapse into one resolutions-map entry.
+//   IL-7 (fixed) — record_review replaces (last-write-wins), not appends, a
+//     reviewer's second submission within the same round.
+//
+// Three bugs are KEPT AS DESIGNED — re-affirmed, not fixed:
+//   IL-3 (by design) — no model-enforced iteration cap; MAX_CODE_ITERATIONS /
+//     MAX_TEST_ITERATIONS are skill-layer policy, not the pure model's job.
+//   IL-5 (by design) — close has no guardState call; it is the
+//     abandon/escape hatch and must work from any state, including
+//     terminal ones.
 //
 // Harness is a byte-identical copy of issue_lifecycle.test.ts's fake context.
 
@@ -177,10 +192,10 @@ async function withApprovedPlan(h: Harness): Promise<void> {
 }
 
 // ============================================================================
-// IL-1 — start overwrites an in-flight issue (no guard, no read-before-write)
+// IL-1 (fixed) — start now guards against overwriting an in-flight issue
 // ============================================================================
 
-Deno.test("IL-1: start overwrites an in-flight approved plan, wiping history", async () => {
+Deno.test("IL-1 (fixed): start refuses to overwrite an in-flight approved plan", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
   const before = h.getState()!;
@@ -188,10 +203,37 @@ Deno.test("IL-1: start overwrites an in-flight approved plan, wiping history", a
   assertEquals(before.reviewHistory.length, 1);
   assertEquals(before.title, "Test issue");
 
-  // Re-invoking start with no guard silently clobbers everything.
+  await assertRejects(
+    () =>
+      run(
+        "start",
+        { title: "Different issue entirely", description: "d2", labels: [] },
+        h.ctx,
+      ),
+    Error,
+    "force",
+  );
+
+  // Nothing was overwritten.
+  const after = h.getState()!;
+  assertEquals(after.state, "approved");
+  assertEquals(after.title, "Test issue");
+  assertEquals(after.reviewHistory.length, 1);
+  assertEquals(after.planVersion, 1);
+});
+
+Deno.test("IL-1 (fixed): start with force:true still overwrites an in-flight issue", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+
   await run(
     "start",
-    { title: "Different issue entirely", description: "d2", labels: [] },
+    {
+      title: "Different issue entirely",
+      description: "d2",
+      labels: [],
+      force: true,
+    },
     h.ctx,
   );
 
@@ -201,40 +243,74 @@ Deno.test("IL-1: start overwrites an in-flight approved plan, wiping history", a
   assertEquals(
     after.reviewHistory,
     [],
-    "IL-1: start wipes reviewHistory with no confirmation",
+    "force:true still wipes reviewHistory — that's the explicit opt-in",
   );
-  assertEquals(after.plan, undefined, "IL-1: start wipes the plan");
-  assertEquals(after.planVersion, 1, "IL-1: start resets planVersion to 1");
+  assertEquals(after.plan, undefined);
+  assertEquals(after.planVersion, 1);
+});
+
+Deno.test("IL-1 (fixed): start succeeds from a terminal state (complete) without force", async () => {
+  const h = createHarness();
+  await filedAndTriaged(h);
+  const s = h.getState()!;
+  await h.ctx.writeResource("state", "current", {
+    ...s,
+    state: "complete",
+    completedAt: "2026-07-31T00:00:00.000Z",
+  });
+
+  await run(
+    "start",
+    { title: "Fresh issue after complete", description: "d3", labels: [] },
+    h.ctx,
+  );
+  const after = h.getState()!;
+  assertEquals(after.state, "filed");
+  assertEquals(after.title, "Fresh issue after complete");
+});
+
+Deno.test("IL-1 (fixed): start succeeds from a terminal state (closed) without force", async () => {
+  const h = createHarness();
+  await filedAndTriaged(h);
+  await run("close", { reason: "abandoned" }, h.ctx);
+  assertEquals(h.getState()!.state, "closed");
+
+  await run(
+    "start",
+    { title: "Fresh issue after close", description: "d4", labels: [] },
+    h.ctx,
+  );
+  const after = h.getState()!;
+  assertEquals(after.state, "filed");
+  assertEquals(after.title, "Fresh issue after close");
 });
 
 // ============================================================================
-// IL-2 — approve gate ignores `verdict`; FAIL verdict with 0 open findings
-// still approves
+// IL-2 (fixed) — approve_plan / tests_approved now also block on a reviewer
+// FAIL verdict, even with zero open/blocking findings
 // ============================================================================
 
-Deno.test("IL-2: approve_plan succeeds even when a reviewer's verdict is FAIL, as long as findings are empty/resolved", async () => {
+Deno.test("IL-2 (fixed): approve_plan blocks when a reviewer's verdict is FAIL, even with empty findings", async () => {
   const h = createHarness();
   await withReviewingPlan(h);
   // review-code posts verdict=FAIL but with an empty findings array —
-  // hasBlockingFindings only counts open CRITICAL/HIGH findings, never
-  // inspects `verdict`.
+  // hasBlockingFindings alone would miss this; failingReviewers() catches it.
   await run("record_review", failReview("review-code", []), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
 
-  await run("approve_plan", {}, h.ctx);
-
-  const s = h.getState()!;
-  assertEquals(s.state, "approved");
+  await assertRejects(
+    () => run("approve_plan", {}, h.ctx),
+    Error,
+    "review-code",
+  );
   assertEquals(
-    s.reviewHistory[0].reviews.find((r) => r.reviewer === "review-code")
-      ?.verdict,
-    "FAIL",
-    "IL-2: a FAIL-verdict review is preserved verbatim in history yet did " +
-      "not block approval",
+    h.getState()!.state,
+    "reviewing",
+    "approval must not proceed on a FAIL verdict",
   );
 });
 
-Deno.test("IL-2: approve_plan succeeds when a reviewer's verdict is FAIL but the finding is already resolved", async () => {
+Deno.test("IL-2 (fixed): approve_plan blocks when a reviewer's verdict is FAIL even though the finding is already resolved", async () => {
   const h = createHarness();
   await withReviewingPlan(h);
   await run(
@@ -246,12 +322,52 @@ Deno.test("IL-2: approve_plan succeeds when a reviewer's verdict is FAIL but the
   );
   await run("record_review", passReview("review-adversarial"), h.ctx);
 
-  await run("approve_plan", {}, h.ctx);
-  assertEquals(h.getState()!.state, "approved");
+  await assertRejects(
+    () => run("approve_plan", {}, h.ctx),
+    Error,
+    "review-code",
+  );
+});
+
+Deno.test("IL-2 (fixed): tests_approved blocks when a reviewer's verdict is FAIL, even with zero blocking findings", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", failReview("review-code", []), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+
+  await assertRejects(
+    () => run("tests_approved", {}, h.ctx),
+    Error,
+    "review-code",
+  );
+});
+
+Deno.test("IL-2 (fixed): tests_approved override_reason bypasses the FAIL-verdict gate too", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", failReview("review-code", []), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+
+  await run(
+    "tests_approved",
+    { override_reason: "human accepts FAIL verdict with no open findings" },
+    h.ctx,
+  );
+  const s = h.getState()!;
+  assertEquals(s.state, "implementing");
+  const testRound = s.reviewHistory.find((r) => r.phase === "test_review")!;
+  assertEquals(testRound.outcome, "human_override");
 });
 
 // ============================================================================
-// IL-3 — no model-enforced iteration cap (LOW, by design; skill-enforced)
+// IL-3 (re-affirmed by-design in 2026.08.02.1) — no model-enforced iteration
+// cap; MAX_CODE_ITERATIONS/MAX_TEST_ITERATIONS are skill-layer policy, not
+// enforced here, so the human override_reason escape hatch is never coupled
+// to a model-level cap.
 // ============================================================================
 
 Deno.test("IL-3: iterate has no model-enforced cap — 10 consecutive rounds all succeed", async () => {
@@ -287,10 +403,11 @@ Deno.test("IL-3: iterate has no model-enforced cap — 10 consecutive rounds all
 });
 
 // ============================================================================
-// IL-4 — resolutions keyed by description text collide across reviewers
+// IL-4 (fixed) — resolutions are keyed per matching reviewer, so shared
+// description text across reviewers no longer collapses into one entry
 // ============================================================================
 
-Deno.test("IL-4: resolve_findings collapses two different findings that share description text into one resolution entry", async () => {
+Deno.test("IL-4 (fixed): resolve_findings expands a shared description into one composite key per matching reviewer", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x" }, h.ctx);
@@ -301,8 +418,9 @@ Deno.test("IL-4: resolve_findings collapses two different findings that share de
   await run("review_code", {}, h.ctx);
 
   // Two DIFFERENT reviewers, two DIFFERENT findings, but the exact same
-  // description string ("needs error handling") — resolutions is a flat
-  // Record<string,string> keyed by that string, so both collapse to one key.
+  // description string ("needs error handling") — resolve_findings now
+  // expands the key to one composite `${reviewer} :: ${description}` entry
+  // per reviewer whose finding matches, instead of collapsing to one key.
   await run(
     "record_review",
     failReview("review-code", [
@@ -328,13 +446,82 @@ Deno.test("IL-4: resolve_findings collapses two different findings that share de
   assertEquals(s.state, "resolved");
   assertEquals(
     Object.keys(s.resolutions).length,
-    1,
-    "IL-4: one resolutions map key represents two distinct findings from two different reviewers",
+    2,
+    "IL-4 (fixed): a shared description expands into one composite key per matching reviewer",
+  );
+  assertEquals(
+    s.resolutions["review-code :: needs error handling"],
+    "fixed in both call sites",
+  );
+  assertEquals(
+    s.resolutions["review-adversarial :: needs error handling"],
+    "fixed in both call sites",
   );
 });
 
+Deno.test("IL-4 (fixed): resolve_findings does not spuriously expand a single-reviewer description", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("tests_approved", {}, h.ctx);
+  await run("review_code", {}, h.ctx);
+
+  await run(
+    "record_review",
+    failReview("review-code", [
+      finding("review-code", "MEDIUM", "single reviewer finding"),
+    ]),
+    h.ctx,
+  );
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+
+  await run(
+    "resolve_findings",
+    { resolutions: { "single reviewer finding": "fixed" } },
+    h.ctx,
+  );
+
+  const s = h.getState()!;
+  assertEquals(Object.keys(s.resolutions).length, 1);
+  assertEquals(
+    s.resolutions["review-code :: single reviewer finding"],
+    "fixed",
+  );
+});
+
+Deno.test("IL-4 (fixed): resolve_findings stores a key that matches no current-round finding verbatim (legacy-safe)", async () => {
+  const h = createHarness();
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("tests_approved", {}, h.ctx);
+  await run("review_code", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+
+  await run(
+    "resolve_findings",
+    { resolutions: { "no matching finding description": "n/a" } },
+    h.ctx,
+  );
+
+  const s = h.getState()!;
+  assertEquals(Object.keys(s.resolutions), [
+    "no matching finding description",
+  ]);
+  assertEquals(s.resolutions["no matching finding description"], "n/a");
+});
+
 // ============================================================================
-// IL-5 — close is guardless and terminal-agnostic
+// IL-5 (re-affirmed by-design in 2026.08.02.1) — close is guardless and
+// terminal-agnostic; it is the abandon/escape hatch and manifest.yaml
+// promises "close works from any state" — an escape hatch must never be
+// blockable, including from terminal/error states.
 // ============================================================================
 
 Deno.test("IL-5: close works from complete (a terminal state) with no guard", async () => {
@@ -363,10 +550,11 @@ Deno.test("IL-5: close works from closed (idempotent no-op re-close)", async () 
 });
 
 // ============================================================================
-// IL-7 — duplicate-reviewer double-count in blocking (only tightens the gate)
+// IL-7 (fixed) — record_review now replaces (last-write-wins), not appends,
+// a reviewer's second submission within the same round
 // ============================================================================
 
-Deno.test("IL-7: recording the same reviewer twice in one round double-counts its open findings", async () => {
+Deno.test("IL-7 (fixed): recording the same reviewer twice in one round replaces the earlier entry", async () => {
   const h = createHarness();
   await withReviewingPlan(h);
   // review-code posts once with a HIGH finding...
@@ -377,7 +565,8 @@ Deno.test("IL-7: recording the same reviewer twice in one round double-counts it
     ]),
     h.ctx,
   );
-  // ...then posts AGAIN in the same round (record_review has no dedup guard).
+  // ...then posts AGAIN in the same round — record_review now replaces the
+  // earlier entry from the same reviewer instead of appending a second one.
   await run(
     "record_review",
     failReview("review-code", [
@@ -387,15 +576,44 @@ Deno.test("IL-7: recording the same reviewer twice in one round double-counts it
   );
   await run("record_review", passReview("review-adversarial"), h.ctx);
 
-  // Coverage is a Set-of-reviewer-names check so it's unaffected (still
-  // complete), but the blocking gate iterates the raw `reviews` array and
-  // counts both HIGH findings — a stricter-than-intended but LOW-risk bug
-  // since it only ever makes approval HARDER, never easier.
+  assertEquals(
+    h.getState()!.reviews.length,
+    2,
+    "IL-7 (fixed): the duplicate review-code submission replaces, not appends",
+  );
+
+  // The blocking gate no longer double-counts the same reviewer's HIGH
+  // finding across two submissions.
   await assertRejects(
     () => run("approve_plan", {}, h.ctx),
     Error,
-    "0 CRITICAL and 2 HIGH",
+    "0 CRITICAL and 1 HIGH",
   );
+});
+
+Deno.test("IL-7 (fixed): a reviewer's second submission replaces the verdict and findings from their first (last write wins)", async () => {
+  const h = createHarness();
+  await withReviewingPlan(h);
+  await run(
+    "record_review",
+    failReview("review-code", [
+      finding("review-code", "CRITICAL", "first pass finding"),
+    ]),
+    h.ctx,
+  );
+  // Same reviewer re-submits clean — should fully replace, not merge.
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+
+  const s = h.getState()!;
+  assertEquals(s.reviews.length, 2, "one entry per distinct reviewer");
+  const codeReview = s.reviews.find((r) => r.reviewer === "review-code")!;
+  assertEquals(codeReview.verdict, "PASS");
+  assertEquals(codeReview.findings, []);
+
+  // The stale CRITICAL finding from the first submission no longer blocks.
+  await run("approve_plan", {}, h.ctx);
+  assertEquals(h.getState()!.state, "approved");
 });
 
 // ============================================================================
