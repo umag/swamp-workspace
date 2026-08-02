@@ -3,11 +3,14 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-skype, wave-4
-# batch-4a of the Phase D extension-quality backfill). skype.ts is
-# BYTE-FROZEN — every suite drives model.methods.<m>.execute() against a
-# stubbed Deno.Command (the sqlite3 subprocess) + a real filesystem
-# (listProfiles' Deno.readDir/Deno.stat walk, importToObsidian's vault
-# writes) + fake context, characterizing already-shipped behavior.
+# batch-4a of the Phase D extension-quality backfill). Every suite drives
+# model.methods.<m>.execute() against a stubbed Deno.Command (the sqlite3
+# subprocess) + a real filesystem (listProfiles' Deno.readDir/Deno.stat walk,
+# importToObsidian's vault writes) + fake context. As of 2026.08.02.1,
+# skype.ts is no longer BYTE-FROZEN for latent bugs #3-#9 (real-fixed, pins
+# flipped to green FIXED assertions) — LB1/LB2's 2026.08.01.1 fixes and every
+# benign/frozen contract, methods, and coverage assertion remain
+# byte-identical throughout.
 #
 # Role map (each test file assigned to exactly ONE honest role, per
 # STANDARD.md's "named by ROLE, never by filename convention"):

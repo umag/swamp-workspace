@@ -11,6 +11,9 @@ const GlobalArgsSchema = z.object({
   profile: z.string().describe(
     "Profile directory name (e.g. your-skype-name)",
   ),
+  queryTimeoutMs: z.number().default(30000).describe(
+    "Max milliseconds to wait for a single sqlite3 subprocess query before aborting it",
+  ),
 });
 
 const ConversationSchema = z.object({
@@ -55,28 +58,46 @@ const ContactSchema = z.object({
 const ASCII_UNIT_SEP = "\x1F";
 const ASCII_RECORD_SEP = "\x1E";
 
+// BUG #5 fix: queryDb used to construct Deno.Command with no signal/timeout
+// option at all -- a wedged sqlite3 process (e.g. a locked/corrupt main.db)
+// would hold the caller (and the swamp model lock) forever. An
+// AbortController + setTimeout is used deliberately instead of the simpler
+// `AbortSignal.timeout(ms)`: that built-in creates an internal timer with no
+// handle the caller can clear, so a query that finishes well within its
+// budget would still leave a live timer running until it eventually fires --
+// under Deno's test resource sanitizer that shows up as a leaked timer. The
+// explicit `clearTimeout` in `finally` guarantees the timer is torn down the
+// instant the subprocess call settles, success or failure alike.
 async function queryDb(
   dbPath: string,
   sql: string,
+  timeoutMs = 30000,
 ): Promise<string[][]> {
-  const cmd = new Deno.Command("sqlite3", {
-    args: ["-ascii", dbPath, sql],
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const output = await cmd.output();
-  if (!output.success) {
-    const err = new TextDecoder().decode(output.stderr);
-    throw new Error(`SQLite error: ${err}`);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const cmd = new Deno.Command("sqlite3", {
+      args: ["-ascii", dbPath, sql],
+      stdout: "piped",
+      stderr: "piped",
+      signal: ac.signal,
+    });
+    const output = await cmd.output();
+    if (!output.success) {
+      const err = new TextDecoder().decode(output.stderr);
+      throw new Error(`SQLite error: ${err}`);
+    }
+    const text = new TextDecoder().decode(output.stdout).trim();
+    if (!text) return [];
+    const records = text.split(ASCII_RECORD_SEP);
+    // sqlite3 terminates EVERY record with 0x1E, including the last one, so a
+    // naive split always leaves a trailing empty record -- drop it, or every
+    // query fabricates one spurious blank row.
+    if (records[records.length - 1] === "") records.pop();
+    return records.map((record) => record.split(ASCII_UNIT_SEP));
+  } finally {
+    clearTimeout(timer);
   }
-  const text = new TextDecoder().decode(output.stdout).trim();
-  if (!text) return [];
-  const records = text.split(ASCII_RECORD_SEP);
-  // sqlite3 terminates EVERY record with 0x1E, including the last one, so a
-  // naive split always leaves a trailing empty record -- drop it, or every
-  // query fabricates one spurious blank row.
-  if (records[records.length - 1] === "") records.pop();
-  return records.map((record) => record.split(ASCII_UNIT_SEP));
 }
 
 function stripXml(body: string): string {
@@ -88,7 +109,112 @@ function stripXml(body: string): string {
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n)));
+    // BUG #8 fix: String.fromCharCode only ever produces a SINGLE UTF-16 code
+    // unit, so any astral (>0xFFFF) numeric entity -- e.g. &#128512; (the
+    // grinning-face emoji) -- silently decoded to an unrelated BMP character
+    // instead of the intended emoji. String.fromCodePoint handles the full
+    // Unicode range correctly (encoding a surrogate pair when needed); the
+    // range guard leaves an out-of-range code point (negative, or beyond
+    // 0x10FFFF -- impossible for \d+ to produce a negative value, but
+    // fromCodePoint throws RangeError above 0x10FFFF) as the original
+    // entity text verbatim rather than throwing.
+    .replace(/&#(\d+);/g, (match, n) => {
+      const cp = parseInt(n, 10);
+      return (cp >= 0 && cp <= 0x10ffff) ? String.fromCodePoint(cp) : match;
+    });
+}
+
+/**
+ * FNV-1a 32-bit hash of `s`, base36-encoded (BUG #3/#6 fix). Used by
+ * {@linkcode truncKey} to disambiguate two distinct inputs that would
+ * otherwise collide once both are truncated to the same prefix.
+ */
+export function shortHash(s: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    hash ^= s.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * Truncate `s` to at most `n` CODE POINTS -- never splitting a surrogate pair
+ * in half the way a raw `.slice(0, n)` can (BUG #6) -- and, only when
+ * truncation actually removes something, append a short deterministic hash
+ * of the FULL original string so two distinct inputs that happen to share
+ * the same first `n` code points never collide on the same truncated key
+ * (BUG #3). A string that already fits within `n` code points is returned
+ * completely unchanged, so every existing short resource name / file name
+ * stays byte-identical.
+ */
+export function truncKey(s: string, n: number): string {
+  const codePoints = Array.from(s);
+  if (codePoints.length <= n) return s;
+  return codePoints.slice(0, n).join("") + "_" + shortHash(s);
+}
+
+/**
+ * Escape `s` for embedding in a single-quoted SQL string literal by doubling
+ * every `'`, and reject an embedded NUL byte outright (BUG #9 fix).
+ * Centralizes the escape that used to be duplicated (identically) across
+ * `readConversation`, `searchBySender`, and `searchByText`. The NUL check is
+ * a hard boundary rather than an escape rule -- sqlite3's own C string
+ * handling truncates a value at the first NUL, which a `'`-doubling replace
+ * can never protect against.
+ */
+export function sqlString(s: string): string {
+  if (s.includes("\x00")) {
+    throw new Error(
+      "SQL string literal must not contain a NUL byte (\\x00)",
+    );
+  }
+  return s.replace(/'/g, "''");
+}
+
+/**
+ * Escape `s` for use inside a YAML double-quoted scalar (BUG #7 fix):
+ * backslash and double-quote are backslash-escaped, and every C0 control
+ * character (including a raw CR/LF) is replaced with its escape sequence.
+ * Used for title/identity/profile in `exportToObsidian`'s and
+ * `importToObsidian`'s frontmatter so a hostile displayname/identity carrying
+ * a raw line-break can no longer break out of the YAML string scalar and
+ * inject an arbitrary additional frontmatter key.
+ */
+export function yamlDq(s: string): string {
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(
+      // deno-lint-ignore no-control-regex
+      /[\x00-\x1f]/g,
+      (c) => {
+        switch (c) {
+          case "\n":
+            return "\\n";
+          case "\r":
+            return "\\r";
+          case "\t":
+            return "\\t";
+          default:
+            return "\\x" + c.charCodeAt(0).toString(16).padStart(2, "0");
+        }
+      },
+    );
+}
+
+// BUG #3/#6 fix: shared filename sanitizer for exportToObsidian and
+// importToObsidian -- both derive an on-disk-safe note name from
+// `displayname` via the identical replace/replace/trim pipeline, so it is
+// factored out once. `truncKey` (not a raw `.slice`) both keeps a surrogate
+// pair intact through the cut and disambiguates two names that only differ
+// after it.
+function safeFileName(displayname: string): string {
+  const sanitized = displayname
+    .replace(/[\/\\:*?"<>|#%\[\]{}]/g, "-")
+    .replace(/\.+$/, "")
+    .trim();
+  return truncKey(sanitized, 80);
 }
 
 // Resolve `root` joined with `segments` and reject any result that escapes
@@ -126,8 +252,18 @@ function tsToIso(ts: string | number): string {
 /** Swamp model that reads a Skype SQLite `main.db` to list profiles, conversations and contacts, search messages, and export chat logs to Obsidian notes. */
 export const model = {
   type: "@magistr/skype",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
   globalArguments: GlobalArgsSchema,
+
+  upgrades: [
+    {
+      fromVersion: "2026.08.01.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "LB3–LB9 fixes; adds queryTimeoutMs global arg (defaulted) + exportToObsidian maxNotesPerResource method arg; no resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
 
   resources: {
     conversations: {
@@ -222,6 +358,7 @@ export const model = {
            GROUP BY c.id
            HAVING msg_count >= ${args.minMessages}
            ORDER BY last_ts DESC;`,
+          context.globalArgs.queryTimeoutMs,
         );
 
         const conversations = rows.map((r) => ({
@@ -260,6 +397,7 @@ export const model = {
            FROM Contacts
            WHERE is_permanent = 1
            ORDER BY fullname;`,
+          context.globalArgs.queryTimeoutMs,
         );
 
         const contacts = rows.map((r) => ({
@@ -297,12 +435,14 @@ export const model = {
           `${context.globalArgs.basePath}/${context.globalArgs.profile}/main.db`;
 
         // Find conversation by identity or displayname
+        const safeConversation = sqlString(args.conversation);
         const convRows = await queryDb(
           dbPath,
           `SELECT id, identity, displayname FROM Conversations
-           WHERE identity = '${args.conversation.replace(/'/g, "''")}'
-              OR displayname = '${args.conversation.replace(/'/g, "''")}'
+           WHERE identity = '${safeConversation}'
+              OR displayname = '${safeConversation}'
            LIMIT 1;`,
+          context.globalArgs.queryTimeoutMs,
         );
 
         if (convRows.length === 0) {
@@ -322,6 +462,7 @@ export const model = {
            WHERE convo_id = ${convoId} AND type = 61 AND body_xml IS NOT NULL
            ORDER BY timestamp ASC
            LIMIT ${args.limit} OFFSET ${args.offset};`,
+          context.globalArgs.queryTimeoutMs,
         );
 
         const messages = rows.map((r) => ({
@@ -337,8 +478,12 @@ export const model = {
           dialogPartner: r[8] || "",
         }));
 
-        const safeKey = convoName.replace(/[^a-zA-Z0-9а-яА-Я]/g, "_")
-          .slice(0, 50);
+        // BUG #3 fix: truncKey (not a raw .slice(0, 50)) appends a hash of
+        // the FULL conversation name once truncation actually occurs, so two
+        // distinct conversations sharing the same 50-char sanitized prefix
+        // no longer collide on the identical conv_<safeKey> resource name.
+        const safeKeyFull = convoName.replace(/[^a-zA-Z0-9а-яА-Я]/g, "_");
+        const safeKey = truncKey(safeKeyFull, 50);
         const handle = await context.writeResource(
           "messages",
           `conv_${safeKey}`,
@@ -365,7 +510,7 @@ export const model = {
       execute: async (args, context) => {
         const dbPath =
           `${context.globalArgs.basePath}/${context.globalArgs.profile}/main.db`;
-        const needle = args.sender.replace(/'/g, "''");
+        const needle = sqlString(args.sender);
 
         const rows = await queryDb(
           dbPath,
@@ -378,6 +523,7 @@ export const model = {
              AND (m.author LIKE '%${needle}%' OR m.from_dispname LIKE '%${needle}%')
            ORDER BY m.timestamp ASC
            LIMIT ${args.limit};`,
+          context.globalArgs.queryTimeoutMs,
         );
 
         const messages = rows.map((r) => ({
@@ -419,6 +565,9 @@ export const model = {
         minMessages: z.number().default(1).describe(
           "Skip conversations with fewer messages",
         ),
+        maxNotesPerResource: z.number().default(500).describe(
+          "Flush accumulated notes to a new data resource after this many conversations, bounding both in-memory growth and per-resource size for large profiles",
+        ),
       }),
       execute: async (args, context) => {
         const dbPath =
@@ -438,13 +587,49 @@ export const model = {
            GROUP BY c.id
            HAVING msg_count >= ${args.minMessages}
            ORDER BY last_ts DESC;`,
+          context.globalArgs.queryTimeoutMs,
         );
 
         context.logger.info(
           `Found ${convRows.length} conversations to export`,
         );
 
-        const notes: Array<Record<string, unknown>> = [];
+        // BUG #4 fix: exportToObsidian used to accumulate EVERY conversation's
+        // full chat log into one in-memory array and write it as exactly one
+        // writeResource call, unbounded regardless of profile size. `notes`
+        // is now flushed to its own data resource every `maxNotesPerResource`
+        // conversations and reset; `handles` collects every page written.
+        // Page 0 keeps the original `obsidian_<profile>` name (so any
+        // profile within the default 500-conversation budget, which is every
+        // fixture in this test suite, still writes exactly one
+        // byte-identical resource); overflow pages are numbered
+        // `obsidian_<profile>_p<N>`. The buffer is always flushed once more
+        // after the loop UNLESS it is empty and at least one page has
+        // already been written — an empty export must still produce exactly
+        // one (empty) page 0, never zero resources.
+        let notes: Array<Record<string, unknown>> = [];
+        const handles: unknown[] = [];
+        let page = 0;
+        let totalNotes = 0;
+
+        const flush = async () => {
+          const resourceName = page === 0
+            ? `obsidian_${profile}`
+            : `obsidian_${profile}_p${page}`;
+          const handle = await context.writeResource(
+            "messages",
+            resourceName,
+            {
+              profile,
+              query: `obsidian:${profile}`,
+              messages: notes,
+              count: notes.length,
+            },
+          );
+          handles.push(handle);
+          notes = [];
+          page++;
+        };
 
         for (const conv of convRows) {
           const convoId = conv[0];
@@ -465,15 +650,20 @@ export const model = {
              FROM Messages
              WHERE convo_id = ${convoId} AND type = 61 AND body_xml IS NOT NULL
              ORDER BY timestamp ASC;`,
+            context.globalArgs.queryTimeoutMs,
           );
 
-          // Build frontmatter
+          // Build frontmatter. BUG #7 fix: title/identity/profile now go
+          // through yamlDq (backslash + quote + every C0 control, including
+          // a raw CR/LF, all escaped) instead of only ever escaping a quote
+          // -- a displayname carrying a raw line-break used to break out of
+          // the YAML string scalar and inject arbitrary additional
+          // frontmatter lines.
           let md = "---\n";
-          const safeName = displayname.replace(/"/g, '\\"');
-          md += `title: "${safeName}"\n`;
+          md += `title: "${yamlDq(displayname)}"\n`;
           md += `type: ${typeName}\n`;
-          md += `identity: "${identity.replace(/"/g, '\\"')}"\n`;
-          md += `profile: "${profile}"\n`;
+          md += `identity: "${yamlDq(identity)}"\n`;
+          md += `profile: "${yamlDq(profile)}"\n`;
           md += `messages: ${msgCount}\n`;
           md += `first_message: ${firstDate}\n`;
           md += `last_message: ${lastDate}\n`;
@@ -508,12 +698,11 @@ export const model = {
             md += `**${timeStr} ${sender}:** ${body}\n\n`;
           }
 
-          // File name
-          const safeFile = displayname
-            .replace(/[\/\\:*?"<>|#%\[\]{}]/g, "-")
-            .replace(/\.+$/, "")
-            .trim()
-            .slice(0, 80);
+          // File name — BUG #3/#6 fix: safeFileName truncates by CODE POINT
+          // (never splitting a surrogate pair) and appends a hash past the
+          // cut so two distinct names sharing the same 80-char prefix no
+          // longer collide on the identical obsidianPath.
+          const safeFile = safeFileName(displayname);
           const fileName = `${subfolder}/${safeFile}`;
 
           notes.push({
@@ -522,21 +711,22 @@ export const model = {
             displayname,
             messageCount: msgCount,
           });
+          totalNotes++;
+
+          if (notes.length >= args.maxNotesPerResource) {
+            await flush();
+          }
         }
 
-        context.logger.info(`Formatted ${notes.length} notes`);
+        if (notes.length > 0 || page === 0) {
+          await flush();
+        }
 
-        const handle = await context.writeResource(
-          "messages",
-          `obsidian_${profile}`,
-          {
-            profile,
-            query: `obsidian:${profile}`,
-            messages: notes,
-            count: notes.length,
-          },
+        context.logger.info(
+          `Formatted ${totalNotes} notes across ${page} page(s)`,
         );
-        return { dataHandles: [handle] };
+
+        return { dataHandles: handles };
       },
     },
 
@@ -571,6 +761,7 @@ export const model = {
            GROUP BY c.id
            HAVING msg_count >= ${args.minMessages}
            ORDER BY last_ts DESC;`,
+          context.globalArgs.queryTimeoutMs,
         );
 
         context.logger.info(
@@ -596,10 +787,13 @@ export const model = {
           const chunkSize = 10000;
           let offset = 0;
           let md = "---\n";
-          md += `title: "${displayname.replace(/"/g, '\\"')}"\n`;
+          // BUG #7 fix: yamlDq (backslash + quote + every C0 control,
+          // including a raw CR/LF) replaces the quote-only escape — see
+          // exportToObsidian's identical fix for the full rationale.
+          md += `title: "${yamlDq(displayname)}"\n`;
           md += `type: ${typeName}\n`;
-          md += `identity: "${identity.replace(/"/g, '\\"')}"\n`;
-          md += `profile: "${profile}"\n`;
+          md += `identity: "${yamlDq(identity)}"\n`;
+          md += `profile: "${yamlDq(profile)}"\n`;
           md += `messages: ${msgCount}\n`;
           md += `first_message: ${firstDate}\n`;
           md += `last_message: ${lastDate}\n`;
@@ -617,6 +811,7 @@ export const model = {
                WHERE convo_id = ${convoId} AND type = 61 AND body_xml IS NOT NULL
                ORDER BY timestamp ASC
                LIMIT ${chunkSize} OFFSET ${offset};`,
+              context.globalArgs.queryTimeoutMs,
             );
 
             if (msgRows.length === 0) break;
@@ -650,12 +845,13 @@ export const model = {
             if (msgRows.length < chunkSize) break;
           }
 
-          // Write directly to vault directory
-          const safeFile = displayname
-            .replace(/[\/\\:*?"<>|#%\[\]{}]/g, "-")
-            .replace(/\.+$/, "")
-            .trim()
-            .slice(0, 80);
+          // Write directly to vault directory. BUG #3/#6 fix: safeFileName
+          // truncates by CODE POINT (never splitting a surrogate pair, so an
+          // astral emoji near the cut survives intact rather than being
+          // silently corrupted to U+FFFD on disk) and appends a hash past
+          // the cut so two distinct names sharing the same 80-char prefix no
+          // longer overwrite each other's note.
+          const safeFile = safeFileName(displayname);
           // Guard the write boundary: folder AND profile are both
           // attacker-influenced (BUG #2 -- path traversal), so both must be
           // contained inside vaultPath before anything is written.
@@ -714,7 +910,7 @@ export const model = {
       execute: async (args, context) => {
         const dbPath =
           `${context.globalArgs.basePath}/${context.globalArgs.profile}/main.db`;
-        const needle = args.text.replace(/'/g, "''");
+        const needle = sqlString(args.text);
 
         const rows = await queryDb(
           dbPath,
@@ -726,6 +922,7 @@ export const model = {
            WHERE m.type = 61 AND m.body_xml LIKE '%${needle}%'
            ORDER BY m.timestamp ASC
            LIMIT ${args.limit};`,
+          context.globalArgs.queryTimeoutMs,
         );
 
         const messages = rows.map((r) => ({
@@ -742,10 +939,15 @@ export const model = {
           conversationName: r[9] || "",
         }));
 
-        const textKey = args.text.slice(0, 20).replace(
-          /[^a-zA-Z0-9]/g,
-          "_",
-        );
+        // BUG #6 fix (folded into LB3's truncKey): sanitize first, THEN
+        // truncate by CODE POINT — a raw `.slice(0, 20)` executed BEFORE
+        // sanitizing could cut an astral character's surrogate pair in
+        // half. For any all-ASCII search term this produces the identical
+        // key as before (sanitizing is a position-preserving 1:1 map, so
+        // slice-then-replace and replace-then-slice agree whenever no
+        // multi-code-unit character falls within the window).
+        const textKeyFull = args.text.replace(/[^a-zA-Z0-9]/g, "_");
+        const textKey = truncKey(textKeyFull, 20);
         const handle = await context.writeResource(
           "messages",
           `search_${textKey}`,

@@ -5,35 +5,56 @@
  * export resource, the absent subprocess timeout, lone-surrogate slice
  * truncation, YAML frontmatter injection, the emoji numeric-entity
  * mis-decode, and the hand-rolled SQL escaping (a covered NEGATIVE — pinning
- * that it holds TODAY). Plus a mechanical fixtures-secret-scan over
- * skype/fixtures/*.
+ * that it holds TODAY, now centralized in `sqlString` with a NUL-byte
+ * rejection). Plus a mechanical fixtures-secret-scan over skype/fixtures/*.
  *
  * FIXED (2026.08.01.1): BUG #1 (TSV row corruption on embedded newline/tab —
  * queryDb now transports via `sqlite3 -ascii`, 0x1F/0x1E framing) and BUG #2
  * (path traversal via unsanitized `folder`/`profile` — importToObsidian now
- * guards the write target with `resolveWithin`). Both are now GREEN tests
- * proving the fix, not pins of buggy behavior. Every other bug (#3-#9) is
- * still characterized-not-fixed — skype.ts remains BYTE-FROZEN for those.
- * Where a test documents a real gap, it is labeled "pin"/"BUG #n" and says so
- * explicitly. Every finding here is filed against the LOCAL
- * `skype-latent-bugs` issue-lifecycle model, never the Lab. See
- * fixtures/PROVENANCE.md for fixture provenance.
+ * guards the write target with `resolveWithin`).
+ *
+ * FIXED (2026.08.02.1): every remaining latent bug (#3-#9) is now a GREEN
+ * test proving the fix, not a pin of buggy behavior:
+ *   - BUG #3 (resource-name/note-filename collision) — `truncKey` appends a
+ *     hash of the full name once truncation actually occurs.
+ *   - BUG #4 (unbounded single-blob export) — `exportToObsidian` now pages
+ *     via `maxNotesPerResource`, returning one `dataHandles` entry per page.
+ *   - BUG #5 (no subprocess timeout) — `queryDb` wraps `Deno.Command` in an
+ *     `AbortController` + `setTimeout`/`clearTimeout`.
+ *   - BUG #6 (lone-surrogate slice truncation) — folded into `truncKey`,
+ *     which slices by code point via `Array.from`.
+ *   - BUG #7 (YAML frontmatter injection) — `yamlDq` escapes backslash,
+ *     quote, and every C0 control character (including a raw CR/LF).
+ *   - BUG #8 (emoji numeric-entity mis-decode) — `stripXml` now decodes via
+ *     `String.fromCodePoint` with an out-of-range guard.
+ *   - BUG #9 (fragile hand-rolled SQL escaping) — centralized into
+ *     `sqlString`, which additionally rejects an embedded NUL byte.
+ * Every finding here was filed against the LOCAL `skype-latent-bugs`
+ * issue-lifecycle model, never the Lab. See fixtures/PROVENANCE.md for
+ * fixture provenance.
  *
  * All `sqlite3` stdout stubs use `asciiTable()` — 0x1F between columns, 0x1E
  * terminating every record (the real `sqlite3 -ascii` wire shape) — never
  * raw tab/newline joins, which the fixed queryDb no longer parses as framing.
  *
- * No test in this file hangs (BUG #5 is pinned by inspecting the Deno.Command
- * options, never by simulating a real subprocess hang) and no test reads a
- * real filesystem path outside a `Deno.makeTempDir` sandbox (BUG #2's escape
- * targets are sibling temp directories, never a real system path).
+ * No test in this file hangs (BUG #5's timeout is proven by inspecting the
+ * Deno.Command options and by Deno's own test resource sanitizer catching an
+ * uncleared timer, never by simulating a real subprocess hang) and no test
+ * reads a real filesystem path outside a `Deno.makeTempDir` sandbox (BUG #2's
+ * escape targets are sibling temp directories, never a real system path).
  *
  * Toolchain rule (deno 2.8.3 in CI): the `Deno.Command` seam is installed via
  * `(globalThis as any).Deno.Command = FakeCommand`, never a
  * `as typeof Deno.Command` cast.
  */
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { model } from "./skype.ts";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "jsr:@std/assert@1";
+import { model, sqlString, yamlDq } from "./skype.ts";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -330,10 +351,10 @@ Deno.test("BUG #2 FIXED: importToObsidian also rejects a `profile` global argume
 });
 
 // ---------------------------------------------------------------------------
-// BUG #3 (MEDIUM): resource-name collision -> overwrite
+// BUG #3 (MEDIUM, FIXED 2026.08.02.1): resource-name collision -> overwrite
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG #3 pin: readConversation's safeKey collides for two conversations whose first 50 sanitized characters are identical", async () => {
+Deno.test("BUG #3 FIXED: readConversation's safeKey no longer collides for two conversations whose first 50 sanitized characters are identical — truncKey's hash suffix disambiguates them", async () => {
   const longNameA = "Fixture Group " + "X".repeat(60) + " Alpha";
   const longNameB = "Fixture Group " + "X".repeat(60) + " Beta";
   const namesA = asciiTable([["1", "live:.cid.fakeA", longNameA]]);
@@ -349,16 +370,23 @@ Deno.test("BUG #3 pin: readConversation's safeKey collides for two conversations
     byTable({ conversations: namesB, messages }),
     () => run("readConversation", { conversation: longNameB }, ctx),
   );
-  const names = written.filter((w) => w.spec === "messages").map((w) => w.name);
-  assertEquals(names.length, 2);
-  assertEquals(
+  const writes = written.filter((w) => w.spec === "messages");
+  assertEquals(writes.length, 2);
+  const names = writes.map((w) => w.name);
+  assertNotEquals(
     names[0],
     names[1],
-    "both distinct conversations collide on the identical conv_<safeKey> resource name — the second call clobbers the first's data in a real instance",
+    "the two distinct conversations no longer collide on the same conv_<safeKey> resource name",
   );
+  assert(names[0].startsWith("conv_Fixture_Group_"));
+  assert(names[1].startsWith("conv_Fixture_Group_"));
+  // Both must actually have written (and be independently readable) —
+  // neither call's data was clobbered by the other's.
+  assertEquals(writes[0].payload.conversation, longNameA);
+  assertEquals(writes[1].payload.conversation, longNameB);
 });
 
-Deno.test("BUG #3 pin: exportToObsidian's obsidianPath collides for two conversations sharing the same first-80-chars sanitized displayname", async () => {
+Deno.test("BUG #3 FIXED: exportToObsidian's obsidianPath no longer collides for two conversations sharing the same first-80-chars sanitized displayname", async () => {
   const longA = "Y".repeat(90) + " Alpha";
   const longB = "Y".repeat(90) + " Beta";
   const conversations = asciiTable([
@@ -372,20 +400,69 @@ Deno.test("BUG #3 pin: exportToObsidian's obsidianPath collides for two conversa
     () => run("exportToObsidian", {}, ctx),
   );
   const res = written.find((w) => w.spec === "messages")!;
-  const notes = res.payload.messages as Array<{ obsidianPath: string }>;
+  const notes = res.payload.messages as Array<
+    { obsidianPath: string; displayname: string }
+  >;
   assertEquals(notes.length, 2);
-  assertEquals(
+  assertNotEquals(
     notes[0].obsidianPath,
     notes[1].obsidianPath,
-    "two conversations with different names collide on the identical 80-char-truncated obsidianPath",
+    "two conversations with different names no longer collide on the same 80-char-truncated obsidianPath",
   );
+  assert(notes[0].obsidianPath.startsWith("Skype/synthetic-user/YYYY"));
+  assert(notes[1].obsidianPath.startsWith("Skype/synthetic-user/YYYY"));
+  // Both notes remain independently identifiable by their own displayname —
+  // neither is clobbered by the other.
+  assertEquals(notes[0].displayname, longA);
+  assertEquals(notes[1].displayname, longB);
 });
 
 // ---------------------------------------------------------------------------
-// BUG #4 (MEDIUM): exportToObsidian is one unbounded single-blob resource
+// BUG #4 (MEDIUM, FIXED 2026.08.02.1): exportToObsidian's export is now paged
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG #4 pin: exportToObsidian accumulates EVERY conversation's full chat log into ONE array written as ONE resource — no chunking/pagination", async () => {
+Deno.test("BUG #4 FIXED: exportToObsidian pages the export into multiple resources once maxNotesPerResource is exceeded, instead of one unbounded single-blob resource", async () => {
+  const conversations = await loadFixture("conversations.tsv");
+  const messages = await loadFixture("messages_export.tsv");
+  const { ctx, written } = makeCtx();
+  await withSqliteStub(
+    byTable({ conversations, messages }),
+    () => run("exportToObsidian", { maxNotesPerResource: 2 }, ctx),
+  );
+  const writes = written.filter((w) => w.spec === "messages");
+  assertEquals(
+    writes.length,
+    2,
+    "4 conversations at maxNotesPerResource=2 page into exactly 2 resources",
+  );
+  assertEquals(writes[0].name, "obsidian_synthetic-user");
+  assertEquals(writes[1].name, "obsidian_synthetic-user_p1");
+  const notes0 = writes[0].payload.messages as unknown[];
+  const notes1 = writes[1].payload.messages as unknown[];
+  assertEquals(notes0.length, 2, "page 0 carries the first 2 conversations");
+  assertEquals(notes1.length, 2, "page 1 carries the remaining 2");
+  assertEquals(writes[0].payload.count, 2);
+  assertEquals(writes[1].payload.count, 2);
+});
+
+Deno.test("BUG #4 FIXED: an empty export (zero qualifying conversations) still writes exactly one (empty) page 0, never zero resources", async () => {
+  const { ctx, written } = makeCtx();
+  await withSqliteStub(
+    byTable({ conversations: "", messages: "" }),
+    () => run("exportToObsidian", { maxNotesPerResource: 2 }, ctx),
+  );
+  const writes = written.filter((w) => w.spec === "messages");
+  assertEquals(
+    writes.length,
+    1,
+    "zero conversations must still produce exactly page 0, not zero writes",
+  );
+  assertEquals(writes[0].name, "obsidian_synthetic-user");
+  assertEquals(writes[0].payload.messages, []);
+  assertEquals(writes[0].payload.count, 0);
+});
+
+Deno.test("guard: exportToObsidian's default maxNotesPerResource=500 keeps a <=4-conversation export a single byte-identical page (no behavior change for existing small profiles)", async () => {
   const conversations = await loadFixture("conversations.tsv");
   const messages = await loadFixture("messages_export.tsv");
   const { ctx, written } = makeCtx();
@@ -397,48 +474,65 @@ Deno.test("BUG #4 pin: exportToObsidian accumulates EVERY conversation's full ch
   assertEquals(
     writes.length,
     1,
-    "exactly one writeResource call carries every conversation's export, regardless of how many conversations exist",
+    "the default budget (500) never triggers a second page for a 4-conversation fixture",
   );
+  assertEquals(writes[0].name, "obsidian_synthetic-user");
   const notes = writes[0].payload.messages as unknown[];
-  assertEquals(
-    notes.length,
-    4,
-    "all 4 conversations' notes live in that single array",
-  );
+  assertEquals(notes.length, 4);
 });
 
 // ---------------------------------------------------------------------------
-// BUG #5 (MEDIUM): no subprocess timeout on queryDb's Deno.Command
+// BUG #5 (MEDIUM, FIXED 2026.08.02.1): queryDb's Deno.Command now carries an
+// AbortController-backed timeout
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG #5 pin: queryDb's Deno.Command is constructed with NO signal/timeout option — a wedged sqlite3 would hang forever", async () => {
+Deno.test("BUG #5 FIXED: queryDb's Deno.Command is now constructed with a real AbortSignal — a wedged sqlite3 can be cancelled instead of hanging forever", async () => {
   // We do NOT simulate an actual hang (that would make this test itself hang
   // or require a real timeout) — we inspect the constructor's captured
-  // options and assert the absence of any abort/timeout mechanism.
+  // options and assert the PRESENCE of a genuine abort/timeout mechanism.
   const conversations = await loadFixture("conversations.tsv");
   const { ctx } = makeCtx();
   await withSqliteStub(byTable({ conversations }), async (stub) => {
     await run("listConversations", {}, ctx);
     const opts = stub.invocations[0].options;
     assert(
-      !("signal" in opts),
-      "no AbortSignal is ever passed to Deno.Command — nothing can cancel a hung sqlite3 process",
+      "signal" in opts,
+      "a signal is now always passed to Deno.Command — a hung sqlite3 process can be cancelled",
+    );
+    assert(
+      opts.signal instanceof AbortSignal,
+      "the signal is a real AbortSignal, wired from an AbortController the setTimeout can abort",
     );
     assertEquals(opts.stdout, "piped");
     assertEquals(opts.stderr, "piped");
   });
 });
 
+Deno.test("BUG #5 FIXED: a successful query still resolves normally and clears its timeout timer — no leaked timer resource", async () => {
+  // If queryDb failed to `clearTimeout` in its `finally` block, Deno's own
+  // test resource sanitizer (enabled by default) would fail THIS test with a
+  // leaked timer, regardless of any assertion below — the absence of that
+  // failure is itself part of the proof, alongside the explicit result check.
+  const conversations = await loadFixture("conversations.tsv");
+  const { ctx, written } = makeCtx();
+  await withSqliteStub(
+    byTable({ conversations }),
+    () => run("listConversations", {}, ctx),
+  );
+  const res = written.find((w) => w.spec === "conversations")!;
+  assertEquals(res.payload.count, 4);
+});
+
 // ---------------------------------------------------------------------------
-// BUG #6 (MEDIUM): lone-surrogate slice truncation
+// BUG #6 (MEDIUM, FIXED 2026.08.02.1): lone-surrogate slice truncation
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG #6 pin: importToObsidian's 80-char filename slice can cut a surrogate pair in half — Deno.writeTextFile silently replaces the lone surrogate with U+FFFD rather than erroring", async () => {
-  // 79 'A' characters + an astral emoji (2 UTF-16 code units) means
-  // slice(0, 80) keeps the emoji's HIGH surrogate but drops its LOW
-  // surrogate — the forbidden-filesystem-character replace() that runs
-  // BEFORE the slice does not touch emoji, so the pair survives intact up to
-  // the cut.
+Deno.test("BUG #6 FIXED: importToObsidian's filename truncation no longer cuts a surrogate pair in half — the astral emoji survives intact on disk instead of corrupting to U+FFFD", async () => {
+  // 79 'A' characters + an astral emoji (2 UTF-16 code units, but ONE code
+  // point) means a raw slice(0, 80) would keep the emoji's HIGH surrogate but
+  // drop its LOW surrogate. truncKey slices by CODE POINT via Array.from, so
+  // the emoji — landing exactly at code point 80 — is kept whole rather than
+  // split.
   const displayname = "A".repeat(79) + "\u{1F600}" + " tail";
   const conversations = asciiTable([
     [
@@ -460,23 +554,23 @@ Deno.test("BUG #6 pin: importToObsidian's 80-char filename slice can cut a surro
       () => run("importToObsidian", { vaultPath: vault }, ctx),
     );
     const res = written.find((w) => w.spec === "conversations")!;
-    assertEquals(
-      res.payload.count,
-      1,
-      "the write is NOT skipped — Deno.writeTextFile tolerates the lone surrogate",
-    );
+    assertEquals(res.payload.count, 1, "the write still succeeds");
     const dir = `${vault}/Skype/synthetic-user`;
     const entries: string[] = [];
     for await (const entry of Deno.readDir(dir)) entries.push(entry.name);
     assertEquals(entries.length, 1);
-    const written_name = entries[0];
+    const writtenName = entries[0];
     assert(
-      written_name.includes("�"),
-      "the on-disk filename contains the U+FFFD replacement character where the lone surrogate was — silent corruption, not an error",
+      !writtenName.includes("�"),
+      "the on-disk filename must NOT contain the U+FFFD replacement character — the surrogate pair was never split",
     );
     assert(
-      !written_name.includes("tail"),
-      "the text after the truncation point never made it into the filename",
+      writtenName.includes("\u{1F600}"),
+      "the on-disk filename contains the FULL, intact emoji",
+    );
+    assert(
+      !writtenName.includes("tail"),
+      "the text after the truncation point still never makes it into the filename",
     );
   } finally {
     await Deno.remove(vault, { recursive: true });
@@ -484,21 +578,17 @@ Deno.test("BUG #6 pin: importToObsidian's 80-char filename slice can cut a surro
 });
 
 // ---------------------------------------------------------------------------
-// BUG #7 (MEDIUM): YAML frontmatter injection via newline in display name
+// BUG #7 (MEDIUM, FIXED 2026.08.02.1): YAML frontmatter injection via
+// newline in display name
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG #7 pin: a carriage return in displayname breaks out of the YAML 'title' string scalar in exportToObsidian's frontmatter", async () => {
-  // exportToObsidian only escapes '\"' in the title field
-  // (`displayname.replace(/\"/g, '\\\\\"')`) — it never escapes or rejects a
-  // raw line-break, so an attacker-controlled displayname can inject
-  // arbitrary additional YAML-shaped lines into the frontmatter block.
-  //
-  // NOTE: this bug is independent of queryDb's transport (TSV or ascii) —
-  // exportToObsidian's frontmatter builder only ever escapes the quote
-  // character, never a line-break, regardless of how the row reached it. A
-  // raw CR ("\r") is not a record separator in either transport, so it
-  // survives intact as a single coherent displayname value all the way
-  // through to the frontmatter template literal.
+Deno.test("BUG #7 FIXED: a carriage return in displayname can no longer break out of the YAML 'title' string scalar in exportToObsidian's frontmatter", async () => {
+  // exportToObsidian now escapes title/identity/profile via yamlDq —
+  // backslash, quote, AND every C0 control character (including a raw
+  // CR/LF) — instead of only ever escaping the quote. A raw CR ("\r") is not
+  // a record separator in the ascii transport, so it survives intact as a
+  // single coherent displayname value all the way to yamlDq, which now
+  // neutralizes it.
   const hostileName = 'Evil"\rtags:\r  - injected-by-displayname';
   const conversations = asciiTable([
     [
@@ -521,16 +611,32 @@ Deno.test("BUG #7 pin: a carriage return in displayname breaks out of the YAML '
   const notes = res.payload.messages as Array<{ obsidianContent: string }>;
   const content = notes[0].obsidianContent;
   assert(
-    content.includes('title: "Evil\\"\rtags:\r  - injected-by-displayname"'),
-    "the raw carriage return and injected 'tags:' key survive verbatim inside the YAML frontmatter block",
+    !content.includes("\r"),
+    "no raw carriage return survives anywhere in the frontmatter — it is now backslash-escaped as a literal \\r sequence",
+  );
+  assert(
+    content.includes(`title: "${yamlDq(hostileName)}"`),
+    "the quote and both carriage returns are escaped by yamlDq; the whole hostile value stays a single YAML scalar",
+  );
+  // Scope the "no injected key" check to the actual YAML frontmatter block
+  // (between the opening and closing `---` markers), mirroring the sibling
+  // fix precedent in this workspace (juick LB2).
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
+  assert(fmMatch, "the YAML frontmatter block must be present");
+  const frontmatter = fmMatch![1];
+  assert(
+    !frontmatter.split("\n").some((line) =>
+      line.trim() === "- injected-by-displayname"
+    ),
+    "the injected '- injected-by-displayname' list item must NOT land as its own line inside the YAML frontmatter block",
   );
 });
 
 // ---------------------------------------------------------------------------
-// BUG #8 (LOW): emoji numeric-entity mis-decode
+// BUG #8 (LOW, FIXED 2026.08.02.1): emoji numeric-entity mis-decode
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG #8 pin: stripXml's &#N; decoder is CORRECT for BMP code points but silently mis-decodes an astral (>0xFFFF) code point via String.fromCharCode instead of String.fromCodePoint", async () => {
+Deno.test("BUG #8 FIXED: stripXml's &#N; decoder now correctly decodes an astral (>0xFFFF) code point via String.fromCodePoint instead of mis-decoding via String.fromCharCode", async () => {
   const conversations = asciiTable([
     ["1", "live:.cid.fake0007", "Fixture Seven"],
   ]);
@@ -545,22 +651,24 @@ Deno.test("BUG #8 pin: stripXml's &#N; decoder is CORRECT for BMP code points bu
   const body = rows[0].body;
   assert(
     body.includes("☃"),
-    "the BMP snowman entity (&#9731;) decodes correctly",
+    "the BMP snowman entity (&#9731;) still decodes correctly",
   );
   assert(
-    !body.includes("\u{1F600}"),
-    "the astral grinning-face emoji (&#128512;) does NOT decode to the real emoji",
+    body.includes("\u{1F600}"),
+    "the astral grinning-face emoji (&#128512;) now decodes to the real emoji",
   );
   assert(
-    body.includes(String.fromCharCode(128512)),
-    "instead it decodes to String.fromCharCode(128512) verbatim — an unrelated BMP character, not U+FFFD and not the intended emoji",
+    !body.includes(String.fromCharCode(128512)),
+    "the old mis-decoded BMP character (String.fromCharCode(128512)) no longer appears",
   );
 });
 
 // ---------------------------------------------------------------------------
-// BUG #9 (MEDIUM, not currently exploitable): hand-rolled SQL escaping —
-// covered NEGATIVE pinning that the '->'' escaping and argv-array
-// (no `sh -c`) invocation shape both hold TODAY.
+// BUG #9 (MEDIUM, not currently exploitable; centralized 2026.08.02.1):
+// hand-rolled SQL escaping — covered NEGATIVE pinning that the ''-doubling
+// escape and argv-array (no `sh -c`) invocation shape both hold TODAY, now
+// centralized into the shared `sqlString` helper, which additionally rejects
+// an embedded NUL byte outright.
 // ---------------------------------------------------------------------------
 
 Deno.test("pin: readConversation's search term has every single-quote doubled ('') before being embedded in the SQL literal", async () => {
@@ -625,6 +733,39 @@ Deno.test("covered negative: a hostile sender value with a single quote AND a ba
       "the quote is doubled; the backslash is left completely untouched (sqlite3 string literals do not treat backslash as an escape character, so this is correct, not a gap)",
     );
   });
+});
+
+Deno.test("BUG #9 FIXED: sqlString rejects a NUL byte outright, rather than silently letting sqlite3's own C-string truncation corrupt the query", () => {
+  assertThrows(
+    () => sqlString("O'Brien\x00 OR 1=1"),
+    Error,
+    "NUL byte",
+  );
+});
+
+Deno.test("BUG #9 FIXED: a search term containing a NUL byte throws through readConversation instead of silently truncating the SQL literal", async () => {
+  const { ctx } = makeCtx();
+  await withSqliteStub(byTable({ conversations: "" }), () =>
+    assertRejects(
+      () =>
+        run(
+          "readConversation",
+          { conversation: "evil\x00name" },
+          ctx,
+        ),
+      Error,
+      "NUL byte",
+    ));
+});
+
+Deno.test("BUG #9 FIXED: a search term containing a NUL byte throws through searchByText instead of silently truncating the SQL literal", async () => {
+  const { ctx } = makeCtx();
+  await withSqliteStub(byTable({ messages: "" }), () =>
+    assertRejects(
+      () => run("searchByText", { text: "evil\x00text" }, ctx),
+      Error,
+      "NUL byte",
+    ));
 });
 
 // ---------------------------------------------------------------------------
