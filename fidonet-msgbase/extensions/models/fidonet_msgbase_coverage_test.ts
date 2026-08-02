@@ -1,11 +1,13 @@
 /**
  * Coverage suite: closes specific branch gaps the methods/contract/
  * adversarial suites don't already exercise on BOTH sides — deleting any one
- * of these guards should turn a test red. fidonet_msgbase.ts is UNMODIFIED;
- * every test here pins existing behavior (see fidonet_msgbase_adversarial_test.ts
- * for the two found-bugs this suite specifically closes branch coverage for:
- * searchByText's missing Squish branch, and its `continue` on a missing
- * .jdt). All fixture content is synthetic — see fixtures/PROVENANCE.md.
+ * of these guards should turn a test red. Two tests here were previously
+ * PINS of found bugs (searchByText's missing Squish branch — LB4 — and its
+ * `continue` dropping a whole JAM area on a missing `.jdt` — LB5); both bugs
+ * are now real-fixed in `fidonet_msgbase.ts` and these tests assert the
+ * FIXED behavior instead (see fidonet_msgbase_adversarial_test.ts for the
+ * rest of the real-fix pass). All fixture content is synthetic — see
+ * fixtures/PROVENANCE.md.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./fidonet_msgbase.ts";
@@ -281,11 +283,12 @@ Deno.test("coverage: searchByAddress node search DOES match that node's points v
 });
 
 // ---------------------------------------------------------------------------
-// pin: searchByText silently excludes ALL Squish areas — no .sqd branch
-// (fidonet_msgbase.ts:1133)
+// FIXED (LB4): searchByText previously excluded ALL Squish areas — no .sqd
+// branch at all (was fidonet_msgbase.ts:1133) — now mirrors searchBySender's
+// Squish handling.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: searchByText finds zero hits in a Squish-only area, even for text that is genuinely present", async () => {
+Deno.test("FIXED (was pin): searchByText now finds a hit in a Squish-only area", async () => {
   const sqd = buildSquishArea({
     messages: [{
       from: "Squish Author",
@@ -299,18 +302,23 @@ Deno.test("pin: searchByText finds zero hits in a Squish-only area, even for tex
     async (basePath) => {
       const { ctx, written } = makeCtx(basePath);
       await run("searchByText", { text: "unmistakable needle" }, ctx);
-      assertEquals(written[0].payload.count, 0);
+      const payload = written[0].payload;
+      assertEquals(payload.count, 1);
+      const messages = payload.messages as Array<Record<string, unknown>>;
+      assertEquals(messages[0].from, "Squish Author");
+      assertEquals(messages[0].format, "squish");
     },
   );
 });
 
 // ---------------------------------------------------------------------------
-// pin: searchByText drops an entire JAM area when its .jdt is missing —
-// even subject/from matches are lost (fidonet_msgbase.ts:1150), unlike
-// readArea which tolerates a missing .jdt with an empty body.
+// FIXED (LB5): searchByText previously dropped an entire JAM area when its
+// .jdt was missing — even subject/from matches were lost (was
+// fidonet_msgbase.ts:1150) — now tolerates a missing .jdt like readArea and
+// searchBySender do, with an empty body.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: searchByText excludes a whole JAM area when its .jdt sibling is missing, dropping even a subject match", async () => {
+Deno.test("FIXED (was pin): searchByText now finds a subject match in a JAM area whose .jdt sibling is missing", async () => {
   const { jhr } = buildJamAreaFiles({
     messages: [{
       msgNum: 1,
@@ -325,7 +333,11 @@ Deno.test("pin: searchByText excludes a whole JAM area when its .jdt sibling is 
     async (basePath) => {
       const { ctx, written } = makeCtx(basePath);
       await run("searchByText", { text: "findme" }, ctx);
-      assertEquals(written[0].payload.count, 0);
+      const payload = written[0].payload;
+      assertEquals(payload.count, 1);
+      const messages = payload.messages as Array<Record<string, unknown>>;
+      assertEquals(messages[0].from, "No Jdt Sender");
+      assertEquals(messages[0].body, "");
     },
   );
 });

@@ -1,20 +1,25 @@
 /**
- * Adversarial suite: hostile/malformed inputs, pinning CURRENT behavior.
- * fidonet_msgbase.ts is BYTE-FROZEN — nothing here is a proposed fix, every
- * test asserts what the shipped code ACTUALLY does today. Bug pins are
- * labelled "pin:" and are recorded to the LOCAL `fidonet-msgbase-latent-bugs`
- * issue-lifecycle model, never a swamp.club Lab issue.
+ * Adversarial suite: hostile/malformed inputs, exercising both the 9
+ * real-fixed latent bugs and remaining intentionally-unchanged behavior.
+ * `fidonet_msgbase.ts` received a real-fix pass (see the LOCAL
+ * `fidonet-msgbase-latent-bugs` issue-lifecycle model, never a swamp.club Lab
+ * issue): tests labelled "FIXED (was pin):" assert the NEW, corrected
+ * behavior for a closed bug; tests still labelled "pin:" assert CURRENT,
+ * intentionally-unchanged behavior (not one of the 9 bugs in scope).
  *
- * Two findings are deliberately NOT exercised as running code:
- *  - The Squish frame-chain cycle (bug #2, MEDIUM): `parseSquishMessages`
- *    follows `nextFrame` with no visited-set. A crafted cycle hangs forever.
- *    This suite builds a genuine 2-frame cycle and asserts its STRUCTURE
- *    (frame B's nextFrame really does point back at frame A) without ever
- *    calling `readArea`/`searchBy*` on it — doing so would hang CI.
+ * Two findings that were previously characterized WITHOUT running code are
+ * now both exercised directly, since the fix itself makes them safe to run:
+ *  - The Squish frame-chain cycle (bug #2, MEDIUM): `parseSquishMessages` now
+ *    tracks visited frame offsets and breaks on a revisit, so the same
+ *    crafted 2-frame cycle this suite used to only characterize structurally
+ *    can now be run through `readArea` directly without hanging CI.
  *  - Unbounded `Deno.readFile` into RAM (bug #9, LOW/informational): every
- *    parser buffers the whole file with no size cap. Demonstrating this
- *    would require allocating a multi-GB fixture, which is not a reasonable
- *    CI-time cost; it is recorded as an accepted informational finding only.
+ *    parser now goes through `readFileCapped`, which rejects a file over a
+ *    configurable byte cap (`FIDONET_MSGBASE_MAX_BYTES`) before ever calling
+ *    `Deno.readFile`. Demonstrating the ORIGINAL unbounded-buffering behavior
+ *    would still require a multi-GB fixture (not a reasonable CI-time cost),
+ *    but the FIX is fully testable at CI scale by shrinking the cap via the
+ *    env var instead of growing the fixture.
  *
  * All fixture content is synthetic — see fixtures/PROVENANCE.md.
  */
@@ -65,10 +70,11 @@ function run(name: string, args: Record<string, unknown>, ctx: unknown) {
 }
 
 // ---------------------------------------------------------------------------
-// pin: readArea path traversal via the `area` arg — HIGH, fidonet_msgbase.ts:617
+// FIXED: readArea path traversal via the `area` arg — HIGH, was
+// fidonet_msgbase.ts:617, now rejected by `resolveAreaFile` (LB1)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: readArea's `area` arg is interpolated unsanitized into the filesystem path — '../' escapes basePath (escape target stays INSIDE the temp tree)", async () => {
+Deno.test("FIXED (was pin): readArea rejects a traversal `area` arg ('../secret') instead of escaping basePath — the escape target stays on disk, untouched, and its content never reaches the output", async () => {
   const root = await Deno.makeTempDir({ prefix: "fidonet-msgbase-traversal-" });
   try {
     const basePath = `${root}/msgbase`;
@@ -87,16 +93,93 @@ Deno.test("pin: readArea's `area` arg is interpolated unsanitized into the files
     await Deno.writeFile(`${root}/secret.jdt`, jdt);
 
     const { ctx, written } = makeCtx(basePath);
-    await run("readArea", { area: "../secret" }, ctx);
-    const payload = written[0].payload;
-    const messages = payload.messages as Array<Record<string, unknown>>;
-    assertEquals(messages.length, 1);
-    assertEquals(messages[0].from, "Escaped Secret");
-    // area label reflects the caller-supplied traversal string verbatim
-    assertEquals(payload.area, "../secret");
+    await assertRejects(
+      () => run("readArea", { area: "../secret" }, ctx),
+      Error,
+      "path traversal rejected",
+    );
+    // Non-vacuous: the escape target is still ON DISK, unchanged, and no
+    // handle was ever written referencing its content — the rejection
+    // happened before any read, not after a read that was then discarded.
+    const secretBytes = await Deno.readFile(`${root}/secret.jhr`);
+    assertEquals(secretBytes, jhr);
+    assert(
+      written.every((w) =>
+        !JSON.stringify(w.payload).includes("Escaped Secret")
+      ),
+      "the escaped secret's content must never reach any written resource",
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("adversarial: readArea rejects an absolute-path `area` arg", async () => {
+  await withTempMsgbase({}, async (basePath) => {
+    const { ctx } = makeCtx(basePath);
+    await assertRejects(
+      () => run("readArea", { area: "/etc/passwd" }, ctx),
+      Error,
+      "path traversal rejected",
+    );
+  });
+});
+
+Deno.test("adversarial: readArea rejects a backslash-separated `area` arg", async () => {
+  await withTempMsgbase({}, async (basePath) => {
+    const { ctx } = makeCtx(basePath);
+    await assertRejects(
+      () => run("readArea", { area: "..\\secret" }, ctx),
+      Error,
+      "path traversal rejected",
+    );
+  });
+});
+
+Deno.test("adversarial: readArea rejects a nested traversal `area` arg ('a/../b') even though it would numerically cancel out", async () => {
+  await withTempMsgbase({}, async (basePath) => {
+    const { ctx } = makeCtx(basePath);
+    await assertRejects(
+      () => run("readArea", { area: "a/../b" }, ctx),
+      Error,
+      "path traversal rejected",
+    );
+  });
+});
+
+Deno.test("adversarial: readArea still reads a benign dotted area name ('fido.general') after the traversal guard", async () => {
+  const { jhr, jdt } = buildJamAreaFiles({
+    messages: [{
+      msgNum: 1,
+      dateWritten: 1000000000,
+      from: "Benign Sender",
+      subject: "dots in an area name are fine",
+    }],
+  });
+  await withTempMsgbase(
+    { areas: { "fido.general": { kind: "jam", jhr, jdt } } },
+    async (basePath) => {
+      const { ctx, written } = makeCtx(basePath);
+      await run("readArea", { area: "fido.general" }, ctx);
+      const messages = written[0].payload.messages as Array<
+        Record<string, unknown>
+      >;
+      assertEquals(messages.length, 1);
+      assertEquals(messages[0].from, "Benign Sender");
+    },
+  );
+});
+
+Deno.test("adversarial: readArea surfaces 'not found or unreadable' when the resolved .jhr path is actually a directory (readFileCapped throws, not silently ignored)", async () => {
+  await withTempMsgbase({}, async (basePath) => {
+    await Deno.mkdir(`${basePath}/fido.dirarea.jhr`, { recursive: true });
+    const { ctx } = makeCtx(basePath);
+    await assertRejects(
+      () => run("readArea", { area: "fido.dirarea" }, ctx),
+      Error,
+      "not found or unreadable",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -245,12 +328,11 @@ Deno.test("adversarial: txtOffset/txtLen pointing past the .jdt buffer yields an
 });
 
 // ---------------------------------------------------------------------------
-// Truncated Squish frame -> OOB fixed-field reads decode as ZERO (not NaN —
-// bitwise ops coerce `undefined` to 0 via ToInt32), yielding a degenerate
-// "0:0/0" address and a rolled-over garbage date, with no throw.
+// FIXED: truncated Squish frame -> the frame is now SKIPPED entirely instead
+// of decoding OOB fixed-field reads as garbage ("0:0/0" etc.) (LB6)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a truncated Squish frame (XMSG cut short) decodes OOB fields as zero, not NaN — garbage address '0:0/0', no throw", async () => {
+Deno.test("FIXED (was pin): a truncated Squish frame (XMSG cut short) is now skipped entirely instead of decoding OOB fields as zero", async () => {
   const full = buildSquishArea({
     messages: [{
       from: "X",
@@ -263,8 +345,9 @@ Deno.test("pin: a truncated Squish frame (XMSG cut short) decodes OOB fields as 
       body: "hi",
     }],
   });
-  // Truncate to 10 bytes into the 238-byte XMSG: "from" (starts at xmsgOfs+4)
-  // partially survives (6 bytes present), everything after it reads as 0.
+  // Truncate to 10 bytes into the 238-byte XMSG — same fixture bytes as
+  // before the fix; the `xmsgOfs + 238 > sqd.length` guard now rejects the
+  // frame outright rather than reading past the end of the buffer.
   const truncated = full.slice(0, 256 + 28 + 10);
   await withTempMsgbase(
     { areas: { "fido.trunc": { kind: "squish", sqd: truncated } } },
@@ -274,13 +357,7 @@ Deno.test("pin: a truncated Squish frame (XMSG cut short) decodes OOB fields as 
       const messages = written[0].payload.messages as Array<
         Record<string, unknown>
       >;
-      assertEquals(messages.length, 1);
-      assertEquals(messages[0].from, "X");
-      assertEquals(messages[0].to, ""); // fully OOB -> empty slice
-      assertEquals(messages[0].subject, "");
-      assertEquals(messages[0].address, "0:0/0"); // zone/net/node all OOB->0
-      assertEquals(messages[0].body, ""); // bodyStart+bodyLen > length guard
-      assert(!Number.isNaN(messages[0].timestamp), "timestamp must not be NaN");
+      assertEquals(messages.length, 0);
     },
   );
 });
@@ -382,23 +459,23 @@ Deno.test("adversarial: listAreas over a completely empty basePath returns zero 
 });
 
 // ---------------------------------------------------------------------------
-// pin: silent-skip — a corrupt JAM area contributes zero matches and never
-// blocks search of the rest of the msgbase (fidonet_msgbase.ts:796+)
+// FIXED (LB3): a corrupt/truncated JAM area contributes zero matches, never
+// blocks search of the rest of the msgbase, and now ALSO names itself in a
+// `warnings` array instead of failing completely silently
+// (fidonet_msgbase.ts's searchBySender/searchByAddress/searchByText).
 //
-// Correction to the plan's framing: for searchBySender/searchByAddress/
-// searchByText, the JAM branch's outer `catch {}` is actually UNREACHABLE by
-// crafted bytes alone — `parseJamMessages` never throws for any byte input
-// (every read is bounds-guarded; `decodeText`'s only throwing call is caught
-// internally). The user-visible "silent skip" is really `parseJamMessages`
-// returning `[]` for a truncated/short area, which then hits the ordinary
-// `if (matches.length === 0) continue` early-exit — not the catch block. The
-// OBSERVABLE behavior (a corrupt area is silently and harmlessly excluded,
-// with a good area alongside it still fully searchable) is what this test
-// pins; readArea's catch IS reachable (see the bad-signature test above)
-// because it explicitly validates the header and throws.
+// Correction to the plan's framing, still true post-fix: for
+// searchBySender/searchByAddress/searchByText, the JAM branch's outer
+// `catch` is UNREACHABLE by crafted bytes alone for THIS fixture —
+// `parseJamMessages` never throws for any byte input (every read is
+// bounds-guarded; `decodeText`'s only throwing call is caught internally).
+// The warning below comes from the explicit `jhrData.length < 1024` check
+// added alongside the catch, not from the catch firing. See the
+// directory-as-`.jhr` and tiny-size-cap tests further down for cases that DO
+// reach the catch itself.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a truncated/corrupt JAM area beside a good one yields only the good area's hits, with no throw", async () => {
+Deno.test("FIXED (was pin): a truncated/corrupt JAM area beside a good one yields only the good area's hits, with a warning naming the corrupt area, no throw", async () => {
   const corruptJhr = new Uint8Array(50); // valid-looking but far too short for any message region
   corruptJhr.set(new TextEncoder().encode("JAM"), 0);
   const { jhr: goodJhr } = buildJamAreaFiles({
@@ -428,20 +505,83 @@ Deno.test("pin: a truncated/corrupt JAM area beside a good one yields only the g
       assertEquals(messages.length, 1);
       assertEquals(messages[0].from, "Good Sender");
       assertEquals(messages[0].area, "fido.good");
+      const warnings = payload.warnings as string[] | undefined;
+      assert(
+        warnings !== undefined &&
+          warnings.some((w) => w.includes("fido.corrupt2")),
+        "expected a warning naming the corrupt area",
+      );
     },
   );
 });
 
 // ---------------------------------------------------------------------------
-// pin: JAM subfields carry raw, untrimmed bytes — embedded NUL padding
-// survives verbatim into from/to/subject (unlike Squish's XMSG fixed fields
-// and FTS-0001's header fields, both explicitly NUL-truncated at the call
-// site via .replace(/\0.*/, "") / .split("\0")[0]).
-// (Part of bug #8 — see also the contract suite's "dead-code UTF-8 guard"
-// pin for the other half of that finding.)
+// New LB3/LB9 coverage: a real readFile-throwing failure (via the tiny
+// FIDONET_MSGBASE_MAX_BYTES cap — portable across CI environments, unlike a
+// permission-denied file which some CI runners bypass as root) is surfaced
+// as a warning naming the offending area, while a good sibling area is still
+// searched. Doubles as LB9's "tiny env cap excludes an oversized .jhr" test.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a JAM subfield's declared datLen is taken literally — trailing NUL padding survives untrimmed into the decoded field", async () => {
+Deno.test("adversarial: a tiny FIDONET_MSGBASE_MAX_BYTES cap excludes an oversized .jhr with a warning, while a good sibling area is still searched", async () => {
+  const { jhr: smallJhr } = buildJamAreaFiles({
+    messages: [{
+      msgNum: 1,
+      dateWritten: 1000000000,
+      from: "Cap Test Sender",
+      to: "All",
+      subject: "small enough",
+    }],
+  });
+  const { jhr: bigJhr } = buildJamAreaFiles({
+    messages: [{
+      msgNum: 1,
+      dateWritten: 1000000000,
+      from: "Cap Test Sender",
+      to: "All",
+      subject: "x".repeat(500), // pads this .jhr well past the tiny cap below
+    }],
+  });
+  await withTempMsgbase(
+    {
+      areas: {
+        "fido.small": { kind: "jam", jhr: smallJhr },
+        "fido.big": { kind: "raw", files: { "fido.big.jhr": bigJhr } },
+      },
+    },
+    async (basePath) => {
+      Deno.env.set("FIDONET_MSGBASE_MAX_BYTES", String(smallJhr.length));
+      try {
+        const { ctx, written } = makeCtx(basePath);
+        await run("searchBySender", { sender: "Cap Test" }, ctx);
+        const payload = written[0].payload;
+        const messages = payload.messages as Array<Record<string, unknown>>;
+        assertEquals(messages.length, 1);
+        assertEquals(messages[0].area, "fido.small");
+        const warnings = payload.warnings as string[] | undefined;
+        assert(
+          warnings !== undefined &&
+            warnings.some((w) =>
+              w.includes("fido.big") && w.includes("exceeds size cap")
+            ),
+          "expected a warning naming the oversized area and the size cap",
+        );
+      } finally {
+        Deno.env.delete("FIDONET_MSGBASE_MAX_BYTES");
+      }
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// FIXED: JAM subfields now NUL-trim, matching Squish's XMSG fixed fields
+// and FTS-0001's header fields (both already NUL-truncated at the call site
+// via .replace(/\0.*/, "") / .split("\0")[0]) (LB8 — see also the contract
+// suite's former "dead-code UTF-8 guard" note for the other half of this
+// finding, also fixed).
+// ---------------------------------------------------------------------------
+
+Deno.test("FIXED (was pin): a JAM subfield's declared datLen no longer keeps trailing NUL padding — NUL-trimmed to match Squish/FTS-0001", async () => {
   const paddedFrom = new Uint8Array([0x42, 0x6f, 0x62, 0x00, 0x00]); // "Bob\0\0"
   const jhr = buildJamArea({
     activeMsgs: 1,
@@ -459,18 +599,50 @@ Deno.test("pin: a JAM subfield's declared datLen is taken literally — trailing
       const messages = written[0].payload.messages as Array<
         Record<string, unknown>
       >;
-      assertEquals(messages[0].from, "Bob\0\0");
-      assertEquals((messages[0].from as string).length, 5);
+      assertEquals(messages[0].from, "Bob");
+      assertEquals((messages[0].from as string).length, 3);
     },
   );
 });
 
 // ---------------------------------------------------------------------------
-// Squish frame-cycle — STRUCTURAL characterization only, never executed
-// (bug #2, MEDIUM, fidonet_msgbase.ts:270). See the module docstring.
+// FIXED: the Squish frame-chain cycle guard (LB2, fidonet_msgbase.ts:270) —
+// previously characterized STRUCTURALLY ONLY (never executed, since it would
+// hang CI); `parseSquishMessages` now tracks visited frame offsets and
+// breaks on a revisit, so this exact cyclic fixture can be run through
+// `readArea` directly.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin (structural only, NOT executed): a crafted Squish frame chain can cycle — nextFrame pointing backward is representable and would hang parseSquishMessages if ever read", () => {
+Deno.test("FIXED (was structural-only pin): a crafted Squish frame chain that cycles now terminates via the visited-frame guard, returning each frame exactly once", async () => {
+  const headerSize = 256;
+  const sqd = buildSquishArea({
+    headerSize,
+    messages: [
+      { from: "A", to: "All", subject: "frame A", body: "a" },
+      { from: "B", to: "All", subject: "frame B", body: "b" },
+    ],
+    lastNextFrameOverride: headerSize, // frame B's nextFrame -> frame A's offset (cycle)
+  });
+  await withTempMsgbase(
+    { areas: { "fido.cycle": { kind: "squish", sqd } } },
+    async (basePath) => {
+      const { ctx, written } = makeCtx(basePath);
+      await run("readArea", { area: "fido.cycle" }, ctx);
+      const messages = written[0].payload.messages as Array<
+        Record<string, unknown>
+      >;
+      assertEquals(messages.length, 2);
+      assertEquals(messages.map((m) => m.from), ["A", "B"]);
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Structural characterization retained: confirms the fixture BYTES really do
+// form a genuine cycle (independent of the guard that now handles it above).
+// ---------------------------------------------------------------------------
+
+Deno.test("sanity: the cyclic Squish fixture's bytes genuinely form a cycle — frame B's nextFrame points back at frame A", () => {
   // Two frames; force the LAST frame's nextFrame back to frame A's offset
   // instead of 0, forming a 2-frame cycle: A -> B -> A -> B -> ... forever.
   const headerSize = 256;

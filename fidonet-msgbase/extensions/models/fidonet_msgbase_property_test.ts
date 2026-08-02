@@ -20,13 +20,15 @@
  *      `Array.prototype.slice` of the full message list.
  *  (e) an arbitrary printable-ASCII from/to/subject round-trips BYTE-EXACT
  *      through the JAM subfield encode -> decodeText(UTF-8) path.
- *  (f) resource-instance-name slug determinism/collision: two different
- *      sender strings that collapse to the same slug (any non-alnum
- *      separator maps to `_`) produce the IDENTICAL written instance name —
- *      pins the resource-name collision finding (bug #7).
+ *  (f) resource-instance-name slug collision is FIXED (bug #7): two
+ *      different sender strings that collapse to the same base slug (any
+ *      non-alnum separator maps to `_`) now produce DIFFERENT written
+ *      instance names, thanks to a trailing hash of the raw query — while
+ *      the SAME raw query always produces the IDENTICAL name (determinism).
  *
- * fidonet_msgbase.ts is BYTE-FROZEN. All fixture content is synthetic — see
- * fixtures/PROVENANCE.md.
+ * `fidonet_msgbase.ts` received a real-fix pass for 9 latent bugs (see the
+ * LOCAL `fidonet-msgbase-latent-bugs` issue-lifecycle model). All fixture
+ * content is synthetic — see fixtures/PROVENANCE.md.
  */
 import { assert } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
@@ -287,7 +289,7 @@ Deno.test("property: any printable-ASCII from/subject round-trips byte-exact thr
 });
 
 // ---------------------------------------------------------------------------
-// (f) resource-instance-name slug determinism / collision (bug #7)
+// (f) resource-instance-name slug collision FIX + determinism (bug #7)
 // ---------------------------------------------------------------------------
 
 const arbAlnum = fc.stringMatching(/^[a-zA-Z0-9]{1,10}$/);
@@ -300,7 +302,7 @@ const arbSeparatorPair = fc
   )
   .filter(([a, b]) => a !== b);
 
-Deno.test("pin: two different sender strings that collapse to the same slug produce the IDENTICAL resource instance name (bug #7)", async () => {
+Deno.test("FIXED (was pin): two different sender strings that collapse to the same base slug now get DIFFERENT resource instance names (bug #7 fix — raw-query hash suffix)", async () => {
   await fc.assert(
     fc.asyncProperty(
       arbAlnum,
@@ -315,14 +317,38 @@ Deno.test("pin: two different sender strings that collapse to the same slug prod
           const { ctx: ctx2, written: w2 } = makeCtx(basePath);
           await run("searchBySender", { sender: sender2 }, ctx2);
           assert(
-            w1[0].name === w2[0].name,
-            `expected identical slug for ${JSON.stringify(sender1)} and ${
+            w1[0].name !== w2[0].name,
+            `expected DIFFERENT resource names for ${
+              JSON.stringify(sender1)
+            } vs ${
               JSON.stringify(sender2)
-            }, got ${w1[0].name} vs ${w2[0].name}`,
+            } (same base slug, different raw query) — got identical name ${
+              w1[0].name
+            }`,
           );
         });
       },
     ),
+    FC_RUNS,
+  );
+});
+
+Deno.test("property: searchBySender's resource instance name is deterministic — the same raw sender string always produces the identical name", async () => {
+  await fc.assert(
+    fc.asyncProperty(arbAlnum, async (sender) => {
+      await withTempMsgbase({}, async (basePath) => {
+        const { ctx: ctx1, written: w1 } = makeCtx(basePath);
+        await run("searchBySender", { sender }, ctx1);
+        const { ctx: ctx2, written: w2 } = makeCtx(basePath);
+        await run("searchBySender", { sender }, ctx2);
+        assert(
+          w1[0].name === w2[0].name,
+          `expected deterministic name for ${JSON.stringify(sender)}, got ${
+            w1[0].name
+          } vs ${w2[0].name}`,
+        );
+      });
+    }),
     FC_RUNS,
   );
 });
