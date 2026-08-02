@@ -2,36 +2,44 @@
  * Adversarial suite for @magistr/career-kb (career_kb.ts) -- hostile/boundary
  * inputs plus a mechanical fixtures-secret-scan over `fixtures/**`.
  *
- * LB1 (path traversal via `read`'s `file` argument, HIGH) was FIXED by this
- * change: `readRef()` now calls the exported `assertWithinRefs()` guard
- * before building the on-disk path, so a `file` argument that escapes
- * `references/` is REJECTED (no read, no resource written) instead of
- * succeeding. Every OTHER test here still PINS current behavior (including
- * behavior that is a documented latent bug) rather than proposing a fix. This
- * suite is where the remaining 6 latent bugs tracked in the LOCAL
+ * LB1 (path traversal via `read`'s `file` argument, HIGH) was FIXED earlier:
+ * `readRef()` calls the exported `assertWithinRefs()` guard before building
+ * the on-disk path, so a `file` argument that escapes `references/` is
+ * REJECTED (no read, no resource written) instead of succeeding.
+ *
+ * This change real-fixes the remaining 6 latent bugs tracked in the LOCAL
  * `career-kb-latent-bugs` issue-lifecycle model (NEVER filed to the
- * swamp.club Lab -- see CLAUDE.md's anti-bypass rule) are characterized as
- * failing-would-be-red-if-"fixed" pins:
- *   LB2 all out-of-range CARINAS values yield a NaN mean mislabeled "high"
- *   (MEDIUM), LB3 resource-name slug collision between distinct `assess`
- *   situations (MEDIUM), LB4 one bad/missing source aborts the whole catalog
- *   build (MEDIUM), LB5 an empty `clusters: []` global arg disables filtering
- *   entirely (LOW), LB6 no size cap on `read`/`index` (LOW), LB7 verbatim
- *   unsanitized content storage (LOW/info).
+ * swamp.club Lab -- see CLAUDE.md's anti-bypass rule), version
+ * 2026.08.01.1 -> 2026.08.02.1:
+ *   LB2 all out-of-range CARINAS values now yield a distinct `mean: null`,
+ *   `band: "no valid input"` state instead of a NaN mean mislabeled "high"
+ *   (MEDIUM), LB3 `resourceName()` (slugify + FNV-1a hash suffix) now gives
+ *   distinct `assess`/`search`/`read` inputs distinct resource names (MEDIUM),
+ *   LB4 `loadSources` now skips+warns on one bad/missing source instead of
+ *   aborting the whole catalog build (MEDIUM), LB5 an empty `clusters: []`
+ *   global arg now matches zero sources instead of disabling filtering
+ *   entirely (LOW), LB6 a new defaulted `maxFileBytes` global arg now caps
+ *   `read`/`index` file size (LOW), LB7 `content` is now explicitly
+ *   documented as untrusted-must-sanitize (verbatim storage stays
+ *   BY DESIGN -- this model returns markdown to an agent/LLM consumer, not a
+ *   trusted-HTML renderer) (LOW/info). Every pin below that flipped is
+ *   renamed with `-- FIXED` (or `-- BY DESIGN` for LB7); all others are
+ *   unchanged.
  *
  * LB1 uses the COMMITTED `fixtures/outside/` sibling (never a real file) --
- * now an unreachable synthetic attack target, kept committed to prove the
- * guard actually rejects a real escape rather than merely rejecting a
- * nonexistent path. LB4/LB6/LB7 need bespoke corpora (a broken index entry, a
- * huge file, an injection payload) that must NOT pollute the shared
+ * an unreachable synthetic attack target, kept committed to prove the guard
+ * actually rejects a real escape rather than merely rejecting a nonexistent
+ * path. LB4/LB6/LB7 need bespoke corpora (a broken index entry, a huge file,
+ * an injection payload) that must NOT pollute the shared
  * `fixtures/references/` corpus the methods/coverage/property suites depend
  * on -- each builds its own disposable `Deno.makeTempDir()` corpus, cleaned
  * up in a `finally`.
  *
  * It also pins two REFUTED risk classes as covered-negatives: credential
- * leak (globalArguments carries no secret-shaped field) and
- * subprocess/network egress (career_kb.ts calls neither `Deno.Command` nor
- * `fetch` anywhere -- confirmed by reading its own source text).
+ * leak (globalArguments carries no secret-shaped field -- now `clusters` AND
+ * `maxFileBytes`, neither credential-shaped) and subprocess/network egress
+ * (career_kb.ts calls neither `Deno.Command` nor `fetch` anywhere --
+ * confirmed by reading its own source text).
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./career_kb.ts";
@@ -42,10 +50,17 @@ import { model } from "./career_kb.ts";
 
 type Written = { spec: string; name: string; data: unknown };
 
-function makeContext(clusters: string[] | undefined, baseDir: string) {
+function makeContext(
+  clusters: string[] | undefined,
+  baseDir: string,
+  overrides?: Record<string, unknown>,
+) {
   const writes: Written[] = [];
   const context = {
-    globalArgs: model.globalArguments.parse(clusters ? { clusters } : {}),
+    globalArgs: model.globalArguments.parse({
+      ...(clusters ? { clusters } : {}),
+      ...overrides,
+    }),
     extensionFile: (rel: string) => `${baseDir}/${rel}`,
     writeResource: (spec: string, name: string, data: unknown) => {
       writes.push({ spec, name, data });
@@ -165,35 +180,43 @@ Deno.test("pin (career-kb-latent-bugs LB1, HIGH -- FIXED): additional synthetic 
 });
 
 // ===========================================================================
-// LB2 all-out-of-range CARINAS -> NaN mean mislabeled "high" -- MEDIUM
+// LB2 all-out-of-range CARINAS -> distinct "no valid input" state -- MEDIUM -- FIXED
 // ===========================================================================
 
-Deno.test("pin (career-kb-latent-bugs LB2, MEDIUM): every CARINAS value out of [1,5] yields a NaN mean that falls through every `<` comparison into the 'high' band", async () => {
+Deno.test("pin (career-kb-latent-bugs LB2, MEDIUM -- FIXED): every CARINAS value out of [1,5] yields a distinct 'no valid input' state, never a fabricated 'high' band", async () => {
   const { context, writes } = fixtureContext();
   await model.methods.assess.execute(
     { situation: "stuck", carinas: [0, 9, -3, 6, 100] },
     context,
   );
+  assertEquals(writes.length, 1);
   const a = writes[0].data as {
-    carinas?: { mean: number; band: string; interpretation: string };
+    carinas?: { mean: number | null; band: string; interpretation: string };
   };
   assert(a.carinas !== undefined);
-  assert(
-    Number.isNaN(a.carinas!.mean),
-    "vals is empty after filtering, so mean = 0/0 = NaN",
+  assertEquals(
+    a.carinas!.mean,
+    null,
+    "vals is empty after filtering -- mean must be null, never NaN",
   );
   assertEquals(
     a.carinas!.band,
-    "high",
-    "NaN < 2.5, NaN < 3.0, and NaN < 3.5 are all false, so the else branch (the STRONGEST band) is what a NaN mean lands in",
+    "no valid input",
+    "an all-out-of-range input must never be mislabeled with the STRONGEST band ('high')",
+  );
+  assert(
+    /no mean/i.test(a.carinas!.interpretation),
+    `expected the interpretation to explain no mean could be computed, got: ${
+      a.carinas!.interpretation
+    }`,
   );
 });
 
 // ===========================================================================
-// LB3 resource-name slug collision -- MEDIUM
+// LB3 resource-name slug collision -- MEDIUM -- FIXED
 // ===========================================================================
 
-Deno.test("pin (career-kb-latent-bugs LB3, MEDIUM): two DIFFERENT situations that differ only in punctuation slugify to the IDENTICAL resource name", async () => {
+Deno.test("pin (career-kb-latent-bugs LB3, MEDIUM -- FIXED): two DIFFERENT situations that differ only in punctuation now map to DISTINCT resource names", async () => {
   const { context, writes } = fixtureContext();
   await model.methods.assess.execute(
     { situation: "Fixture Career Situation, One!" },
@@ -204,10 +227,9 @@ Deno.test("pin (career-kb-latent-bugs LB3, MEDIUM): two DIFFERENT situations tha
     context,
   );
   assertEquals(writes.length, 2);
-  assertEquals(
-    writes[0].name,
-    writes[1].name,
-    "both distinct situations collapse to the same slugify() resource name -- in a real datastore the second write clobbers the first",
+  assert(
+    writes[0].name !== writes[1].name,
+    "distinct situations now get distinct resource names -- resourceName()'s hash suffix prevents the second write from clobbering the first",
   );
   const first = writes[0].data as { situation: string };
   const second = writes[1].data as { situation: string };
@@ -218,10 +240,10 @@ Deno.test("pin (career-kb-latent-bugs LB3, MEDIUM): two DIFFERENT situations tha
 });
 
 // ===========================================================================
-// LB4 one bad/missing source aborts the whole catalog build -- MEDIUM
+// LB4 one bad/missing source aborts the whole catalog build -- MEDIUM -- FIXED
 // ===========================================================================
 
-Deno.test("pin (career-kb-latent-bugs LB4, MEDIUM): one missing source listed in index.json aborts index() entirely -- the other well-formed sources are never returned", async () => {
+Deno.test("pin (career-kb-latent-bugs LB4, MEDIUM -- FIXED): one missing source listed in index.json is skipped; the catalog still covers every source that loaded", async () => {
   await withTempCorpus(
     {
       "inaction/fixture-good-one.md": validMd("Fixture Good One", "inaction"),
@@ -234,31 +256,63 @@ Deno.test("pin (career-kb-latent-bugs LB4, MEDIUM): one missing source listed in
     ],
     async (baseDir) => {
       const { context, writes } = makeContext(undefined, baseDir);
-      await assertRejects(
-        () => model.methods.index.execute({}, context),
-        Deno.errors.NotFound,
-      );
+      await model.methods.index.execute({}, context);
       assertEquals(
         writes.length,
-        0,
-        "no catalog is EVER written -- not even a partial one covering the 2 good sources read before the missing one",
+        1,
+        "index() must resolve and write exactly one catalog, not abort",
       );
+      const cat = model.resources.catalog.schema.parse(writes[0].data);
+      assertEquals(
+        cat.sourceCount,
+        2,
+        "the missing source is skipped -- only the 2 good sources are counted",
+      );
+      const files = cat.sources.map((s) => s.file).sort();
+      assertEquals(files, [
+        "inaction/fixture-good-one.md",
+        "inaction/fixture-good-two.md",
+      ]);
+    },
+  );
+});
+
+Deno.test("pin (career-kb-latent-bugs LB4, MEDIUM -- FIXED): search() over the same one-bad-two-good corpus still returns hits drawn only from the good sources", async () => {
+  await withTempCorpus(
+    {
+      "inaction/fixture-good-one.md": validMd("Fixture Good One", "inaction"),
+      "inaction/fixture-good-two.md": validMd("Fixture Good Two", "inaction"),
+    },
+    [
+      "inaction/fixture-good-one.md",
+      "inaction/fixture-missing.md",
+      "inaction/fixture-good-two.md",
+    ],
+    async (baseDir) => {
+      const { context, writes } = makeContext(undefined, baseDir);
+      await model.methods.search.execute({ query: "good" }, context);
+      const res = model.resources.searchResult.schema.parse(writes[0].data);
+      const files = res.hits.map((h) => h.file).sort();
+      assertEquals(files, [
+        "inaction/fixture-good-one.md",
+        "inaction/fixture-good-two.md",
+      ]);
     },
   );
 });
 
 // ===========================================================================
-// LB5 empty `clusters: []` disables filtering entirely -- LOW
+// LB5 empty `clusters: []` matches zero sources -- LOW -- FIXED
 // ===========================================================================
 
-Deno.test("pin (career-kb-latent-bugs LB5, LOW): an explicit `clusters: []` global arg disables filtering -- it returns the FULL unfiltered index, not zero sources", async () => {
+Deno.test("pin (career-kb-latent-bugs LB5, LOW -- FIXED): an explicit `clusters: []` global arg matches zero sources, as its shape implies", async () => {
   const empty = fixtureContext([]);
   await model.methods.index.execute({}, empty.context);
   const catEmpty = empty.writes[0].data as { sourceCount: number };
   assertEquals(
     catEmpty.sourceCount,
-    4,
-    "`[].length` is falsy, so `clusters && clusters.length ? filter : index` takes the UNFILTERED branch",
+    0,
+    "an explicit empty clusters array must filter down to zero sources, not fall back to the full unfiltered index",
   );
 
   const one = fixtureContext(["ama"]);
@@ -272,12 +326,13 @@ Deno.test("pin (career-kb-latent-bugs LB5, LOW): an explicit `clusters: []` glob
 });
 
 // ===========================================================================
-// LB6 no size cap on read()/index() -- LOW
+// LB6 size cap on read()/index() via maxFileBytes -- LOW -- FIXED
 // ===========================================================================
 
 const LARGE_BODY_CHARS = 500_000;
+const TINY_CAP_BYTES = 1024;
 
-Deno.test("pin (career-kb-latent-bugs LB6, LOW): read() has no size cap -- a large source is loaded into memory and returned in full", async () => {
+Deno.test("pin (career-kb-latent-bugs LB6, LOW -- FIXED): a source exceeding maxFileBytes is rejected", async () => {
   const largeBody = "fixture-filler-text ".repeat(
     Math.ceil(LARGE_BODY_CHARS / 20),
   );
@@ -291,25 +346,93 @@ Deno.test("pin (career-kb-latent-bugs LB6, LOW): read() has no size cap -- a lar
     },
     undefined,
     async (baseDir) => {
-      const { context, writes } = makeContext(undefined, baseDir);
-      await model.methods.read.execute(
-        { file: "success-outcomes/fixture-large.md" },
-        context,
+      const { context, writes } = makeContext(undefined, baseDir, {
+        maxFileBytes: TINY_CAP_BYTES,
+      });
+      await assertRejects(
+        () =>
+          model.methods.read.execute(
+            { file: "success-outcomes/fixture-large.md" },
+            context,
+          ),
+        Error,
+        "exceeding",
       );
-      const doc = writes[0].data as { content: string };
-      assert(
-        doc.content.length >= LARGE_BODY_CHARS,
-        `expected the FULL body (>= ${LARGE_BODY_CHARS} chars), got ${doc.content.length} -- no truncation/size cap anywhere in read()`,
+      assertEquals(
+        writes.length,
+        0,
+        "no resource is written when the size cap rejects the read",
       );
     },
   );
 });
 
+Deno.test("pin (career-kb-latent-bugs LB6, LOW -- FIXED): a small file UNDER a tiny cap still reads successfully", async () => {
+  await withTempCorpus(
+    {
+      "success-outcomes/fixture-small.md": validMd(
+        "Fixture Small",
+        "success-outcomes",
+      ),
+    },
+    undefined,
+    async (baseDir) => {
+      const { context, writes } = makeContext(undefined, baseDir, {
+        maxFileBytes: TINY_CAP_BYTES,
+      });
+      await model.methods.read.execute(
+        { file: "success-outcomes/fixture-small.md" },
+        context,
+      );
+      assertEquals(writes.length, 1);
+      const doc = writes[0].data as { content: string };
+      assert(
+        doc.content.includes("Fixture body text."),
+        "a file safely under the cap must still read in full",
+      );
+    },
+  );
+});
+
+Deno.test("pin (career-kb-latent-bugs LB6+LB4, LOW -- FIXED): index() over a corpus with one oversized entry + one small entry writes a catalog of just the small one", async () => {
+  const largeBody = "fixture-filler-text ".repeat(
+    Math.ceil(LARGE_BODY_CHARS / 20),
+  );
+  await withTempCorpus(
+    {
+      "success-outcomes/fixture-oversized.md": validMd(
+        "Fixture Oversized",
+        "success-outcomes",
+        largeBody,
+      ),
+      "success-outcomes/fixture-normal.md": validMd(
+        "Fixture Normal",
+        "success-outcomes",
+      ),
+    },
+    undefined,
+    async (baseDir) => {
+      const { context, writes } = makeContext(undefined, baseDir, {
+        maxFileBytes: TINY_CAP_BYTES,
+      });
+      await model.methods.index.execute({}, context);
+      assertEquals(writes.length, 1);
+      const cat = model.resources.catalog.schema.parse(writes[0].data);
+      assertEquals(
+        cat.sourceCount,
+        1,
+        "the oversized entry's readRef() throws, loadSources() skips it (LB4), leaving only the small source",
+      );
+      assertEquals(cat.sources[0].file, "success-outcomes/fixture-normal.md");
+    },
+  );
+});
+
 // ===========================================================================
-// LB7 verbatim unsanitized content storage -- LOW/info
+// LB7 verbatim unsanitized content storage -- LOW/info -- BY DESIGN
 // ===========================================================================
 
-Deno.test("pin (career-kb-latent-bugs LB7, LOW/info): read()'s `content` field stores/returns raw markdown VERBATIM -- an embedded <script> tag is never escaped or stripped", async () => {
+Deno.test("pin (career-kb-latent-bugs LB7, LOW/info -- BY DESIGN): read()'s `content` field returns markdown VERBATIM by design AND documents content as untrusted-must-sanitize", async () => {
   const payload = "<script>alert('fixture-injection-marker')</script>";
   await withTempCorpus(
     {
@@ -329,9 +452,22 @@ Deno.test("pin (career-kb-latent-bugs LB7, LOW/info): read()'s `content` field s
       const doc = writes[0].data as { content: string };
       assert(
         doc.content.includes(payload),
-        "the raw, unescaped <script> tag survives byte-for-byte into the returned content",
+        "the raw, unescaped <script> tag survives byte-for-byte into the returned content -- lossless by design, this model returns source markdown to an agent/LLM consumer, not a trusted-HTML renderer",
       );
     },
+  );
+
+  const desc = model.resources.document.schema.shape.content.description ??
+    "";
+  assert(
+    /untrusted|sanitiz/i.test(desc),
+    `expected DocumentSchema.content to document the untrusted-must-sanitize contract, got: "${desc}"`,
+  );
+
+  const readDesc = model.methods.read.description;
+  assert(
+    /untrusted|sanitiz/i.test(readDesc),
+    `expected read()'s method description to carry the same untrusted-content caveat, got: "${readDesc}"`,
   );
 });
 
@@ -339,9 +475,9 @@ Deno.test("pin (career-kb-latent-bugs LB7, LOW/info): read()'s `content` field s
 // Covered-negatives: credential leak / subprocess+network egress -- REFUTED
 // ===========================================================================
 
-Deno.test("refuted: globalArguments carries no secret-shaped field -- `clusters` is the only key, and it is not credential-shaped", () => {
+Deno.test("refuted: globalArguments carries no secret-shaped field -- `clusters`/`maxFileBytes` are the only keys, and neither is credential-shaped", () => {
   const keys = Object.keys(model.globalArguments.shape);
-  assertEquals(keys, ["clusters"]);
+  assertEquals(keys, ["clusters", "maxFileBytes"]);
   for (const k of keys) {
     assert(
       !/token|secret|key|password|credential/i.test(k),

@@ -17,6 +17,9 @@ const GlobalArgsSchema = z.object({
     .describe(
       "Optional filter restricting index/search to these bundled clusters.",
     ),
+  maxFileBytes: z.number().int().positive().default(1_000_000).describe(
+    "Max bytes for any single bundled reference file read; larger files are rejected.",
+  ),
 });
 
 // ---------- Resource schemas -------------------------------------------------
@@ -74,7 +77,9 @@ const DocumentSchema = z.object({
   frontmatter: z.record(z.string(), z.unknown()),
   section: z.string().optional(),
   availableSections: z.array(z.string()),
-  content: z.string(),
+  content: z.string().describe(
+    "Raw source markdown, returned losslessly byte-for-byte; UNTRUSTED content that callers MUST sanitize/escape before rendering as HTML.",
+  ),
   timestamp: z.string(),
 });
 
@@ -97,7 +102,7 @@ const AssessmentSchema = z.object({
   primaryFamily: z.string(),
   families: z.array(FamilyAssessmentSchema),
   carinas: z.object({
-    mean: z.number(),
+    mean: z.number().nullable(),
     band: z.string(),
     interpretation: z.string(),
   }).optional(),
@@ -379,6 +384,34 @@ export function slugify(s) {
 }
 
 /**
+ * FNV-1a 32-bit hash of the FULL input (career-kb-latent-bugs LB3), rendered
+ * as a fixed 7-char base36 string. Deterministic: identical input always
+ * yields the identical hash.
+ */
+export function shortHash(s) {
+  const str = String(s);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36).padStart(7, "0").slice(0, 7);
+}
+
+/**
+ * Collision-resistant resource name (career-kb-latent-bugs LB3, MEDIUM fix):
+ * a `slugify()` prefix (truncated to 40 chars, trailing hyphens stripped) plus
+ * a `shortHash()` suffix over the FULL input, so distinct inputs that
+ * `slugify()` alone would collapse to the same slug still get distinct
+ * resource names, while identical input still yields an identical name
+ * (idempotent overwrite is preserved). Always ≤48 chars, charset `[a-z0-9-]`.
+ */
+export function resourceName(s) {
+  const slug = slugify(s).slice(0, 40).replace(/-+$/, "");
+  return `${slug}-${shortHash(s)}`;
+}
+
+/**
  * Confine a reference path to the `references/` root (career-kb-latent-bugs
  * LB1, HIGH). Rejects absolute paths (leading `/`), backslashes, and any `..`
  * / `.` / empty path segment; accepts `cluster/file.md`-shaped relative paths
@@ -508,16 +541,25 @@ export function buildEntry(rel, text) {
 // is the single chokepoint for read, loadRaw, loadSources, and sourceList.
 async function readRef(context, rel) {
   assertWithinRefs(rel);
-  return await Deno.readTextFile(context.extensionFile(`${REF_DIR}/${rel}`));
+  const path = context.extensionFile(`${REF_DIR}/${rel}`);
+  const cap = context.globalArgs.maxFileBytes;
+  const info = await Deno.stat(path);
+  if (info.size > cap) {
+    throw new Error(
+      `Reference file "${rel}" is ${info.size} bytes, exceeding the ${cap}-byte limit.`,
+    );
+  }
+  return await Deno.readTextFile(path);
 }
 
 // The list of bundled source paths, optionally filtered to the clusters.
 async function sourceList(context) {
   const index = JSON.parse(await readRef(context, "index.json"));
   const clusters = context.globalArgs.clusters;
-  return clusters && clusters.length
+  if (clusters === undefined) return index; // defensive; schema default normally prevents this
+  return clusters.length
     ? index.filter((rel) => clusters.includes(rel.split("/")[0]))
-    : index;
+    : [];
 }
 
 // Resolve one source's raw markdown text from the bundled reference files.
@@ -526,11 +568,23 @@ function loadRaw(context, rel) {
 }
 
 // Load all sources as structured entries from the bundled reference files.
+// Each entry is read independently (career-kb-latent-bugs LB4, MEDIUM fix): a
+// single missing/unreadable source is skipped with a console.warn rather than
+// aborting the whole catalog build, so every source that DID load is still
+// returned.
 async function loadSources(context) {
   const list = await sourceList(context);
   const out: ReturnType<typeof buildEntry>[] = [];
   for (const rel of list) {
-    out.push(buildEntry(rel, await readRef(context, rel)));
+    try {
+      out.push(buildEntry(rel, await readRef(context, rel)));
+    } catch (err) {
+      console.warn(
+        `career-kb: skipping unreadable source "${rel}": ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
   return out;
 }
@@ -558,7 +612,16 @@ export function tokenize(q) {
  */
 export const model = {
   type: "@magistr/career-kb",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.08.01.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "LB2 no-valid-CARINAS state (nullable mean); LB3 collision-resistant resource names; LB4 skip+warn on unreadable source; LB5 empty clusters:[] returns zero sources; LB6 adds defaulted maxFileBytes size cap (global arg); LB7 documents content as untrusted-must-sanitize. Only defaulted global arg added, no resource schema field added -> identity attribute upgrade.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     catalog: {
@@ -696,7 +759,7 @@ export const model = {
 
         const handle = await context.writeResource(
           "searchResult",
-          slugify(args.query),
+          resourceName(args.query),
           {
             query: args.query,
             clusterFilter: args.cluster,
@@ -714,7 +777,7 @@ export const model = {
 
     read: {
       description:
-        "Read one source: its frontmatter plus the full body, or just a named section (e.g. Measurement, Frameworks).",
+        "Read one source: its frontmatter plus the full body, or just a named section (e.g. Measurement, Frameworks). The returned content is raw markdown -- untrusted; callers MUST sanitize/escape before rendering it as HTML.",
       arguments: z.object({
         file: z.string().describe(
           "Relative path (inaction/career-inaction.md), filename, or slug",
@@ -753,17 +816,21 @@ export const model = {
           }
           content = sec;
         }
-        const handle = await context.writeResource("document", slugify(rel), {
-          file: rel,
-          cluster: rel.split("/")[0],
-          slug: rel.split("/").pop().replace(/\.md$/, ""),
-          title: String(fm.title || rel),
-          frontmatter: fm,
-          section: args.section,
-          availableSections,
-          content,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "document",
+          resourceName(rel),
+          {
+            file: rel,
+            cluster: rel.split("/")[0],
+            slug: rel.split("/").pop().replace(/\.md$/, ""),
+            title: String(fm.title || rel),
+            frontmatter: fm,
+            section: args.section,
+            availableSections,
+            content,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
@@ -809,32 +876,45 @@ export const model = {
         let carinas;
         if (args.carinas && args.carinas.length > 0) {
           const vals = args.carinas.filter((n) => n >= 1 && n <= 5);
-          const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-          let band;
-          if (mean < 2.5) band = "low";
-          else if (mean < 3.0) {
-            band = "moderate (~general-population mean 2.74)";
-          } else if (mean < 3.5) {
-            band = "elevated (~counseling-client mean 3.21)";
-          } else band = "high";
-          carinas = {
-            mean: Number(mean.toFixed(2)),
-            band,
-            interpretation:
-              `Mean ${mean.toFixed(2)} on the 1–5 CARINAS (midpoint 3). ` +
-              `Reference points: general-worker samples average ≈2.7–2.8, career-counseling clients ≈3.21. ` +
-              `Higher = a stronger, self-aware desire for change paired with insufficient action.` +
-              (vals.length !== args.carinas.length
-                ? ` (${
-                  args.carinas.length - vals.length
-                } value(s) out of the 1–5 range were ignored.)`
-                : ""),
-          };
+          if (vals.length === 0) {
+            // career-kb-latent-bugs LB2 (MEDIUM) fix: every supplied value
+            // fell outside [1,5], so no mean/band can be computed -- report a
+            // distinct, non-fabricated state instead of letting a NaN mean
+            // fall through every `<` comparison into the "high" band.
+            carinas = {
+              mean: null,
+              band: "no valid input",
+              interpretation:
+                `None of the ${args.carinas.length} supplied CARINAS value(s) fell within the 1-5 range, so no mean or band could be computed. Re-enter each item as an integer 1-5.`,
+            };
+          } else {
+            const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+            let band;
+            if (mean < 2.5) band = "low";
+            else if (mean < 3.0) {
+              band = "moderate (~general-population mean 2.74)";
+            } else if (mean < 3.5) {
+              band = "elevated (~counseling-client mean 3.21)";
+            } else band = "high";
+            carinas = {
+              mean: Number(mean.toFixed(2)),
+              band,
+              interpretation:
+                `Mean ${mean.toFixed(2)} on the 1–5 CARINAS (midpoint 3). ` +
+                `Reference points: general-worker samples average ≈2.7–2.8, career-counseling clients ≈3.21. ` +
+                `Higher = a stronger, self-aware desire for change paired with insufficient action.` +
+                (vals.length !== args.carinas.length
+                  ? ` (${
+                    args.carinas.length - vals.length
+                  } value(s) out of the 1–5 range were ignored.)`
+                  : ""),
+            };
+          }
         }
 
         const handle = await context.writeResource(
           "assessment",
-          slugify(args.situation),
+          resourceName(args.situation),
           {
             situation: args.situation,
             primaryFamily,

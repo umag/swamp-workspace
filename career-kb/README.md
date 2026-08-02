@@ -44,7 +44,9 @@ swamp model method run career index
 ```
 
 (`clusters` is an optional global arg that restricts `index`/`search` to a
-subset of the bundled clusters; it defaults to all three.)
+subset of the bundled clusters; it defaults to all three. `maxFileBytes` caps
+the size of any single bundled reference file that `read`/`index` will load; it
+defaults to 1,000,000 and safely exceeds every bundled source.)
 
 ## Methods
 
@@ -75,7 +77,9 @@ swamp model method run career search --input query="subjective success" --input 
 ### `read`
 
 Returns one source's frontmatter plus its full body, or just a named section
-(case-insensitive, partial match).
+(case-insensitive, partial match). `content` is raw markdown, returned
+losslessly byte-for-byte — it is **untrusted** and callers must sanitize/escape
+it before rendering as HTML.
 
 ```bash
 swamp model method run career read --input file=inaction/career-inaction-scale.md --input section=Measurement

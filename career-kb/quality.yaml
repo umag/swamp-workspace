@@ -4,9 +4,12 @@
 #
 # Backfilled to full five-suite compliance by ext-quality-bf-career-kb
 # (wave-4 batch-4b child of the extension-quality backfill program,
-# ext-quality-test-backfill). career_kb.ts and manifest.yaml are BYTE-FROZEN
-# by this change — every listed test file characterizes/pins already-shipped
-# behavior; no production code changed and no manifest/model version bump.
+# ext-quality-test-backfill), then real-fixed for the six remaining LB2-LB7
+# latent bugs the backfill's adversarial/coverage/property suites found
+# (fix/career-kb-latent-bugs, 2026.08.02.1) — career_kb.ts, manifest.yaml,
+# and the adversarial/coverage/property suites all changed; the
+# contract-fixture and methods suites stayed byte-identical. LB1 (path
+# traversal) was fixed earlier in 2026.08.01.1 and is untouched here.
 #
 # Role map (each file assigned to exactly ONE honest role):
 #   contract-fixture        -> career_kb_test.ts (unchanged — pins behavior
