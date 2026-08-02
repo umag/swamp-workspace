@@ -7,6 +7,15 @@ const GlobalArgsSchema = z.object({
   vaultRoot: z.string().optional().describe(
     "Absolute path to the Obsidian vault directory. When set, importToObsidian writes notes directly to this directory (no Obsidian CLI, no desktop app needed) and takes precedence over CLI-based vault-name resolution. Overridden per-call by the importToObsidian method's own vaultPath argument.",
   ),
+  timeoutMs: z.number().optional().describe(
+    "Timeout (ms) for the 'obsidian' CLI subprocess used to resolve a vault name to a filesystem path. Only applies when neither vaultPath (method argument) nor vaultRoot (global argument) is set. Defaults to 30000 (30s).",
+  ),
+  obsidianBin: z.string().optional().describe(
+    "Path or command name for the Obsidian CLI binary invoked to resolve a vault name to a path. Defaults to the bare command name 'obsidian' (resolved via $PATH). Only applies when neither vaultPath nor vaultRoot is set.",
+  ),
+  maxFileBytes: z.number().optional().describe(
+    "Maximum size, in bytes, of a single history file read into memory. Files larger than this are skipped (with a warning) rather than read. Defaults to 52428800 (50 MiB).",
+  ),
 });
 
 // --- Path confinement ------------------------------------------------------
@@ -16,6 +25,10 @@ const GlobalArgsSchema = z.object({
 // rationale. Swamp bundles each extension independently, so this ~60-line
 // block is duplicated rather than shared across extensions.
 
+/**
+ * A caller-supplied path resolved and confined against a vault's root
+ * directory -- returned by resolveVaultPath/resolveVaultPathSafe below.
+ */
 export interface VaultPath {
   absolutePath: string;
   vaultRelativePath: string;
@@ -198,7 +211,18 @@ const SummarySchema = z.object({
 
 function decodeJid(filename: string): string {
   // URL-decode %XX sequences and replace _at_ with @
-  return decodeURIComponent(filename.replace(/_at_/g, "@"));
+  const withAt = filename.replace(/_at_/g, "@");
+  try {
+    return decodeURIComponent(withAt);
+  } catch {
+    // LB1 fix: a malformed % escape (e.g. "%ZZ") makes decodeURIComponent
+    // throw a URIError. Before this fix that exception propagated out of
+    // listHistoryFiles' `for await` loop unguarded, aborting EVERY method
+    // for the WHOLE directory over a single poisoned filename. Sanitize, not
+    // abort: fall back to the _at_-replaced raw string so every OTHER file
+    // in the directory stays reachable.
+    return withAt;
+  }
 }
 
 function parsePipeDelimited(content: string): Array<{
@@ -241,6 +265,52 @@ function parsePipeDelimited(content: string): Array<{
   return messages;
 }
 
+// LB4 fix: parsePipeDelimited's blind `timestamp + "Z"` append and
+// unvalidated `direction` string pass straight through untouched -- in a
+// real swamp instance `context.writeResource` would validate the built
+// resource against ConversationSchema (whose `messages[].timestamp` is
+// `z.iso.datetime()` and `.direction` a 3-value enum) and reject the WHOLE
+// resource, aborting `read` for every OTHER well-formed message in the same
+// conversation too. Guard post-parse instead: validate each candidate
+// message against the model's own MessageSchema and drop (with a warning)
+// only the invalid ones, localizing the damage the same way LB1's decodeJid
+// fix localizes a single bad filename -- valid sibling messages survive.
+function filterValidMessages(
+  msgs: Array<{
+    timestamp: string;
+    direction: string;
+    body: string;
+    flags?: string;
+  }>,
+  jid: string,
+  logger: { warn: (message: string) => void },
+): Array<{
+  timestamp: string;
+  direction: string;
+  body: string;
+  flags?: string;
+}> {
+  const valid: typeof msgs = [];
+  for (const msg of msgs) {
+    const result = MessageSchema.safeParse({
+      timestamp: msg.timestamp,
+      direction: msg.direction,
+      body: msg.body,
+      flags: msg.flags,
+    });
+    if (result.success) {
+      valid.push(msg);
+    } else {
+      logger.warn(
+        `Dropping invalid message in ${jid}: ${
+          result.error.issues[0]?.message ?? "schema validation failed"
+        }`,
+      );
+    }
+  }
+  return valid;
+}
+
 function parsePlainText(content: string): Array<{
   timestamp: string;
   sender: string;
@@ -269,13 +339,33 @@ function parsePlainText(content: string): Array<{
   return messages;
 }
 
-async function getVaultPath(vault: string): Promise<string> {
-  const proc = new Deno.Command("obsidian", {
+// LB6 fix: the subprocess previously carried no AbortSignal/timeout at all,
+// so a hung `obsidian` CLI blocked the import indefinitely. LB7 fix: the
+// binary is now resolved via the caller-supplied `obsidianBin` (defaulting
+// to the bare "obsidian" PATH-resolved name, unchanged) instead of a literal
+// hardcoded string. AbortSignal.timeout() is deliberately NOT used here (see
+// livejournal_import.ts's runObsidian/getVaultPath for the same pattern) --
+// a manual setTimeout/clearTimeout pair, always cleared in `finally`, avoids
+// leaving a pending internal timer that op-sanitizers/FakeTime dislike.
+async function getVaultPath(
+  vault: string,
+  timeoutMs: number,
+  obsidianBin: string,
+): Promise<string> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const proc = new Deno.Command(obsidianBin, {
     args: ["vault", `vault=${vault}`, "info=path"],
     stdout: "piped",
     stderr: "piped",
+    signal: ac.signal,
   });
-  const output = await proc.output();
+  let output: Deno.CommandOutput;
+  try {
+    output = await proc.output();
+  } finally {
+    clearTimeout(timer);
+  }
   if (!output.success) {
     const stderr = new TextDecoder().decode(output.stderr).trim();
     throw new Error(`Failed to resolve vault path: ${stderr}`);
@@ -284,11 +374,76 @@ async function getVaultPath(vault: string): Promise<string> {
 }
 
 function sanitizeFilename(jid: string): string {
-  return jid
+  const cleaned = jid
     .replace(/[\/\\:*?"<>|#%\[\]{}]/g, "-")
     .replace(/\.+$/, "")
-    .trim()
-    .slice(0, 80);
+    .trim();
+  // LB9 fix: a raw UTF-16 code-unit `.slice(0, 80)` can split a surrogate
+  // pair straddling the boundary, emitting a lone unpaired high surrogate
+  // (which either survives as-is or is silently substituted with U+FFFD by
+  // the OS/runtime on write). `Array.from` iterates by Unicode code point,
+  // so the cut can never land inside a surrogate pair.
+  return Array.from(cleaned).slice(0, 80).join("");
+}
+
+// LB2 fix: escape a string for safe embedding INSIDE a double-quoted YAML
+// scalar -- copied verbatim from livejournal_import.ts's yamlEscape (see
+// that file for the full rationale). Order matters: backslashes are
+// escaped FIRST so the backslashes this function itself introduces are
+// never re-escaped by a later step. Byte-identical to the old
+// `.replace(/"/g, '\\"')` for any input with no backslash/control character
+// (the common case) -- only newline/CR/other-control/backslash-bearing
+// input produces different (and now SAFE) output.
+function yamlEscape(s: string): string {
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(
+      // deno-lint-ignore no-control-regex
+      /[\x00-\x08\x0b\x0c\x0e-\x1f]/g,
+      (c) => "\\x" + c.charCodeAt(0).toString(16).padStart(2, "0"),
+    );
+}
+
+// LB3b fix: a message body containing a literal frontmatter/hr delimiter
+// line (`---`, `***`, `___`) renders inline as a raw delimiter line in the
+// note body, letting an attacker-controlled body forge a second frontmatter
+// block (or a spurious thematic break). Escape any body LINE that is,
+// after trimming, exactly such a delimiter by prefixing it with a
+// backslash -- Markdown's backslash-escape neutralizes the delimiter while
+// leaving the visible text intact. Byte-stable for the overwhelmingly
+// common case of a body with no such line.
+const FRONTMATTER_DELIMITER_LINE = /^(-{3,}|_{3,}|\*{3,})$/;
+function neutralizeBodyDelimiters(body: string): string {
+  return body
+    .split("\n")
+    .map((line) =>
+      FRONTMATTER_DELIMITER_LINE.test(line.trim()) ? `\\${line}` : line
+    )
+    .join("\n");
+}
+
+// LB8 fix: every method previously read each history file whole via
+// `Deno.readTextFile` with no size guard anywhere -- a several-thousand
+// message single file (or an adversarially huge one) was read entirely
+// into memory unconditionally. `Deno.stat` first and skip (with a warning)
+// any file over the caller-configured cap; well under the default 50 MiB
+// cap, behavior is completely unchanged.
+async function readFileWithCap(
+  path: string,
+  maxBytes: number,
+  logger: { warn: (message: string) => void },
+): Promise<string | undefined> {
+  const info = await Deno.stat(path);
+  if (info.size > maxBytes) {
+    logger.warn(
+      `Skipping ${path}: file size ${info.size} bytes exceeds maxFileBytes cap (${maxBytes})`,
+    );
+    return undefined;
+  }
+  return await Deno.readTextFile(path);
 }
 
 async function listHistoryFiles(historyDir: string): Promise<
@@ -351,7 +506,23 @@ async function listHistoryFiles(historyDir: string): Promise<
 /** Psi/Psi+ Jabber (XMPP) chat-history model: list, read, search, and import DMs and MUC conferences into an Obsidian vault as markdown notes. */
 export const model = {
   type: "@magistr/jabber/history",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.01.1",
+      description:
+        "Lineage-repair bridge: 2026.08.01.1 (the headless vaultRoot filesystem backend, swamp-workspace #57) shipped without an upgrades[] entry. No resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.01.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "Fix latent bugs #1-4, #6-9: resilient decodeJid (#1), sanitizeFilename collision dedup (#2), YAML/body-delimiter escaping (#3), post-parse message schema guard (#4), timeout+obsidianBin+maxFileBytes on the obsidian CLI subprocess and file reads (#6-8), code-point-aware filename truncation (#9). Bug #5 (path traversal) was already fixed in 2026.08.01.1 and is untouched here. No resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     summary: {
@@ -378,6 +549,9 @@ export const model = {
       }),
       execute: async (args, context) => {
         const historyDir = context.globalArgs.historyDir + "/history";
+        const maxFileBytes =
+          (context.globalArgs.maxFileBytes as number | undefined) ??
+            52428800;
         const files = await listHistoryFiles(historyDir);
 
         const filtered = args.chatType === "all"
@@ -393,7 +567,12 @@ export const model = {
         }> = [];
 
         for (const file of filtered) {
-          const content = await Deno.readTextFile(file.path);
+          const content = await readFileWithCap(
+            file.path,
+            maxFileBytes,
+            context.logger,
+          );
+          if (content === undefined) continue;
 
           if (file.format === "pipe") {
             const msgs = parsePipeDelimited(content);
@@ -446,6 +625,9 @@ export const model = {
       }),
       execute: async (args, context) => {
         const historyDir = context.globalArgs.historyDir + "/history";
+        const maxFileBytes =
+          (context.globalArgs.maxFileBytes as number | undefined) ??
+            52428800;
         const files = await listHistoryFiles(historyDir);
 
         const searchTerm = args.jid.toLowerCase();
@@ -463,7 +645,12 @@ export const model = {
         const handles: unknown[] = [];
 
         for (const file of matching) {
-          const content = await Deno.readTextFile(file.path);
+          const content = await readFileWithCap(
+            file.path,
+            maxFileBytes,
+            context.logger,
+          );
+          if (content === undefined) continue;
           let messages: Array<{
             timestamp: string;
             direction: string;
@@ -473,7 +660,15 @@ export const model = {
           }>;
 
           if (file.format === "pipe") {
-            messages = parsePipeDelimited(content);
+            // LB4 fix: drop (with a warning) any message whose parsed
+            // timestamp/direction fails the model's own MessageSchema,
+            // instead of letting a single malformed message poison the
+            // whole conversation resource -- see filterValidMessages.
+            messages = filterValidMessages(
+              parsePipeDelimited(content),
+              file.jid,
+              context.logger,
+            );
           } else {
             messages = parsePlainText(content).map((m) => ({
               timestamp: m.timestamp,
@@ -538,6 +733,9 @@ export const model = {
       }),
       execute: async (args, context) => {
         const historyDir = context.globalArgs.historyDir + "/history";
+        const maxFileBytes =
+          (context.globalArgs.maxFileBytes as number | undefined) ??
+            52428800;
         const files = await listHistoryFiles(historyDir);
 
         const filtered = args.chatType === "all"
@@ -556,32 +754,38 @@ export const model = {
         }> = [];
 
         for (const file of filtered) {
-          const content = await Deno.readTextFile(file.path);
+          const content = await readFileWithCap(
+            file.path,
+            maxFileBytes,
+            context.logger,
+          );
 
-          if (file.format === "pipe") {
-            for (const msg of parsePipeDelimited(content)) {
-              if (msg.body.toLowerCase().includes(searchLower)) {
-                allMatches.push({
-                  ...msg,
-                  jid: file.jid,
-                  conversationType: file.chatType,
-                });
+          if (content !== undefined) {
+            if (file.format === "pipe") {
+              for (const msg of parsePipeDelimited(content)) {
+                if (msg.body.toLowerCase().includes(searchLower)) {
+                  allMatches.push({
+                    ...msg,
+                    jid: file.jid,
+                    conversationType: file.chatType,
+                  });
+                }
               }
-            }
-          } else {
-            for (const msg of parsePlainText(content)) {
-              if (
-                msg.body.toLowerCase().includes(searchLower) ||
-                msg.sender.toLowerCase().includes(searchLower)
-              ) {
-                allMatches.push({
-                  timestamp: msg.timestamp,
-                  direction: "from",
-                  sender: msg.sender,
-                  body: msg.body,
-                  jid: file.jid,
-                  conversationType: file.chatType,
-                });
+            } else {
+              for (const msg of parsePlainText(content)) {
+                if (
+                  msg.body.toLowerCase().includes(searchLower) ||
+                  msg.sender.toLowerCase().includes(searchLower)
+                ) {
+                  allMatches.push({
+                    timestamp: msg.timestamp,
+                    direction: "from",
+                    sender: msg.sender,
+                    body: msg.body,
+                    jid: file.jid,
+                    conversationType: file.chatType,
+                  });
+                }
               }
             }
           }
@@ -642,8 +846,16 @@ export const model = {
             "Either 'vault' or 'vaultPath' must be provided (or set the vaultRoot global argument)",
           );
         }
+        const timeoutMs =
+          (context.globalArgs.timeoutMs as number | undefined) ?? 30000;
+        const obsidianBin =
+          (context.globalArgs.obsidianBin as string | undefined) ??
+            "obsidian";
+        const maxFileBytes =
+          (context.globalArgs.maxFileBytes as number | undefined) ??
+            52428800;
         const vaultPath = args.vaultPath || vaultRoot ||
-          await getVaultPath(args.vault!);
+          await getVaultPath(args.vault!, timeoutMs, obsidianBin);
         // Synthetic globalArgs so the copied resolveVaultPathSafe helper can
         // confine noteDir/notePath under vaultPath regardless of which of
         // the three precedence tiers produced it.
@@ -689,9 +901,23 @@ export const model = {
           firstMessage?: string;
           lastMessage?: string;
         }> = [];
+        // LB2 fix: tracks how many times each sanitizeFilename() stem has
+        // already been used in THIS run, so two distinct JIDs that collide
+        // to the same filename (one with a literal "-", one with a "/" that
+        // sanitizeFilename replaces with "-") get " (2)", " (3)", ... suffixes
+        // instead of the second write silently clobbering the first.
+        const usedStems = new Map<string, number>();
 
         for (const file of filtered) {
-          const content = await Deno.readTextFile(file.path);
+          const content = await readFileWithCap(
+            file.path,
+            maxFileBytes,
+            context.logger,
+          );
+          if (content === undefined) {
+            skipped++;
+            continue;
+          }
           let md = "";
           let msgCount = 0;
           let firstDate = "";
@@ -712,9 +938,9 @@ export const model = {
               ? "conference"
               : "dm";
             md += "---\n";
-            md += `title: "${file.jid.replace(/"/g, '\\"')}"\n`;
+            md += `title: "${yamlEscape(file.jid)}"\n`;
             md += `type: ${typeTag}\n`;
-            md += `jid: "${file.jid}"\n`;
+            md += `jid: "${yamlEscape(file.jid)}"\n`;
             md += `messages: ${msgCount}\n`;
             md += `first_message: ${firstDate}\n`;
             md += `last_message: ${lastDate}\n`;
@@ -729,8 +955,10 @@ export const model = {
                 md += `\n### ${dateStr}\n\n`;
                 currentDate = dateStr;
               }
-              const arrow = msg.direction === "to" ? "\u2192" : "\u2190";
-              md += `**${timeStr} ${arrow}** ${msg.body}\n\n`;
+              const arrow = msg.direction === "to" ? "→" : "←";
+              md += `**${timeStr} ${arrow}** ${
+                neutralizeBodyDelimiters(msg.body)
+              }\n\n`;
             }
           } else {
             // Conference plain-text format
@@ -744,10 +972,12 @@ export const model = {
             lastDate = msgs[msgs.length - 1].timestamp.slice(0, 10);
 
             md += "---\n";
-            md += `title: "${file.jid.replace(/"/g, '\\"')}"\n`;
+            md += `title: "${yamlEscape(file.jid)}"\n`;
             md += `type: conference\n`;
-            md += `jid: "${file.jid}"\n`;
-            if (file.account) md += `account: "${file.account}"\n`;
+            md += `jid: "${yamlEscape(file.jid)}"\n`;
+            if (file.account) {
+              md += `account: "${yamlEscape(file.account)}"\n`;
+            }
             md += `messages: ${msgCount}\n`;
             md += `first_message: ${firstDate}\n`;
             md += `last_message: ${lastDate}\n`;
@@ -762,11 +992,18 @@ export const model = {
                 md += `\n### ${dateStr}\n\n`;
                 currentDate = dateStr;
               }
-              md += `**${timeStr} ${msg.sender}:** ${msg.body}\n\n`;
+              md += `**${timeStr} ${msg.sender}:** ${
+                neutralizeBodyDelimiters(msg.body)
+              }\n\n`;
             }
           }
 
-          const safeFile = sanitizeFilename(file.jid);
+          const rawStem = sanitizeFilename(file.jid);
+          const priorUses = usedStems.get(rawStem) ?? 0;
+          usedStems.set(rawStem, priorUses + 1);
+          const safeFile = priorUses === 0
+            ? rawStem
+            : `${rawStem} (${priorUses + 1})`;
           const noteTarget = await resolveVaultPathSafe(
             pathGlobalArgs,
             `${args.folder}/${safeFile}.md`,

@@ -4,9 +4,11 @@
  * test here answers "if someone deletes/weakens this guard, does a test go
  * red?"
  *
- * Also pins bug #8 (unbounded memory -- no streaming/cap on whole-file
- * reads or the all-file scan), tracked in the LOCAL `jabber-latent-bugs`
- * issue-lifecycle model.
+ * Also pins the FIX for bug #8 (unbounded memory -- no streaming/cap on
+ * whole-file reads or the all-file scan), formerly tracked in the LOCAL
+ * `jabber-latent-bugs` issue-lifecycle model: a new `maxFileBytes` global
+ * argument now caps how large a single history file may be before it is
+ * skipped (with a warning) instead of read whole.
  *
  * The "backend selection branch matrix" section near the end covers
  * importToObsidian's destination-resolution precedence added for
@@ -290,13 +292,18 @@ Deno.test("guard: with fewer than 20 writes, no 'Progress:' line is ever logged"
 });
 
 // ---------------------------------------------------------------------------
-// bug #8 (LOW) -- unbounded memory: no streaming, no cap, on either a
-// whole-file read or the all-file directory scan. A few thousand messages
-// in ONE file are read entirely into memory in one `Deno.readTextFile` call
-// with no size guard anywhere in list/read/search/importToObsidian.
+// FIXED (was bug #8) -- unbounded memory: no streaming, no cap, on either a
+// whole-file read or the all-file directory scan. A new `maxFileBytes`
+// global argument (default 52428800 = 50 MiB) now makes `readFileWithCap`
+// `Deno.stat` each file and skip (with a warning) any file over the cap
+// instead of reading it whole. The default cap is far above any realistic
+// history file, so the ORIGINAL 4000-message pin below is UNCHANGED and
+// stays green -- it now re-characterizes "default behavior below the cap"
+// rather than "no cap exists at all". The second test below exercises the
+// cap itself with a caller-set low `maxFileBytes`.
 // ---------------------------------------------------------------------------
 
-Deno.test("bug #8: a several-thousand-message file is read entirely into memory with no cap or streaming -- messageCount reflects every single message", async () => {
+Deno.test("bug #8 default (below the maxFileBytes cap): a several-thousand-message file is still read entirely into memory -- messageCount reflects every single message", async () => {
   const N = 4000;
   const lines: string[] = [];
   for (let i = 0; i < N; i++) {
@@ -314,8 +321,40 @@ Deno.test("bug #8: a several-thousand-message file is read entirely into memory 
       assertEquals(
         bulk!.messageCount,
         N,
-        "no truncation/cap -- every one of the N messages was parsed and counted",
+        "well under the default 50 MiB cap -- every one of the N messages was parsed and counted, same as before the fix",
       );
+    },
+  );
+});
+
+Deno.test("FIXED (was bug #8): a file whose size exceeds a caller-set maxFileBytes cap is skipped, not read into memory", async () => {
+  const N = 200;
+  const lines: string[] = [];
+  for (let i = 0; i < N; i++) {
+    lines.push(`|2024-11-01T00:00:00Z|1|to|0|bulk message number ${i}`);
+  }
+  const content = lines.join("\n") + "\n";
+  await withTempHistoryDir(
+    { "toobig_at_example.com.history": content },
+    async (historyDir) => {
+      const { ctx, written, logs } = makeCtx(historyDir);
+      (ctx.globalArgs as Record<string, unknown>).maxFileBytes =
+        content.length - 1;
+      await run("list", { chatType: "all" }, ctx);
+      const conversations = written[0].payload.conversations as Array<
+        { jid: string }
+      >;
+      const toobig = conversations.find((c) => c.jid === "toobig@example.com");
+      assertEquals(
+        toobig,
+        undefined,
+        "the over-cap file must not appear in list output at all",
+      );
+      const warnLog = logs.find((l) =>
+        typeof l.args[0] === "string" &&
+        (l.args[0] as string).includes("maxFileBytes")
+      );
+      assert(warnLog, "expected a warn log naming the maxFileBytes cap");
     },
   );
 });

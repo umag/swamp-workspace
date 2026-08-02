@@ -5,13 +5,14 @@
 # Backfilled to full five-suite compliance by ext-quality-bf-jabber (wave-4
 # batch-4a child of ext-quality-test-backfill), then extended for
 # swamp-workspace #57 (headless `vaultRoot` filesystem backend, mirroring PR
-# #56's obsidian-vault backend split — model version 2026.08.01.1). This
-# model parses NO XML (Psi/Psi+ pipe-delimited + plain-text formats only) —
-# the adversarial suite falsifies XXE applicability with a covered-negative.
-# 8 already-shipped latent bugs remain tracked in the LOCAL
-# jabber-latent-bugs issue-lifecycle model (never filed to the Lab); latent
-# bug #5 (folder path traversal) was FIXED by the #57 path-confinement
-# change — see CHANGELOG.md.
+# #56's obsidian-vault backend split — model version 2026.08.01.1), then
+# again for the jabber-latent-bugs real-fix pass (model version
+# 2026.08.02.1). This model parses NO XML (Psi/Psi+ pipe-delimited +
+# plain-text formats only) — the adversarial suite falsifies XXE
+# applicability with a covered-negative. All 9 latent bugs tracked in the
+# LOCAL jabber-latent-bugs issue-lifecycle model (never filed to the Lab)
+# are now FIXED: #5 (folder path traversal) by the #57 path-confinement
+# change, #1-4/#6-9 by the 2026.08.02.1 real-fix pass — see CHANGELOG.md.
 #
 # Role map (each test file assigned to exactly ONE suite):
 #   contract-fixture        -> jabber_test.ts
