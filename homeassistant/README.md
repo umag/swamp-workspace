@@ -7,7 +7,7 @@ all written back as typed, queryable swamp resources.
 
 ## Configuration
 
-The model takes three global arguments. Store the long-lived access token in a
+The model takes four global arguments. Store the long-lived access token in a
 vault and reference it; never inline the token.
 
 ```yaml
@@ -18,14 +18,16 @@ globalArguments:
   host: "homeassistant.example.com"
   token: "${{ vault.get(home-assistant, HA_TOKEN) }}"
   protocol: "https"
+  wsTimeoutMs: 60000
 methods: {}
 ```
 
-| Argument   | Required | Description                                      |
-| ---------- | -------- | ------------------------------------------------ |
-| `host`     | yes      | Host (e.g. `homeassistant.example.com` or an IP) |
-| `token`    | yes      | Long-lived access token (use a vault reference)  |
-| `protocol` | no       | `http` or `https` (default `https`)              |
+| Argument      | Required | Description                                                       |
+| ------------- | -------- | ----------------------------------------------------------------- |
+| `host`        | yes      | Host (e.g. `homeassistant.example.com` or an IP)                  |
+| `token`       | yes      | Long-lived access token (use a vault reference; marked sensitive) |
+| `protocol`    | no       | `http` or `https` (default `https`)                               |
+| `wsTimeoutMs` | no       | WebSocket statistics request timeout in ms (default `60000`)      |
 
 Create the vault and store the token:
 
@@ -83,6 +85,12 @@ imports them into a VictoriaMetrics instance so historical data sits alongside
 live scrapes. Point it at your own VM endpoint with the `vmUrl` argument (it
 defaults to a documentation-only placeholder such as
 `http://203.0.113.10:8428`).
+
+A per-entity statistics fetch failure (bad statistic id, transient WS drop, auth
+hiccup) no longer aborts the whole batch: that entity's `backfill-report`
+summary carries a redacted `error` string and `0` points, while every other
+entity is still imported normally. Re-running is safe — inspect
+`entities[].error` to see which ids need attention.
 
 ## License
 

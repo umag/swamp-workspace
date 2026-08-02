@@ -8,11 +8,15 @@
 # against a stubbed fetch + a novel FakeWebSocket scripted-responder (the
 # model's one WS path, fetchStatistics) + a fake context.
 #
-# homeassistant.ts v2026.08.01.1 folds in fixes for two HIGH findings from the
-# local `homeassistant-latent-bugs` issue-lifecycle model (WS clean-close hang
-# + latent msg.id non-correlation) — homeassistant.ts is NO LONGER unmodified;
-# see CHANGELOG.md. All remaining MED/LOW findings from that model are still
-# characterized (pinned), not fixed.
+# homeassistant.ts v2026.08.02.1 real-fixes all nine originally tracked
+# findings (LB1-LB9) from the local `homeassistant-latent-bugs` issue-lifecycle
+# model — the two HIGH findings (WS clean-close hang, msg.id non-correlation)
+# landed in 2026.08.01.1, and the remaining seven MED/LOW findings (non-JSON
+# frame handling, server-echoed token redaction, encodeURIComponent REST
+# paths, sensitive token meta, symmetric backfill fan-out, statistics
+# missing-key/empty distinction, defaulted WS timeout + surfaced close
+# errors) land in 2026.08.02.1; see CHANGELOG.md. Every suite proves the fix
+# via a flipped pin rather than merely characterizing the prior behavior.
 schemaVersion: 1
 extension: homeassistant
 tests:

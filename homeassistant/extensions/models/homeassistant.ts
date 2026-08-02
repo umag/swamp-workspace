@@ -2,13 +2,73 @@ import { z } from "npm:zod@4";
 
 const InputSchema = z.object({
   host: z.string().describe("Home Assistant host (e.g., homeassistant.local)"),
-  token: z.string().describe(
+  token: z.string().meta({ sensitive: true }).describe(
     "Long-lived access token - use vault: ${{ vault.get(my-vault, HA_TOKEN) }}",
   ),
   protocol: z.string().optional().describe(
     "Protocol (http or https, default: https)",
   ),
+  wsTimeoutMs: z.number().int().positive().default(60000).describe(
+    "WebSocket statistics request timeout in ms (default: 60000)",
+  ),
 });
+
+/**
+ * Redact the caller's own token from a server-controlled string. Coerces
+ * every input shape (an `Error`'s `.message`, or anything else via
+ * `String()`) to a string first, then replaces the exact token with
+ * `<redacted>`. Strict no-op when `token` is falsy or the text doesn't
+ * contain it, so every benign message (no token echo) stays byte-identical —
+ * mirrors telegram-send's `redactToken`.
+ */
+function redactToken(message: unknown, token: string): string {
+  const text = typeof message === "string"
+    ? message
+    : message instanceof Error
+    ? message.message
+    : String(message);
+  return token ? text.split(token).join("<redacted>") : text;
+}
+
+/**
+ * Build a redacted stand-in for a caught error's cause chain. `cause` must
+ * NEVER be the raw caught error: `Deno.inspect()`/console formatting and
+ * Deno's uncaught-error printer walk `.cause` (including its `.stack`, whose
+ * first line embeds the message), so attaching the original as-is would
+ * silently reopen the leak this helper exists to close. Returns a FRESH
+ * single-level `Error` preserving `.name` and a redacted `.stack`; any deeper
+ * nested cause on the original is intentionally dropped (mirrors
+ * telegram-send/headphones precedent).
+ */
+function redactedCause(err: unknown, token: string): unknown {
+  if (err instanceof Error) {
+    const redacted = new Error(redactToken(err, token));
+    redacted.name = err.name;
+    if (typeof err.stack === "string") {
+      redacted.stack = redactToken(err.stack, token);
+    }
+    return redacted;
+  }
+  return redactToken(err, token);
+}
+
+/**
+ * Close a WebSocket, swallowing (never re-throwing) a close-time failure so
+ * it can never clobber the real rejection reason already in flight. Unlike
+ * the former silent `catch {}`, the failure is surfaced via
+ * `logger.warning` (redacted) so it's diagnosable without changing behavior.
+ */
+function closeQuietly(
+  ws: WebSocket,
+  token: string,
+  logger?: { warning: (...args: unknown[]) => void },
+) {
+  try {
+    ws.close();
+  } catch (e) {
+    logger?.warning(`WebSocket close failed: ${redactToken(e, token)}`);
+  }
+}
 
 async function fetchStatistics(
   host,
@@ -18,6 +78,8 @@ async function fetchStatistics(
   startTime,
   endTime,
   period,
+  timeoutMs = 60000,
+  logger?: { warning: (...args: unknown[]) => void },
 ): Promise<Record<string, unknown>[]> {
   const wsProto = (protocol || "https") === "https" ? "wss" : "ws";
   const wsUrl = `${wsProto}://${host}/api/websocket`;
@@ -27,18 +89,22 @@ async function fetchStatistics(
     let done = false;
     const timer = setTimeout(() => {
       done = true;
-      try {
-        ws.close();
-      } catch {
-        // ignore close errors
-      }
-      reject(new Error("WebSocket timeout after 60s"));
-    }, 60000);
+      closeQuietly(ws, token, logger);
+      reject(new Error(`WebSocket timeout after ${timeoutMs / 1000}s`));
+    }, timeoutMs);
     ws.addEventListener("message", (ev) => {
       let msg;
       try {
         msg = JSON.parse(ev.data);
       } catch {
+        // A non-JSON frame can never become our expected result — fail fast
+        // rather than silently waiting out the full timeout. The message is
+        // static (never echoes `ev.data`, which is server-controlled) so
+        // this can't reopen the LB4 token-leak surface.
+        done = true;
+        clearTimeout(timer);
+        closeQuietly(ws, token, logger);
+        reject(new Error("WebSocket received a non-JSON frame"));
         return;
       }
       if (msg.type === "auth_required") {
@@ -55,12 +121,8 @@ async function fetchStatistics(
       } else if (msg.type === "auth_invalid") {
         done = true;
         clearTimeout(timer);
-        try {
-          ws.close();
-        } catch {
-          // ignore close errors
-        }
-        reject(new Error(`Auth invalid: ${msg.message}`));
+        closeQuietly(ws, token, logger);
+        reject(new Error(redactToken(`Auth invalid: ${msg.message}`, token)));
       } else if (msg.type === "result") {
         if (msg.id !== requestId) {
           // Not our command's response (e.g. a foreign/stale id on a
@@ -70,23 +132,53 @@ async function fetchStatistics(
         }
         done = true;
         clearTimeout(timer);
-        try {
-          ws.close();
-        } catch {
-          // ignore close errors
-        }
+        closeQuietly(ws, token, logger);
         if (!msg.success) {
-          reject(new Error(`WS error: ${JSON.stringify(msg.error)}`));
+          reject(
+            new Error(
+              redactToken(`WS error: ${JSON.stringify(msg.error)}`, token),
+            ),
+          );
           return;
         }
-        resolve((msg.result && msg.result[statisticId]) || []);
+        const result = msg.result;
+        if (result && typeof result === "object") {
+          if (statisticId in result) {
+            // Present key (including an explicitly empty array) — pass
+            // through verbatim.
+            resolve(result[statisticId] || []);
+            return;
+          }
+          if (Object.keys(result).length === 0) {
+            // HA omits the key entirely for a legitimately empty range —
+            // an empty object is NOT malformed, resolve to no points.
+            resolve([]);
+            return;
+          }
+          // The frame has OTHER keys but not ours — we only ever request one
+          // statistic id, so this is anomalous, not a legit empty range.
+          reject(
+            new Error(
+              `Statistics response omitted requested statistic '${statisticId}'`,
+            ),
+          );
+          return;
+        }
+        reject(new Error("Statistics response missing result payload"));
       }
     });
     ws.addEventListener("error", (e) => {
       done = true;
       clearTimeout(timer);
       const errEvent = e as Event & { message?: string };
-      reject(new Error(`WS error: ${errEvent.message || errEvent.type}`));
+      reject(
+        new Error(
+          redactToken(
+            `WS error: ${errEvent.message || errEvent.type}`,
+            token,
+          ),
+        ),
+      );
     });
     ws.addEventListener("close", () => {
       if (done) return;
@@ -100,21 +192,29 @@ async function fetchStatistics(
 async function haFetch(host, token, path, protocol, options: RequestInit = {}) {
   const proto = protocol || "https";
   const url = `${proto}://${host}/api${path}`;
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  } catch (e) {
+    throw new Error(redactToken(e, token), { cause: redactedCause(e, token) });
+  }
 
   if (!response.ok) {
     const body = await response.text();
     throw new Error(
-      `HA API ${
-        options.method || "GET"
-      } ${path} failed: ${response.status} - ${body}`,
+      redactToken(
+        `HA API ${
+          options.method || "GET"
+        } ${path} failed: ${response.status} - ${body}`,
+        token,
+      ),
     );
   }
 
@@ -128,8 +228,28 @@ async function haFetch(host, token, path, protocol, options: RequestInit = {}) {
  */
 export const model = {
   type: "@magistr/homeassistant",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
   globalArguments: InputSchema,
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.01.1",
+      description:
+        "Lineage-repair bridge for the LB1/LB2 WS-hardening release (no data migration).",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.01.1",
+      toVersion: "2026.08.02.1",
+      description: "Real-fix LB3-LB9: non-JSON-frame error, token redaction, " +
+        "encodeURIComponent REST paths, sensitive token meta, symmetric " +
+        "backfill fan-out (+ optional backfill-report.error), statistics " +
+        "missing-key/empty distinction, defaulted wsTimeoutMs global arg + " +
+        "surfaced close errors. Additive schema + defaulted global arg " +
+        "only; no data migration.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   resources: {
     "states": {
       schema: z.object({
@@ -237,6 +357,10 @@ export const model = {
           points: z.number(),
           firstTs: z.string().optional(),
           lastTs: z.string().optional(),
+          error: z.string().optional().describe(
+            "Set when this entity's statistics fetch failed; its samples " +
+              "are skipped but the fan-out continues for the rest",
+          ),
         })),
         totalSamples: z.number(),
         timestamp: z.string(),
@@ -305,7 +429,7 @@ export const model = {
         const state = await haFetch(
           host,
           token,
-          `/states/${entityId}`,
+          `/states/${encodeURIComponent(entityId)}`,
           protocol,
         );
 
@@ -354,7 +478,9 @@ export const model = {
         const result = await haFetch(
           host,
           token,
-          `/services/${domain}/${service}`,
+          `/services/${encodeURIComponent(domain)}/${
+            encodeURIComponent(service)
+          }`,
           protocol,
           {
             method: "POST",
@@ -458,7 +584,7 @@ export const model = {
         const config = await haFetch(
           host,
           token,
-          `/config/automation/config/${automationId}`,
+          `/config/automation/config/${encodeURIComponent(automationId)}`,
           protocol,
         );
 
@@ -550,6 +676,7 @@ export const model = {
         const { host, token, protocol } = context.globalArgs;
         const { statisticId, startTime, endTime } = args;
         const period = args.period || "hour";
+        const timeoutMs = context.globalArgs.wsTimeoutMs ?? 60000;
 
         const points = await fetchStatistics(
           host,
@@ -559,6 +686,8 @@ export const model = {
           startTime,
           endTime,
           period,
+          timeoutMs,
+          context.logger,
         );
 
         const header = "start,end,mean,min,max,last_reset,state,sum";
@@ -619,28 +748,52 @@ export const model = {
         const aggregator = args.aggregator || "mean";
         const vmUrl = args.vmUrl || "http://203.0.113.10:8428";
         const instance = args.instance || "203.0.113.10:8123";
+        const timeoutMs = context.globalArgs.wsTimeoutMs ?? 60000;
 
         const lines: string[] = [];
         const summaries: Array<Record<string, unknown>> = [];
         let total = 0;
 
         for (const ent of args.entities) {
-          const points = await fetchStatistics(
-            host,
-            token,
-            protocol,
-            ent.entityId,
-            args.startTime,
-            args.endTime,
-            period,
-          );
+          // One entity's statistics fetch failing (auth hiccup, a bad
+          // statistic id, a WS drop) must not tear down the whole fan-out —
+          // record a per-entity `error` (redacted) and move on to the next
+          // entity, mirroring the existing `/states` swallow-to-`{}` guard
+          // just below (headphones onboard-artists / seadex summary.errors
+          // precedent).
+          let points: Record<string, unknown>[];
+          try {
+            points = await fetchStatistics(
+              host,
+              token,
+              protocol,
+              ent.entityId,
+              args.startTime,
+              args.endTime,
+              period,
+              timeoutMs,
+              context.logger,
+            );
+          } catch (e) {
+            const message = redactToken(e, token);
+            context.logger?.warning?.(
+              `backfill-to-vm: statistics fetch failed for ${ent.entityId}: ${message}`,
+            );
+            summaries.push({
+              entityId: ent.entityId,
+              metricName: ent.metricName,
+              points: 0,
+              error: message,
+            });
+            continue;
+          }
 
           let stateResp: Record<string, unknown> = {};
           try {
             stateResp = await haFetch(
               host,
               token,
-              `/states/${ent.entityId}`,
+              `/states/${encodeURIComponent(ent.entityId)}`,
               protocol,
             );
           } catch {
@@ -699,7 +852,9 @@ export const model = {
           });
           if (!resp.ok) {
             const text = await resp.text();
-            throw new Error(`VM import failed: ${resp.status} - ${text}`);
+            throw new Error(
+              redactToken(`VM import failed: ${resp.status} - ${text}`, token),
+            );
           }
         }
 
@@ -734,7 +889,7 @@ export const model = {
         const result = await haFetch(
           host,
           token,
-          `/config/automation/config/${automationId}`,
+          `/config/automation/config/${encodeURIComponent(automationId)}`,
           protocol,
           {
             method: "POST",

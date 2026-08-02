@@ -4,9 +4,12 @@
  * deleting any one of these guards turns a test red (STANDARD.md's coverage
  * role — a behavioral regression guard, not a numeric percentage).
  *
- * homeassistant.ts is UNMODIFIED; every test PINS existing behavior.
+ * homeassistant.ts v2026.08.02.1 real-fixes LB3-LB9 (see CHANGELOG.md); the
+ * guards below that changed shape (the statistics missing-key/empty
+ * distinction, the sensitive token meta) are flipped to prove-fixed tests
+ * ("fix:"/"new:"), every other guard here still PINS unchanged behavior.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { z } from "npm:zod@4";
 import { model } from "./homeassistant.ts";
 import states from "../../fixtures/states.json" with { type: "json" };
@@ -248,8 +251,8 @@ Deno.test("get-statistics: msg.result PRESENT and HAS the statisticId key -> the
   assertEquals(written.find((w) => w.spec === "statistics")!.payload.count, 1);
 });
 
-Deno.test("get-statistics: msg.result PRESENT but MISSING the requested statisticId key -> []", async () => {
-  const { ctx, written } = makeCtx();
+Deno.test("fix: get-statistics: msg.result PRESENT but with OTHER keys, missing the requested statisticId -> rejects 'omitted requested statistic' (flip of the former []-masking pin)", async () => {
+  const { ctx } = makeCtx();
   await withWebSocketStub(
     [
       AUTH_REQUIRED,
@@ -257,19 +260,41 @@ Deno.test("get-statistics: msg.result PRESENT but MISSING the requested statisti
       resultFrame({ "sensor.other_entity": [{ start: 1 }] }),
     ],
     () =>
-      run("get-statistics", {
-        statisticId: "sensor.example_temperature",
-        startTime: "2026-01-01T00:00:00Z",
-        endTime: "2026-01-01T01:00:00Z",
-      }, ctx),
+      assertRejects(
+        () =>
+          run("get-statistics", {
+            statisticId: "sensor.example_temperature",
+            startTime: "2026-01-01T00:00:00Z",
+            endTime: "2026-01-01T01:00:00Z",
+          }, ctx),
+        Error,
+        "omitted requested statistic",
+      ),
   );
-  assertEquals(written.find((w) => w.spec === "statistics")!.payload.count, 0);
 });
 
-Deno.test("get-statistics: msg.result is FALSY (absent from the frame entirely) -> [] (short-circuits before the key lookup)", async () => {
-  const { ctx, written } = makeCtx();
+Deno.test("fix: get-statistics: msg.result is FALSY (absent from the frame entirely) -> rejects 'missing result payload' (flip of the former []-masking pin)", async () => {
+  const { ctx } = makeCtx();
   await withWebSocketStub(
     [AUTH_REQUIRED, AUTH_OK, msg({ id: 1, type: "result", success: true })],
+    () =>
+      assertRejects(
+        () =>
+          run("get-statistics", {
+            statisticId: "sensor.example_temperature",
+            startTime: "2026-01-01T00:00:00Z",
+            endTime: "2026-01-01T01:00:00Z",
+          }, ctx),
+        Error,
+        "missing result payload",
+      ),
+  );
+});
+
+Deno.test("new: get-statistics: msg.result is an EMPTY OBJECT ({}) -> resolves [] / count 0 — a legitimately empty range (HA omits the key entirely), NOT an error", async () => {
+  const { ctx, written } = makeCtx();
+  await withWebSocketStub(
+    [AUTH_REQUIRED, AUTH_OK, resultFrame({})],
     () =>
       run("get-statistics", {
         statisticId: "sensor.example_temperature",
@@ -764,23 +789,18 @@ Deno.test("call-service: entityId OVERWRITES an entity_id key already present in
 // Security-review finding: the token field is NOT marked sensitive
 // =============================================================================
 
-Deno.test("pin: token is NOT marked `.meta({ sensitive: true })` today — documented security-hardening gap", () => {
-  // Unlike stripe-mpp's secretKey/serverSecret, homeassistant.ts's
-  // globalArguments schema never calls `.meta({ sensitive: true })` on
-  // `token`. This is a real gap surfaced during the test-backfill security
-  // review, but homeassistant.ts is deliberately UNMODIFIED by this change
-  // (no manifest version bump; the plan is test-authoring only) — fixing it
-  // is tracked in the local `homeassistant-latent-bugs` model. This test
-  // pins the CURRENT (regrettable) state so a future fix flips it from
-  // failing to passing, rather than silently slipping by unnoticed.
+Deno.test("fix: token is now marked `.meta({ sensitive: true })` (flip of the former security-hardening-gap pin)", () => {
+  // Mirrors stripe-mpp's secretKey/serverSecret and telegram-send's botToken:
+  // homeassistant.ts's globalArguments schema now calls
+  // `.meta({ sensitive: true })` on `token`, closing the gap the security
+  // review surfaced (tracked in the local `homeassistant-latent-bugs` model).
   const shape = (model.globalArguments as z.ZodObject<z.ZodRawShape>).shape;
   const meta = z.globalRegistry.get(shape.token) as
     | { sensitive?: boolean }
     | undefined;
   assertEquals(
     meta?.sensitive,
-    undefined,
-    "token is not yet marked sensitive — if this starts failing, " +
-      "homeassistant.ts added the annotation; update this pin to assert true",
+    true,
+    "token must be marked sensitive now that homeassistant.ts adds the annotation",
   );
 });
