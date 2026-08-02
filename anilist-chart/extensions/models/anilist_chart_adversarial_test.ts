@@ -5,27 +5,42 @@
  * plus focused pure-function pins for the two lowest-level latent bugs
  * (LB2, LB7) that resist stubbing through the model boundary.
  *
- * anilist_chart.ts + every lib/*.ts file are UNMODIFIED — every test here
- * PINS current, already-shipped behavior (including 7 accepted latent bugs,
- * see the LOCAL `anilist-chart-latent-bugs` issue-lifecycle model — never
- * the Lab) rather than proposing a fix. Fixtures are entirely SYNTHETIC:
- * invented titles/users, RFC 2606 hosts (`.example.test`), no real AniList
- * data or hostnames.
+ * `2026.08.02.1` REAL-FIXED all 7 latent bugs tracked in the LOCAL
+ * `anilist-chart-latent-bugs` issue-lifecycle model (never the Lab). Every
+ * test that used to PIN a bug (LB2, LB3, LB5, LB7 here) now asserts the FIXED
+ * behavior instead; the rest of this file (hostile-response characterization,
+ * HTML/CSS injection defenses, SQL-injection defenses, credential sweep) is
+ * an unchanged characterization of already-shipped behavior. Fixtures are
+ * entirely SYNTHETIC: invented titles/users, RFC 2606 hosts
+ * (`.example.test`), no real AniList data or hostnames.
  *
- * Latent bug map (all LOW/MEDIUM, 0 CRITICAL/HIGH):
- *   LB1 (MED) read-phase ClickHouse failure aborts render, no diagnostic
- *       marker — see anilist_chart_methods_test.ts (dedicated test there).
- *   LB2 (MED) no ssh publish timeout — pinned HERE via a source-text scan.
- *   LB3 (MED) unbounded response buffering / no row cap — pinned HERE.
- *   LB4 (LOW) malformed freshness timestamp silently disables the
- *       staleness anomaly — see anilist_chart_methods_test.ts.
- *   LB5 (LOW) non-numeric media_id poisons metadata read, aborting the
- *       whole render — pinned HERE (end-to-end) + methods_test.ts (wiring).
- *   LB6 (LOW) ClickHouse error echoes response body into thrown error, no
+ * Latent bug map (all LOW/MEDIUM, 0 CRITICAL/HIGH) — ALL FIXED in
+ * `2026.08.02.1`, see CHANGELOG.md for the per-bug writeup:
+ *   LB1 (MED) read-phase ClickHouse failure now leaves a diagnostic
+ *       `renderRun` marker (write-then-rethrow) — see
+ *       anilist_chart_methods_test.ts (dedicated test there); this file's
+ *       malformed-JSONEachRow and 200-inline-exception tests below also
+ *       assert the marker now survives.
+ *   LB2 (MED) ssh publish spawn now bounded by AbortController + setTimeout +
+ *       clearTimeout — flipped HERE via a source-text scan.
+ *   LB3 (MED) ClickHouseClient.query() now caps response bytes
+ *       (`maxResponseBytes`, streamed) — flipped HERE.
+ *   LB4 (LOW) malformed freshness timestamp now surfaces an explicit
+ *       "unparseable" anomaly — see anilist_chart_methods_test.ts.
+ *   LB5 (LOW) non-numeric media_id is now filtered before it ever reaches
+ *       ClickHouse — flipped HERE (end-to-end) + methods_test.ts (wiring).
+ *   LB6 (LOW) ClickHouse error body is now trimmed+redacted, still no
  *       credential leak — see anilist_chart_methods_test.ts.
- *   LB7 (LOW) hand-rolled arrayStringParam escaping — pinned HERE.
+ *   LB7 (LOW) arrayStringParam now escapes an embedded NUL byte — flipped
+ *       HERE.
  */
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "jsr:@std/assert@1";
 import { model } from "./anilist_chart.ts";
 import {
   arrayIntParam,
@@ -198,7 +213,7 @@ function minimalRoute(overrides: {
 // Hostile ClickHouse HTTP responses
 // ===========================================================================
 
-Deno.test("hostile: malformed JSONEachRow (one valid line, one garbage line) throws a JSON parse error, aborting the whole render with no marker left behind", async () => {
+Deno.test("hostile: malformed JSONEachRow (one valid line, one garbage line) still throws a JSON parse error, but now leaves a diagnostic renderRun marker behind (LB1 fix)", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [
@@ -220,7 +235,10 @@ Deno.test("hostile: malformed JSONEachRow (one valid line, one garbage line) thr
       await assertRejects(() => run("render", {}, ctx));
     },
   );
-  assertEquals(written.find((w) => w.spec === "renderRun"), undefined);
+  const runRes = written.find((w) => w.spec === "renderRun")!;
+  assert(runRes, "a diagnostic marker must survive a parse-error read throw");
+  assertEquals(runRes.payload.ok, false);
+  assertStringIncludes(String(runRes.payload.refuseReason), "read failed");
 });
 
 Deno.test("hostile: an empty response body (zero rows) from a landing query is valid JSONEachRow -- `[0]` destructure yields `undefined`, N() coerces to 0, no throw", async () => {
@@ -248,7 +266,7 @@ Deno.test("hostile: an empty response body (zero rows) from a landing query is v
   assert(String(runRes.payload.refuseReason).includes("no score rows"));
 });
 
-Deno.test("hostile: a 200 status with a ClickHouse-style exception TEXT body (not an HTTP error code) is parsed as-if-JSON and throws a JSON syntax error, not a ClickHouse-status error", async () => {
+Deno.test("hostile: a 200 status with a ClickHouse-style exception TEXT body (not an HTTP error code) is still parsed as-if-JSON and throws a JSON syntax error, not a ClickHouse-status error -- but now leaves a diagnostic renderRun marker behind (LB1 fix)", async () => {
   // Some ClickHouse deployments can return 200 with an inline exception in
   // the body under certain settings. The client only branches on `res.ok`
   // (200-299), so this path is NOT caught by the `!res.ok` branch at all --
@@ -278,60 +296,66 @@ Deno.test("hostile: a 200 status with a ClickHouse-style exception TEXT body (no
       );
     },
   );
-  assertEquals(written.find((w) => w.spec === "renderRun"), undefined);
+  const runRes = written.find((w) => w.spec === "renderRun")!;
+  assert(runRes, "a diagnostic marker must survive this parse-error throw too");
+  assertEquals(runRes.payload.ok, false);
+  assertStringIncludes(String(runRes.payload.refuseReason), "read failed");
 });
 
 // ===========================================================================
 // LB5: non-numeric media_id poisons the metadata read, end-to-end
 // ===========================================================================
 
-Deno.test("LB5 (latent, LOW): a non-numeric media_id from distinctMediaIdsQuery becomes NaN, is sent to ClickHouse as the literal '[NaN]' array param, and a simulated real-ClickHouse rejection aborts the WHOLE render", async () => {
+Deno.test("LB5 (fixed): a non-numeric media_id from distinctMediaIdsQuery is filtered out before ever reaching ClickHouse -- render COMPLETES instead of aborting on a poisoned '[NaN]' array param", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [
       (req) =>
         (async () => {
-          const url = new URL(req.url);
           const sql = await req.text();
           if (sql.includes("SELECT DISTINCT media_id")) {
             // A non-numeric media_id — e.g. a corrupted upstream ingest row.
+            // Number("not-a-number") -> NaN -> now dropped by render()'s
+            // `.filter(Number.isFinite)` before it can ever become a
+            // ClickHouse array param (LB5).
             return jsonEachRow([{ media_id: "not-a-number" }]);
-          }
-          if (sql.includes("WHERE media_id IN {ids:Array(Int64)}")) {
-            assertEquals(
-              url.searchParams.get("param_ids"),
-              "[NaN]",
-              "arrayIntParam(NaN) truncates to the literal string 'NaN', producing an invalid Array(Int64) wire value",
-            );
-            return new Response(
-              "Code: 53. DB::Exception: Cannot parse Int64 from String, because value is too short: NaN",
-              { status: 400 },
-            );
           }
           return undefined;
         })(),
       minimalRoute(),
     ],
-    async () => {
-      await assertRejects(
-        () => run("render", {}, ctx),
-        Error,
-        "ClickHouse 400",
-      );
+    async (calls) => {
+      await run("render", {}, ctx);
+      for (const call of calls) {
+        const url = new URL(call.url);
+        assert(
+          url.searchParams.get("param_ids") !== "[NaN]",
+          "a poisoned '[NaN]' array param must never be sent to ClickHouse",
+        );
+      }
     },
   );
+  const runRes = written.find((w) => w.spec === "renderRun")!;
   assertEquals(
-    written.find((w) => w.spec === "renderRun"),
-    undefined,
-    "the whole render aborts on the poisoned metadata read -- no partial marker",
+    runRes.payload.ok,
+    true,
+    "the whole render now completes instead of aborting on the filtered id",
   );
 });
 
-Deno.test("LB5 root cause (pure): arrayIntParam has no NaN/Infinity guard -- Math.trunc passes them straight through to String()", () => {
-  assertEquals(arrayIntParam([Number.NaN]), "[NaN]");
-  assertEquals(arrayIntParam([Number.POSITIVE_INFINITY]), "[Infinity]");
-  assertEquals(arrayIntParam([Number.NEGATIVE_INFINITY]), "[-Infinity]");
-  // Sanity: the well-formed path still works correctly.
+Deno.test("LB5 root cause (fixed, pure): arrayIntParam now throws loud on a non-finite value instead of letting Math.trunc pass it straight through to String()", () => {
+  assertThrows(() => arrayIntParam([Number.NaN]), Error, "non-finite");
+  assertThrows(
+    () => arrayIntParam([Number.POSITIVE_INFINITY]),
+    Error,
+    "non-finite",
+  );
+  assertThrows(
+    () => arrayIntParam([Number.NEGATIVE_INFINITY]),
+    Error,
+    "non-finite",
+  );
+  // Sanity: the well-formed path still works correctly, byte-identical.
   assertEquals(arrayIntParam([1, -2, 3.9]), "[1,-2,3]");
 });
 
@@ -339,7 +363,42 @@ Deno.test("LB5 root cause (pure): arrayIntParam has no NaN/Infinity guard -- Mat
 // LB3: unbounded response buffering / no row cap (pure ClickHouseClient test)
 // ===========================================================================
 
-Deno.test("LB3 (latent, MEDIUM): ClickHouseClient.query() enforces no row cap -- 4000 synthetic rows all come back, none dropped", async () => {
+Deno.test("LB3 (fixed): ClickHouseClient.query() now enforces maxResponseBytes -- a response over the configured cap throws instead of buffering unbounded", async () => {
+  const ROWS = 4000;
+  const lines: string[] = [];
+  for (let i = 0; i < ROWS; i++) {
+    lines.push(JSON.stringify({ media_id: i, title_romaji: `T${i}` }));
+  }
+  const body = lines.join("\n");
+  const bodyBytes = new TextEncoder().encode(body).byteLength;
+  assert(
+    bodyBytes > 1024,
+    "sanity: the stubbed body really is over the configured cap",
+  );
+  const original = globalThis.fetch;
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response(body, { status: 200 }),
+    )) as unknown as typeof globalThis.fetch;
+  try {
+    const client = new ClickHouseClient({
+      url: "https://ch.example.test:8443",
+      user: "render_ro",
+      key: SENTINEL_KEY,
+      database: "default",
+      maxResponseBytes: 1024, // far below the ~4000-row synthetic body
+    });
+    await assertRejects(
+      () => client.query("SELECT media_id, title_romaji FROM x"),
+      Error,
+      "exceeds",
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("LB3 (fixed): a response body UNDER the configured cap still returns every row -- the cap is a ceiling, not a silent truncator", async () => {
   const ROWS = 4000;
   const original = globalThis.fetch;
   globalThis.fetch = (() => {
@@ -355,22 +414,27 @@ Deno.test("LB3 (latent, MEDIUM): ClickHouseClient.query() enforces no row cap --
       user: "render_ro",
       key: SENTINEL_KEY,
       database: "default",
+      maxResponseBytes: 10 * 1024 * 1024, // comfortably above this body
     });
     const rows = await client.query("SELECT media_id, title_romaji FROM x");
-    assertEquals(rows.length, ROWS, "no client-side LIMIT/cap on row count");
+    assertEquals(
+      rows.length,
+      ROWS,
+      "under the cap, every row still comes back -- not a silent truncator",
+    );
   } finally {
     globalThis.fetch = original;
   }
 });
 
 // ===========================================================================
-// LB2: no ssh publish timeout (structural source-text pin — the ssh branch
-// is a Deno.Command spawn; per the Deno-skew rule this suite never stubs
-// Deno.Command with an `as typeof` cast, so the absence of a timeout is
-// characterized by scanning the BYTE-FROZEN source text directly).
+// LB2: ssh publish timeout (structural source-text pin — the ssh branch is a
+// Deno.Command spawn; per the Deno-skew rule this suite never stubs
+// Deno.Command with an `as typeof` cast, so the bounded spawn is
+// characterized by scanning the source text directly).
 // ===========================================================================
 
-Deno.test("LB2 (latent, MEDIUM): the ssh publish spawn carries no AbortSignal/timeout -- a hung ssh connection blocks publish() forever", () => {
+Deno.test("LB2 (fixed): the ssh publish spawn is now bounded by AbortController + setTimeout + clearTimeout -- a hung ssh connection aborts instead of blocking publish() forever", () => {
   const src = Deno.readTextFileSync(
     new URL("./anilist_chart.ts", import.meta.url),
   );
@@ -379,10 +443,20 @@ Deno.test("LB2 (latent, MEDIUM): the ssh publish spawn carries no AbortSignal/ti
     "sanity: the ssh spawn is actually present in this file",
   );
   assert(
-    !src.includes("AbortSignal"),
-    "anilist_chart.ts's ssh Deno.Command has NO AbortSignal-based timeout " +
-      "anywhere (contrast with lib/clickhouse.ts's fetch, which DOES bound " +
-      "every request via AbortSignal.timeout) -- pinned, not fixed (byte-freeze)",
+    src.includes("AbortController"),
+    "anilist_chart.ts's ssh Deno.Command must now be bounded by an " +
+      "AbortController (contrast with lib/clickhouse.ts's fetch, which was " +
+      "already bounded via AbortSignal.timeout)",
+  );
+  assert(
+    src.includes("signal:"),
+    "the AbortController's signal must actually be wired into the " +
+      "Deno.Command options, not just constructed",
+  );
+  assert(
+    src.includes("clearTimeout"),
+    "the timer must be cleared on a fast success, not left pending " +
+      "(AbortController + setTimeout + clearTimeout, NOT AbortSignal.timeout)",
   );
 });
 
@@ -390,8 +464,9 @@ Deno.test("LB2 (latent, MEDIUM): the ssh publish spawn carries no AbortSignal/ti
 // LB7: hand-rolled arrayStringParam escaping (pure function pin)
 // ===========================================================================
 
-Deno.test("LB7 (latent, LOW): arrayStringParam's hand-rolled escaping -- pinned exact output for adversarial strings, including an UNESCAPED embedded NUL byte", () => {
-  // Backslash escaped first, then quote -- matches the source's replace order.
+Deno.test("LB7 (fixed): arrayStringParam's escaping -- pinned exact output for adversarial strings, now including an ESCAPED embedded NUL byte", () => {
+  // Backslash escaped first, then quote, then NUL -- matches the source's
+  // replace order (each new escape's backslash must not be re-doubled).
   assertEquals(arrayStringParam(["O'Brien"]), "['O\\'Brien']");
   assertEquals(arrayStringParam(["back\\slash"]), "['back\\\\slash']");
   assertEquals(
@@ -402,14 +477,12 @@ Deno.test("LB7 (latent, LOW): arrayStringParam's hand-rolled escaping -- pinned 
     arrayStringParam(["'; DROP TABLE users; --"]),
     "['\\'; DROP TABLE users; --']",
   );
-  // A NUL byte is NOT escaped by this hand-rolled function at all -- it
-  // passes straight through into the array literal. This is the exact
-  // "hand-rolled, not a vetted quoting library" risk the security review
-  // flagged (LOW: bound as a URL query param value, not raw SQL text, so
-  // there is no direct SQL-injection path here -- but the escaping is
-  // incomplete relative to a real quoting library).
+  // A NUL byte is now ENCODED as the two-character backslash-zero escape
+  // instead of passing straight through into the array literal (LB7 fix).
+  // Encode, not reject -- this is a URL query-param value, not raw SQL text,
+  // matching LB5's "don't abort the render" philosophy.
   const withNul = "before\0after";
-  assertEquals(arrayStringParam([withNul]), `['${withNul}']`);
+  assertEquals(arrayStringParam([withNul]), "['before\\0after']");
 });
 
 // ===========================================================================

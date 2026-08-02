@@ -13,6 +13,18 @@
 # rubric point (symbols-docs, 50% -> 100%). Docs-only: no runtime behavior
 # changed, no test flips. Ratchet moves 92% -> 100% (14/14) = Grade A.
 #
+# 2026.08.02.1 (anilist-chart-latent-bugs, LOCAL issue-lifecycle model):
+# real-fixed all 7 latent bugs below (LB1-LB7) in anilist_chart.ts and
+# lib/clickhouse.ts; two DEFAULTED global args added (sshTimeoutMs,
+# clickhouseMaxResponseBytes) via a single identity upgrades[] entry. All
+# five suites stay present; only the pinned characterization of each fixed
+# bug flipped from "pins the bug" to "pins the fix" (see CHANGELOG.md for
+# the exact flip list), plus one additive unit in render_run.test.ts. The
+# contract-fixture, property-invariant-flow, and happy-path methods suites
+# are byte-identical. Re-measured via `swamp extension quality
+# manifest.yaml --repo-dir <workspace-root> --json`: ratchet unchanged at
+# 100% (14/14, rubricVersion 3) — Grade A.
+#
 # Role map (the scaffolder originally dumped all 16 pre-existing test files
 # under contract-fixture; this corrects that to their HONEST primary role —
 # a suite label denotes a file's DOMINANT role, not its exclusive content,
@@ -45,10 +57,10 @@
 #     restricted arbitraries — bayesian/ranking/age-penalty/esc invariants
 #     plus one end-to-end fan-out FLOW property
 #
-# 7 accepted LOW/MEDIUM latent bugs (0 CRITICAL/HIGH) pinned by the new
-# suites are tracked in the LOCAL `anilist-chart-latent-bugs`
-# issue-lifecycle model — never the swamp.club Lab (this extension is
-# @magistr/*, not @swamp/*).
+# 7 LOW/MEDIUM latent bugs (0 CRITICAL/HIGH), tracked in the LOCAL
+# `anilist-chart-latent-bugs` issue-lifecycle model — never the
+# swamp.club Lab (this extension is @magistr/*, not @swamp/*) — are ALL
+# FIXED as of 2026.08.02.1 (see the header note above and CHANGELOG.md).
 schemaVersion: 1
 extension: anilist-chart
 tests:
@@ -109,9 +121,11 @@ ratchet:
   baselinePercentage: 100
   label: >-
     100% (14/14, rubricVersion 3) — Grade A. Five suites present, docs
-    present, rich-readme earned by expanding README.md, and symbols-docs now
-    earned: JSDoc added to the two exported symbols that were missing it
+    present, rich-readme earned by expanding README.md, and symbols-docs
+    earned: JSDoc on the two exported symbols that were missing it
     (RenderTaskBundle, model), bringing entrypoint coverage to 4/4 (100%,
-    >=80% threshold). Measured via
+    >=80% threshold). Re-measured after the 2026.08.02.1 real-fix of all 7
+    latent bugs (LB1-LB7): status "passed", allPassed true, earnedPoints
+    14/14, unchanged from the prior stamp. Measured via
     `swamp extension quality manifest.yaml --repo-dir <workspace-root> --json`
     (stdout is valid despite a non-zero exit — Lab #1481).

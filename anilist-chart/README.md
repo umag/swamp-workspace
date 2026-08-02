@@ -82,11 +82,12 @@ publish   — reads back the `renderedPage` artifacts by key and writes them to
 ```
 
 The **only** two IO seams in the whole model: `fetch` once (ClickHouse HTTP,
-`lib/clickhouse.ts` — param-bound, `AbortSignal.timeout(30_000)`) and
-`Deno.Command` once (the ssh publish fallback, `anilist_chart.ts`). Everything
-else — the awards/pairs/bayesian/age-penalty math and all four render templates
-— is pure, dependency-injected, and unit-tested without network or filesystem
-access (`deno task test`).
+`lib/clickhouse.ts` — param-bound, `AbortSignal.timeout(30_000)`, response body
+capped by `clickhouseMaxResponseBytes`) and `Deno.Command` once (the ssh publish
+fallback, `anilist_chart.ts` — bounded by `sshTimeoutMs` via `AbortController`).
+Everything else — the awards/pairs/bayesian/age-penalty math and all four render
+templates — is pure, dependency-injected, and unit-tested without network or
+filesystem access (`deno task test`).
 
 Example: driving a render manually against a configured instance —
 
@@ -95,18 +96,21 @@ swamp model method run render my-anilist-chart --input topK=13 --json
 swamp data get my-anilist-chart render-run --json
 ```
 
-## Known latent bugs (accepted, tracked locally)
+## Known latent bugs — Fixed in 2026.08.02.1
 
-Seven LOW/MEDIUM-severity gaps are characterized by the test suite and recorded
-in the LOCAL `anilist-chart-latent-bugs` issue-lifecycle model (never the
-swamp.club Lab — this is a `@magistr/*` extension, not a swamp-product issue): a
-read-phase ClickHouse failure aborts `render()` with no diagnostic marker; the
-ssh publish spawn has no timeout; the ClickHouse client buffers an unbounded
-response with no row cap; a malformed freshness timestamp silently disables the
-staleness anomaly; a non-numeric `media_id` poisons the metadata read and aborts
-the whole render; a ClickHouse error's response body is echoed verbatim into the
-thrown error (never the credential); and `arrayStringParam`'s hand-rolled
-escaping leaves an embedded NUL byte unescaped. None require a source change to
-be safe in production — see `CHANGELOG.md` for the full writeup of each, and the
-defended-negative behavior (HTML/CSS/SQL injection resistance) that the same
-suite pins as already correct.
+Seven LOW/MEDIUM-severity gaps (0 CRITICAL/HIGH), tracked in the LOCAL
+`anilist-chart-latent-bugs` issue-lifecycle model (never the swamp.club Lab —
+this is a `@magistr/*` extension, not a swamp-product issue), are ALL FIXED as
+of `2026.08.02.1`: a read-phase ClickHouse failure now leaves a diagnostic
+`renderRun` marker before re-throwing (LB1); the ssh publish spawn is now
+bounded by an `AbortController` timeout (LB2, new `sshTimeoutMs` global arg);
+the ClickHouse client now caps response bytes on a streamed read instead of
+buffering unbounded (LB3, new `clickhouseMaxResponseBytes` global arg); a
+malformed freshness timestamp now surfaces an explicit "unparseable" anomaly
+instead of a silent gap (LB4); a non-numeric `media_id` is now filtered before
+it can ever poison the metadata read (LB5); a ClickHouse error's response body
+is now trimmed and redacted before it reaches the thrown error (LB6, the
+credential itself never appeared even before this fix); and `arrayStringParam`
+now escapes an embedded NUL byte (LB7). See `CHANGELOG.md` for the full per-bug
+writeup, the two new DEFAULTED global args, and the defended-negative behavior
+(HTML/CSS/SQL injection resistance) that the same suite pins as already correct.
