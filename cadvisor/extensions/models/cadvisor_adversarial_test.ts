@@ -12,13 +12,14 @@
  * The four tests below are re-baselined to assert the single-quote-wrapped,
  * safely-escaped command strings instead of the previously-unescaped ones.
  *
- * The remaining 6 latent bugs (fragile `sed` range-delete, unnormalized
- * cpuPercent, empty-aliases name collapse, unclamped counter-reset deltas,
- * README typeVersion drift, hardcoded VM port) are still tracked, unfixed,
- * and pinned in the LOCAL `cadvisor-latent-bugs` issue-lifecycle model.
+ * As of 2026.08.02.1, all cadvisor-latent-bugs tracked in the LOCAL
+ * `cadvisor-latent-bugs` issue-lifecycle model are fixed (fragile `sed`
+ * range-delete, unnormalized cpuPercent, empty-aliases name collapse,
+ * unclamped counter-reset deltas, README typeVersion drift, hardcoded VM
+ * port); the pins below now assert the FIXED behavior.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { model } from "./cadvisor.ts";
+import { model, removeCadvisorJob } from "./cadvisor.ts";
 import dockerFixture from "../../fixtures/cadvisor-docker.json" with {
   type: "json",
 };
@@ -44,6 +45,7 @@ const GLOBAL_ARGS = {
   vmComposeDir: "/opt/victoriametrics",
   vmComposeFile: "compose-vl-single.yml",
   vmScrapeConfig: "prometheus-vl-single.yml",
+  vmPort: 8428,
 };
 
 type Written = { spec: string; name: string; payload: Record<string, unknown> };
@@ -317,12 +319,14 @@ Deno.test("hardened: contrast — the SAME hostile string used as vmComposeDir (
   const hostile = "x; touch /tmp/pwned #";
 
   // As vmComposeDir: now single-quote-escaped inside the remote command string.
+  // remove()'s VM-restart call is now at index 3 (LB2's job-scoped teardown
+  // rewrite inserted a read [1] and a rewrite [2] ahead of it).
   const { ctx: ctx1 } = makeCtx({ ...GLOBAL_ARGS, vmComposeDir: hostile });
   await withCommandStub(
     () => OK(),
     async (calls) => {
       await run("remove", {}, ctx1);
-      const cmd = sshCommandOf(calls[2]);
+      const cmd = sshCommandOf(calls[3]);
       assert(
         cmd.startsWith(`cd '${hostile}' &&`),
         "escaped via shellEsc inside the command string",
@@ -352,23 +356,93 @@ Deno.test("hardened: contrast — the SAME hostile string used as vmComposeDir (
 // remove(): unconditional, non-idempotent teardown — no existence check
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: remove() issues the SAME three commands unconditionally on every call — no 'already removed' short-circuit", async () => {
+Deno.test("pin: remove() issues the SAME four commands unconditionally on every call — no 'already removed' short-circuit", async () => {
   const { ctx } = makeCtx();
   await withCommandStub(
-    () => OK(),
+    () => OK(""),
     async (calls) => {
       await run("remove", {}, ctx);
       await run("remove", {}, ctx);
       assertEquals(
         calls.length,
-        6,
-        "two full 3-call teardown sequences — no dedup",
+        8,
+        "two full 4-call teardown sequences — no dedup",
       );
-      assertEquals(sshCommandOf(calls[0]), sshCommandOf(calls[3]));
-      assertEquals(sshCommandOf(calls[1]), sshCommandOf(calls[4]));
-      assertEquals(sshCommandOf(calls[2]), sshCommandOf(calls[5]));
+      assertEquals(sshCommandOf(calls[0]), sshCommandOf(calls[4]));
+      assertEquals(sshCommandOf(calls[1]), sshCommandOf(calls[5]));
+      assertEquals(sshCommandOf(calls[2]), sshCommandOf(calls[6]));
+      assertEquals(sshCommandOf(calls[3]), sshCommandOf(calls[7]));
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// LB2 job-scoping: remove()'s job-scoped rewrite must remove ONLY the exact
+// `- job_name: cadvisor` block — not a differently named job that merely
+// contains the substring "cadvisor", nor an unrelated job that happens to
+// share cadvisor's port. The old sed range-delete (keyed on the `cadvisor`
+// SUBSTRING and an unanchored `- .*:8080` port pattern) would have clobbered
+// both. Synthetic fixture only — see fixtures/PROVENANCE.md's capture ban.
+// ---------------------------------------------------------------------------
+
+const JOB_SCOPING_BEFORE = [
+  "global:",
+  "  scrape_interval: 30s",
+  "",
+  "scrape_configs:",
+  "  - job_name: victoriametrics",
+  "    static_configs:",
+  "      - targets:",
+  "          - localhost:8428",
+  "",
+  "  - job_name: cadvisor",
+  "    scrape_interval: 30s",
+  "    static_configs:",
+  "      - targets:",
+  "          - host.example.com:8080",
+  "",
+  "  - job_name: other-svc",
+  "    static_configs:",
+  "      - targets:",
+  "          - host.example.com:8080",
+  "",
+  "  - job_name: my-cadvisor-exporter",
+  "    static_configs:",
+  "      - targets:",
+  "          - host.example.com:9999",
+].join("\n") + "\n";
+
+Deno.test("pin: removeCadvisorJob removes ONLY the exact cadvisor job — a sibling job sharing its port (:8080) and a job whose name merely CONTAINS the substring 'cadvisor' both survive intact", () => {
+  const result = removeCadvisorJob(JOB_SCOPING_BEFORE);
+
+  assert(
+    !result.includes("job_name: cadvisor\n"),
+    "the exact cadvisor job_name line must be gone",
+  );
+  assert(
+    result.includes("job_name: other-svc"),
+    "the unrelated same-port job must survive — the old sed's `- .*:8080` " +
+      "range pattern had no job anchoring and would have deleted this too",
+  );
+  assert(
+    result.includes("job_name: my-cadvisor-exporter"),
+    "a job whose name merely CONTAINS the substring 'cadvisor' must survive " +
+      "— the old sed's `/cadvisor/d` line-delete had no job-boundary anchoring",
+  );
+  const portOccurrences = result.split(":8080").length - 1;
+  assertEquals(
+    portOccurrences,
+    1,
+    "only other-svc's :8080 target remains — cadvisor's own :8080 target line is gone",
+  );
+
+  // Idempotent: re-filtering the already-filtered config is a no-op, since no
+  // exact `job_name: cadvisor` line remains.
+  assertEquals(removeCadvisorJob(result), result);
+});
+
+Deno.test("unit: removeCadvisorJob(scrape-config-after.txt) === scrape-config-before.txt (byte-exact round trip against the committed fixtures)", () => {
+  assertEquals(removeCadvisorJob(SCRAPE_CONFIG_AFTER), SCRAPE_CONFIG_BEFORE);
 });
 
 // ---------------------------------------------------------------------------
@@ -427,11 +501,11 @@ Deno.test("pin: a single-stat container (no previous sample) yields cpuPercent/n
   assertEquals(c.networkTxMBps, 0);
 });
 
-Deno.test("pin: a counter-reset (current sample LOWER than the previous one) produces a NEGATIVE cpuPercent/networkRxMBps/networkTxMBps — no floor at 0", async () => {
-  // Documented gap (bug #5 in cadvisor-latent-bugs): current-metrics computes
-  // `latest - prev` deltas with no clamp. A container restart or counter
-  // wraparound on the real cAdvisor side would make `latest` smaller than
-  // `prev`, and this negative delta is reported as-is.
+Deno.test("pin: a counter-reset (current sample LOWER than the previous one) produces cpuPercent/networkRxMBps/networkTxMBps of exactly 0 — clamped to 0, never negative", async () => {
+  // Fixed (bug #5 in cadvisor-latent-bugs): current-metrics computes
+  // `latest - prev` deltas clamped via Math.max(0, ...). A container restart
+  // or counter wraparound on the real cAdvisor side would otherwise make
+  // `latest` smaller than `prev`, reporting a nonsensical negative rate.
   const { ctx, written } = makeCtx();
   const hostile = {
     "/docker/counterreset": {
@@ -458,18 +532,9 @@ Deno.test("pin: a counter-reset (current sample LOWER than the previous one) pro
   });
   const res = written.find((w) => w.spec === "current")!;
   const c = (res.payload.containers as Array<Record<string, unknown>>)[0];
-  assert(
-    (c.cpuPercent as number) < 0,
-    `cpuPercent must go negative, got ${c.cpuPercent}`,
-  );
-  assert(
-    (c.networkRxMBps as number) < 0,
-    `networkRxMBps must go negative, got ${c.networkRxMBps}`,
-  );
-  assert(
-    (c.networkTxMBps as number) < 0,
-    `networkTxMBps must go negative, got ${c.networkTxMBps}`,
-  );
+  assertEquals(c.cpuPercent, 0, "clamped to 0, not negative");
+  assertEquals(c.networkRxMBps, 0, "clamped to 0, not negative");
+  assertEquals(c.networkTxMBps, 0, "clamped to 0, not negative");
 });
 
 Deno.test("pin: memLimit boundary — exactly 1e18 fails the '< 1e18' guard (treated as no-limit, MB=0), but a value clearly under it passes", async () => {
@@ -519,12 +584,11 @@ Deno.test("pin: memLimit boundary — exactly 1e18 fails the '< 1e18' guard (tre
   );
 });
 
-Deno.test("pin: empty (but present) aliases array collapses the container name to the literal string 'unknown', NOT the cgroup path fallback", async () => {
-  // Documented gap (bug #4 in cadvisor-latent-bugs):
-  // `(info.aliases ? info.aliases[0] : path.split("/").pop()) ?? "unknown"`
-  // only falls back to the path when `aliases` is ABSENT. An aliases array
-  // that is present-but-empty takes the truthy branch, reads aliases[0]
-  // (undefined), and the ?? only catches THAT — losing the path fallback.
+Deno.test("pin: empty (but present) aliases array falls back to the cgroup path, NOT the literal string 'unknown'", async () => {
+  // Fixed (bug #4 in cadvisor-latent-bugs):
+  // `info.aliases?.[0] ?? path.split("/").pop() ?? "unknown"` falls back to
+  // the path whenever aliases[0] is missing — whether aliases is ABSENT or
+  // present-but-empty — instead of only when aliases is absent entirely.
   const { ctx, written } = makeCtx();
   const hostile = {
     "/docker/deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead": {
@@ -543,10 +607,13 @@ Deno.test("pin: empty (but present) aliases array collapses the container name t
   });
   const res = written.find((w) => w.spec === "current")!;
   const c = (res.payload.containers as Array<Record<string, unknown>>)[0];
-  assertEquals(c.name, "unknown");
+  assertEquals(
+    c.name,
+    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead",
+  );
   assert(
-    !(c.name as string).includes("deadbeef"),
-    "the cgroup path is silently discarded rather than used as a fallback",
+    (c.name as string).includes("deadbeef"),
+    "the cgroup path is used as the fallback name, not the literal 'unknown'",
   );
 });
 

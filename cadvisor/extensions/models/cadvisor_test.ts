@@ -25,7 +25,9 @@
  * network call is made, and no Deno.Command is constructed at all in this
  * file (the scrape-config text shape is pinned via direct fixture comparison,
  * not by driving deploy() — that execution-level pin belongs to the methods
- * suite). cadvisor.ts is UNMODIFIED — characterization, not TDD.
+ * suite). As of 2026.08.02.1, all cadvisor-latent-bugs are fixed; this suite's
+ * wire-shape/URL pins are unaffected by those fixes except top-memory's vmPort
+ * (Section D), which is re-baselined below.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { model } from "./cadvisor.ts";
@@ -61,6 +63,7 @@ const GLOBAL_ARGS = {
   vmComposeDir: "/opt/victoriametrics",
   vmComposeFile: "compose-vl-single.yml",
   vmScrapeConfig: "prometheus-vl-single.yml",
+  vmPort: 8428,
 };
 
 type Written = {
@@ -354,7 +357,11 @@ Deno.test("contract: top-memory fetches /api/v1/query_range with the documented 
     assertEquals(calls.length, 1);
     const url = new URL(calls[0].url);
     assertEquals(url.hostname, "host.example.com");
-    assertEquals(url.port, "8428", "top-memory hardcodes the VM port to 8428");
+    assertEquals(
+      url.port,
+      "8428",
+      "top-memory uses the configured vmPort global arg (default 8428)",
+    );
     assertEquals(url.pathname, "/api/v1/query_range");
     assertEquals(
       url.searchParams.get("query"),
@@ -363,5 +370,15 @@ Deno.test("contract: top-memory fetches /api/v1/query_range with the documented 
     assertEquals(url.searchParams.get("step"), "300");
     assert(url.searchParams.has("start"));
     assert(url.searchParams.has("end"));
+  });
+});
+
+Deno.test("contract: top-memory honors a non-default vmPort", async () => {
+  const ctx = makeCtx();
+  ctx.ctx.globalArgs = { ...GLOBAL_ARGS, vmPort: 9428 };
+  await withFetchStub(vmRangeFixture, async (calls) => {
+    await run("top-memory", { hoursBack: 12, topN: 20 }, ctx.ctx);
+    assertEquals(calls.length, 1);
+    assertEquals(new URL(calls[0].url).port, "9428");
   });
 });

@@ -40,6 +40,7 @@ const GLOBAL_ARGS = {
   vmComposeDir: "/opt/victoriametrics",
   vmComposeFile: "compose-vl-single.yml",
   vmScrapeConfig: "prometheus-vl-single.yml",
+  vmPort: 8428,
 };
 
 type Written = {
@@ -478,11 +479,12 @@ Deno.test("current-metrics: happy path — full transform pinned against cadviso
   const containers = res.payload.containers as Array<Record<string, unknown>>;
 
   // Sorted desc by memoryUsageMB: postgres-db(250) > web-frontend(150) >
-  // unknown(128, empty-aliases bug) > <hash>(64, no-aliases fallback).
+  // <hash>(128, empty-aliases falls back to the cgroup path) >
+  // <hash>(64, no-aliases fallback).
   assertEquals(containers.map((c) => c.name), [
     "postgres-db",
     "web-frontend",
-    "unknown",
+    "3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc",
     "4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd",
   ]);
 
@@ -494,7 +496,7 @@ Deno.test("current-metrics: happy path — full transform pinned against cadviso
     "the >1e18 no-limit sentinel yields 0, not a huge MB value",
   );
   assertEquals(postgres.memoryPercent, 0);
-  assertEquals(postgres.cpuPercent, 50);
+  assertEquals(postgres.cpuPercent, 50, "spec.cpu.limit=1 -> 50/1 = 50");
   assertEquals(postgres.networkRxMBps, 0.1);
   assertEquals(postgres.networkTxMBps, 0.03);
 
@@ -502,7 +504,7 @@ Deno.test("current-metrics: happy path — full transform pinned against cadviso
   assertEquals(web.memoryUsageMB, 150);
   assertEquals(web.memoryLimitMB, 512);
   assertEquals(web.memoryPercent, 29.3);
-  assertEquals(web.cpuPercent, 100);
+  assertEquals(web.cpuPercent, 50, "spec.cpu.limit=2 -> 100/2 = 50");
   assertEquals(web.networkRxMBps, 1);
   assertEquals(web.networkTxMBps, 0.5);
 
@@ -599,25 +601,29 @@ Deno.test("top-memory: error path — non-ok response throws 'VM query failed: <
 // remove
 // ---------------------------------------------------------------------------
 
-Deno.test("remove: happy path — exactly 3 unconditional SSH calls (stop/rm, sed teardown, VM restart), writes removed status", async () => {
+Deno.test("remove: happy path — exactly 4 unconditional SSH calls (stop/rm, read scrape config, job-scoped rewrite, VM restart), writes removed status", async () => {
   const { ctx, written } = makeCtx();
   await withCommandStub(
-    () => OK(),
+    (_call, i) => i === 1 ? OK(SCRAPE_CONFIG_AFTER) : OK(),
     async (calls) => {
       await run("remove", {}, ctx);
-      assertEquals(calls.length, 3);
+      assertEquals(calls.length, 4);
       assertEquals(
         sshCommandOf(calls[0]),
         "docker stop cadvisor 2>/dev/null; docker rm cadvisor 2>/dev/null || true",
       );
       assertEquals(
         sshCommandOf(calls[1]),
-        "sed -i '/cadvisor/,/- .*:8080/{//d;d}' '/opt/victoriametrics/prometheus-vl-single.yml' 2>/dev/null; " +
-          "sed -i '/cadvisor/d' '/opt/victoriametrics/prometheus-vl-single.yml' 2>/dev/null; " +
-          "sed -i '/^$/N;/^\\n$/d' '/opt/victoriametrics/prometheus-vl-single.yml' 2>/dev/null || true",
+        "cat '/opt/victoriametrics/prometheus-vl-single.yml'",
       );
       assertEquals(
         sshCommandOf(calls[2]),
+        "cat > '/opt/victoriametrics/prometheus-vl-single.yml' << 'HEREDOC'\n" +
+          SCRAPE_CONFIG_BEFORE + "HEREDOC",
+        "the rewrite's body is the before-fixture — proves the cadvisor job block was removed and nothing else was touched",
+      );
+      assertEquals(
+        sshCommandOf(calls[3]),
         "cd '/opt/victoriametrics' && docker compose -f 'compose-vl-single.yml' restart victoriametrics",
       );
     },
@@ -630,13 +636,13 @@ Deno.test("remove: happy path — exactly 3 unconditional SSH calls (stop/rm, se
 });
 
 Deno.test("remove: error path — a failing command propagates (NOT caught); no status resource is ever written", async () => {
-  // None of remove()'s three runSsh calls are wrapped in try/catch (unlike
+  // None of remove()'s four runSsh calls are wrapped in try/catch (unlike
   // status()'s independently-guarded calls, or deploy()'s guarded verify
-  // step). A failure at ANY of the three stages throws immediately and
+  // step). A failure at ANY of the four stages throws immediately and
   // leaves NO record at all — not even a partial/failed status resource.
   // This differs from deploy(), which always writes a status resource even
   // when its post-verify checks fail.
-  for (const failAt of [0, 1, 2]) {
+  for (const failAt of [0, 1, 2, 3]) {
     const { ctx, written } = makeCtx();
     await withCommandStub(
       (_call, i) => i === failAt ? FAIL("permission denied") : OK(),

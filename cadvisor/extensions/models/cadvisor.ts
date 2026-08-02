@@ -4,6 +4,61 @@ function shellEsc(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+/**
+ * Job-scoped scrape-config rewrite for remove(): drops ONLY the
+ * `- job_name: cadvisor` block (its job_name line plus every more-indented
+ * child line, up to the next sibling `- job_name:` at the same indentation,
+ * or EOF) plus the one orphaned blank separator line immediately preceding
+ * it. Unlike a substring/port-keyed `sed` range-delete, this is scoped to
+ * the EXACT cadvisor job: a differently named job that merely contains the
+ * substring "cadvisor", or that happens to expose the same port, is left
+ * untouched. A config with no cadvisor job is returned unchanged (remove()
+ * itself stays unconditional — this helper is a pure no-op filter in that
+ * case, not an existence check).
+ */
+export function removeCadvisorJob(config: string): string {
+  const lines = config.split("\n");
+  // A config always ends with a trailing newline in practice (prometheus
+  // scrape configs are text files); split()'s final "" element represents
+  // that terminator, not a real blank line — pop it off so line-index math
+  // below only ever deals with real content lines.
+  const hadTrailingNewline = lines.length > 0 &&
+    lines[lines.length - 1] === "";
+  const realLines = hadTrailingNewline ? lines.slice(0, -1) : lines;
+
+  const jobLineRe = /^(\s*)-\s+job_name:\s*cadvisor\s*$/;
+  let start = -1;
+  let indent = "";
+  for (let i = 0; i < realLines.length; i++) {
+    const m = realLines[i].match(jobLineRe);
+    if (m) {
+      start = i;
+      indent = m[1];
+      break;
+    }
+  }
+  if (start === -1) return config;
+
+  const siblingRe = new RegExp(`^${indent}-\\s+job_name:`);
+  let end = realLines.length;
+  for (let i = start + 1; i < realLines.length; i++) {
+    if (siblingRe.test(realLines[i])) {
+      end = i;
+      break;
+    }
+  }
+
+  // Drop the one orphaned blank separator line immediately preceding the
+  // block, if present, so removal doesn't leave a double blank line behind.
+  let blockStart = start;
+  if (blockStart > 0 && realLines[blockStart - 1] === "") {
+    blockStart -= 1;
+  }
+
+  const kept = [...realLines.slice(0, blockStart), ...realLines.slice(end)];
+  return kept.join("\n") + "\n";
+}
+
 const GlobalArgsSchema = z.object({
   host: z.string().describe("Docker host (IP or hostname)"),
   username: z.string().default("root").describe("SSH username"),
@@ -17,6 +72,7 @@ const GlobalArgsSchema = z.object({
   vmScrapeConfig: z.string().default("prometheus-vl-single.yml").describe(
     "VM prometheus scrape config file name",
   ),
+  vmPort: z.number().default(8428).describe("VictoriaMetrics HTTP API port"),
 });
 
 const StatusSchema = z.object({
@@ -131,7 +187,16 @@ async function vmQuery(host, port, path) {
 /** Swamp model that deploys cAdvisor and queries container resource metrics from cAdvisor and VictoriaMetrics. */
 export const model = {
   type: "@magistr/cadvisor",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.08.01.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "Fix all six remaining cadvisor-latent-bugs (job-scoped teardown, per-core cpuPercent, empty-aliases name fallback, counter-reset clamp, README typeVersion, configurable vmPort); adds a backward-compatible defaulted vmPort global arg, no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     "status": {
@@ -353,21 +418,23 @@ export const model = {
             ? info.stats[info.stats.length - 2]
             : null;
 
-          const name =
-            (info.aliases ? info.aliases[0] : path.split("/").pop()) ??
-              "unknown";
+          const name = info.aliases?.[0] ?? path.split("/").pop() ??
+            "unknown";
           const memUsage = latest.memory?.usage || 0;
           const memLimit = info.spec?.memory?.limit || 0;
 
           let cpuPercent = 0;
           if (prev && latest.cpu && prev.cpu) {
-            const cpuDelta = latest.cpu.usage.total - prev.cpu.usage.total;
+            const cpuDelta = Math.max(
+              0,
+              latest.cpu.usage.total - prev.cpu.usage.total,
+            );
             const timeDelta = new Date(latest.timestamp).getTime() -
               new Date(prev.timestamp).getTime();
             if (timeDelta > 0) {
-              const _numCores = info.spec?.cpu?.limit ||
+              const numCores = info.spec?.cpu?.limit ||
                 (latest.cpu.usage.per_cpu_usage?.length || 1);
-              cpuPercent = (cpuDelta / (timeDelta * 1e6)) * 100;
+              cpuPercent = (cpuDelta / (timeDelta * 1e6)) * 100 / numCores;
             }
           }
 
@@ -376,10 +443,14 @@ export const model = {
             const timeDelta = (new Date(latest.timestamp).getTime() -
               new Date(prev.timestamp).getTime()) / 1000;
             if (timeDelta > 0) {
-              const rxDelta = (latest.network.rx_bytes || 0) -
-                (prev.network.rx_bytes || 0);
-              const txDelta = (latest.network.tx_bytes || 0) -
-                (prev.network.tx_bytes || 0);
+              const rxDelta = Math.max(
+                0,
+                (latest.network.rx_bytes || 0) - (prev.network.rx_bytes || 0),
+              );
+              const txDelta = Math.max(
+                0,
+                (latest.network.tx_bytes || 0) - (prev.network.tx_bytes || 0),
+              );
               rxRate = rxDelta / timeDelta / 1024 / 1024;
               txRate = txDelta / timeDelta / 1024 / 1024;
             }
@@ -421,8 +492,7 @@ export const model = {
         topN: z.number().default(20).describe("Number of top containers"),
       }),
       execute: async (args, context) => {
-        const { host } = context.globalArgs;
-        const vmPort = 8428;
+        const { host, vmPort } = context.globalArgs;
         const end = Math.floor(Date.now() / 1000);
         const start = end - (args.hoursBack * 3600);
 
@@ -482,18 +552,23 @@ export const model = {
           "docker stop cadvisor 2>/dev/null; docker rm cadvisor 2>/dev/null || true",
         );
 
-        // Remove scrape config entry
+        // Remove scrape config entry: read, drop ONLY the cadvisor job block
+        // (job-scoped — mirrors deploy()'s own read/heredoc-write idiom),
+        // write back. Replaces a fragile substring/port-keyed `sed`
+        // range-delete that could silently clobber an unrelated scrape job.
         const scrapeConfigPath = `${vmComposeDir}/${vmScrapeConfig}`;
+        const currentConfig = await runSsh(
+          host,
+          username,
+          `cat ${shellEsc(scrapeConfigPath)}`,
+        );
+        const filteredConfig = removeCadvisorJob(currentConfig);
         await runSsh(
           host,
           username,
-          `sed -i '/cadvisor/,/- .*:8080/{//d;d}' ${
+          `cat > ${
             shellEsc(scrapeConfigPath)
-          } 2>/dev/null; sed -i '/cadvisor/d' ${
-            shellEsc(scrapeConfigPath)
-          } 2>/dev/null; sed -i '/^$/N;/^\\n$/d' ${
-            shellEsc(scrapeConfigPath)
-          } 2>/dev/null || true`,
+          } << 'HEREDOC'\n${filteredConfig}HEREDOC`,
         );
 
         // Restart VM
