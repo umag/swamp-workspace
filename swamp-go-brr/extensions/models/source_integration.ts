@@ -11,10 +11,12 @@
 import { z } from "npm:zod@4";
 import {
   isDeniedPath,
+  isUnsafePathError,
   normalizePath,
   pathEscapes,
   pathInSet,
   resolveWithinRepo,
+  safeWriteWithinRepo,
 } from "./lib/acl.ts";
 import { scrubSecrets } from "./lib/scrub.ts";
 // Value imports: EnvelopeSummarySchema composes the typed applied-result schema;
@@ -377,7 +379,7 @@ export function summarizeEnvelope(env: Envelope): EnvelopeSummary {
 
 type Ctx = {
   logger: { info: (msg: string, data?: Record<string, unknown>) => void };
-  globalArgs: { jjPath?: string };
+  globalArgs: { jjPath?: string; jjTimeoutMs?: number };
   writeResource: (
     spec: string,
     name: string,
@@ -385,25 +387,87 @@ type Ctx = {
   ) => Promise<unknown>;
 };
 
+/**
+ * Run a local `jj` invocation (issue swamp-go-brr-latent-bugs B6). jj runs LOCALLY
+ * (the repo is on this host) — never SSH. No git hooks/filters are involved (jj is
+ * not git); we additionally only ever write regular files. Every invocation carries
+ * `--no-pager` (a paged, tty-detecting jj would otherwise be a latent hang under an
+ * unusual environment, rather than relying solely on jj's own non-tty auto-
+ * detection) and a client-side timeout: on expiry the child is killed via
+ * AbortController and a synthetic `{code:124,...}` is returned (fail-closed),
+ * mirroring lib/ssh.ts's runSsh. The timer is always cleared in `finally`.
+ */
 async function jjRun(
   jjPath: string,
   repoRoot: string,
   args: string[],
+  timeoutMs?: number,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  // jj runs LOCALLY (the repo is on this host) — never SSH. No git hooks/filters
-  // are involved (jj is not git); we additionally only ever write regular files.
-  const cmd = new Deno.Command(jjPath, {
-    args,
-    cwd: repoRoot,
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const { code, stdout, stderr } = await cmd.output();
-  return {
-    code,
-    stdout: new TextDecoder().decode(stdout),
-    stderr: new TextDecoder().decode(stderr),
-  };
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (timeoutMs && timeoutMs > 0) {
+    timer = setTimeout(() => controller.abort(), timeoutMs);
+  }
+  try {
+    const cmd = new Deno.Command(jjPath, {
+      args: ["--no-pager", ...args],
+      cwd: repoRoot,
+      stdout: "piped",
+      stderr: "piped",
+      signal: controller.signal,
+    });
+    try {
+      const { code, stdout, stderr } = await cmd.output();
+      if (controller.signal.aborted) {
+        return {
+          code: 124,
+          stdout: "",
+          stderr: `jj timed out after ${timeoutMs}ms`,
+        };
+      }
+      return {
+        code,
+        stdout: new TextDecoder().decode(stdout),
+        stderr: new TextDecoder().decode(stderr),
+      };
+    } catch (e) {
+      if (controller.signal.aborted) {
+        return {
+          code: 124,
+          stdout: "",
+          stderr: `jj timed out after ${timeoutMs}ms`,
+        };
+      }
+      throw e;
+    }
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Split a `diff --git a/<A> b/<B>` header's post-`a/` remainder at the correct
+ * ` b/` boundary (issue swamp-go-brr-latent-bugs B7). The naive non-greedy
+ * `a\/(.+?) b\/` regex stops at the FIRST ` b/` it finds, mis-splitting a path that
+ * itself contains a literal ` b/` substring (e.g. `weird b/file.ts`). For the
+ * common (non-rename) case A === B, so this scans every ` b/` occurrence and
+ * returns the split where the left half equals the right half — true regardless
+ * of how many literal ` b/` substrings the filename itself contains. A rename
+ * (A !== B) has no such split; the LAST ` b/` occurrence is used as a best-effort
+ * fallback (matching the historical greedy-tail behavior).
+ */
+function splitGitDiffHeader(rest: string): string {
+  const marker = " b/";
+  let idx = rest.indexOf(marker);
+  let lastIdx = -1;
+  while (idx !== -1) {
+    lastIdx = idx;
+    const aPath = rest.slice(0, idx);
+    const bPath = rest.slice(idx + marker.length);
+    if (aPath === bPath) return bPath;
+    idx = rest.indexOf(marker, idx + 1);
+  }
+  return lastIdx === -1 ? rest : rest.slice(lastIdx + marker.length);
 }
 
 /** Parse `jj diff --git` for the set of changed paths + whether each is a regular
@@ -416,10 +480,10 @@ export function parseGitDiffPaths(
   let cur: string | null = null;
   let regular = true;
   for (const ln of lines) {
-    const m = ln.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    const m = ln.match(/^diff --git a\/(.+)$/);
     if (m) {
       if (cur !== null) out.push({ path: cur, regular });
-      cur = m[2];
+      cur = splitGitDiffHeader(m[1]);
       regular = true;
       continue;
     }
@@ -594,11 +658,23 @@ export type AppliedTaskResult = z.infer<typeof AppliedTaskResultSchema>;
 /** @internal — the source-integration model definition; invoke its methods via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.07.16.2",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix B6 (jjRun now carries --no-pager + a client-side timeout via the new jjTimeoutMs global arg), B7 (parseGitDiffPaths symmetric ' b/' split, no longer mis-splitting a path containing a literal ' b/' substring), and B8 (apply()'s write loop now goes through lib/acl's safeWriteWithinRepo: refuses an existing symlink at the final path component and re-confines the written path post-write, closing the TOCTOU window's blast radius). jjTimeoutMs is additive-defaulted (120000ms); no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
 
   globalArguments: z.object({
     jjPath: z.string().default("jj").describe(
       "jj binary (PATH-resolved by default)",
+    ),
+    jjTimeoutMs: z.number().default(120_000).describe(
+      "Client-side wall-clock budget (ms) for each local jj invocation (new/diff/log). On expiry the jj child is killed and that call is treated as a transport failure (synthetic exit 124).",
     ),
   }),
 
@@ -721,6 +797,7 @@ export const model = {
         context: Ctx,
       ) => {
         const jjPath = context.globalArgs.jjPath ?? "jj";
+        const jjTimeoutMs = context.globalArgs.jjTimeoutMs ?? 120_000;
         // Assert repoScope is an absolute, clean, real jj repo (docker_verify-style).
         if (!isSafeRepoScope(args.repoScope)) {
           throw new Error("repoScope must be an absolute, clean host path");
@@ -787,31 +864,27 @@ export const model = {
             `gobrr ${t.taskId}`,
             "--",
             args.base,
-          ]);
+          ], jjTimeoutMs);
           if (mk.code !== 0) {
             fail("transport", `jj new: ${mk.stderr.slice(0, 200)}`);
             continue;
           }
 
-          // write each planned file as a REGULAR file, intermediate dirs created
-          // under the verified-real base (no-follow on the resolved leaf).
+          // write each planned file as a REGULAR file via safeWriteWithinRepo
+          // (issue swamp-go-brr-latent-bugs B8): re-resolves immediately before
+          // writing, refuses an existing symlink at the final path component
+          // (no-follow), and re-confines the written path afterward — detecting
+          // and cleaning up a TOCTOU ancestor-symlink-swap race instead of
+          // silently letting an escaped write stand.
           let writeErr: { failureKind: FailureKind; note: string } | null =
             null;
           for (const w of plan.writes) {
-            const r = resolveWithinRepo(repoRoot, w.path);
-            if (!r.ok) {
-              writeErr = { failureKind: "unsafe_change", note: w.path };
-              break;
-            }
             try {
-              const dir = r.abs.slice(0, r.abs.lastIndexOf("/"));
-              Deno.mkdirSync(dir, { recursive: true });
-              Deno.writeTextFileSync(r.abs, w.content); // regular file — never a symlink/gitlink
+              safeWriteWithinRepo(repoRoot, w.path, w.content);
             } catch (e) {
-              writeErr = {
-                failureKind: "transport",
-                note: String(e).slice(0, 120),
-              };
+              writeErr = isUnsafePathError(e)
+                ? { failureKind: "unsafe_change", note: w.path }
+                : { failureKind: "transport", note: String(e).slice(0, 120) };
               break;
             }
           }
@@ -827,7 +900,7 @@ export const model = {
             "--git",
             "-r",
             "@",
-          ]);
+          ], jjTimeoutMs);
           const observed = parseGitDiffPaths(dr.stdout);
           let tripwire: { failureKind: FailureKind; note: string } | null =
             null;
@@ -853,11 +926,13 @@ export const model = {
             "-T",
             "change_id",
             "--no-graph",
-          ]);
+          ], jjTimeoutMs);
           results[t.taskId] = {
             changeId: idr.stdout.trim(),
             changedPaths: observed.map((o) => o.path).sort(), // HOST-OBSERVED, not agent-declared
-            diff: scrubSecrets(dr.stdout).slice(0, 20000),
+            // B4: bound BEFORE scrubbing (head-preserving; scrubSecrets itself now
+            // imposes its own tail-preserving MAX_SCRUB_BYTES backstop too).
+            diff: scrubSecrets(dr.stdout.slice(0, 20000)),
             // AGENT-DECLARED intent (advisory) — the driver forwards this to gobrr.report
             // so the audit trail can contrast declared edits against the host-observed
             // changedPaths above. Never used as a gate or as host truth.

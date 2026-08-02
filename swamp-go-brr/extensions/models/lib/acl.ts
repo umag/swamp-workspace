@@ -123,3 +123,75 @@ export function resolveWithinRepo(
   if (!isUnder(abs, repoRoot)) return { ok: false, reason: "escapes repo" };
   return { ok: true, abs };
 }
+
+// ── 3. write-time TOCTOU hardening (issue swamp-go-brr-latent-bugs B8) ───────
+//
+// resolveWithinRepo already refuses a PRE-EXISTING symlink anywhere in the path
+// (including the final/leaf component — its per-segment loop walks every segment,
+// the last one included). What it cannot see is a race: an attacker with local
+// filesystem access swapping a symlink into place AFTER the check succeeds but
+// BEFORE the write lands (two separate syscalls). This cannot be fully closed in
+// userspace without directory-fd primitives, so confineWrittenPath is a
+// detect-and-remediate layer: after the write, re-resolve the REAL path and
+// confirm it is still contained under repoRoot — best-effort cleaning up (unlink)
+// a race that slipped through, instead of silently leaving the escaped write in
+// place. Throws with an `UNSAFE_PATH:` prefix (like resolveWithinRepo's own
+// rejection, re-thrown as such) so callers can distinguish this from a generic
+// (e.g. EISDIR) filesystem error.
+
+const UNSAFE_PATH_PREFIX = "UNSAFE_PATH";
+
+/** True if `err` (as thrown by `safeWriteWithinRepo`/`confineWrittenPath`) signals a
+ * path-safety refusal rather than a generic filesystem error. */
+export function isUnsafePathError(err: unknown): boolean {
+  return String(err).includes(UNSAFE_PATH_PREFIX);
+}
+
+/**
+ * Post-write confinement re-check: realpath the just-written `abs` and confirm it
+ * still resolves under `repoRoot`. Defense-in-depth for the narrow TOCTOU window
+ * between a path's resolveWithinRepo check and the write that follows it — if an
+ * ancestor symlink-swap raced in between and the write landed outside (a stale
+ * `abs` silently followed a swapped ancestor symlink at write-time), this detects
+ * it, best-effort unlinks the escaped file, and throws. Fail-closed: never
+ * silently accept a write outside repoRoot.
+ */
+export function confineWrittenPath(repoRoot: string, abs: string): void {
+  const real = Deno.realPathSync(abs);
+  if (isUnder(real, repoRoot)) return;
+  try {
+    Deno.removeSync(real);
+  } catch {
+    // best-effort cleanup — the thrown error below is the authoritative signal.
+  }
+  throw new Error(
+    `${UNSAFE_PATH_PREFIX}: write escaped repo after a TOCTOU race: ${abs}`,
+  );
+}
+
+/**
+ * Write `content` to `relPath` inside `repoRoot`, fail-closed against both a
+ * pre-existing symlink anywhere in the path — including the final component,
+ * refused by `resolveWithinRepo` itself, no-follow — and a TOCTOU ancestor-
+ * symlink swap raced in between the resolve and the write (caught by
+ * `confineWrittenPath` immediately after the write lands). Intermediate
+ * directories are created as needed. Returns the absolute path written. Throws
+ * (prefixed `UNSAFE_PATH:`, see `isUnsafePathError`) on any path-safety
+ * refusal; a genuine filesystem error (e.g. the target collides with an
+ * existing directory) propagates as-is.
+ */
+export function safeWriteWithinRepo(
+  repoRoot: string,
+  relPath: string,
+  content: string,
+): string {
+  const r = resolveWithinRepo(repoRoot, relPath);
+  if (!r.ok) {
+    throw new Error(`${UNSAFE_PATH_PREFIX}: ${r.reason}: ${relPath}`);
+  }
+  const dir = r.abs.slice(0, r.abs.lastIndexOf("/"));
+  Deno.mkdirSync(dir, { recursive: true });
+  Deno.writeTextFileSync(r.abs, content); // regular file — never a symlink/gitlink
+  confineWrittenPath(repoRoot, r.abs);
+  return r.abs;
+}

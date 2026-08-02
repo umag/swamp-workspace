@@ -2,43 +2,44 @@
 # This file is then HAND-MAINTAINED: the scaffolder never overwrites an
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
-# Backfilled to full five-suite compliance (ext-quality-bf-swamp-go-brr,
-# wave-4 batch-4d, FINAL batch of the Phase D extension-quality backfill).
-# gobrr.ts, docker_verify.ts, otlp_export.ts, preflight.ts, source_integration.ts,
-# and lib/{acl,otlp,scrub,ssh}.ts are BYTE-FROZEN by this change — every suite
-# listed below either drives model.methods.<m>.execute() against a stubbed
-# Deno.Command (BOTH the "direct output" ssh/jjRun shape and preflight's
-# "spawn+stdin" shape) + fake context, or exercises an EXPORTED pure
-# function/builder directly. No production code changed and no manifest/model
-# version bump.
+# 2026.08.02.1 (swamp-go-brr-latent-bugs): all eight latent bugs (B1..B8),
+# previously pinned as characterization tests over a byte-frozen source, are
+# now REAL-FIXED — gobrr.ts, docker_verify.ts, otlp_export.ts, preflight.ts,
+# source_integration.ts, and lib/{acl,otlp,scrub,ssh}.ts all changed; every
+# adversarial pin now asserts the FIXED behavior. All five models bump to
+# 2026.08.02.1 (lockstep) with a first upgrades[] entry apiece. Re-stamped
+# from a real `swamp extension quality` run (14/14, 100%, allPassed=true).
 #
 # Role map (the scaffolder originally dumped all 12 pre-existing files under
 # contract-fixture; this corrects that to an honest per-file role):
 #   contract-fixture -> source_integration.test.ts, source_integration_framing.test.ts,
 #                        source_integration_applied_result.test.ts, lib/otlp.test.ts,
-#                        gobrr_observability.test.ts
+#                        gobrr_observability.test.ts (byte-identical — none of
+#                        these touch Deno.Command/jjRun/ssh, only pure functions
+#                        unaffected by the B1-B8 fixes)
 #   methods          -> gobrr.test.ts, otlp_export.test.ts, preflight.test.ts,
-#                        extensions/models/swamp_go_brr_methods_test.ts (new)
+#                        extensions/models/swamp_go_brr_methods_test.ts
 #   adversarial      -> lib/acl.test.ts, lib/scrub.test.ts, docker_verify.test.ts,
 #                        source_integration_leaf_json.test.ts,
-#                        extensions/models/swamp_go_brr_adversarial_test.ts (new)
-#   coverage         -> extensions/models/swamp_go_brr_coverage_test.ts (new)
-#   property-invariant-flow -> extensions/models/swamp_go_brr_property_test.ts (new)
+#                        extensions/models/swamp_go_brr_adversarial_test.ts
+#   coverage         -> extensions/models/swamp_go_brr_coverage_test.ts
+#   property-invariant-flow -> extensions/models/swamp_go_brr_property_test.ts
 #
-# Eight known-but-unfixed issues (B1..B8) are pinned as characterization tests
-# in the new adversarial suite, tracked in the LOCAL `swamp-go-brr-latent-bugs`
-# issue-lifecycle bug model (never the Lab, per this repo's convention):
-# B1 (MED) docker-verify has no client-side timeout on the remote verify
-# command; B2 (MED, within-temp) preflight.scaffold's ScaffoldFile.path has no
-# traversal guard; B3 (MED) lib/ssh.ts disables ssh host-key verification;
-# B4 (LOW) lib/scrub.ts's generic key=value pattern is a documented
-# false-positive-prone over-approximation with no input-size cap of its own;
-# B5 (LOW) a bare high-entropy secret with no recognizable key word is not
-# redacted (accepted, documented gap); B6 (LOW) source-integration's jjRun has
-# no timeout/--no-pager; B7 (LOW) parseGitDiffPaths mis-splits a path
-# containing a literal " b/" substring, but this is UNREACHABLE via the real
-# apply() flow (pathEscapes rejects whitespace upstream); B8 (LOW) apply()'s
-# resolve-then-write is not atomic (TOCTOU symlink-swap).
+# B1..B8 fixed: B1 (MED) docker-verify's ssh transport now enforces a
+# client-side timeout (verifyTimeoutMs); B2 (MED, within-temp)
+# preflight.scaffold now pre-validates every ScaffoldFile.path with
+# pathEscapes before any write; B3 (MED) lib/ssh.ts now defaults to
+# StrictHostKeyChecking=accept-new (documented "no" opt-out); B4 (LOW)
+# lib/scrub.ts's generic key=value floor raised {8,}->{11,} and scrubSecrets
+# now enforces its own tail-preserving MAX_SCRUB_BYTES cap; B5 (LOW) a bare
+# high-entropy run (>=32 chars, 3 char-classes) is now redacted with no key
+# word required; B6 (LOW) source-integration's jjRun now carries --no-pager +
+# a client-side timeout (jjTimeoutMs); B7 (LOW) parseGitDiffPaths now splits
+# a diff header symmetrically (no longer mis-splits a literal " b/" in a
+# filename) — still unreachable via the real apply() flow either way
+# (pathEscapes rejects whitespace upstream); B8 (LOW) apply()'s write loop now
+# goes through lib/acl.ts's safeWriteWithinRepo + confineWrittenPath
+# (TOCTOU detect-and-clean-up).
 schemaVersion: 1
 extension: swamp-go-brr
 tests:

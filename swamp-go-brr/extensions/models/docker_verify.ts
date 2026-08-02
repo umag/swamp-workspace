@@ -8,8 +8,11 @@
 // down: no network, no token, no docker socket, dropped caps. The exit code is
 // the gate; the agent controls neither this command nor the tree's test surface.
 import { z } from "npm:zod@4";
-import { sshExecRaw } from "./lib/ssh.ts";
+import { sshExecRaw, type StrictHostKeyChecking } from "./lib/ssh.ts";
 import { scrubSecrets } from "./lib/scrub.ts";
+
+/** Mirrors lib/ssh.ts's StrictHostKeyChecking as a zod enum for the global arg. */
+const StrictHostKeyCheckingEnum = z.enum(["accept-new", "yes", "no"]);
 
 // Flags an attacker-influenced input must never introduce.
 const FORBIDDEN = ["--privileged", "--pid=host", "--ipc=host", "--userns=host"];
@@ -114,7 +117,13 @@ export function boundedStdout(stdout: string): string {
 
 type Ctx = {
   logger: { info: (msg: string, data?: Record<string, unknown>) => void };
-  globalArgs: { sshHost: string; sshUser?: string };
+  globalArgs: {
+    sshHost: string;
+    sshUser?: string;
+    verifyTimeoutMs?: number;
+    sshStrictHostKeyChecking?: StrictHostKeyChecking;
+    sshKnownHostsFile?: string;
+  };
   writeResource: (
     spec: string,
     name: string,
@@ -125,11 +134,30 @@ type Ctx = {
 /** @internal — call via the CLI / driver loop. */
 export const model = {
   type: "@magistr/swamp-go-brr/docker-verify",
-  version: "2026.07.16.2",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        'Real-fix B1 (the ssh transport now enforces a client-side timeout — new verifyTimeoutMs global arg, default 1800000ms — wrapping the whole handshake+remote-command runtime; on expiry the child is killed and exitCode=124 is recorded, fail-closed) and B3 (ssh host-key verification is secure-by-default: StrictHostKeyChecking=accept-new + a real known_hosts file, replacing the hardcoded no + /dev/null; new sshStrictHostKeyChecking [accept-new|yes|no] + sshKnownHostsFile global args, "no" is a documented insecure opt-out). All new global args are additive-defaulted; no resource schema change.',
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
 
   globalArguments: z.object({
     sshHost: z.string().describe("Docker host running the applied tree (SSH)"),
     sshUser: z.string().default("root").describe("SSH username"),
+    verifyTimeoutMs: z.number().default(1_800_000).describe(
+      "Client-side wall-clock budget (ms) for the whole ssh verify invocation (handshake + remote docker run). On expiry the ssh child is killed and exitCode=124 is recorded (fail-closed) — ssh's own ConnectTimeout bounds only the handshake.",
+    ),
+    sshStrictHostKeyChecking: StrictHostKeyCheckingEnum.default("accept-new")
+      .describe(
+        'ssh StrictHostKeyChecking mode. "accept-new" (default, TOFU) trusts an unseen host key on first contact but REFUSES a host whose stored key later CHANGES. "no" restores the historical insecure UserKnownHostsFile=/dev/null behavior — a documented opt-out only, for environments that cannot maintain a known_hosts file.',
+      ),
+    sshKnownHostsFile: z.string().optional().describe(
+      "Override ssh's UserKnownHostsFile. Defaults to /dev/null only when sshStrictHostKeyChecking=\"no\"; otherwise ssh's own default known_hosts file is used unless this is set.",
+    ),
   }),
 
   resources: {
@@ -174,13 +202,23 @@ export const model = {
         },
         context: Ctx,
       ) => {
-        const { sshHost, sshUser = "root" } = context.globalArgs;
+        const {
+          sshHost,
+          sshUser = "root",
+          verifyTimeoutMs = 1_800_000,
+          sshStrictHostKeyChecking = "accept-new",
+          sshKnownHostsFile,
+        } = context.globalArgs;
         const cmd = buildVerifyCommandLine(args as VerifySpec);
         context.logger.info("docker-verify on {host}: {verify}", {
           host: sshHost,
           verify: args.verifyCommand,
         });
-        const res = await sshExecRaw(sshHost, sshUser, cmd);
+        const res = await sshExecRaw(sshHost, sshUser, cmd, {
+          strictHostKeyChecking: sshStrictHostKeyChecking,
+          knownHostsFile: sshKnownHostsFile,
+          timeoutMs: verifyTimeoutMs,
+        });
         // The SSH layer's own exit code can be the docker exit; prefer the
         // sentinel we appended so a non-zero gate survives the transport.
         const sentinel = parseExitSentinel(res.stdout);
