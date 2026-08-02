@@ -9,13 +9,21 @@
  * AbortSignal.timeout can actually bound execution), so every call site
  * below is awaited.
  *
- * Two SYNTHETIC live negatives close out the B1/B2 fix verification that
- * can only be proven against a real subprocess:
+ * SYNTHETIC live cases close out the B1–B5 fix verification that can only be
+ * proven against a real subprocess (no test here ever allocates an
+ * oversized fixture):
  *   - B1: a malicious CadScript that attempts to read a sibling
  *     synthetic-secret temp file must now be DENIED (PermissionDenied),
  *     with the token never appearing in the error message.
  *   - B2: an infinite-looping CadScript run with a short timeoutMs must now
  *     be TIMED OUT (bounded, clear error) instead of hanging forever.
+ *   - B3: a CadScript that itself calls console.log() before returning
+ *     geometry must still render successfully (the parent now parses only
+ *     the last stdout line for object-count metadata).
+ *   - B4: a CadScript whose main() returns [] must be rejected with a clear
+ *     "at least one shape" error, never a silent objectCount 0.
+ *   - B5: a real (small) render whose output exceeds a tiny maxOutputBytes
+ *     cap must be rejected by the subprocess's size-cap guard.
  */
 import {
   assert,
@@ -250,5 +258,71 @@ Deno.test("B2 live negative: an infinite-looping CadScript is TIMED OUT (bounded
   assert(
     elapsedMs < 15_000,
     `expected the timeout to bound execution well under 15s, took ${elapsedMs}ms`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// B3 live positive: a script that itself calls console.log no longer
+// corrupts the trailing object-count metadata parse.
+// ---------------------------------------------------------------------------
+
+Deno.test("B3 live positive: a CadScript that console.log()s before returning geometry still renders successfully with the correct objectCount", async () => {
+  const script = CadScript.of(`
+    const main = () => {
+      console.log("debug: about to build a cuboid");
+      console.log("debug: still going");
+      return primitives.cuboid({ size: [5, 5, 5] });
+    };
+  `);
+  const { objectCount, serialized } = await ScriptEvaluator
+    .evaluateAndSerialize(
+      script,
+      ScriptParameters.empty(),
+      "stl",
+    );
+  assertEquals(objectCount, 1);
+  assertEquals(serialized.format, "stl");
+  assertEquals(serialized.bytes.byteLength > 84, true);
+});
+
+// ---------------------------------------------------------------------------
+// B4 live negative: an explicit empty-array main() result is rejected with a
+// clear error instead of silently succeeding with objectCount 0.
+// ---------------------------------------------------------------------------
+
+Deno.test("B4 live negative: a CadScript whose main() returns [] is rejected with 'at least one shape', never a silent objectCount 0", async () => {
+  const script = CadScript.of("const main = () => [];");
+  await assertRejects(
+    () =>
+      ScriptEvaluator.evaluateAndSerialize(
+        script,
+        ScriptParameters.empty(),
+        "stl",
+      ),
+    Error,
+    "at least one shape",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// B5 live negative: a real (small, non-oversized) render whose output
+// exceeds a tiny maxOutputBytes cap is rejected by the subprocess guard.
+// ---------------------------------------------------------------------------
+
+Deno.test("B5 live negative: a real CadScript render exceeding a tiny maxOutputBytes cap is rejected by the subprocess's size-cap guard — no oversized fixture needed", async () => {
+  const script = CadScript.of(`
+    const main = () => primitives.cuboid({ size: [10, 10, 10] });
+  `);
+  await assertRejects(
+    () =>
+      ScriptEvaluator.evaluateAndSerialize(
+        script,
+        ScriptParameters.empty(),
+        "stl",
+        undefined,
+        16,
+      ),
+    Error,
+    "exceeds",
   );
 });
