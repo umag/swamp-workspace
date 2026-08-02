@@ -1,21 +1,32 @@
 /**
- * Adversarial suite for @magistr/telegram-import — pins eight latent bugs
- * (LB-2..LB-9) as CHARACTERIZATION tests: each asserts telegram_import.ts's
- * CURRENT, already-shipped behavior, not a spec to satisfy. Those files are
- * still byte-frozen for LB-2..LB-9 — none of those are fixed here.
+ * Adversarial suite for @magistr/telegram-import — LB-1 through LB-9 are ALL
+ * now fix-regression tests: every one of the ten latent bugs tracked on the
+ * LOCAL `telegram-import-latent-bugs` issue-lifecycle model (never filed to
+ * the swamp.club Lab) has a real code fix in telegram_import.ts, and the
+ * section below asserts the FIXED behavior, not the old bug. LB-0 (the
+ * model-upgrade-chain break) was repaired in 2026.08.01.1 — quality.yaml's
+ * ratchet is restamped from UNSCORABLE to the honest score.
  *
  * LB-1 (HIGH path-traversal via export photo/file/video path escaping
- * extractDir) has been PROMOTED from a characterization pin to a
- * fix-regression test: telegram_import.ts's `safeCopyMedia`/
- * `isPathContained` guard (2026.08.01.1) now REJECTS any source path that
- * escapes `extractDir`, so the section below asserts the FIXED behavior
- * (rejection, an `errors[]` entry, the note still created, no escaping
- * `copyInvocation`) plus regression pins that legit relative photo/file/video
- * sources still reach `Deno.copyFile` unchanged. LB-0 (the model-upgrade-chain
- * break) is also repaired in 2026.08.01.1 — quality.yaml's ratchet is
- * restamped from UNSCORABLE to the honest score. All ten bugs (LB-0..LB-9) are
- * tracked in the LOCAL `telegram-import-latent-bugs` issue-lifecycle model —
- * never filed to the swamp.club Lab.
+ * extractDir): telegram_import.ts's `safeCopyMedia`/`isPathContained` guard
+ * (2026.08.01.1) REJECTS any source path that escapes `extractDir` (rejection,
+ * an `errors[]` entry, the note still created, no escaping `copyInvocation`)
+ * plus regression pins that legit relative photo/file/video sources still
+ * reach `Deno.copyFile` unchanged.
+ *
+ * LB-2..LB-9 (2026.08.02.1): `assertSafeSlug` rejects a path-traversal-shaped
+ * note slug before it ever reaches the obsidian `create path=` argument
+ * (LB-2); `yamlDq` escapes `channel`/`forwarded_from`/`title` into a
+ * single-line YAML double-quoted scalar (LB-3); the per-message loop body is
+ * now wrapped in its own try/catch, so one malformed message is skipped and
+ * recorded in `errors[]` instead of aborting the whole import (LB-4); the
+ * top-level export shape is validated with zod before `data.name`/
+ * `data.messages` are trusted (LB-5); `find` is bounded by a timeout and its
+ * success/exit code is checked explicitly (LB-6); the 500-unit post-text
+ * truncation now cuts by CODE POINT, never splitting a surrogate pair (LB-7);
+ * an oversized `result.json` is rejected before `Deno.readTextFile`/
+ * `JSON.parse` ever runs (LB-8); a leading-dash `zipPath` is normalized to a
+ * `./`-relative form before reaching unzip's argv (LB-9).
  *
  * LB-2's escape target is asserted ONLY against captured
  * `Deno.copyFile`/`obsidian create` argv — Deno.copyFile is always stubbed in
@@ -23,9 +34,9 @@
  * a real filesystem, and no obsidian vault write ever really happens.
  *
  * LB-6 is characterized without ever reproducing an actual hang or timeout.
- * LB-8 uses a moderately long string (thousands of characters), never a
- * genuinely oversized payload — this is a characterization test, not a
- * stress/memory test.
+ * LB-8's oversize-rejection test allocates a string just over the model's
+ * internal size cap in memory — real, but still a single in-process
+ * allocation, not an I/O stress test.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import {
@@ -263,13 +274,13 @@ Deno.test("containment guard: a sibling directory that merely shares extractDir 
 });
 
 // ---------------------------------------------------------------------------
-// LB-2 (MEDIUM) — note-path traversal via msg.id / msg.date
+// LB-2 (MEDIUM, FIXED 2026.08.02.1) — note-path traversal via msg.id
 // ---------------------------------------------------------------------------
 
-Deno.test("LB-2: a crafted string msg.id containing '../' segments propagates unsanitized into the obsidian create path= argument", async () => {
+Deno.test("fix regression (telegram-import-latent-bugs LB-2, MEDIUM): a crafted string msg.id containing '../' segments is REJECTED before it ever reaches the obsidian create path= argument", async () => {
   const real = await writeRealResultJson(maliciousFixture);
   try {
-    const { ctx } = makeCtx(DEFAULT_GLOBAL_ARGS);
+    const { ctx, written } = makeCtx(DEFAULT_GLOBAL_ARGS);
     let calls: { path?: string }[] = [];
     await withStubs({ resultJsonPath: real.resultPath }, async (stubs) => {
       await runImport(ctx);
@@ -279,13 +290,37 @@ Deno.test("LB-2: a crafted string msg.id containing '../' segments propagates un
       c.path?.includes("../../../../tmp/evil-note")
     );
     assert(
-      escape,
-      "noteSlug's `${date}-${msg.id}` interpolation never sanitizes msg.id — " +
-        "a traversal-shaped id reaches the obsidian create path= argument verbatim",
+      !escape,
+      "assertSafeSlug must reject a slug containing a '/' segment before " +
+        "any obsidian create call is ever made — the traversal must never " +
+        "reach the create path= argument",
     );
-    assertEquals(
-      escape!.path,
-      "Telegram/2021-01-02-101/../../../../tmp/evil-note",
+    const result = written.find((w) => w.spec === "result")!;
+    const errors = result.payload.errors as string[];
+    assert(
+      errors.some((e) =>
+        e.includes("Unsafe note slug") &&
+        e.includes("101/../../../../tmp/evil-note")
+      ),
+      "the rejection must be recorded in errors[], same shape as the pre-existing per-item create-failure catch",
+    );
+  } finally {
+    await real.cleanup();
+  }
+});
+
+Deno.test("LB-2 non-vacuity: a normal numeric-id slug still reaches obsidian create path= unchanged -- assertSafeSlug does not reject legitimate slugs", async () => {
+  const real = await writeRealResultJson(basicFixture);
+  try {
+    const { ctx } = makeCtx(DEFAULT_GLOBAL_ARGS);
+    let calls: { path?: string }[] = [];
+    await withStubs({ resultJsonPath: real.resultPath }, async (stubs) => {
+      await runImport(ctx);
+      calls = stubs.obsidianCreateCalls;
+    });
+    assert(
+      calls.some((c) => c.path === "Telegram/2020-09-15-2"),
+      "a normal numeric-id slug must still reach obsidian create path= exactly as before the LB-2 fix",
     );
   } finally {
     await real.cleanup();
@@ -293,10 +328,10 @@ Deno.test("LB-2: a crafted string msg.id containing '../' segments propagates un
 });
 
 // ---------------------------------------------------------------------------
-// LB-3 (MEDIUM) — YAML frontmatter injection
+// LB-3 (MEDIUM, FIXED 2026.08.02.1) — YAML frontmatter injection
 // ---------------------------------------------------------------------------
 
-Deno.test("LB-3: an embedded quote + YAML mapping in forwarded_from breaks out of the frontmatter block, unescaped", async () => {
+Deno.test("fix regression (telegram-import-latent-bugs LB-3, MEDIUM): an embedded quote + YAML mapping in forwarded_from is escaped into a single-line double-quoted scalar -- it no longer breaks out of the frontmatter block", async () => {
   const real = await writeRealResultJson(maliciousFixture);
   try {
     const { ctx } = makeCtx(DEFAULT_GLOBAL_ARGS);
@@ -307,22 +342,27 @@ Deno.test("LB-3: an embedded quote + YAML mapping in forwarded_from breaks out o
     });
     const call = calls.find((c) => c.path?.includes("2021-01-03-102"));
     assert(call, "the LB-3 fixture message must produce a note");
-    // The raw payload — including the closing quote, newline, and injected
-    // `admin: true` key — appears VERBATIM: telegram_import.ts builds
-    // frontmatter with `forwarded_from: "${msg.forwarded_from}"`, a plain
-    // template interpolation with no quote-escaping or newline-stripping.
     assert(
-      call!.content!.includes(
+      !call!.content!.includes(
         'forwarded_from: "Attacker"\ntags:\n  - injected\nadmin: true"',
       ),
-      "the injected YAML payload must appear unescaped in the rendered frontmatter",
+      "the raw, unescaped breakout must no longer appear",
+    );
+    // yamlDq escapes the embedded quote and both newlines into a single YAML
+    // line: the closing `"` and the `admin: true` key are now inert text
+    // inside the forwarded_from scalar, not live YAML.
+    assert(
+      call!.content!.includes(
+        'forwarded_from: "Attacker\\"\\ntags:\\n  - injected\\nadmin: true"',
+      ),
+      "the injected payload must appear escaped, on a single YAML line",
     );
   } finally {
     await real.cleanup();
   }
 });
 
-Deno.test("LB-3: the same unescaped interpolation applies to the channel name on EVERY note in the import", async () => {
+Deno.test("fix regression (telegram-import-latent-bugs LB-3, MEDIUM): the same escaping applies to the channel name on EVERY note in the import", async () => {
   const real = await writeRealResultJson(maliciousFixture);
   try {
     const { ctx } = makeCtx(DEFAULT_GLOBAL_ARGS);
@@ -334,8 +374,14 @@ Deno.test("LB-3: the same unescaped interpolation applies to the channel name on
     assert(calls.length > 0);
     for (const call of calls) {
       assert(
-        call.content!.includes('channel: "Fixture Channel"\nadmin: true'),
-        'channel: "${channelName}" is interpolated unescaped on every single note',
+        !call.content!.includes('channel: "Fixture Channel"\nadmin: true'),
+        "the raw, unescaped breakout must no longer appear",
+      );
+      assert(
+        call.content!.includes(
+          'channel: "Fixture Channel\\"\\nadmin: true\\ndescription: \\"pwned"',
+        ),
+        "channelName must be escaped into a single-line YAML scalar on every note",
       );
     }
   } finally {
@@ -344,10 +390,11 @@ Deno.test("LB-3: the same unescaped interpolation applies to the channel name on
 });
 
 // ---------------------------------------------------------------------------
-// LB-4 (MEDIUM) — one malformed message aborts the WHOLE import
+// LB-4 (MEDIUM, FIXED 2026.08.02.1) — one malformed message no longer aborts
+// the whole import
 // ---------------------------------------------------------------------------
 
-Deno.test("LB-4: a message with a non-string date throws INSIDE the loop and rejects the entire import — no result summary is ever written", async () => {
+Deno.test("fix regression (telegram-import-latent-bugs LB-4, MEDIUM): a message with a non-string date is SKIPPED, recorded in errors[], and the import still resolves with the remaining messages processed", async () => {
   const real = await writeRealResultJson(
     payload([
       { id: 1, type: "message", date: "2022-06-01T00:00:00", text: "fine" },
@@ -356,46 +403,70 @@ Deno.test("LB-4: a message with a non-string date throws INSIDE the loop and rej
         id: 3,
         type: "message",
         date: "2022-06-03T00:00:00",
-        text: "never reached",
+        text: "now reached",
       },
     ]),
   );
   try {
     const { ctx, written } = makeCtx();
     await withStubs({ resultJsonPath: real.resultPath }, async () => {
-      await assertRejects(() => runImport(ctx));
+      await runImport(ctx);
     });
-    assertEquals(
-      written.find((w) => w.spec === "result"),
-      undefined,
-      "the final result summary is only written AFTER the loop completes — " +
-        "an uncaught exception mid-loop means it is never written at all",
+    const result = written.find((w) => w.spec === "result");
+    assert(
+      result,
+      "the result summary must be written even though message 2 failed -- " +
+        "the per-message try/catch means the loop never throws uncaught",
     );
+    assertEquals(
+      result!.payload.totalMessages,
+      3,
+      "all 3 messages are still counted — one failure does not zero the import",
+    );
+    assertEquals(
+      result!.payload.notesCreated,
+      2,
+      "messages 1 and 3 both get notes; message 2 is skipped",
+    );
+    const errors = result!.payload.errors as string[];
+    assertEquals(errors.length, 1);
+    assert(errors[0].startsWith("Skipped message (id 2):"));
     const posts = written.filter((w) => w.spec === "post");
     assertEquals(
       posts.length,
-      1,
-      "message 1 (processed before the throw) already has its post " +
-        "resource written; message 3 is never reached at all",
+      2,
+      "message 1 (processed before the throw) and message 3 (now reached, " +
+        "since message 2's failure no longer aborts the loop) both have " +
+        "their post resource written",
     );
-    assertEquals(posts[0].payload.id, 1);
+    assertEquals(
+      posts.map((p) => p.payload.id).sort((a, b) =>
+        (a as number) - (b as number)
+      ),
+      [1, 3],
+    );
   } finally {
     await real.cleanup();
   }
 });
 
 // ---------------------------------------------------------------------------
-// LB-5 (MEDIUM) — unvalidated top-level export shape
+// LB-5 (MEDIUM, FIXED 2026.08.02.1) — top-level export shape now validated
 // ---------------------------------------------------------------------------
 
-Deno.test("LB-5a: a missing top-level `messages` array throws a raw TypeError, not a validation error", async () => {
+Deno.test("fix regression (telegram-import-latent-bugs LB-5a, MEDIUM): a missing top-level `messages` array now throws a CLEAR validation error, not a raw TypeError", async () => {
   const real = await writeRealResultJson({ name: "No Messages Channel" });
   try {
     const { ctx } = makeCtx();
     await withStubs({ resultJsonPath: real.resultPath }, async () => {
-      await assertRejects(
-        () => runImport(ctx),
-        TypeError,
+      const err = await assertRejects(() => runImport(ctx), Error);
+      assert(
+        !(err instanceof TypeError),
+        "must be a clear validation Error, not the raw TypeError this bug used to throw",
+      );
+      assert(
+        err.message.includes("Invalid Telegram export"),
+        `expected a clear validation message, got: ${err.message}`,
       );
     });
   } finally {
@@ -403,7 +474,7 @@ Deno.test("LB-5a: a missing top-level `messages` array throws a raw TypeError, n
   }
 });
 
-Deno.test("LB-5b: a missing top-level `name` silently renders the literal string 'undefined' into every note's channel frontmatter", async () => {
+Deno.test("fix regression (telegram-import-latent-bugs LB-5b, MEDIUM): a missing top-level `name` now throws a CLEAR validation error instead of silently rendering the literal string 'undefined' into every note", async () => {
   // payload() above always sets a name — build the raw object directly here
   // so `name` is genuinely absent from the top-level shape.
   const real = await writeRealResultJson({
@@ -417,32 +488,44 @@ Deno.test("LB-5b: a missing top-level `name` silently renders the literal string
     }],
   });
   try {
-    const { ctx, written } = makeCtx();
-    let calls: { content?: string }[] = [];
-    await withStubs({ resultJsonPath: real.resultPath }, async (stubs) => {
-      await runImport(ctx);
-      calls = stubs.obsidianCreateCalls;
+    const { ctx } = makeCtx();
+    await withStubs({ resultJsonPath: real.resultPath }, async () => {
+      const err = await assertRejects(() => runImport(ctx), Error);
+      assert(
+        err.message.includes("Invalid Telegram export"),
+        `expected a clear validation message, got: ${err.message}`,
+      );
     });
-    const result = written.find((w) => w.spec === "result")!;
-    assertEquals(result.payload.channel, undefined);
-    assert(calls[0].content!.includes('channel: "undefined"'));
   } finally {
     await real.cleanup();
   }
 });
 
 // ---------------------------------------------------------------------------
-// LB-6 (LOW) — no subprocess timeout; `find`'s exit code is never checked
+// LB-6 (LOW, FIXED 2026.08.02.1) — `find` is bounded by a timeout, and its
+// exit code is now checked explicitly
 // ---------------------------------------------------------------------------
 
-Deno.test("LB-6: a FAILING find subprocess is indistinguishable from an empty match — success/code is never inspected", async () => {
+Deno.test("fix regression (telegram-import-latent-bugs LB-6, LOW): a FAILING find subprocess now throws a DISTINCT 'find failed' message -- no longer indistinguishable from an empty match", async () => {
   // No real hang or timeout is reproduced here — findFails only makes the
-  // stub return { success: false, stdout: "" } immediately. The bug is that
-  // telegram_import.ts reads ONLY findOut.stdout and never checks
-  // findOut.success/.code, so this looks identical to "find ran fine but
-  // matched nothing" (both throw the same "No result.json found" message).
+  // stub return { success: false, code: 1, stdout: "" } immediately.
+  // telegram_import.ts now checks findOut.success/.code explicitly BEFORE
+  // reading stdout, so a failing find surfaces its own distinct message
+  // instead of the generic "No result.json found" an empty-but-successful
+  // find would produce.
   const { ctx } = makeCtx();
   await withStubs({ findFails: true }, async () => {
+    await assertRejects(
+      () => runImport(ctx),
+      Error,
+      "find failed (exit 1)",
+    );
+  });
+});
+
+Deno.test("LB-6 non-vacuity: an empty-but-SUCCESSFUL find still throws the original 'No result.json found' message -- the two failure modes stay distinct", async () => {
+  const { ctx } = makeCtx();
+  await withStubs({ findFails: false, resultJsonPath: null }, async () => {
     await assertRejects(
       () => runImport(ctx),
       Error,
@@ -452,11 +535,12 @@ Deno.test("LB-6: a FAILING find subprocess is indistinguishable from an empty ma
 });
 
 // ---------------------------------------------------------------------------
-// LB-7 (LOW) — lone surrogate produced by text.substring(0, 500)
+// LB-7 (LOW, FIXED 2026.08.02.1) — truncation is now by CODE POINT, never
+// splitting a surrogate pair
 // ---------------------------------------------------------------------------
 
-Deno.test("LB-7: text.substring(0, 500) can cut a surrogate pair in half, leaving a lone high surrogate", async () => {
-  const emoji = "\u{1F600}"; // 😀 — a surrogate pair, 2 UTF-16 code units
+Deno.test("fix regression (telegram-import-latent-bugs LB-7, LOW): a 500-code-point truncation keeps a surrogate pair intact -- no lone high surrogate is ever produced", async () => {
+  const emoji = "\u{1F600}"; // 😀 — a surrogate pair, 2 UTF-16 code units, 1 code point
   const text = "a".repeat(499) + emoji + "b".repeat(20);
   const real = await writeRealResultJson(
     payload([{
@@ -473,25 +557,59 @@ Deno.test("LB-7: text.substring(0, 500) can cut a surrogate pair in half, leavin
     });
     const post = written.find((w) => w.spec === "post")!;
     const truncated = post.payload.text as string;
-    assertEquals(truncated.length, 500);
-    const lastCode = truncated.charCodeAt(499);
-    assert(
-      lastCode >= 0xd800 && lastCode <= 0xdbff,
-      "the 500th UTF-16 code unit must be a lone (unpaired) high surrogate, " +
-        `got charCode 0x${lastCode.toString(16)}`,
+    assertEquals(
+      Array.from(truncated).length,
+      500,
+      "truncation is now by CODE POINT, not raw UTF-16 code unit",
     );
+    assert(
+      truncated.endsWith(emoji),
+      "the emoji at the truncation boundary must survive intact, as its own code point",
+    );
+    for (let i = 0; i < truncated.length; i++) {
+      const code = truncated.charCodeAt(i);
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const next = truncated.charCodeAt(i + 1);
+        assert(
+          next >= 0xdc00 && next <= 0xdfff,
+          `lone high surrogate found at index ${i} -- every high surrogate must be paired`,
+        );
+      }
+    }
   } finally {
     await real.cleanup();
   }
 });
 
 // ---------------------------------------------------------------------------
-// LB-8 (LOW) — unbounded JSON.parse, no size guard
+// LB-8 (LOW, FIXED 2026.08.02.1) — result.json is now size-guarded before
+// Deno.readTextFile/JSON.parse ever runs
 // ---------------------------------------------------------------------------
 
-Deno.test("LB-8: a long text field parses and processes with no explicit size guard anywhere in the pipeline", async () => {
-  // Deliberately moderate (thousands, not millions, of characters) — this
-  // characterizes the ABSENCE of a size guard, it is not a stress test.
+Deno.test("fix regression (telegram-import-latent-bugs LB-8, LOW): a result.json larger than the model's internal size cap is REJECTED before Deno.readTextFile/JSON.parse ever runs", async () => {
+  // The model's internal MAX_RESULT_JSON_BYTES cap is 50 MB (not exported --
+  // this suite deliberately allocates comfortably over it, 60 MB, rather
+  // than depending on the exact constant).
+  const oversized = "x".repeat(60_000_000);
+  const real = await writeRealResultJson(null, { rawJson: oversized });
+  try {
+    const { ctx } = makeCtx();
+    await withStubs({ resultJsonPath: real.resultPath }, async () => {
+      await assertRejects(
+        () => runImport(ctx),
+        Error,
+        "too large to import",
+      );
+    });
+  } finally {
+    await real.cleanup();
+  }
+});
+
+Deno.test("LB-8 non-vacuity: a long text field WELL UNDER the size cap still parses and processes normally -- the guard does not reject legitimate large exports", async () => {
+  // Deliberately moderate (thousands, not millions, of characters, well
+  // under MAX_RESULT_JSON_BYTES) — this pins that the LB-8 size guard does
+  // NOT reject ordinary large-ish messages, only genuinely oversized files.
   const longText = "x".repeat(20_000);
   const real = await writeRealResultJson(
     payload([{
@@ -521,8 +639,8 @@ Deno.test("LB-8: a long text field parses and processes with no explicit size gu
 });
 
 // ---------------------------------------------------------------------------
-// LB-9 (LOW) — command-injection CLOSED via argv arrays + residual
-// leading-dash zipPath ambiguity
+// LB-9 (LOW, 9b FIXED 2026.08.02.1) — command-injection CLOSED via argv
+// arrays (9a), leading-dash zipPath now normalized (9b)
 // ---------------------------------------------------------------------------
 
 Deno.test("LB-9a: command-injection is CLOSED — a shell-metacharacter zipPath reaches unzip as ONE untouched argv element", async () => {
@@ -541,7 +659,7 @@ Deno.test("LB-9a: command-injection is CLOSED — a shell-metacharacter zipPath 
   });
 });
 
-Deno.test("LB-9b: a leading-dash zipPath is passed through verbatim — a real unzip would positionally misread it as a flag (residual, LOW, distinct from injection)", async () => {
+Deno.test("fix regression (telegram-import-latent-bugs LB-9b, LOW): a leading-dash zipPath is normalized to './-l' before reaching unzip's argv, closing the positional-misread residual", async () => {
   const { ctx } = makeCtx({ ...DEFAULT_GLOBAL_ARGS, zipPath: "-l" });
   await withStubs({ findFails: false, resultJsonPath: null }, async (stubs) => {
     await assertRejects(() => runImport(ctx));
@@ -549,9 +667,10 @@ Deno.test("LB-9b: a leading-dash zipPath is passed through verbatim — a real u
     assert(unzip);
     assertEquals(
       unzip!.args[1],
-      "-l",
-      "zipPath is never validated to not start with '-' before being placed " +
-        "as unzip's second argv element (after the -o flag)",
+      "./-l",
+      "a leading-dash zipPath must be normalized to './-l' before being " +
+        "placed as unzip's second argv element (after the -o flag) -- a " +
+        "real unzip would otherwise positionally misread it as a flag",
     );
   });
 });

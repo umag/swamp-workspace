@@ -24,6 +24,11 @@ const GlobalArgsSchema = z.object({
 // the headless vaultRoot note-write destination below -- unrelated to
 // isPathContained/safeCopyMedia's extractDir confinement (LB-1) further down.
 
+/**
+ * A caller-supplied vault-relative path resolved against `vaultRoot` and
+ * validated to stay inside it. Returned by `resolveVaultPath`/
+ * `resolveVaultPathSafe` below.
+ */
 export interface VaultPath {
   absolutePath: string;
   vaultRelativePath: string;
@@ -249,6 +254,34 @@ const PostSchema = z.object({
   timestamp: z.iso.datetime(),
 });
 
+/**
+ * Top-level export shape guard (telegram-import-latent-bugs LB-5, MEDIUM).
+ * Previously `data.name`/`data.messages.filter(...)` ran directly against
+ * whatever `JSON.parse` returned, with no validation at all: a missing
+ * `messages` array threw an opaque `TypeError` deep inside `.filter()`, and a
+ * missing `name` silently rendered the literal string `"undefined"` into
+ * every note's `channel` frontmatter line instead of failing loudly. Used
+ * only to VALIDATE (fail closed with a clear message) — `data` itself stays
+ * whatever `JSON.parse` returned (see the `import` method below), so every
+ * existing per-message field access keeps its prior (permissive) typing;
+ * this schema does not describe individual message shapes.
+ */
+const ExportSchema = z.object({
+  name: z.string(),
+  messages: z.array(z.unknown()),
+});
+
+/**
+ * Size guard for the export's `result.json` (telegram-import-latent-bugs
+ * LB-8, LOW). Previously nothing bounded it at all -- an oversized
+ * `result.json` (malicious or just an unusually large channel history) was
+ * read into memory and handed to `JSON.parse` regardless of size. 50 MB is
+ * generous for a `result.json` (media itself is separate, so even a
+ * multi-year, high-volume channel export's metadata stays well under this),
+ * while still bounding worst-case memory use.
+ */
+const MAX_RESULT_JSON_BYTES = 50_000_000;
+
 // Run an obsidian CLI command and return its trimmed stdout.
 async function runObsidian(
   command: string,
@@ -345,6 +378,54 @@ function telegramTextToMarkdown(text: unknown): string {
 function noteSlug(msg: Record<string, unknown>): string {
   const date = (msg.date as string).split("T")[0]; // 2020-09-15
   return `${date}-${msg.id}`;
+}
+
+/**
+ * Reject a note slug containing a `/` or a `..` segment
+ * (telegram-import-latent-bugs LB-2, MEDIUM). `noteSlug` builds
+ * `${date}-${msg.id}` straight from the export's attacker/data-controlled
+ * `msg.id` (LB-5 only validates the top-level export shape, never individual
+ * message fields), so a crafted string id like
+ * `"101/../../../../tmp/evil-note"` reached the CLI `create path=` argument
+ * verbatim — the vaultRoot branch below is already confined by
+ * `resolveVaultPathSafe`, but the CLI branch passes `notePath` straight
+ * through with no check of its own. Called as the FIRST statement inside the
+ * note-create try below, so a rejection lands in the existing catch: the
+ * note for that message is skipped and recorded in `errors[]`, and the post
+ * resource is still written — same shape as every other per-item failure in
+ * this loop.
+ */
+function assertSafeSlug(slug: string): void {
+  const segments = slug.split("/");
+  if (segments.length > 1 || segments.some((segment) => segment === "..")) {
+    throw new Error(`Unsafe note slug (path traversal): "${slug}"`);
+  }
+}
+
+/**
+ * Escape a string for embedding inside a YAML double-quoted scalar
+ * (telegram-import-latent-bugs LB-3, MEDIUM). `channel`, `forwarded_from`,
+ * and the note `title` are interpolated straight from the Telegram export
+ * (attacker/data-controlled) into a hand-built `"..."` frontmatter value with
+ * no escaping — an embedded `"` closed the scalar early, and an embedded
+ * CR/LF then let arbitrary extra YAML keys (e.g. `admin: true`) ride in on
+ * the same line, landing as sibling keys in the note's frontmatter block.
+ * Backslash is escaped FIRST so an already-escaped sequence in the input is
+ * never re-escaped by a later replace. Byte-identical to the previous bare
+ * interpolation for any input with no backslash/quote/control character (the
+ * common case).
+ */
+function yamlDq(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(
+      // deno-lint-ignore no-control-regex
+      /[\x00-\x08\x0b\x0c\x0e-\x1f]/g,
+      (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`,
+    );
 }
 
 /**
@@ -446,7 +527,7 @@ async function safeCopyMedia(
  */
 export const model = {
   type: "@magistr/telegram/import",
-  version: "2026.08.01.2",
+  version: "2026.08.02.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     result: {
@@ -497,6 +578,13 @@ export const model = {
         "Add a headless vaultRoot filesystem backend (swamp-workspace #57, mirrors PR #56's obsidian-vault backend split): the note is written directly to disk via a confined atomic write when vaultRoot is set, instead of the Obsidian CLI. Upgrades isPathContained/safeCopyMedia (extractDir confinement) from lexical-only to realpath-aware, closing the documented symlink-escape residual. No resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      fromVersion: "2026.08.01.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix all eight remaining latent bugs (telegram-import-latent-bugs LB-2..LB-9): note-slug path-traversal guard (LB-2), YAML frontmatter escaping (LB-3), per-message error isolation so one malformed message no longer aborts the whole import (LB-4), top-level export shape validation (LB-5), a bounded+success-checked `find` subprocess (LB-6), code-point-safe 500-unit text truncation (LB-7), a result.json size guard (LB-8), and leading-dash zipPath normalization (LB-9). No resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   methods: {
     import: {
@@ -512,8 +600,16 @@ export const model = {
         const tmpDir = await Deno.makeTempDir({ prefix: "telegram-import-" });
 
         try {
+          // A zipPath starting with "-" is normalized to a "./"-relative form
+          // (telegram-import-latent-bugs LB-9, LOW): the argv array below
+          // already closes command-injection (every Deno.Command call passes
+          // an argv array, never a shell string), but Info-ZIP's `unzip` does
+          // not honor a `--` end-of-options marker, so an unnormalized
+          // leading-dash zipPath would still be positionally misread as a
+          // flag by a real unzip binary.
+          const safeZip = zipPath.startsWith("-") ? `./${zipPath}` : zipPath;
           const unzipProc = new Deno.Command("unzip", {
-            args: ["-o", zipPath, "-d", tmpDir],
+            args: ["-o", safeZip, "-d", tmpDir],
             stdout: "piped",
             stderr: "piped",
           });
@@ -523,12 +619,38 @@ export const model = {
             throw new Error(`unzip failed: ${stderr}`);
           }
 
-          // Find result.json in extracted dir
-          const findProc = new Deno.Command("find", {
-            args: [tmpDir, "-name", "result.json", "-type", "f"],
-            stdout: "piped",
-          });
-          const findOut = await findProc.output();
+          // Find result.json in extracted dir. Bounded by a timeout, and the
+          // subprocess exit status is checked explicitly
+          // (telegram-import-latent-bugs LB-6, LOW): previously only stdout
+          // was read, with no timeout and no success/code check -- a hung or
+          // genuinely FAILING find (stale mount, permission error) was
+          // indistinguishable from "ran fine, matched nothing" (both
+          // surfaced the identical "No result.json found" message), and a
+          // wedged find could hang the import forever with no way to report
+          // back.
+          const FIND_TIMEOUT_MS = 30_000;
+          const findOut = await (async () => {
+            const findAbort = new AbortController();
+            const findTimer = setTimeout(
+              () => findAbort.abort(),
+              FIND_TIMEOUT_MS,
+            );
+            try {
+              const findProc = new Deno.Command("find", {
+                args: [tmpDir, "-name", "result.json", "-type", "f"],
+                stdout: "piped",
+                stderr: "piped",
+                signal: findAbort.signal,
+              });
+              return await findProc.output();
+            } finally {
+              clearTimeout(findTimer);
+            }
+          })();
+          if (!findOut.success) {
+            const stderr = new TextDecoder().decode(findOut.stderr);
+            throw new Error(`find failed (exit ${findOut.code}): ${stderr}`);
+          }
           const resultPath = new TextDecoder()
             .decode(findOut.stdout)
             .trim()
@@ -538,8 +660,34 @@ export const model = {
           }
 
           const extractDir = resultPath.replace("/result.json", "");
+
+          // Size guard (telegram-import-latent-bugs LB-8, LOW): reject an
+          // oversized result.json BEFORE it is ever read into memory or
+          // handed to JSON.parse -- previously nothing bounded either.
+          const resultInfo = await Deno.stat(resultPath);
+          if (resultInfo.size > MAX_RESULT_JSON_BYTES) {
+            throw new Error(
+              `result.json is too large to import (${resultInfo.size} bytes > ${MAX_RESULT_JSON_BYTES} byte limit)`,
+            );
+          }
+
           const rawJson = await Deno.readTextFile(resultPath);
           const data = JSON.parse(rawJson);
+
+          // Validate the top-level export shape (telegram-import-latent-bugs
+          // LB-5, MEDIUM) before trusting data.name/data.messages -- see
+          // ExportSchema above. `data` itself is left as whatever
+          // JSON.parse returned (not replaced by the parsed/narrowed
+          // value), so every per-message field access below keeps its prior
+          // permissive typing; this only guards the shape check that used to
+          // be entirely absent.
+          const shapeCheck = ExportSchema.safeParse(data);
+          if (!shapeCheck.success) {
+            throw new Error(
+              `Invalid Telegram export: ${shapeCheck.error.message}`,
+            );
+          }
+
           const channelName = data.name;
 
           // Filter actual messages (skip service messages)
@@ -563,74 +711,107 @@ export const model = {
           const dataHandles: unknown[] = [];
 
           for (const msg of messages) {
-            const slug = noteSlug(msg);
-            const text = telegramTextToMarkdown(msg.text);
-            const date = msg.date;
-            const msgId = msg.id;
+            // Per-message error isolation (telegram-import-latent-bugs LB-4,
+            // MEDIUM): the ENTIRE per-message body used to run uncaught --
+            // one bad message (e.g. a non-string `date`, which throws inside
+            // noteSlug below) rejected the whole `import` call, and since the
+            // `result` summary is only written AFTER this loop completes
+            // (unchanged, still true below), NOTHING was ever reported back,
+            // even for messages already processed successfully before the
+            // throw. Every failure is now recorded in `errors[]` and the loop
+            // moves on to the next message, same shape as the pre-existing
+            // per-item copy/create failure handling below.
+            try {
+              const slug = noteSlug(msg);
+              const text = telegramTextToMarkdown(msg.text);
+              const date = msg.date;
+              const msgId = msg.id;
 
-            // Build frontmatter
-            const fm = [
-              "---",
-              `title: "Post ${msgId}"`,
-              `date: ${date}`,
-              `source: telegram`,
-              `channel: "${channelName}"`,
-              `telegram_id: ${msgId}`,
-            ];
-            if (msg.forwarded_from) {
-              fm.push(`forwarded_from: "${msg.forwarded_from}"`);
-            }
-            if (msg.reply_to_message_id) {
-              fm.push(`reply_to: ${msg.reply_to_message_id}`);
-            }
-            fm.push("tags:", "  - telegram", "---", "");
-
-            const body: string[] = [];
-
-            if (msg.forwarded_from) {
-              body.push(`> Forwarded from **${msg.forwarded_from}**`, "");
-            }
-
-            if (text.trim()) {
-              body.push(text, "");
-            }
-
-            // Handle photo — srcFile is containment-guarded (LB-1) by
-            // safeCopyMedia before Deno.copyFile ever runs.
-            let photoFilename;
-            if (msg.photo) {
-              const srcFile = `${extractDir}/${msg.photo}`;
-              photoFilename = msg.photo.split("/").pop();
-              const copied = await safeCopyMedia(
-                extractDir,
-                srcFile,
-                `${attachDiskPath}/${photoFilename}`,
-                `image ${photoFilename}`,
-                errors,
-              );
-              if (copied) {
-                imagesCopied++;
-                body.push(`![[${attachFolder}/${photoFilename}]]`, "");
+              // Build frontmatter. title/channel/forwarded_from are escaped
+              // with yamlDq (LB-3, MEDIUM) -- see its docstring above.
+              const fm = [
+                "---",
+                `title: "Post ${yamlDq(String(msgId))}"`,
+                `date: ${date}`,
+                `source: telegram`,
+                `channel: "${yamlDq(String(channelName))}"`,
+                `telegram_id: ${msgId}`,
+              ];
+              if (msg.forwarded_from) {
+                fm.push(
+                  `forwarded_from: "${yamlDq(String(msg.forwarded_from))}"`,
+                );
               }
-            }
+              if (msg.reply_to_message_id) {
+                fm.push(`reply_to: ${msg.reply_to_message_id}`);
+              }
+              fm.push("tags:", "  - telegram", "---", "");
 
-            // Handle file attachment (PDF etc) — skip thumbnails and videos
-            // handled below. srcFile is containment-guarded (LB-1) by
-            // safeCopyMedia, applied AFTER the _thumb skip so thumbnails
-            // stay silently skipped and only true escapes record an error.
-            if (
-              msg.file &&
-              typeof msg.file === "string" &&
-              msg.media_type !== "video_file"
-            ) {
-              const fileName = msg.file.split("/").pop();
-              if (!fileName.endsWith("_thumb.jpg")) {
+              const body: string[] = [];
+
+              if (msg.forwarded_from) {
+                body.push(`> Forwarded from **${msg.forwarded_from}**`, "");
+              }
+
+              if (text.trim()) {
+                body.push(text, "");
+              }
+
+              // Handle photo — srcFile is containment-guarded (LB-1) by
+              // safeCopyMedia before Deno.copyFile ever runs.
+              let photoFilename;
+              if (msg.photo) {
+                const srcFile = `${extractDir}/${msg.photo}`;
+                photoFilename = msg.photo.split("/").pop();
+                const copied = await safeCopyMedia(
+                  extractDir,
+                  srcFile,
+                  `${attachDiskPath}/${photoFilename}`,
+                  `image ${photoFilename}`,
+                  errors,
+                );
+                if (copied) {
+                  imagesCopied++;
+                  body.push(`![[${attachFolder}/${photoFilename}]]`, "");
+                }
+              }
+
+              // Handle file attachment (PDF etc) — skip thumbnails and videos
+              // handled below. srcFile is containment-guarded (LB-1) by
+              // safeCopyMedia, applied AFTER the _thumb skip so thumbnails
+              // stay silently skipped and only true escapes record an error.
+              if (
+                msg.file &&
+                typeof msg.file === "string" &&
+                msg.media_type !== "video_file"
+              ) {
+                const fileName = msg.file.split("/").pop();
+                if (!fileName.endsWith("_thumb.jpg")) {
+                  const srcFile = `${extractDir}/${msg.file}`;
+                  const copied = await safeCopyMedia(
+                    extractDir,
+                    srcFile,
+                    `${attachDiskPath}/${fileName}`,
+                    `file ${fileName}`,
+                    errors,
+                  );
+                  if (copied) {
+                    filesCopied++;
+                    body.push(`![[${attachFolder}/${fileName}]]`, "");
+                  }
+                }
+              }
+
+              // Handle video — srcFile is containment-guarded (LB-1) by
+              // safeCopyMedia before Deno.copyFile ever runs.
+              if (msg.media_type === "video_file" && msg.file) {
+                const fileName = msg.file.split("/").pop();
                 const srcFile = `${extractDir}/${msg.file}`;
                 const copied = await safeCopyMedia(
                   extractDir,
                   srcFile,
                   `${attachDiskPath}/${fileName}`,
-                  `file ${fileName}`,
+                  `video ${fileName}`,
                   errors,
                 );
                 if (copied) {
@@ -638,76 +819,76 @@ export const model = {
                   body.push(`![[${attachFolder}/${fileName}]]`, "");
                 }
               }
-            }
 
-            // Handle video — srcFile is containment-guarded (LB-1) by
-            // safeCopyMedia before Deno.copyFile ever runs.
-            if (msg.media_type === "video_file" && msg.file) {
-              const fileName = msg.file.split("/").pop();
-              const srcFile = `${extractDir}/${msg.file}`;
-              const copied = await safeCopyMedia(
-                extractDir,
-                srcFile,
-                `${attachDiskPath}/${fileName}`,
-                `video ${fileName}`,
-                errors,
-              );
-              if (copied) {
-                filesCopied++;
-                body.push(`![[${attachFolder}/${fileName}]]`, "");
-              }
-            }
+              // Create the note: a confined direct write when vaultRoot is
+              // set (headless, no Obsidian app needed), the Obsidian CLI
+              // otherwise.
+              const noteContent = fm.join("\n") + body.join("\n");
+              const notePath = `${folder}/${slug}`;
 
-            // Create the note: a confined direct write when vaultRoot is set
-            // (headless, no Obsidian app needed), the Obsidian CLI otherwise.
-            const noteContent = fm.join("\n") + body.join("\n");
-            const notePath = `${folder}/${slug}`;
-
-            try {
-              if (vaultRoot) {
-                const noteGlobalArgs: Record<string, unknown> = { vaultRoot };
-                const noteTarget = await resolveVaultPathSafe(
-                  noteGlobalArgs,
-                  `${notePath}.md`,
-                );
-                await ensureParentDir(
-                  noteTarget.absolutePath,
-                  DEFAULT_DIRECTORY_MODE,
-                );
-                await writeAtomic(
-                  noteTarget.absolutePath,
-                  noteContent,
-                  DEFAULT_FILE_MODE,
-                );
-              } else {
-                const noteKey = notePath.includes("/") ? "path" : "name";
-                await runObsidian(
-                  "create",
-                  { [noteKey]: notePath, content: noteContent },
-                  vault,
-                  ["overwrite"],
+              try {
+                // LB-2 guard: reject a slug containing a path-traversal
+                // segment before it ever reaches either branch below -- see
+                // assertSafeSlug's docstring above.
+                assertSafeSlug(slug);
+                if (vaultRoot) {
+                  const noteGlobalArgs: Record<string, unknown> = {
+                    vaultRoot,
+                  };
+                  const noteTarget = await resolveVaultPathSafe(
+                    noteGlobalArgs,
+                    `${notePath}.md`,
+                  );
+                  await ensureParentDir(
+                    noteTarget.absolutePath,
+                    DEFAULT_DIRECTORY_MODE,
+                  );
+                  await writeAtomic(
+                    noteTarget.absolutePath,
+                    noteContent,
+                    DEFAULT_FILE_MODE,
+                  );
+                } else {
+                  const noteKey = notePath.includes("/") ? "path" : "name";
+                  await runObsidian(
+                    "create",
+                    { [noteKey]: notePath, content: noteContent },
+                    vault,
+                    ["overwrite"],
+                  );
+                }
+                notesCreated++;
+              } catch (e) {
+                errors.push(
+                  `Failed to create note ${notePath}: ${
+                    e instanceof Error ? e.message : String(e)
+                  }`,
                 );
               }
-              notesCreated++;
+
+              // Write post resource (factory pattern). Truncated by CODE
+              // POINT, not raw UTF-16 code unit (telegram-import-latent-bugs
+              // LB-7, LOW): `text.substring(0, 500)` could cut a surrogate
+              // pair in half, leaving a lone (unpaired) high surrogate at the
+              // end of the truncated text.
+              const postHandle = await context.writeResource("post", slug, {
+                id: msgId,
+                date,
+                text: Array.from(text).slice(0, 500).join(""),
+                photo: photoFilename,
+                forwardedFrom: msg.forwarded_from || undefined,
+                replyTo: msg.reply_to_message_id || undefined,
+                timestamp: new Date().toISOString(),
+              });
+              dataHandles.push(postHandle);
             } catch (e) {
               errors.push(
-                `Failed to create note ${notePath}: ${
+                `Skipped message (id ${msg.id}): ${
                   e instanceof Error ? e.message : String(e)
                 }`,
               );
+              continue;
             }
-
-            // Write post resource (factory pattern)
-            const postHandle = await context.writeResource("post", slug, {
-              id: msgId,
-              date,
-              text: text.substring(0, 500),
-              photo: photoFilename,
-              forwardedFrom: msg.forwarded_from || undefined,
-              replyTo: msg.reply_to_message_id || undefined,
-              timestamp: new Date().toISOString(),
-            });
-            dataHandles.push(postHandle);
           }
 
           // Write summary
