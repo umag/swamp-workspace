@@ -2,17 +2,20 @@
  * Contract-fixture suite: pins EXACT decoded output against golden synthetic
  * fixtures — independent of the methods suite's happy-path shape checks.
  * Covers: CP866 fallback decode (mapped byte ranges), the UTF-8 path,
- * `* Origin:` line + FTN-address extraction regexes (including the
- * no-OADDRESS-subfield fallback), an INDEPENDENTLY hand-derived DOS
- * packed-datetime (`parseScombo`) pin (a raw hex combo, not round-tripped
- * through the fixture builder's own `packScombo` inverse — so a symmetric
- * bit-math bug in both wouldn't silently cancel out), `parseFtsDate`'s
- * 2-digit-year century rule, every INTL/FMPT/TOPT kludge-address-assembly
- * combination, the deleted-message (`attr & 0x80000000`) skip, and the exact
+ * JAM/Squish/FTS-0001 NUL-trim byte-exactness (LB8 fix), `* Origin:` line +
+ * FTN-address extraction regexes (including the no-OADDRESS-subfield
+ * fallback), an INDEPENDENTLY hand-derived DOS packed-datetime
+ * (`parseScombo`) pin (a raw hex combo, not round-tripped through the
+ * fixture builder's own `packScombo` inverse — so a symmetric bit-math bug
+ * in both wouldn't silently cancel out), `parseFtsDate`'s 2-digit-year
+ * century rule, every INTL/FMPT/TOPT kludge-address-assembly combination,
+ * the deleted-message (`attr & 0x80000000`) skip, and the exact
  * `formatForObsidian` markdown frontmatter + body + dedup suffix string.
  *
- * fidonet_msgbase.ts is BYTE-FROZEN. All fixture content is synthetic — see
- * fixtures/PROVENANCE.md.
+ * `fidonet_msgbase.ts` received a real-fix pass for 9 latent bugs (see the
+ * LOCAL `fidonet-msgbase-latent-bugs` issue-lifecycle model); valid-message
+ * parsing stays byte-identical, which is exactly what this suite pins. All
+ * fixture content is synthetic — see fixtures/PROVENANCE.md.
  */
 import { assertEquals } from "jsr:@std/assert@1";
 import { model } from "./fidonet_msgbase.ts";
@@ -135,7 +138,7 @@ Deno.test("contract: CP866 extra-table bytes (shading blocks + Ё variants) deco
 // UTF-8 path (decodeText's first branch)
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: valid multi-byte UTF-8 with high bytes decodes as UTF-8, not CP866 (the high-byte guard is dead code — both branches return `text`)", async () => {
+Deno.test("contract: valid multi-byte UTF-8 with high bytes decodes as UTF-8, not CP866 (the previously-dead high-byte guard was removed as part of the LB8 fix — decodeText now returns directly from the UTF-8 branch)", async () => {
   const utf8Name = "Привет мир"; // valid UTF-8, all bytes >= 0x80 for Cyrillic
   await withTempMsgbase(
     {
@@ -162,6 +165,64 @@ Deno.test("contract: valid multi-byte UTF-8 with high bytes decodes as UTF-8, no
         Record<string, unknown>
       >;
       assertEquals(messages[0].from, utf8Name);
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// LB8 fix: JAM subfield NUL-trim is byte-exact with Squish/FTS-0001
+// ---------------------------------------------------------------------------
+
+Deno.test("contract: JAM subfield NUL-trim is byte-exact with Squish's XMSG and FTS-0001's header NUL-truncation for the same padded input", async () => {
+  const paddedName = new Uint8Array([
+    0x43,
+    0x61,
+    0x72,
+    0x6f,
+    0x6c,
+    0x00,
+    0x00,
+    0x00,
+  ]); // "Carol\0\0\0"
+  const { jhr, jdt } = buildJamAreaFiles({
+    messages: [{
+      msgNum: 1,
+      dateWritten: 1000000000,
+      from: paddedName,
+      to: "All",
+    }],
+  });
+  const sqd = buildSquishArea({
+    messages: [{ from: paddedName, to: "All", subject: "x", body: "b" }],
+  });
+  const nm = buildFtsMsg({ from: paddedName, to: "All", bodyLines: ["x"] });
+  await withTempMsgbase(
+    {
+      areas: {
+        "fido.jamtrim": { kind: "jam", jhr, jdt },
+        "fido.sqtrim": { kind: "squish", sqd },
+      },
+      netmail: { "1.msg": nm },
+    },
+    async (basePath) => {
+      const { ctx: ctx1, written: w1 } = makeCtx(basePath);
+      await run("readArea", { area: "fido.jamtrim" }, ctx1);
+      const jamFrom =
+        (w1[0].payload.messages as Array<Record<string, unknown>>)[0].from;
+
+      const { ctx: ctx2, written: w2 } = makeCtx(basePath);
+      await run("readArea", { area: "fido.sqtrim" }, ctx2);
+      const sqFrom =
+        (w2[0].payload.messages as Array<Record<string, unknown>>)[0].from;
+
+      const { ctx: ctx3, written: w3 } = makeCtx(basePath);
+      await run("readNetmail", {}, ctx3);
+      const ftsFrom =
+        (w3[0].payload.messages as Array<Record<string, unknown>>)[0].from;
+
+      assertEquals(jamFrom, "Carol");
+      assertEquals(sqFrom, "Carol");
+      assertEquals(ftsFrom, "Carol");
     },
   );
 });

@@ -1,8 +1,8 @@
 {
   "tasks": {
     "check": "deno check extensions/models/fidonet_msgbase.ts extensions/models/fixtures/builders.ts",
-    "test": "deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/",
-    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/fidonet_msgbase_property_test.ts",
+    "test": "deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS,FIDONET_MSGBASE_MAX_BYTES extensions/models/",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS,FIDONET_MSGBASE_MAX_BYTES extensions/models/fidonet_msgbase_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

@@ -31,6 +31,133 @@ const AreaInfoSchema = z.object({
   baseMsgNum: z.number().optional(),
 });
 
+// --- Filesystem safety helpers ---
+
+const DEFAULT_MAX_BYTES = 256 * 1024 * 1024; // 256 MiB
+
+/** Resolve the effective read-size cap: `FIDONET_MSGBASE_MAX_BYTES` (bytes)
+ * when set to a valid positive number, otherwise `DEFAULT_MAX_BYTES`. Wrapped
+ * in try/catch so a sandbox without `--allow-env` (or the var simply being
+ * unset) silently falls back to the default instead of throwing. */
+function resolveMaxBytes(): number {
+  try {
+    const override = Deno.env.get("FIDONET_MSGBASE_MAX_BYTES");
+    if (override) {
+      const parsed = Number(override);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  } catch {
+    // No env permission — fall back to the default cap.
+  }
+  return DEFAULT_MAX_BYTES;
+}
+
+/**
+ * Read a file with a size cap instead of buffering an unbounded amount into
+ * RAM (LB9 — every parser in this model reads its whole area/text/message
+ * file with no streaming, so an oversized or corrupt file is a real
+ * memory-exhaustion vector). Defaults to 256 MiB; overridable via the
+ * `FIDONET_MSGBASE_MAX_BYTES` env var (bytes). Throws `'<path>' exceeds size
+ * cap` when `Deno.stat` reports a larger size than the cap, before ever
+ * calling `Deno.readFile` — callers that already tolerate a missing sibling
+ * file (`.jdt`, `.sqd`, ...) via try/catch get the oversized case folded
+ * into the same catch for free; the fan-out search methods additionally
+ * surface it as a `warnings` entry instead of silently dropping the area.
+ */
+async function readFileCapped(path: string): Promise<Uint8Array> {
+  const maxBytes = resolveMaxBytes();
+  const stat = await Deno.stat(path);
+  if (stat.size > maxBytes) {
+    throw new Error(
+      `'${path}' exceeds size cap (${stat.size} > ${maxBytes} bytes)`,
+    );
+  }
+  return await Deno.readFile(path);
+}
+
+/** Normalize a `/`- or `\`-separated path into its resolved segments: empty
+ * and `.` segments are dropped, and `..` pops the previous segment (throwing
+ * if that would escape past an empty stack). Mirrors POSIX path resolution.
+ * Adapted from livejournal-import's `normalizeSegments` confinement check
+ * (see livejournal-import/extensions/models/livejournal_import.ts) for
+ * `resolveAreaFile`'s basePath-confinement check below. */
+function normalizeSegments(path: string): string[] {
+  const segments: string[] = [];
+  for (const raw of path.split(/[\\/]+/)) {
+    if (!raw || raw === ".") continue;
+    if (raw === "..") {
+      if (segments.length === 0) {
+        throw new Error(`Path escapes root: ${path}`);
+      }
+      segments.pop();
+      continue;
+    }
+    segments.push(raw);
+  }
+  return segments;
+}
+
+/**
+ * Resolve a message area's on-disk file path (`.jhr`/`.jdt`/`.sqd`) against
+ * `basePath`, rejecting any path-traversal attempt embedded in the caller-
+ * supplied `area` argument (LB1 — `readArea` previously interpolated `area`
+ * into the filesystem path with no validation at all, so `area="../secret"`
+ * escaped `basePath` and read any sibling `.jhr`/`.jdt`/`.sqd` file the
+ * process could reach). Legitimate area names are a single flat dotted
+ * identifier (e.g. "fido.general"), never a nested path, so `area` is
+ * rejected outright if it contains ANY `/` or `\` separator, or is itself
+ * empty/`.`/`..`. As defense in depth, the fully resolved candidate path is
+ * additionally normalized (adapting livejournal-import's `normalizeSegments`
+ * + prefix-check confinement pattern) and verified to still land strictly
+ * under `basePath`, so a future relaxation of the up-front character check
+ * would still be caught here. Only `readArea` calls this — the fan-out
+ * search methods enumerate area files via `Deno.readDir`, never from a
+ * caller-supplied name, so they are not a traversal vector.
+ */
+function resolveAreaFile(
+  basePath: string,
+  area: string,
+  ext: string,
+): string {
+  const hasSeparator = /[\\/]/.test(area);
+  if (!area || area === "." || area === ".." || hasSeparator) {
+    throw new Error(`Area '${area}': path traversal rejected`);
+  }
+  const normalizedBase = normalizeSegments(basePath).join("/");
+  let normalizedTarget: string;
+  try {
+    normalizedTarget = normalizeSegments(`${basePath}/${area}${ext}`).join(
+      "/",
+    );
+  } catch {
+    throw new Error(`Area '${area}': path traversal rejected`);
+  }
+  if (!normalizedTarget.startsWith(`${normalizedBase}/`)) {
+    throw new Error(`Area '${area}': path traversal rejected`);
+  }
+  return `${basePath}/${area}${ext}`;
+}
+
+/**
+ * FNV-1a 32-bit hash of `input`, truncated to 6 hex characters. Used to
+ * disambiguate `writeResource` instance-name slugs (LB7): `searchBySender`/
+ * `searchByAddress`/`searchByText` slugify their query into an instance name
+ * by collapsing every non-alphanumeric character to `_`, so two distinct raw
+ * queries sharing a base and differing only in separator character (e.g.
+ * "John.Doe" vs "John_Doe") used to collapse to the IDENTICAL slug and
+ * silently overwrite each other's stored results. Appending a hash of the
+ * RAW, pre-slugification query gives distinct raw inputs distinct instance
+ * names while remaining fully deterministic for the same raw input.
+ */
+function fnv1aHex(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0").slice(0, 6);
+}
+
 // --- JAM parser ---
 
 function readUint32LE(buf: Uint8Array, offset: number): number {
@@ -87,10 +214,7 @@ function decodeText(buf: Uint8Array, start: number, len: number): string {
   // Try UTF-8 first, fall back to CP866
   try {
     const slice = buf.slice(start, start + len);
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(slice);
-    // If no high bytes, it's ASCII — fine either way
-    if (slice.some((b) => b >= 0x80)) return text;
-    return text;
+    return new TextDecoder("utf-8", { fatal: true }).decode(slice);
   } catch {
     // Not valid UTF-8, use CP866
   }
@@ -161,7 +285,12 @@ function parseJamMessages(jhr: Uint8Array): JamMessage[] {
 
       if (bufStart + datLen > jhr.length) break;
 
-      const text = decodeText(jhr, bufStart, datLen);
+      // NUL-trim to match Squish's XMSG fixed fields
+      // (`.replace(/\0.*/, "")`) and FTS-0001's header fields
+      // (`.split("\0")[0]`) — a subfield's declared `datLen` was previously
+      // taken literally, letting trailing NUL padding survive verbatim into
+      // from/to/subject (LB8).
+      const text = decodeText(jhr, bufStart, datLen).replace(/\0.*/s, "");
 
       switch (loID) {
         case 0:
@@ -266,8 +395,23 @@ function parseSquishMessages(sqd: Uint8Array): SquishMessage[] {
 
   let frameOfs = beginFrame;
   let msgCounter = 0;
+  // LB2: a crafted/corrupt frame chain can point `nextFrame` back at an
+  // already-visited offset, looping forever. Track every offset already
+  // processed and stop the moment one repeats; `maxFrameIterations` is a
+  // belt-and-suspenders cap independent of the visited-set (no genuine chain
+  // needs more hops than the buffer has bytes), in case that check is ever
+  // relaxed.
+  const visitedFrames = new Set<number>();
+  const maxFrameIterations = sqd.length;
+  let frameIterations = 0;
 
   while (frameOfs > 0 && frameOfs + 28 <= sqd.length) {
+    if (visitedFrames.has(frameOfs) || frameIterations >= maxFrameIterations) {
+      break;
+    }
+    visitedFrames.add(frameOfs);
+    frameIterations++;
+
     // Read SQHDR
     const id = readUint32LE(sqd, frameOfs);
     if (id !== 0xafae4453) break;
@@ -278,8 +422,15 @@ function parseSquishMessages(sqd: Uint8Array): SquishMessage[] {
     const frameType = readUint16LE(sqd, frameOfs + 24);
 
     if (frameType === 0 && msgLength >= 238) {
-      // Normal frame — read XMSG
+      // Normal frame — read XMSG, but only when the buffer actually holds
+      // the full 238-byte fixed region here (LB6 — `msgLength` is an
+      // untrusted on-disk field and can claim more bytes than the buffer
+      // has, e.g. from a truncated file; without this guard the subsequent
+      // readUint32LE/readUint16LE calls silently read out-of-bounds
+      // `undefined` bytes, which bitwise ops coerce to 0 rather than
+      // throwing or NaN-ing).
       const xmsgOfs = frameOfs + 28;
+      if (xmsgOfs + 238 > sqd.length) break;
       const attr = readUint32LE(sqd, xmsgOfs);
       const from = decodeText(sqd, xmsgOfs + 4, 36).replace(/\0.*/, "");
       const to = decodeText(sqd, xmsgOfs + 40, 36).replace(/\0.*/, "");
@@ -460,7 +611,7 @@ async function readNetmailDir(
       const num = parseInt(entry.name);
       if (isNaN(num)) continue;
       try {
-        const data = await Deno.readFile(`${netmailPath}/${entry.name}`);
+        const data = await readFileCapped(`${netmailPath}/${entry.name}`);
         const msg = parseFtsMsg(data, num);
         if (msg) messages.push(msg);
       } catch {
@@ -501,10 +652,20 @@ function ftsToRecord(
 /** FidoNet JAM/Squish/FTS-0001 message base reader: list areas, read areas and netmail, and search messages by sender, FidoNet address, or text. */
 export const model = {
   type: "@magistr/fidonet-msgbase",
-  version: "2026.07.16.2",
+  version: "2026.08.02.1",
   globalArguments: GlobalArgsSchema,
 
   reports: ["@magistr/fidonet-summary", "@magistr/fidonet-messages"],
+
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix 9 latent bugs incl. LB1 area path traversal; add optional warnings; no breaking schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
 
   resources: {
     areas: {
@@ -523,6 +684,7 @@ export const model = {
         query: z.string().optional(),
         messages: z.array(MessageSchema),
         count: z.number(),
+        warnings: z.array(z.string()).optional(),
       }),
       lifetime: "1h",
       garbageCollection: 10,
@@ -547,7 +709,7 @@ export const model = {
 
           if (entry.name.endsWith(".jhr")) {
             const name = entry.name.slice(0, -4);
-            const data = await Deno.readFile(`${basePath}/${entry.name}`);
+            const data = await readFileCapped(`${basePath}/${entry.name}`);
             const header = parseJamFixedHeader(data);
             if (header) {
               areas.push({
@@ -559,7 +721,7 @@ export const model = {
             }
           } else if (entry.name.endsWith(".sqd")) {
             const name = entry.name.slice(0, -4);
-            const data = await Deno.readFile(`${basePath}/${entry.name}`);
+            const data = await readFileCapped(`${basePath}/${entry.name}`);
             if (data.length >= 12) {
               const numMsg = readUint32LE(data, 4);
               areas.push({ name, format: "squish", activeMessages: numMsg });
@@ -614,13 +776,13 @@ export const model = {
         const areaName = args.area;
 
         // Try JAM first
-        const jhrPath = `${basePath}/${areaName}.jhr`;
-        const jdtPath = `${basePath}/${areaName}.jdt`;
+        const jhrPath = resolveAreaFile(basePath, areaName, ".jhr");
+        const jdtPath = resolveAreaFile(basePath, areaName, ".jdt");
 
         let messages: Array<Record<string, unknown>> = [];
 
         try {
-          const jhrData = await Deno.readFile(jhrPath);
+          const jhrData = await readFileCapped(jhrPath);
           const header = parseJamFixedHeader(jhrData);
           if (!header) throw new Error("Invalid JAM header");
 
@@ -628,7 +790,7 @@ export const model = {
 
           let jdtData: Uint8Array | null = null;
           try {
-            jdtData = await Deno.readFile(jdtPath);
+            jdtData = await readFileCapped(jdtPath);
           } catch {
             // No text file — messages may have no body
           }
@@ -665,9 +827,9 @@ export const model = {
           }
         } catch {
           // Try Squish
-          const sqdPath = `${basePath}/${areaName}.sqd`;
+          const sqdPath = resolveAreaFile(basePath, areaName, ".sqd");
           try {
-            const sqdData = await Deno.readFile(sqdPath);
+            const sqdData = await readFileCapped(sqdPath);
             const sqMsgs = parseSquishMessages(sqdData);
             const sliced = sqMsgs.slice(
               args.offset,
@@ -745,6 +907,7 @@ export const model = {
         const basePath = context.globalArgs.basePath;
         const needle = args.sender.toLowerCase();
         const results: Array<Record<string, unknown>> = [];
+        const warnings: string[] = [];
 
         for await (const entry of Deno.readDir(basePath)) {
           if (!entry.isFile) continue;
@@ -753,9 +916,14 @@ export const model = {
           if (entry.name.endsWith(".jhr")) {
             const areaName = entry.name.slice(0, -4);
             try {
-              const jhrData = await Deno.readFile(
+              const jhrData = await readFileCapped(
                 `${basePath}/${entry.name}`,
               );
+              if (jhrData.length < 1024) {
+                warnings.push(
+                  `Area '${areaName}': .jhr shorter than 1024-byte fixed header (${jhrData.length} bytes)`,
+                );
+              }
               const jamMsgs = parseJamMessages(jhrData);
               const matches = jamMsgs.filter((m) =>
                 m.from.toLowerCase().includes(needle)
@@ -765,7 +933,7 @@ export const model = {
 
               let jdtData: Uint8Array | null = null;
               try {
-                jdtData = await Deno.readFile(
+                jdtData = await readFileCapped(
                   `${basePath}/${areaName}.jdt`,
                 );
               } catch {
@@ -793,13 +961,19 @@ export const model = {
                   format: "jam",
                 });
               }
-            } catch {
-              // skip unreadable areas
+            } catch (e) {
+              // LB3: surface the failure instead of silently dropping the
+              // area — a good sibling area alongside it is still searched.
+              warnings.push(
+                `Area '${areaName}': ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
             }
           } else if (entry.name.endsWith(".sqd")) {
             const areaName = entry.name.slice(0, -4);
             try {
-              const sqdData = await Deno.readFile(
+              const sqdData = await readFileCapped(
                 `${basePath}/${entry.name}`,
               );
               const sqMsgs = parseSquishMessages(sqdData);
@@ -824,8 +998,12 @@ export const model = {
                   format: "squish",
                 });
               }
-            } catch {
-              // skip
+            } catch (e) {
+              warnings.push(
+                `Area '${areaName}': ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
             }
           }
         }
@@ -848,14 +1026,16 @@ export const model = {
         );
 
         const senderKey = args.sender.replace(/[^a-zA-Z0-9]/g, "_");
+        const payload: Record<string, unknown> = {
+          query: `sender:${args.sender}`,
+          messages: results,
+          count: results.length,
+        };
+        if (warnings.length > 0) payload.warnings = warnings;
         const handle = await context.writeResource(
           "messages",
-          `sender_${senderKey}`,
-          {
-            query: `sender:${args.sender}`,
-            messages: results,
-            count: results.length,
-          },
+          `sender_${senderKey}_${fnv1aHex(args.sender)}`,
+          payload,
         );
         return { dataHandles: [handle] };
       },
@@ -876,6 +1056,7 @@ export const model = {
         // If searching by node (no point), match node prefix
         const isPointSearch = needle.includes(".");
         const results: Array<Record<string, unknown>> = [];
+        const warnings: string[] = [];
 
         for await (const entry of Deno.readDir(basePath)) {
           if (!entry.isFile) continue;
@@ -884,9 +1065,14 @@ export const model = {
           if (entry.name.endsWith(".jhr")) {
             const areaName = entry.name.slice(0, -4);
             try {
-              const jhrData = await Deno.readFile(
+              const jhrData = await readFileCapped(
                 `${basePath}/${entry.name}`,
               );
+              if (jhrData.length < 1024) {
+                warnings.push(
+                  `Area '${areaName}': .jhr shorter than 1024-byte fixed header (${jhrData.length} bytes)`,
+                );
+              }
               const jamMsgs = parseJamMessages(jhrData);
 
               // Quick pre-filter on subfield address
@@ -896,7 +1082,7 @@ export const model = {
 
               let jdtData: Uint8Array | null = null;
               try {
-                jdtData = await Deno.readFile(
+                jdtData = await readFileCapped(
                   `${basePath}/${areaName}.jdt`,
                 );
               } catch {
@@ -933,13 +1119,19 @@ export const model = {
                   format: "jam",
                 });
               }
-            } catch {
-              // skip
+            } catch (e) {
+              // LB3: surface the failure instead of silently dropping the
+              // area — a good sibling area alongside it is still searched.
+              warnings.push(
+                `Area '${areaName}': ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
             }
           } else if (entry.name.endsWith(".sqd")) {
             const areaName = entry.name.slice(0, -4);
             try {
-              const sqdData = await Deno.readFile(
+              const sqdData = await readFileCapped(
                 `${basePath}/${entry.name}`,
               );
               const sqMsgs = parseSquishMessages(sqdData);
@@ -967,8 +1159,12 @@ export const model = {
                   format: "squish",
                 });
               }
-            } catch {
-              // skip
+            } catch (e) {
+              warnings.push(
+                `Area '${areaName}': ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
             }
           }
         }
@@ -994,14 +1190,16 @@ export const model = {
         );
 
         const addrKey = args.address.replace(/[^a-zA-Z0-9]/g, "_");
+        const payload: Record<string, unknown> = {
+          query: `address:${args.address}`,
+          messages: results,
+          count: results.length,
+        };
+        if (warnings.length > 0) payload.warnings = warnings;
         const handle = await context.writeResource(
           "messages",
-          `address_${addrKey}`,
-          {
-            query: `address:${args.address}`,
-            messages: results,
-            count: results.length,
-          },
+          `address_${addrKey}_${fnv1aHex(args.address)}`,
+          payload,
         );
         return { dataHandles: [handle] };
       },
@@ -1012,7 +1210,7 @@ export const model = {
         "Format stored search/read results as Obsidian markdown notes",
       arguments: z.object({
         source: z.string().describe(
-          "Data instance name from a previous search (e.g. sender_John_Doe, netmail, address_2_5020_1_28)",
+          "Data instance name from a previous search (e.g. sender_John_Doe_a1b2c3, netmail, address_2_5020_1_28_4d5e6f — search instance names carry a trailing 6-hex-digit hash; check the search method's own output for the exact name)",
         ),
         folder: z.string().default("FidoNet").describe(
           "Obsidian folder for notes",
@@ -1129,6 +1327,7 @@ export const model = {
         const basePath = context.globalArgs.basePath;
         const needle = args.text.toLowerCase();
         const results: Array<Record<string, unknown>> = [];
+        const warnings: string[] = [];
 
         for await (const entry of Deno.readDir(basePath)) {
           if (!entry.isFile) continue;
@@ -1137,18 +1336,25 @@ export const model = {
           if (entry.name.endsWith(".jhr")) {
             const areaName = entry.name.slice(0, -4);
             try {
-              const jhrData = await Deno.readFile(
+              const jhrData = await readFileCapped(
                 `${basePath}/${entry.name}`,
               );
+              if (jhrData.length < 1024) {
+                warnings.push(
+                  `Area '${areaName}': .jhr shorter than 1024-byte fixed header (${jhrData.length} bytes)`,
+                );
+              }
               const jamMsgs = parseJamMessages(jhrData);
 
               let jdtData: Uint8Array | null = null;
               try {
-                jdtData = await Deno.readFile(
+                jdtData = await readFileCapped(
                   `${basePath}/${areaName}.jdt`,
                 );
               } catch {
-                continue;
+                // LB5: no .jdt sibling — tolerate it like readArea and
+                // searchBySender do, instead of dropping the WHOLE area.
+                // Subject/from are still searchable with an empty body.
               }
 
               for (const msg of jamMsgs) {
@@ -1176,8 +1382,53 @@ export const model = {
                   });
                 }
               }
-            } catch {
-              // skip
+            } catch (e) {
+              // LB3: surface the failure instead of silently dropping the
+              // area — a good sibling area alongside it is still searched.
+              warnings.push(
+                `Area '${areaName}': ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
+            }
+          } else if (entry.name.endsWith(".sqd")) {
+            // LB4: searchByText previously had no Squish branch at all,
+            // silently excluding every Squish-only area — mirrors
+            // searchBySender's .sqd branch.
+            const areaName = entry.name.slice(0, -4);
+            try {
+              const sqdData = await readFileCapped(
+                `${basePath}/${entry.name}`,
+              );
+              const sqMsgs = parseSquishMessages(sqdData);
+
+              for (const msg of sqMsgs) {
+                if (results.length >= args.limit) break;
+                const searchable = `${msg.subject} ${msg.body} ${msg.from}`
+                  .toLowerCase();
+                if (searchable.includes(needle)) {
+                  results.push({
+                    area: areaName,
+                    msgNum: msg.msgNum,
+                    from: msg.from,
+                    to: msg.to,
+                    subject: msg.subject,
+                    date: new Date(msg.dateWritten * 1000).toISOString(),
+                    timestamp: msg.dateWritten,
+                    body: msg.body,
+                    origin: msg.origin,
+                    address: msg.address,
+                    flags: msg.attr,
+                    format: "squish",
+                  });
+                }
+              }
+            } catch (e) {
+              warnings.push(
+                `Area '${areaName}': ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              );
             }
           }
         }
@@ -1202,14 +1453,16 @@ export const model = {
         );
 
         const textKey = args.text.slice(0, 20).replace(/[^a-zA-Z0-9]/g, "_");
+        const payload: Record<string, unknown> = {
+          query: `text:${args.text}`,
+          messages: results,
+          count: results.length,
+        };
+        if (warnings.length > 0) payload.warnings = warnings;
         const handle = await context.writeResource(
           "messages",
-          `search_${textKey}`,
-          {
-            query: `text:${args.text}`,
-            messages: results,
-            count: results.length,
-          },
+          `search_${textKey}_${fnv1aHex(args.text)}`,
+          payload,
         );
         return { dataHandles: [handle] };
       },

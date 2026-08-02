@@ -6,15 +6,22 @@
  * netmail folder. Every assertion checks the written resource's KIND +
  * INSTANCE NAME plus concrete DECODED FIELDS (from/to/subject/body/address/
  * date/format/timestamp), not just counts — per the approved plan.
+ * searchBySender/searchByAddress/searchByText's instance names now carry a
+ * trailing 6-hex FNV-1a hash suffix (LB7 fix — disambiguates queries that
+ * collapse to the same slug), so those three assertions match a `_[0-9a-f]
+ * {6}$` pattern via `assertMatch` rather than an exact string; readArea's
+ * and readNetmail's instance names are unaffected and still asserted exactly.
  *
- * fidonet_msgbase.ts is BYTE-FROZEN; this suite drives it unmodified via
- * `model.methods.<m>.execute(args, ctx)` against a fake context (globalArgs +
- * writeResource + readResource) with `basePath` pointing at a per-test
- * `Deno.makeTempDir()` populated by `fixtures/builders.ts` — REAL
- * `Deno.readFile`/`readDir` over byte-accurate hand-authored bytes, no FS
- * stubbing. All fixture content is synthetic — see fixtures/PROVENANCE.md.
+ * `fidonet_msgbase.ts` received a real-fix pass for 9 latent bugs (see the
+ * LOCAL `fidonet-msgbase-latent-bugs` issue-lifecycle model); this suite
+ * still drives it, unmodified, via `model.methods.<m>.execute(args, ctx)`
+ * against a fake context (globalArgs + writeResource + readResource) with
+ * `basePath` pointing at a per-test `Deno.makeTempDir()` populated by
+ * `fixtures/builders.ts` — REAL `Deno.readFile`/`readDir` over byte-accurate
+ * hand-authored bytes, no FS stubbing. All fixture content is synthetic —
+ * see fixtures/PROVENANCE.md.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { model } from "./fidonet_msgbase.ts";
 import {
   buildFtsMsg,
@@ -310,7 +317,7 @@ Deno.test("methods: searchBySender matches across JAM, Squish, and netmail, sort
     const { ctx, written } = makeCtx(basePath);
     await run("searchBySender", { sender: "alice" }, ctx);
     assertEquals(written[0].spec, "messages");
-    assertEquals(written[0].name, "sender_alice");
+    assertMatch(written[0].name, /^sender_alice_[0-9a-f]{6}$/);
     const payload = written[0].payload;
     assertEquals(payload.query, "sender:alice");
     assertEquals(payload.count, 3);
@@ -337,7 +344,7 @@ Deno.test("methods: searchByAddress (node, no point) matches JAM, Squish, and ne
   await withTempMsgbase(buildCanonicalTree(), async (basePath) => {
     const { ctx, written } = makeCtx(basePath);
     await run("searchByAddress", { address: "2:5020/10" }, ctx);
-    assertEquals(written[0].name, "address_2_5020_10");
+    assertMatch(written[0].name, /^address_2_5020_10_[0-9a-f]{6}$/);
     const payload = written[0].payload;
     assertEquals(payload.count, 3);
     const messages = payload.messages as Array<Record<string, unknown>>;
@@ -378,7 +385,7 @@ Deno.test("methods: searchByText matches case-insensitively across subject/body/
   await withTempMsgbase(buildCanonicalTree(), async (basePath) => {
     const { ctx, written } = makeCtx(basePath);
     await run("searchByText", { text: "WELCOME" }, ctx);
-    assertEquals(written[0].name, "search_WELCOME");
+    assertMatch(written[0].name, /^search_WELCOME_[0-9a-f]{6}$/);
     const payload = written[0].payload;
     assertEquals(payload.query, "text:WELCOME");
     const messages = payload.messages as Array<Record<string, unknown>>;

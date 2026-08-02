@@ -3,8 +3,9 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-fidonet-msgbase,
-# wave-4 batch-4a of the Phase D extension-quality backfill).
-# fidonet_msgbase.ts and manifest.yaml are BYTE-FROZEN — every suite drives
+# wave-4 batch-4a of the Phase D extension-quality backfill), then real-fixed
+# for all 9 latent bugs the backfill's adversarial/coverage suites found
+# (fix/fidonet-msgbase-latent-bugs, 2026.08.02.1) — every suite drives
 # model.methods.<m>.execute() against a fake context (globalArgs +
 # writeResource + readResource) with basePath pointing at a synthetic
 # fixture tree written by fixtures/builders.ts; real Deno.readFile/readDir
