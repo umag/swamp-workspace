@@ -1,0 +1,21 @@
+{
+  "recenttracks": {
+    "@attr": {
+      "user": "fixtureuser",
+      "page": "1",
+      "perPage": "200",
+      "totalPages": "1",
+      "total": "1"
+    },
+    "track": {
+      "artist": {
+        "#text": "Testband",
+        "mbid": "00000000-0000-4000-8000-000000000001"
+      },
+      "album": { "#text": "First Album", "mbid": "" },
+      "name": "Opening Track",
+      "url": "https://lastfm.example/music/Testband/First+Album/Opening+Track",
+      "date": { "uts": "1199300000", "#text": "02 Jan 2008, 19:33" }
+    }
+  }
+}

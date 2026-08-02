@@ -1,0 +1,5 @@
+{
+  "error": 29,
+  "message": "Rate Limit Exceded - Your IP has made too many requests in a short period, exceeding our API guidelines",
+  "links": []
+}

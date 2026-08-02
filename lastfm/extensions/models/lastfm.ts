@@ -100,6 +100,13 @@ const GlobalArgsSchema = z.object({
 
 type GlobalArgs = z.infer<typeof GlobalArgsSchema>;
 
+/**
+ * One play event, normalized out of the API's loose JSON. `uts` is the UNIX
+ * second at which the track started playing; it is mandatory, because an entry
+ * without one has no position in the history and is therefore not a scrobble.
+ * The mbid fields are absent rather than `""` when Last.fm has no MusicBrainz
+ * id — see {@link normalizeMbid}.
+ */
 export type Scrobble = {
   uts: number;
   artist: string;
@@ -110,12 +117,23 @@ export type Scrobble = {
   trackMbid?: string;
 };
 
+/**
+ * The currently-playing track. The API returns it inline with recent tracks
+ * but gives it no timestamp, so it is modelled separately from
+ * {@link Scrobble} precisely so it cannot be mistaken for history.
+ */
 export type NowPlaying = {
   artist: string;
   album?: string;
   track: string;
 };
 
+/**
+ * The execution context swamp passes to a method. `readResource` is optional
+ * because not every execution driver supplies it: `sync-history` resumes from
+ * the stored cursor when it is present and falls back to a full walk when it
+ * is not, which the dedup predicate makes harmless.
+ */
 export type Ctx = {
   globalArgs: GlobalArgs;
   logger: {
@@ -206,6 +224,13 @@ export function scrobbleKey(s: Scrobble): string {
   return `${s.uts}\u0000${s.artist}\u0000${s.track}`;
 }
 
+/**
+ * Collapse repeated plays to one entry per {@link scrobbleKey}, preserving
+ * first-seen order. Needed because a paged walk overlaps at page boundaries
+ * and because a resumed sync deliberately re-fetches a range it may already
+ * hold — this is what makes re-running the sync a no-op rather than a
+ * double-count.
+ */
 export function dedupeScrobbles(rows: Scrobble[]): Scrobble[] {
   const seen = new Set<string>();
   const out: Scrobble[] = [];
@@ -218,6 +243,12 @@ export function dedupeScrobbles(rows: Scrobble[]): Scrobble[] {
   return out;
 }
 
+/**
+ * Split a run of scrobbles into UTC calendar years, keyed by the year string.
+ * This is the persistence partitioning of the single ScrobbleHistory
+ * aggregate, not an aggregate boundary: a closed year never changes, so only
+ * the current year is ever rewritten, which is what keeps the sync idempotent.
+ */
 export function partitionByYear(rows: Scrobble[]): Map<string, Scrobble[]> {
   const parts = new Map<string, Scrobble[]>();
   for (const row of rows) {

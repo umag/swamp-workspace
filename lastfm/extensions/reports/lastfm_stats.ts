@@ -19,6 +19,12 @@
 // Both are filtered before any content is decoded.
 // ---------------------------------------------------------------------------
 
+/**
+ * A data handle as returned by `dataRepository.findAllForModel` — one entry
+ * per stored data VERSION, including versions whose `lifecycle` is
+ * `"deleted"`. Both facts matter: {@link latestPerName} exists solely to
+ * reduce such a list to one live handle per name.
+ */
 export type Handle = {
   name: string;
   version: number;
@@ -26,6 +32,11 @@ export type Handle = {
   tags?: Record<string, string>;
 };
 
+/**
+ * The subset of a stored scrobble this report needs — structurally a
+ * narrowing of the model's `Scrobble`, declared locally so the report layer
+ * takes no import dependency on the model layer.
+ */
 export type StatScrobble = {
   uts: number;
   artist: string;
@@ -138,6 +149,18 @@ function longestStreak(days: Set<string>): number {
   return best;
 }
 
+/**
+ * Derive the whole statistics payload from a flat run of scrobbles.
+ *
+ * Every distribution is bucketed in `timezone` (an IANA name), not UTC:
+ * scrobble timestamps are UTC instants, so "what hour do I listen at" is only
+ * meaningful once localized. An unknown zone falls back to UTC rather than
+ * throwing, because one bad argument should not take down the whole report.
+ *
+ * The bucket maps are exhaustive over the input — every scrobble lands in
+ * exactly one bucket of each distribution — so each distribution sums to
+ * `total`. The report suite asserts that reconciliation.
+ */
 export function buildStats(
   scrobbles: StatScrobble[],
   timezone: string,
@@ -275,6 +298,21 @@ const decode = (bytes: Uint8Array | null): Record<string, unknown> | null => {
   }
 };
 
+/**
+ * The `@magistr/lastfm-stats` model-scope report.
+ *
+ * Runs after a `sync-history` execution and short-circuits for any other
+ * method — a model-scope report fires after EVERY method on the model, and
+ * recomputing the full history behind a cheap lookup call would be waste.
+ *
+ * Must be required in the model instance YAML to run at all:
+ * ```yaml
+ * reports:
+ *   require:
+ *     - name: '@magistr/lastfm-stats'
+ *       methods: [sync-history]
+ * ```
+ */
 export const report = {
   name: "@magistr/lastfm-stats",
   description:

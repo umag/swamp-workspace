@@ -1,0 +1,27 @@
+{
+  "artist": {
+    "name": "Testband",
+    "mbid": "00000000-0000-4000-8000-000000000001",
+    "url": "https://lastfm.example/music/Testband",
+    "streamable": "0",
+    "ontour": "0",
+    "stats": {
+      "listeners": "1204",
+      "playcount": "9931",
+      "userplaycount": "412"
+    },
+    "tags": {
+      "tag": [
+        {
+          "name": "dungeon synth",
+          "url": "https://lastfm.example/tag/dungeon+synth"
+        },
+        { "name": "ambient", "url": "https://lastfm.example/tag/ambient" }
+      ]
+    },
+    "bio": {
+      "summary": "Testband is a synthetic artist used only in fixture data.",
+      "content": "Testband is a synthetic artist used only in fixture data. No real biography."
+    }
+  }
+}

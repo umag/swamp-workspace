@@ -1,80 +1,74 @@
-# Extension quality record for @magistr/lastfm.
-# Definition of Done per ext-quality-backfill-roster.md §1 (five-suite
-# compliance, derived from the stripe-mpp standard).
-
-extension: "@magistr/lastfm"
-standard: five-suite
-status: present
-
-suites:
+# Quality record for @magistr/lastfm — see STANDARD.md and
+# scripts/quality/schema.ts (the enforced shape).
+#
+# Born compliant: this extension was authored after the five-suite standard
+# landed, so every suite is `present` from its first release and it carries no
+# backlog debt on any allowlist-gated block — it is deliberately absent from
+# quality-allowlist.txt.
+#
+# Role map (each file assigned exactly ONE honest role):
+#   contract-fixture        -> lastfm_test.ts (replays the synthetic corpus
+#                              under fixtures/ through the model's own methods;
+#                              see fixtures/PROVENANCE.md for the standing
+#                              no-live-capture prohibition)
+#   methods                 -> lastfm_methods_test.ts (all 13 methods)
+#   adversarial             -> lastfm_adversarial_test.ts
+#   coverage                -> lastfm_coverage_test.ts
+#   property-invariant-flow -> lastfm_property_test.ts, plus the report's own
+#                              lastfm_stats_test.ts (bucket reconciliation and
+#                              the data-version/deleted-handle invariants)
+schemaVersion: 1
+extension: lastfm
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/lastfm_test.ts
   methods:
-    path: extensions/models/lastfm_methods_test.ts
-    status: present
-    covers: >-
-      Per-method behaviour against a stubbed fetch: exact query string per
-      method, https-only transport, api_key absent from every written
-      resource, argument-schema rejection (period enum, limit/page bounds,
-      username charset), and the sync-history invariants (pinned `to`,
-      one chunk per year, now-playing exclusion, idempotence, cursor).
-      Arguments are exercised through the zod schema, never execute()-direct.
-  contract:
-    path: extensions/models/lastfm_test.ts
-    status: blocked
-    blocked_on: >-
-      Requires a real Last.fm API key to record response fixtures. Registration
-      at https://www.last.fm/api/account/create is a human step. Synthetic
-      fixtures are deliberately NOT landed: they would assert the shape the
-      author imagined, which is the bug class contract tests exist to catch.
+    state: present
+    files:
+      - extensions/models/lastfm_methods_test.ts
   adversarial:
-    path: extensions/models/lastfm_adversarial_test.ts
-    status: present
-    covers: >-
-      Credential leakage into errors and logs; the HTTP-200-plus-error-body
-      protocol across every permanent (6/10/26) and transient (8/11/16/29)
-      code, asserting only the transient set retries and that retries
-      terminate; truncated JSON; an HTML error page; a hung request hitting
-      the AbortSignal timeout; duplicates across a page boundary; page drift;
-      unicode/RTL names; a dateless non-nowplaying track; future/inverted
-      time ranges.
+    state: present
+    files:
+      - extensions/models/lastfm_adversarial_test.ts
   coverage:
-    path: extensions/models/lastfm_coverage_test.ts
-    status: present
-    covers: >-
-      Branch sweep over every pure helper: redactKey, classifyError,
-      normalizeMbid, toNumber, asArray, scrobbleKey, dedupeScrobbles,
-      partitionByYear, chunkName, parseRecentTracksPage, advanceCursor.
-  property:
-    path: extensions/models/lastfm_property_test.ts
-    status: present
-    covers: >-
-      Partition preserves every distinct scrobble; dedupe is idempotent,
-      order-independent and never invents rows; the cursor is monotonic and
-      lands on the newest uts; redaction is total over generated keys and
-      preserves every non-secret parameter.
-    soak: FC_NUM_RUNS
-
-report_suite:
-  path: extensions/reports/lastfm_stats_test.ts
-  status: present
-  covers: >-
-    latestPerName collapses data versions and drops deleted handles (the two
-    round-2 review findings); bucket totals reconcile; timezone shifts hour
-    and weekday buckets; empty history and unreadable chunks degrade with a
-    diagnostic; the report short-circuits when not triggered by sync-history.
-
-gate:
-  network_less_default: true
-  test_task: "deno test --allow-env extensions/ --permit-no-files"
-  live_task: "LIVE_LASTFM=1 deno test --allow-net --allow-env extensions/models/lastfm_live_test.ts"
-  pinned_npm_imports: true
-  notes: >-
-    --allow-env is required for FC_NUM_RUNS; --allow-net is deliberately
-    withheld from the default gate so a test reaching the network fails loudly.
-
-counts:
-  tests_passing: 103
-  suites_present: 4
-  suites_blocked: 1
-  report_suites_present: 1
-  methods_with_method_level_tests: 13
-  methods_total: 13
+    state: present
+    files:
+      - extensions/models/lastfm_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/lastfm_property_test.ts
+      - extensions/reports/lastfm_stats_test.ts
+watch:
+  state: backlog
+  justification: >-
+    release-watch not yet wired — Last.fm publishes no versioned API changelog
+    to subscribe to, so the source shape needs deciding alongside Phase B;
+    tracked in ext-quality-test-backfill
+canary:
+  state: backlog
+  justification: >-
+    live canary deferred to Phase C — a live my-lastfm instance exists, but
+    fixtures/PROVENANCE.md forbids capturing from it, so the canary needs Phase
+    C's redaction contract before it can be defined; tracked in
+    ext-quality-test-backfill
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: na
+    justification: >-
+      lastfm bundles no Claude skill — it is a read-only API model plus a
+      model-scope report, with nothing skill-shaped to document
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"
