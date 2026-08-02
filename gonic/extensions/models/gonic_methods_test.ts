@@ -6,12 +6,16 @@
  * `Deno.Command` (the 3 SSH methods: `db-query`, `db-exec`,
  * `ensure-podcast-dirs`).
  *
- * gonic.ts is no longer wholly byte-frozen: this change fixes the two HIGH
- * findings tracked by the local `gonic-latent-bugs` issue-lifecycle model
- * (URL-query credential leak → Subsonic TOKEN auth; command injection in
- * `ensure-podcast-dirs` → shellEsc quoting). Every other method's behavior
- * here is an unchanged characterization test that PINS the model's
- * already-shipped behavior.
+ * gonic.ts is no longer wholly byte-frozen: this change fixes the two
+ * original HIGH findings tracked by the local `gonic-latent-bugs`
+ * issue-lifecycle model (URL-query credential leak → Subsonic TOKEN auth;
+ * command injection in `ensure-podcast-dirs` → shellEsc quoting), plus
+ * LB3/LB4/LB5/LB7/LB8 (read-only `db-query` via `-readonly`, `db-exec`'s
+ * change-count now derived from a single combined write+`SELECT changes()`
+ * session, redacted network errors, disambiguated `dbResult` names,
+ * surfaced warning-only SSH failures). Every other method's behavior here is
+ * an unchanged characterization test that PINS the model's already-shipped
+ * behavior.
  *
  * Toolchain rules (deno 2.8.3 in CI):
  *  - fetch seam: `as unknown as typeof globalThis.fetch` (double-bridge,
@@ -20,10 +24,10 @@
  *    reassigned directly onto `Deno.Command` (probed reassignable). The fake
  *    models BOTH the `.output()` shape (`sshCommand`'s docker-inspect/mkdir)
  *    and the `.spawn()` + `stdin.getWriter()` shape (`sshExecSql`'s
- *    `sqlite3 -json`), routing a canned `{success,stdout,stderr}` per
- *    invocation by matching the composed command line AND/OR the stdin SQL
- *    text (db-exec's write and its `SELECT changes()` follow-up share an
- *    IDENTICAL command line — only the stdin text tells them apart).
+ *    `sqlite3 -json -readonly`), routing a canned `{success,stdout,stderr}`
+ *    per invocation by matching the composed command line and/or the stdin
+ *    SQL text (`db-exec` now sends its write and `SELECT changes()` as ONE
+ *    combined stdin session on a single connection).
  *
  * Credential-leak assertions run after every fetch-method happy path: the raw
  * password and its enc-hex encoding must never appear in a written resource
@@ -593,13 +597,13 @@ Deno.test("get-playlists: error path — a failed envelope throws the mapped Gon
 // db-query — single sshExecSql spawn invocation, jsonMode=true
 // ---------------------------------------------------------------------------
 
-Deno.test("db-query: happy path — one sqlite3 -json invocation, SQL piped via stdin, rows parsed from JSON stdout", async () => {
+Deno.test("db-query: happy path — one sqlite3 -json -readonly invocation, SQL piped via stdin, rows parsed from JSON stdout", async () => {
   const { ctx, written, logs } = makeCtx();
   const sql = "SELECT id, title FROM podcasts";
   const rowsOut = [{ id: "pd-1", title: "Example Podcast One" }];
   await withCommandStub(
     (inv) => {
-      assertEquals(inv.commandLine, "sqlite3 -json '/data/gonic.db'");
+      assertEquals(inv.commandLine, "sqlite3 -json -readonly '/data/gonic.db'");
       assertEquals(inv.stdin, sql + "\n");
       return { success: true, stdout: JSON.stringify(rowsOut), stderr: "" };
     },
@@ -628,49 +632,41 @@ Deno.test("db-query: empty stdout yields rows: [] and rowCount: 0", async () => 
 });
 
 // ---------------------------------------------------------------------------
-// db-exec — TWO sshExecSql invocations (write, then SELECT changes()),
-// distinguished ONLY by stdin (both share the identical non-json command
-// line) — anti-vacuity fold-in: route DISTINCT outputs and assert the
-// reported count derives from the SECOND invocation, never the first.
+// db-exec — ONE combined sshExecSql invocation (write + SELECT changes() as
+// a single stdin session on the SAME connection) — the reported count is
+// parsed from that single session's trailing output line.
 // ---------------------------------------------------------------------------
 
-Deno.test("db-exec: happy path — two DISTINCT sqlite3 invocations (write, then SELECT changes()); reported changes comes from the SECOND", async () => {
+Deno.test("db-exec: happy path — ONE combined sqlite3 invocation (write + SELECT changes() on the same connection); reported changes comes from its own connection", async () => {
   const { ctx, written, logs } = makeCtx();
   const sql = "UPDATE podcasts SET title = 'Renamed' WHERE id = 'pd-1'";
+  const combinedStdin = `${sql};\nSELECT changes();\n`;
   await withCommandStub(
     (inv) => {
       assertEquals(
         inv.commandLine,
         "sqlite3  '/data/gonic.db'",
-        "db-exec never passes -json (jsonMode=false for both invocations) — " +
+        "db-exec never passes -json/-readonly (jsonMode=false, readOnly=false) — " +
           "note the DOUBLE space: sshExecSql's template `sqlite3 ${flags} '${dbPath}'` " +
           "leaves an extra space when flags is the empty string",
       );
-      if (inv.stdin === sql + "\n") {
-        // The write invocation: sqlite3 reports nothing useful on stdout.
-        return { success: true, stdout: "", stderr: "" };
-      }
-      if (inv.stdin === "SELECT changes()\n") {
-        // A DIFFERENT canned value than any row-count the write "actually"
-        // affected — proves the reported number comes from THIS separate
-        // connection, not the write's real effect.
-        return { success: true, stdout: "3\n", stderr: "" };
-      }
-      throw new Error(`unrouted db-exec stdin: ${JSON.stringify(inv.stdin)}`);
+      assertEquals(
+        inv.stdin,
+        combinedStdin,
+        "the write and SELECT changes() must be sent as ONE combined stdin session",
+      );
+      // A single sqlite3 session: the write itself produces no stdout, then
+      // the trailing SELECT changes() reports THIS connection's own effect.
+      return { success: true, stdout: "3\n", stderr: "" };
     },
     async (stub) => {
       await run("db-exec", { sql }, ctx);
       assertEquals(
         stub.constructions.length,
-        2,
-        "exactly two separate Deno.Command instantiations must occur",
+        1,
+        "exactly ONE Deno.Command instantiation must occur — one connection",
       );
-      assertEquals(stub.invocations[0].stdin, sql + "\n", "first is the write");
-      assertEquals(
-        stub.invocations[1].stdin,
-        "SELECT changes()\n",
-        "second is the disconnected count query",
-      );
+      assertEquals(stub.invocations[0].stdin, combinedStdin);
     },
   );
   const res = written.find((w) => w.spec === "dbResult")!;
@@ -678,29 +674,22 @@ Deno.test("db-exec: happy path — two DISTINCT sqlite3 invocations (write, then
   assertEquals(
     res.payload.rows,
     [{ changes: 3 }],
-    "reported changes is whatever the SECOND (count) invocation's stdout says",
+    "reported changes is parsed from the single combined session's trailing output line",
   );
   assertEquals(res.payload.rowCount, 1);
   assert(res.name.startsWith("exec-"), "resource name must be exec-prefixed");
   assertNoCredentialLeak(written, logs);
 });
 
-Deno.test("db-exec: error path — a failing WRITE propagates WITHOUT ever attempting the SELECT changes() follow-up", async () => {
+Deno.test("db-exec: error path — a failing write (in the combined session) rejects, with exactly ONE Deno.Command instantiation", async () => {
   const { ctx } = makeCtx();
   const sql = "UPDATE podcasts SET title = 'X'";
   await withCommandStub(
-    (inv) => {
-      if (inv.stdin === "SELECT changes()\n") {
-        throw new Error(
-          "REGRESSION: SELECT changes() must never run after a failed write",
-        );
-      }
-      return {
-        success: false,
-        stdout: "",
-        stderr: "Error: near line 1: syntax error\n",
-      };
-    },
+    () => ({
+      success: false,
+      stdout: "",
+      stderr: "Error: near line 1: syntax error\n",
+    }),
     async (stub) => {
       await assertRejects(
         () => run("db-exec", { sql }, ctx),
@@ -710,7 +699,7 @@ Deno.test("db-exec: error path — a failing WRITE propagates WITHOUT ever attem
       assertEquals(
         stub.constructions.length,
         1,
-        "only the failed write invocation occurs — no count-query follow-up",
+        "only the single combined invocation occurs — no separate follow-up",
       );
     },
   );

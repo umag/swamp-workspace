@@ -25,7 +25,7 @@ password prompt is involved.
 
 ```yaml
 type: "@magistr/gonic"
-typeVersion: 2026.05.25.1
+typeVersion: 2026.08.02.1
 name: my-gonic
 version: 1
 globalArguments:

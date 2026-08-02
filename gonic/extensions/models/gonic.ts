@@ -20,6 +20,16 @@ function shellEsc(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+// Monotonic disambiguator for dbResult resource names: two calls within the
+// same wall-clock second (or even the same millisecond, under a frozen
+// Date in tests) get DISTINCT names — a bare timestamp alone is not
+// sufficient. Kept alongside the full ms+Z timestamp (belt-and-suspenders).
+let dbResultSeq = 0;
+function dbResultTag(): string {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${ts}-${(dbResultSeq++).toString(36)}`;
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -51,6 +61,50 @@ async function buildAuthParams(username: string, password: string) {
   });
 }
 
+/**
+ * Redact a password (and its hex encoding) from an arbitrary error-ish
+ * value. `message` is `unknown` because a fetch rejection is not guaranteed
+ * to be an `Error` with a string `.message` — it may be a `DOMException`, a
+ * thrown string, or an arbitrary non-Error value; every shape is coerced to
+ * a string before redaction. Redacts BOTH the raw password and its hex form
+ * (the enc-hex string is what an error URL would embed), plus a generic
+ * `enc:<hex>` backstop.
+ */
+export function redactSecret(message: unknown, password: string): string {
+  const text = typeof message === "string"
+    ? message
+    : message instanceof Error
+    ? message.message
+    : String(message);
+  const hex = bytesToHex(new TextEncoder().encode(password));
+  let out = text;
+  if (password) out = out.split(password).join("<redacted>");
+  if (hex) out = out.split(hex).join("<redacted>");
+  return out.replace(/enc:[0-9a-f]{16,}/gi, "enc:<redacted>");
+}
+
+/**
+ * Build a redacted stand-in for `cause`. `cause` must NEVER be the raw
+ * rejection: `Deno.inspect()`, `console.log`, and Deno's own uncaught-error
+ * printer all walk and print the `cause` chain (including its `.stack`,
+ * whose first line embeds the message), so attaching the original error
+ * as-is would silently reopen the exact credential leak this mapper exists
+ * to close. This preserves the error's `name` (and a redacted `.stack`, when
+ * present) for downstream diagnostics without ever exposing the raw
+ * credential.
+ */
+function redactedCause(err: unknown, password: string): unknown {
+  if (err instanceof Error) {
+    const r = new Error(redactSecret(err, password));
+    r.name = err.name;
+    if (typeof err.stack === "string") {
+      r.stack = redactSecret(err.stack, password);
+    }
+    return r;
+  }
+  return redactSecret(err, password);
+}
+
 async function gonicApi(
   host: string,
   port: number,
@@ -70,7 +124,14 @@ async function gonicApi(
     }
   }
   const url = `http://${host}:${port}/rest/${endpoint}?${params.toString()}`;
-  const resp = await fetch(url);
+  let resp;
+  try {
+    resp = await fetch(url);
+  } catch (err) {
+    throw new Error(redactSecret(err, password), {
+      cause: redactedCause(err, password),
+    });
+  }
   if (!resp.ok) {
     throw new Error(
       `Gonic API ${endpoint} failed: ${resp.status} ${await resp.text()}`,
@@ -190,8 +251,10 @@ async function sshExecSql(
   dbPath: string,
   sql: string,
   jsonMode: boolean,
+  readOnly = false,
 ) {
-  const flags = jsonMode ? "-json" : "";
+  const flags = [jsonMode ? "-json" : null, readOnly ? "-readonly" : null]
+    .filter(Boolean).join(" ");
   const cmd = new Deno.Command("ssh", {
     args: [
       "-o",
@@ -217,11 +280,17 @@ async function sshExecSql(
   const stdout = new TextDecoder().decode(output.stdout);
   const stderr = new TextDecoder().decode(output.stderr);
   if (!output.success) {
-    // Filter SSH warnings from real errors
+    // Filter SSH warnings from real errors; if nothing real remains, fall
+    // back to the raw stderr/stdout so a warning-only failure is never
+    // silently swallowed.
     const realErrors = stderr.split("\n").filter((l) =>
       !l.includes("Warning: Permanently added") && l.trim()
     ).join("\n");
-    if (realErrors) throw new Error(`sqlite3 failed: ${realErrors}`);
+    throw new Error(
+      `sqlite3 failed: ${
+        realErrors || stderr.trim() || stdout.trim() || "unknown error"
+      }`,
+    );
   }
   return stdout;
 }
@@ -235,8 +304,19 @@ async function sshExecSql(
  */
 export const model = {
   type: "@magistr/gonic",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
   globalArguments: GlobalArgsSchema,
+  upgrades: [
+    {
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix LB3-LB9 (read-only db-query, connection-scoped db-exec " +
+        "change count, network-error redaction, dbResult name " +
+        "disambiguation, surfaced warning-only SSH failures). No " +
+        "globalArguments/schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   resources: {
     podcasts: {
       description: "Podcast channels with episodes",
@@ -498,7 +578,7 @@ export const model = {
           created.push({ id: p.id, title: p.title, dir: hostDir });
         }
 
-        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const ts = dbResultTag();
         const handle = await context.writeResource("dbResult", `dirs-${ts}`, {
           query: "ensure-podcast-dirs",
           rows: created,
@@ -516,9 +596,16 @@ export const model = {
       }),
       execute: async (args, context) => {
         const { host, sshUser, dbPath } = context.globalArgs;
-        const stdout = await sshExecSql(host, sshUser, dbPath, args.sql, true);
+        const stdout = await sshExecSql(
+          host,
+          sshUser,
+          dbPath,
+          args.sql,
+          true,
+          true,
+        );
         const rows = stdout.trim() ? JSON.parse(stdout) : [];
-        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const ts = dbResultTag();
         const handle = await context.writeResource("dbResult", `query-${ts}`, {
           query: args.sql,
           rows,
@@ -537,18 +624,19 @@ export const model = {
       }),
       execute: async (args, context) => {
         const { host, sshUser, dbPath } = context.globalArgs;
-        await sshExecSql(host, sshUser, dbPath, args.sql, false);
-        const countOut = await sshExecSql(
-          host,
-          sshUser,
-          dbPath,
-          "SELECT changes()",
-          false,
-        );
-        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        // Run the write and `SELECT changes()` on the SAME sqlite3
+        // connection (single sshExecSql session) so the reported count is
+        // actually derived from this statement's own effect, not a fresh,
+        // structurally-disconnected connection.
+        const combined = `${args.sql};\nSELECT changes();`;
+        const out = await sshExecSql(host, sshUser, dbPath, combined, false);
+        const lines = out.trim().split("\n").filter((l) => l.trim());
+        const changes = parseInt(lines[lines.length - 1]?.trim() ?? "", 10) ||
+          0;
+        const ts = dbResultTag();
         const handle = await context.writeResource("dbResult", `exec-${ts}`, {
           query: args.sql,
-          rows: [{ changes: parseInt(countOut.trim()) || 0 }],
+          rows: [{ changes }],
           rowCount: 1,
           timestamp: new Date().toISOString(),
         });

@@ -1,21 +1,24 @@
 /**
- * Adversarial suite: attacker's-perspective tests for @magistr/gonic — the
- * two HIGH findings tracked by the local `gonic-latent-bugs` issue-lifecycle
- * model are now FIXED and verified below: TOKEN-auth (no more URL-query
- * credential leak) and shellEsc-quoted command injection via a DB-sourced
- * `root_dir`. The remaining findings (unenforced db-query "read-only" guard,
- * the db-exec change-count structural bug, hostile Subsonic responses, an
- * HONEST-GAP fetch-rejection propagation pin, a second-granular `dbResult`
- * name clobber) are out of scope for this change and stay PINNED as
- * characterized (buggy) behavior.
+ * Adversarial suite: attacker's-perspective tests for @magistr/gonic. The two
+ * original HIGH findings tracked by the local `gonic-latent-bugs`
+ * issue-lifecycle model are FIXED and verified below: TOKEN-auth (no more
+ * URL-query credential leak) and shellEsc-quoted command injection via a
+ * DB-sourced `root_dir`. This change ALSO fixes the remaining MED/LOW
+ * findings from the same model: db-query's unenforced "read-only" guard now
+ * really enforces read-only via `-readonly` (e), the db-exec change-count is
+ * now derived from the write's own connection (f), a fetch-layer rejection
+ * is now redacted (b), and the second-granular `dbResult` name clobber is
+ * closed with a monotonic disambiguator (h). Hostile Subsonic responses (g)
+ * are a separate, unrelated bug class and stay PINNED as characterized
+ * (buggy) behavior — out of scope for this change.
  *
  * gonic.ts is no longer wholly byte-frozen — this change edits it to close
- * the two HIGH findings above; every OTHER test here still PINS current
- * behavior (including behavior that is arguably risky/buggy). Where a test
- * documents a real gap, it is labeled "pin"/"HONEST GAP" and says so
- * explicitly. Every finding here is filed against the LOCAL
- * `gonic-latent-bugs` issue-lifecycle model, never the Lab. See
- * fixtures/PROVENANCE.md for fixture provenance.
+ * the HIGH findings above plus LB3/LB4/LB5/LB7/LB8; every OTHER test here
+ * still PINS current behavior (including behavior that is arguably
+ * risky/buggy). Where a test documents a real gap, it is labeled
+ * "pin"/"HONEST GAP" and says so explicitly. Every finding here is filed
+ * against the LOCAL `gonic-latent-bugs` issue-lifecycle model, never the
+ * Lab. See fixtures/PROVENANCE.md for fixture provenance.
  *
  * Pagination: NOT APPLICABLE. Every Subsonic endpoint gonic.ts wraps
  * (getPodcasts, getPlaylists, getScanStatus, ping) returns a full set with no
@@ -309,20 +312,21 @@ Deno.test("fixed: the Subsonic auth uses TOKEN auth (t=md5hex(password+salt), s=
 });
 
 // ---------------------------------------------------------------------------
-// (b) HONEST GAP — network-error credential leak: gonicApi wraps NOTHING
-// around `await fetch(url)`; any rejection (whatever its message happens to
-// contain) propagates verbatim to the caller with no redaction.
+// (b) FIXED — network-error credential leak: gonicApi now wraps `await
+// fetch(url)` in a try/catch that redacts the password (and its hex form)
+// from both the thrown error's message AND its (redacted-copy) cause/stack.
 // ---------------------------------------------------------------------------
 
-Deno.test("HONEST GAP pin: a fetch-layer rejection propagates VERBATIM through gonicApi with no redaction wrapper", async () => {
-  // gonicApi does `const resp = await fetch(url);` with no surrounding
-  // try/catch — ANY rejection (DNS failure, TLS error, connection reset)
-  // propagates completely unchanged. This test uses a clearly-synthetic
-  // sentinel password (never the real `gonic` vault key or any real value)
-  // and frames the constructed rejection as a stand-in for what SOME
-  // network-layer failure modes surface — the point being that gonic.ts has
-  // no wrapper that would redact a credential even if the underlying error
-  // message embedded one.
+Deno.test("fixed: a fetch-layer rejection is REDACTED — no sentinel password/hex survives in the message, cause, or stack", async () => {
+  // gonicApi now does `try { resp = await fetch(url); } catch (err) { throw
+  // new Error(redactSecret(err, password), { cause: redactedCause(err,
+  // password) }); }` — ANY rejection (DNS failure, TLS error, connection
+  // reset) is redacted before it ever reaches the caller. This test uses a
+  // clearly-synthetic sentinel password (never the real `gonic` vault key or
+  // any real value) and frames the constructed rejection as a stand-in for
+  // what SOME network-layer failure modes surface — the point being that
+  // gonic.ts now redacts a credential even if the underlying error message
+  // embedded one.
   const SENTINEL_PASSWORD = "sentinel-net-err-ZZZZ-not-a-real-password";
   const sentinelHex = hexEncode(SENTINEL_PASSWORD);
   const { ctx } = makeCtx({ ...GLOBAL_ARGS, password: SENTINEL_PASSWORD });
@@ -334,11 +338,31 @@ Deno.test("HONEST GAP pin: a fetch-layer rejection propagates VERBATIM through g
       new Error(`network error: connect ECONNRESET ${leakedUrl}`),
     )) as unknown as typeof globalThis.fetch;
   try {
-    await assertRejects(
-      () => run("ping", {}, ctx),
-      Error,
-      sentinelHex,
+    const err = await assertRejects(() => run("ping", {}, ctx), Error);
+    assert(
+      !err.message.includes(sentinelHex),
+      "the redacted message must not contain the sentinel hex encoding",
     );
+    assert(
+      !err.message.includes(SENTINEL_PASSWORD),
+      "the redacted message must not contain the raw sentinel password",
+    );
+    assert(
+      err.message.includes("<redacted>"),
+      "the redacted message must show the <redacted> marker in place of the credential",
+    );
+    if (err.cause instanceof Error) {
+      assert(
+        !err.cause.message.includes(sentinelHex),
+        "the redacted cause's message must not contain the sentinel hex encoding",
+      );
+      if (typeof err.cause.stack === "string") {
+        assert(
+          !err.cause.stack.includes(sentinelHex),
+          "the redacted cause's stack must not contain the sentinel hex encoding",
+        );
+      }
+    }
   } finally {
     globalThis.fetch = original;
   }
@@ -440,10 +464,10 @@ Deno.test("fixed: sshExecSql shellEsc-quotes dbPath — an embedded single quote
   const expectedEscaped = `'${maliciousDbPath.replace(/'/g, "'\\''")}'`;
   assertEquals(
     capturedCommandLine,
-    `sqlite3 -json ${expectedEscaped}`,
+    `sqlite3 -json -readonly ${expectedEscaped}`,
     "dbPath is shellEsc-quoted — every embedded single quote is escaped as '\\''",
   );
-  const arg = capturedCommandLine.slice("sqlite3 -json ".length);
+  const arg = capturedCommandLine.slice("sqlite3 -json -readonly ".length);
   assertEquals(
     posixUnquoteSingleArg(arg),
     maliciousDbPath,
@@ -453,61 +477,89 @@ Deno.test("fixed: sshExecSql shellEsc-quotes dbPath — an embedded single quote
 });
 
 // ---------------------------------------------------------------------------
-// (e) db-query "read-only" is UNENFORCED — a mutating statement is forwarded
-// verbatim, no -readonly / PRAGMA query_only guard exists.
+// (e) FIXED — db-query is now ENFORCED read-only via sqlite3's `-readonly`
+// flag: a mutating statement against a real read-only connection is rejected
+// by sqlite3 itself (non-zero exit, "attempt to write a readonly database"),
+// which sshExecSql surfaces as a thrown error. This is stronger than
+// SQL-string sniffing.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: db-query enforces NO read-only guard — a DELETE statement is forwarded verbatim, no -readonly / query_only", async () => {
+Deno.test("fixed: db-query enforces a REAL read-only guard via -readonly — a DELETE statement is rejected by sqlite3 itself, non-vacuously", async () => {
   const { ctx } = makeCtx();
   const deleteSql = "DELETE FROM podcasts WHERE id = 'pd-1'";
   await withCommandStub(
     (inv) => {
       assertEquals(
         inv.commandLine,
-        "sqlite3 -json '/data/gonic.db'",
-        "no -readonly flag and no PRAGMA query_only is ever added by db-query",
+        "sqlite3 -json -readonly '/data/gonic.db'",
+        "db-query must pass BOTH -json and -readonly to sqlite3",
       );
       assertEquals(
         inv.stdin,
         deleteSql + "\n",
-        "the mutating SQL is piped through completely unmodified",
+        "the mutating SQL is still piped through unmodified — the guard is " +
+          "sqlite3's own read-only connection enforcement, not string sniffing",
       );
-      return { success: true, stdout: "", stderr: "" };
+      // Simulate what a REAL `-readonly` sqlite3 connection does when handed
+      // a write: it rejects with a non-zero exit and this exact message.
+      return {
+        success: false,
+        stdout: "",
+        stderr: "Runtime error: attempt to write a readonly database\n",
+      };
     },
-    () => run("db-query", { sql: deleteSql }, ctx),
+    () =>
+      assertRejects(
+        () => run("db-query", { sql: deleteSql }, ctx),
+        Error,
+        "attempt to write a readonly database",
+      ),
   );
 });
 
 // ---------------------------------------------------------------------------
-// (f) db-exec CHANGE-COUNT bug — SELECT changes() runs on a fresh
-// connection, structurally decoupled from the write.
+// (f) FIXED — db-exec's change-count is now derived from the SAME sqlite3
+// connection as the write (one combined `<sql>;\nSELECT changes();` session),
+// not a fresh, structurally-disconnected connection.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: db-exec's reported change-count is STRUCTURALLY DISCONNECTED from the write — a fresh sqlite3 connection's changes() bears no relation to what the write actually did", async () => {
+Deno.test("fixed: db-exec's reported change-count derives from the write's OWN connection — a single combined session, not a fresh disconnected one", async () => {
   const { ctx, written } = makeCtx();
-  // Would affect MANY rows on a real database — the point is that the
-  // reported count below is NOT derived from this statement's real effect.
   const sql = "UPDATE podcasts SET title = 'X' WHERE 1=1";
+  const combinedStdin = `${sql};\nSELECT changes();\n`;
+  let constructionCount = 0;
   await withCommandStub(
     (inv) => {
-      if (inv.stdin === sql + "\n") {
-        return { success: true, stdout: "", stderr: "" };
-      }
-      if (inv.stdin === "SELECT changes()\n") {
-        // A brand-new sqlite3 process's changes() counter has run NO
-        // statement yet on ITS OWN connection — 0 is what a fresh
-        // connection reports, independent of the write's real impact.
-        return { success: true, stdout: "0\n", stderr: "" };
-      }
-      throw new Error(`unrouted db-exec stdin: ${JSON.stringify(inv.stdin)}`);
+      constructionCount++;
+      assertEquals(
+        inv.commandLine,
+        "sqlite3  '/data/gonic.db'",
+        "db-exec passes NO -json flag (jsonMode=false)",
+      );
+      assertEquals(
+        inv.stdin,
+        combinedStdin,
+        "the write and SELECT changes() must run as ONE combined statement " +
+          "on the SAME connection — not two separate sshExecSql calls",
+      );
+      // A real sqlite3 session: the write itself produces no stdout, then
+      // the trailing SELECT changes() on the SAME connection reports the
+      // write's ACTUAL effect — a non-zero value proves this is derived
+      // from the real write, not a fresh connection's meaningless 0.
+      return { success: true, stdout: "5\n", stderr: "" };
     },
     () => run("db-exec", { sql }, ctx),
+  );
+  assertEquals(
+    constructionCount,
+    1,
+    "exactly ONE Deno.Command construction — a single connection, not two",
   );
   const res = written.find((w) => w.spec === "dbResult")!;
   assertEquals(
     res.payload.rows,
-    [{ changes: 0 }],
-    "reports 0 changes from a disconnected fresh connection regardless of how many rows the write statement actually touched — the count is meaningless by construction",
+    [{ changes: 5 }],
+    "reports the write's own connection's changes() — non-zero, structurally derived from the real write, not a disconnected fresh connection's meaningless count",
   );
 });
 
@@ -561,10 +613,12 @@ Deno.test("pin: non-ok HTTP embeds the FULL response body verbatim — gonic.ts 
 });
 
 // ---------------------------------------------------------------------------
-// (h) Second-granular dbResult name clobber
+// (h) FIXED — dbResult name clobber is closed via a monotonic disambiguator:
+// two calls within the SAME (even frozen) wall-clock second/millisecond now
+// get DISTINCT names.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: db-query's resource name is second-granular (milliseconds stripped) — two calls within the SAME wall-clock second clobber the SAME dbResult name", async () => {
+Deno.test("fixed: db-query's resource name no longer clobbers under a FROZEN Date — two calls within the identical instant get DISTINCT names", async () => {
   const RealDate = globalThis.Date;
   class FrozenDate extends RealDate {
     constructor() {
@@ -590,14 +644,18 @@ Deno.test("pin: db-query's resource name is second-granular (milliseconds stripp
   const names = written.filter((w) => w.spec === "dbResult").map((w) => w.name);
   assertEquals(names.length, 2);
   assertEquals(
-    names[0],
-    names[1],
-    "two calls within the frozen same second collide on the IDENTICAL resource name — the second call's writeResource clobbers the first's data in a real instance",
+    names[0] !== names[1],
+    true,
+    "two calls within the identical frozen instant must NOT collide on the same resource name — the monotonic counter disambiguates them",
   );
-  assert(
-    /^query-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(names[0]),
-    "name has NO millisecond/timezone suffix — .slice(0,19) strips both",
-  );
+  for (const name of names) {
+    assert(
+      /^query-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-z]+$/.test(
+        name,
+      ),
+      `name must keep full ms+Z precision AND a trailing monotonic sequence suffix, got: ${name}`,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
