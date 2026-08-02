@@ -3,11 +3,15 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-juick, wave 2c
-# full-build child of ext-quality-test-backfill). juick.ts is unmodified —
-# every suite drives model.methods.<m>.execute() against a stubbed fetch +
-# fake context, characterizing already-shipped behavior. juick was
-# re-classified from a scraper to a JSON API client during planning (plan
-# v1 was rejected on exactly this point) — see CHANGELOG.md.
+# full-build child of ext-quality-test-backfill); juick was re-classified
+# from a scraper to a JSON API client during planning (plan v1 was rejected
+# on exactly this point) — see CHANGELOG.md. The wave-2c backfill drove
+# model.methods.<m>.execute() against a stubbed fetch + fake context,
+# characterizing already-shipped behavior including 8 latent bugs
+# (juick-latent-bugs). Re-stamped in 2026.08.02.1: all 8 are now FIXED
+# (pins flipped in juick_adversarial_test.ts) — see CHANGELOG.md. Ratchet
+# re-verified via `swamp extension quality manifest.yaml --json` and
+# unchanged (still Grade A / 100% / 14/14, rubricVersion 3).
 schemaVersion: 1
 extension: juick
 tests:

@@ -11,9 +11,12 @@ Obsidian vault model to import an account end-to-end.
 
 ## Global arguments
 
-| Argument | Type   | Default                 | Description        |
-| -------- | ------ | ----------------------- | ------------------ |
-| `apiUrl` | string | `https://api.juick.com` | Juick API base URL |
+| Argument       | Type     | Default                 | Description                                                                                                                                                           |
+| -------------- | -------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apiUrl`       | string   | `https://api.juick.com` | Juick API base URL                                                                                                                                                    |
+| `allowedHosts` | string[] | `["api.juick.com"]`     | Default-deny hostname allowlist applied to the request and to every redirect it follows. A custom `apiUrl`'s host must be added here too, or the request is rejected. |
+| `timeout`      | number   | `30000`                 | Per-request timeout (ms), applied via `AbortController` to every Juick API fetch (including redirect hops).                                                           |
+| `maxPages`     | number   | `1000`                  | Maximum number of pages `getUserPosts` will paginate through before stopping (safety cap against unbounded/stuck pagination).                                         |
 
 ## Methods
 
@@ -38,6 +41,18 @@ tags: {}
 globalArguments:
   apiUrl: "https://api.juick.com"
 methods: {}
+```
+
+If you point `apiUrl` at a host other than the default, add that host to
+`allowedHosts` too — every request (and every redirect it follows) is rejected
+unless its host is in this list, and a loopback/link-local/ private-range IP
+literal is rejected unconditionally regardless of `allowedHosts`:
+
+```yaml
+globalArguments:
+  apiUrl: "https://juick.example.net"
+  allowedHosts:
+    - "juick.example.net"
 ```
 
 ## Usage
