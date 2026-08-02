@@ -6,6 +6,11 @@ import { z } from "npm:zod@4";
 import { StlValidator } from "./jscad/stl_validator.ts";
 import { PathPolicyError, resolveStlPath } from "./jscad/safe_path.ts";
 
+// LB3 (application half): generous default cap so legitimate multi-MB STL
+// files pass; validateFile enforces this via Deno.stat BEFORE Deno.readFile,
+// so an oversized file is never buffered into memory.
+const DEFAULT_MAX_FILE_BYTES = 256 * 1024 * 1024; // 256 MiB
+
 const reportSchema = z.object({
   valid: z.boolean(),
   format: z.enum(["binary", "ascii", "empty", "unknown"]),
@@ -25,7 +30,16 @@ const reportSchema = z.object({
 /** Swamp model that validates STL geometry from a @magistr/jscad-cad model output or a file on disk. */
 export const model = {
   type: "@magistr/jscad-stl-validator",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
+
+  upgrades: [
+    {
+      toVersion: "2026.08.02.1",
+      description:
+        "LB2–LB5 geometry/format fixes; add defaulted maxFileBytes global arg (no breaking schema change).",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
 
   globalArguments: z.object({
     allowedRoots: z.array(z.string()).default([]).describe(
@@ -35,6 +49,15 @@ export const model = {
         "historical unconfined contract — validateFile is an " +
         "operator-supplied-absolute-path method by design.",
     ),
+    maxFileBytes: z.number().int().positive().default(DEFAULT_MAX_FILE_BYTES)
+      .describe(
+        "Maximum size in bytes validateFile will read from disk. Checked " +
+          "via Deno.stat BEFORE Deno.readFile, so an oversized file is " +
+          "never buffered into memory. Defaulted generously (256 MiB) so " +
+          "legitimate multi-MB STL files pass; read only from " +
+          "context.globalArgs (never per-call arguments), mirroring the " +
+          "allowedRoots trust-boundary convention.",
+      ),
   }),
 
   resources: {
@@ -101,6 +124,8 @@ export const model = {
       }),
       execute: async (args, context) => {
         const allowedRoots = context.globalArgs?.allowedRoots ?? [];
+        const maxFileBytes = context.globalArgs?.maxFileBytes ??
+          DEFAULT_MAX_FILE_BYTES;
 
         let resolvedPath: string;
         try {
@@ -111,6 +136,25 @@ export const model = {
           }
           throw new Error(
             `Cannot read "${args.filePath}": ${(err as Error).message}`,
+          );
+        }
+
+        // LB3 (application half): stat the canonical path BEFORE reading it,
+        // so a huge file is never buffered into memory. Stat failures (e.g.
+        // the target vanished between resolveStlPath and here) wrap to the
+        // same "Cannot read" message as a readFile failure; a size-cap
+        // violation gets its own distinct "Refusing to read" message.
+        let info: Deno.FileInfo;
+        try {
+          info = await Deno.stat(resolvedPath);
+        } catch (err) {
+          throw new Error(
+            `Cannot read "${args.filePath}": ${(err as Error).message}`,
+          );
+        }
+        if (info.size > maxFileBytes) {
+          throw new Error(
+            `Refusing to read "${args.filePath}": file exceeds maxFileBytes (${info.size} > ${maxFileBytes})`,
           );
         }
 

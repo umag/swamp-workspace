@@ -2,8 +2,9 @@
  * Methods suite: happy-path + throw-path coverage of both
  * `@magistr/jscad-stl-validator` methods (`validate`, `validateFile`).
  *
- * `jscad_stl_validator.ts` / `jscad/stl_validator.ts` are BYTE-FROZEN; this
- * suite drives them unmodified via `model.methods.<m>.execute(args, ctx)`.
+ * `jscad_stl_validator.ts` / `jscad/stl_validator.ts`: behavior updated in
+ * 2026.08.02.1 (LB3 application-half fix — the `maxFileBytes` global arg);
+ * this suite drives them via `model.methods.<m>.execute(args, ctx)`.
  *
  * Two distinct seams, per the approved plan:
  *  - `validate` reads via `context.definitionRepository.findByNameGlobal` +
@@ -39,6 +40,7 @@ function makeCtx(
     definitions?: Map<string, Found>;
     content?: Map<string, Uint8Array | null>;
     allowedRoots?: string[];
+    maxFileBytes?: number;
   } = {},
 ) {
   const written: Written[] = [];
@@ -73,7 +75,10 @@ function makeCtx(
         });
         return Promise.resolve({ spec, name });
       },
-      globalArgs: { allowedRoots: opts.allowedRoots ?? [] },
+      globalArgs: {
+        allowedRoots: opts.allowedRoots ?? [],
+        maxFileBytes: opts.maxFileBytes,
+      },
     },
   };
 }
@@ -336,4 +341,54 @@ Deno.test("validateFile: a smuggled per-call args.allowedRoots has NO effect —
   } finally {
     await Deno.remove(restrictiveRoot, { recursive: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// validateFile() — maxFileBytes size cap (LB3, application half; operator-set
+// global argument, read via context.globalArgs; NOT part of the per-call
+// untrusted arguments)
+// ---------------------------------------------------------------------------
+
+Deno.test("validateFile: with a small maxFileBytes global arg, rejects a file whose size exceeds the cap before ever reading it", async () => {
+  const stl = buildBinaryStl(50); // comfortably larger than the tiny cap below
+  await withTempStlFile(stl, async (filePath) => {
+    const { ctx, written } = makeCtx({ maxFileBytes: 100 });
+    await assertRejects(
+      () => run("validateFile", { filePath }, ctx),
+      Error,
+      "file exceeds maxFileBytes",
+    );
+    assertEquals(written.length, 0);
+  });
+});
+
+Deno.test("validateFile: with a maxFileBytes global arg configured, accepts a file at or under the cap", async () => {
+  const stl = buildBinaryStl(1);
+  await withTempStlFile(stl, async (filePath) => {
+    const { ctx, written } = makeCtx({ maxFileBytes: stl.byteLength });
+    await run("validateFile", { filePath }, ctx);
+    assertEquals(written[0].payload.format, "binary");
+    assertEquals(written[0].payload.triangleCount, 1);
+  });
+});
+
+Deno.test("validateFile: a smuggled per-call args.maxFileBytes has NO effect — the size cap is governed exclusively by context.globalArgs (operator-set), never the per-call (untrusted) arguments", async () => {
+  const stl = buildBinaryStl(50);
+  await withTempStlFile(stl, async (filePath) => {
+    const { ctx, written } = makeCtx({ maxFileBytes: 100 });
+    await assertRejects(
+      () =>
+        run(
+          "validateFile",
+          { filePath, maxFileBytes: 999_999_999 } as unknown as Record<
+            string,
+            unknown
+          >,
+          ctx,
+        ),
+      Error,
+      "file exceeds maxFileBytes",
+    );
+    assertEquals(written.length, 0);
+  });
 });

@@ -129,7 +129,9 @@ Deno.test("validate file too small for binary", () => {
 
 // ---------------------------------------------------------------------------
 // Exact-output (contract) pins — the FULL report object, not partial fields.
-// jscad/stl_validator.ts is BYTE-FROZEN; these characterize current output.
+// jscad/stl_validator.ts: behavior updated in 2026.08.02.1 (LB2/LB4/LB5
+// fixes); these fixtures are all non-degenerate/finite/non-ambiguous, so
+// none of them are affected by the fix — these pins remain byte-identical.
 // ---------------------------------------------------------------------------
 
 Deno.test("contract: exact full report for a canonical 2-triangle binary STL (pin)", () => {

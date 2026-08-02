@@ -2,15 +2,20 @@
  * Coverage suite: remaining branches not exercised by the methods,
  * contract-fixture, or adversarial suites.
  *
- * `jscad_stl_validator.ts` / `jscad/stl_validator.ts` are BYTE-FROZEN; every
- * test here characterizes current behavior.
+ * `jscad_stl_validator.ts` / `jscad/stl_validator.ts`: behavior updated in
+ * 2026.08.02.1 (LB2/LB4/LB5 fixes); every test here characterizes current
+ * (post-fix) behavior.
  *
  * All fixture content is synthetic — see fixtures/PROVENANCE.md.
  */
 import { assertEquals } from "jsr:@std/assert@1";
 import { model } from "./jscad_stl_validator.ts";
 import { StlValidator } from "./jscad/stl_validator.ts";
-import { encodeBinaryStl, nTriangles } from "./fixtures/stl_builders.ts";
+import {
+  encodeAsciiStl,
+  encodeBinaryStl,
+  nTriangles,
+} from "./fixtures/stl_builders.ts";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -119,10 +124,36 @@ Deno.test("coverage: a mix of one degenerate and one valid triangle — bounding
 });
 
 // ---------------------------------------------------------------------------
+// ASCII degenerate-triangle branches (LB4/LB5 fix) — parity with the binary
+// coverage cases above: duplicate-vertex and near-zero-cross-product
+// (colinear, distinct vertices), exercised on the ASCII parsing path.
+// ---------------------------------------------------------------------------
+
+Deno.test("coverage: ASCII degenerate via duplicate vertex (v1===v2)", () => {
+  const ascii = encodeAsciiStl({
+    facets: [{ v1: [0, 0, 0], v2: [0, 0, 0], v3: [1, 0, 0] }],
+  });
+  const report = StlValidator.validate(ascii);
+  assertEquals(report.format, "ascii");
+  assertEquals(report.degenerateTriangles, 1);
+  assertEquals(report.boundingBox, null); // sole triangle is degenerate -> no geometry
+});
+
+Deno.test("coverage: ASCII degenerate via near-zero cross product — three DISTINCT colinear points (not caught by the duplicate-vertex shortcut)", () => {
+  const ascii = encodeAsciiStl({
+    facets: [{ v1: [0, 0, 0], v2: [1, 0, 0], v3: [2, 0, 0] }], // all on the x-axis, pairwise distinct
+  });
+  const report = StlValidator.validate(ascii);
+  assertEquals(report.format, "ascii");
+  assertEquals(report.degenerateTriangles, 1);
+  assertEquals(report.boundingBox, null);
+});
+
+// ---------------------------------------------------------------------------
 // Reclassification branch — POSITIVE case: a "solid"-looking header whose
 // claimed count DOES match actual size is correctly routed to the binary
-// parser despite the ASCII-looking header (contrast with the LB2 pin in the
-// adversarial suite, where a mismatched count breaks this).
+// parser despite the ASCII-looking header (contrast with the LB2 fix test in
+// the adversarial suite, which covers the mismatched-count case).
 // ---------------------------------------------------------------------------
 
 Deno.test("coverage: a 'solid'-header binary buffer whose claimed count matches actual size is correctly classified as binary", () => {

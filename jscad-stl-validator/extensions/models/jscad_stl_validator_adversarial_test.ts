@@ -1,10 +1,10 @@
 /**
- * Adversarial suite: hostile/malformed inputs, pinning CURRENT behavior.
- * `jscad_stl_validator.ts` / `jscad/stl_validator.ts` are BYTE-FROZEN —
- * nothing here is a proposed fix, every test asserts what the shipped code
- * ACTUALLY does today. Bug pins are labelled "pin:" and are recorded to the
- * LOCAL `jscad-stl-validator-latent-bugs` issue-lifecycle model, never a
- * swamp.club Lab issue.
+ * Adversarial suite: hostile/malformed inputs. Most tests here pin CURRENT
+ * behavior; five of them ("fix:"-labelled, formerly "pin:"-labelled LB2-LB5)
+ * were REAL FIXES landed in 2026.08.02.1 — see CHANGELOG.md. The benign
+ * contract pins in this file remain byte-identical. Bug (and former-bug)
+ * tests are recorded to the LOCAL `jscad-stl-validator-latent-bugs`
+ * issue-lifecycle model, never a swamp.club Lab issue.
  *
  * All fixture content is synthetic — see fixtures/PROVENANCE.md.
  */
@@ -190,10 +190,12 @@ Deno.test("pin: an Infinity coordinate in a binary triangle is flagged as degene
 });
 
 // ---------------------------------------------------------------------------
-// pin: LB3 — issues[] amplification under multiple bad triangles (modest N)
+// fix: LB3 (domain half) — issues[] amplification under multiple bad
+// triangles is now CAPPED at MAX_TRIANGLE_ISSUES (10) individual strings,
+// plus one suppression note, plus the existing degenerate summary.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: one issue string is pushed PER bad triangle — issues[] grows linearly with the (modest) triangle count (LB3, MEDIUM)", () => {
+Deno.test("fix: issues[] amplification under multiple bad triangles is now CAPPED — at most 10 individual issue strings, one suppression note, one degenerate summary (was LB3, MEDIUM)", () => {
   const N = 200; // modest — enough to demonstrate amplification, not a DoS-scale fixture
   const stl = encodeBinaryStl({
     triangles: Array.from({ length: N }, () => ({
@@ -205,70 +207,111 @@ Deno.test("pin: one issue string is pushed PER bad triangle — issues[] grows l
   const report = StlValidator.validate(stl);
   assertEquals(report.triangleCount, N);
   assertEquals(report.degenerateTriangles, N);
-  // N "contains NaN or Infinity" issues + 1 trailing "N degenerate triangle(s)" summary issue.
-  assertEquals(report.issues.length, N + 1);
+  assertEquals(report.valid, false);
+  // 10 individual "contains NaN or Infinity" issues + 1 suppression note +
+  // 1 trailing "N degenerate triangle(s)" summary issue = 12, NOT N + 1.
+  assertEquals(report.issues.length, 12);
   assertEquals(
     report.issues.filter((i) => i.includes("contains NaN or Infinity")).length,
-    N,
+    10,
+  );
+  assertEquals(
+    report.issues.some((i) =>
+      i.includes("further triangle issue(s) suppressed")
+    ),
+    true,
+  );
+  assertEquals(
+    report.issues.some((i) => i.includes(`${N} degenerate triangle(s) found`)),
+    true,
   );
 });
 
 // ---------------------------------------------------------------------------
-// pin: LB2 — corrupt-binary-vs-ASCII misdetection (MEDIUM)
+// fix: LB2 — corrupt-binary-vs-ASCII misdetection (MEDIUM)
 // A binary buffer whose 80-byte header happens to spell "solid" AND whose
-// claimed/actual triangle counts DISAGREE falls through the reclassification
-// guard entirely and gets parsed as ASCII — losing the real binary
-// diagnosis (size mismatch) and the actual triangle data.
+// claimed/actual triangle counts DISAGREE is now correctly classified as
+// binary — the real "Size mismatch" diagnosis and the actual triangle data
+// are restored, because the buffer's body does NOT look like ASCII text.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a binary buffer with a 'solid'-looking header AND a mismatched claimed count is misdetected as ASCII, losing the real diagnosis (LB2, MEDIUM)", () => {
+Deno.test("fix: a binary buffer with a 'solid'-looking header AND a mismatched claimed count is now correctly classified as binary, restoring the real diagnosis (was LB2, MEDIUM)", () => {
   const stl = encodeBinaryStl({
     header: "solid",
     claimedTriangleCount: 3, // does NOT match the actual 2 triangles below
     triangles: nTriangles(2), // actual size: 84 + 100 = 184; 84+3*50=234 != 184
   });
   const report = StlValidator.validate(stl);
-  // Misdetected as ASCII: the real "Size mismatch" binary diagnosis, and the
-  // two real triangles, are both lost.
+  // Correctly classified as binary: the real "Size mismatch" diagnosis and
+  // the two real triangles are both restored.
   assertEquals(report, {
     valid: false,
-    format: "ascii",
-    triangleCount: 0,
-    expectedTriangleCount: null,
+    format: "binary",
+    triangleCount: 2,
+    expectedTriangleCount: 3,
     degenerateTriangles: 0,
     issues: [
-      "No facets found in ASCII STL",
-      "Missing 'endsolid' terminator",
+      "Size mismatch: header says 3 triangles (expected 234 bytes) but file is 184 bytes",
     ],
-    boundingBox: null,
+    boundingBox: { min: [0, 0, 0], max: [2, 1, 0], size: [2, 1, 0] },
   });
 });
 
+Deno.test("coverage: a 'solid'-header buffer with a mismatched claimed count whose body IS ASCII text stays classified ASCII — locks the LB2 discriminator on the ASCII side too", () => {
+  const header = new Uint8Array(80);
+  header.set(new TextEncoder().encode("solid test"));
+  const bodyText = [
+    "facet normal 0 0 1",
+    "  outer loop",
+    "    vertex 0 0 0",
+    "    vertex 1 0 0",
+    "    vertex 0 1 0",
+    "  endloop",
+    "endfacet",
+    "endsolid test",
+  ].join("\n");
+  const bodyBytes = new TextEncoder().encode(bodyText);
+  const buf = new Uint8Array(84 + bodyBytes.length);
+  buf.set(header, 0);
+  const view = new DataView(buf.buffer);
+  view.setUint32(80, 5, true); // claimed count > 0, but mismatches the actual buffer size
+  buf.set(bodyBytes, 84);
+
+  const report = StlValidator.validate(buf);
+  assertEquals(report.format, "ascii");
+  assertEquals(report.triangleCount, 1);
+  assertEquals(report.valid, true);
+});
+
 // ---------------------------------------------------------------------------
-// pin: LB4 — weak ASCII validation accepts malformed geometry as "valid"
+// fix: LB4 — ASCII validation now runs the SAME degenerate-triangle check
+// as the binary path.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: an ASCII STL with a fully degenerate (duplicate-vertex) facet is reported valid — no geometry check exists on the ASCII path (LB4, LOW)", () => {
+Deno.test("fix: an ASCII STL with a fully degenerate (duplicate-vertex) facet is now correctly flagged, mirroring the binary geometry check (was LB4, LOW)", () => {
   const ascii = encodeAsciiStl({
     facets: [{ v1: [0, 0, 0], v2: [0, 0, 0], v3: [0, 0, 0] }], // zero-area, all vertices identical
   });
   const report = StlValidator.validate(ascii);
   assertEquals(report.format, "ascii");
-  assertEquals(report.valid, true); // no degenerate check on the ASCII path
-  assertEquals(report.degenerateTriangles, 0); // hardcoded, never computed for ASCII
-  assertEquals(report.issues.length, 0);
+  assertEquals(report.valid, false);
+  assertEquals(report.degenerateTriangles, 1);
+  assertEquals(report.issues, [
+    "1 degenerate triangle(s) found (zero area or duplicate vertices)",
+  ]);
+  assertEquals(report.boundingBox, null); // sole triangle is degenerate -> no geometry
 });
 
 // ---------------------------------------------------------------------------
-// pin: LB5 — NaN/Infinity handling asymmetry, binary vs ASCII
+// fix: LB5 — NaN/Infinity handling asymmetry, binary vs ASCII. The ASCII
+// path now runs the SAME isFinite/isNaN guard as binary (folded into the
+// LB4 rewrite), so a non-finite triangle is flagged, counted as degenerate,
+// and EXCLUDED from the bounding box on both paths.
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: an ASCII facet with every coordinate NaN-shaped ('.') is silently accepted, producing an inverted Infinity/-Infinity bounding box — no isFinite/isNaN check exists on the ASCII path (LB5, LOW)", () => {
+Deno.test("fix: an ASCII facet with every coordinate NaN-shaped ('.') is now correctly flagged and excluded from the bounding box, mirroring the binary NaN/Infinity check (was LB5, LOW)", () => {
   // "." matches the parser's vertex regex character class `[-\d.eE+]+` but
-  // is not a valid parseFloat numeral, so it decodes to NaN. Every NaN<x
-  // and NaN>x comparison in computeBoundingBoxFromVerts evaluates false, so
-  // the min/max accumulators never advance past their Infinity/-Infinity
-  // seed values — the ASCII path has no isFinite/isNaN guard to catch this.
+  // is not a valid parseFloat numeral, so it decodes to NaN.
   const ascii = encodeAsciiStl({
     facets: [{
       v1: [".", ".", "."],
@@ -278,23 +321,62 @@ Deno.test("pin: an ASCII facet with every coordinate NaN-shaped ('.') is silentl
   });
   const report = StlValidator.validate(ascii);
   assertEquals(report.format, "ascii");
-  assertEquals(report.valid, true); // no issue raised
-  assertEquals(report.degenerateTriangles, 0); // never incremented on the ASCII path
-  assertEquals(report.boundingBox, {
-    min: [Infinity, Infinity, Infinity],
-    max: [-Infinity, -Infinity, -Infinity],
-    size: [-Infinity, -Infinity, -Infinity],
-  });
+  assertEquals(report.valid, false);
+  assertEquals(report.degenerateTriangles, 1);
+  assertEquals(
+    report.issues.some((i) =>
+      i.includes("Triangle 0: contains NaN or Infinity")
+    ),
+    true,
+  );
+  assertEquals(report.boundingBox, null);
 });
 
-Deno.test("pin: an overflowing exponent ('1e400') decodes to Infinity in an ASCII vertex and is silently accepted (LB5, LOW)", () => {
+Deno.test("fix: an overflowing exponent ('1e400') decoding to Infinity in an ASCII vertex is now correctly flagged and excluded from the bounding box (was LB5, LOW)", () => {
   const ascii = encodeAsciiStl({
     facets: [{ v1: ["1e400", 0, 0], v2: [1, 0, 0], v3: [0, 1, 0] }],
   });
   const report = StlValidator.validate(ascii);
   assertEquals(report.format, "ascii");
-  assertEquals(report.valid, true); // no issue raised
-  assertEquals(report.boundingBox!.max[0], Infinity); // Infinity silently poisons the bounding box
+  assertEquals(report.valid, false);
+  assertEquals(
+    report.issues.some((i) =>
+      i.includes("Triangle 0: contains NaN or Infinity")
+    ),
+    true,
+  );
+  // The single facet is non-finite -> excluded -> no valid geometry, so
+  // Infinity can no longer poison the bounding box (it's null, not Infinity).
+  assertEquals(report.boundingBox, null);
+});
+
+Deno.test("fix: a NaN vertex fed as binary vs ASCII now yields equivalent classification — no asymmetry remains (was LB5, LOW)", () => {
+  const binary = encodeBinaryStl({
+    triangles: [{ v1: [NaN, 0, 0], v2: [1, 0, 0], v3: [0, 1, 0] }],
+  });
+  const ascii = encodeAsciiStl({
+    facets: [{ v1: [".", 0, 0], v2: [1, 0, 0], v3: [0, 1, 0] }],
+  });
+
+  const binReport = StlValidator.validate(binary);
+  const asciiReport = StlValidator.validate(ascii);
+
+  assertEquals(binReport.degenerateTriangles, 1);
+  assertEquals(asciiReport.degenerateTriangles, 1);
+  assertEquals(
+    binReport.issues.some((i) =>
+      i.includes("Triangle 0: contains NaN or Infinity")
+    ),
+    true,
+  );
+  assertEquals(
+    asciiReport.issues.some((i) =>
+      i.includes("Triangle 0: contains NaN or Infinity")
+    ),
+    true,
+  );
+  assertEquals(binReport.boundingBox, null);
+  assertEquals(asciiReport.boundingBox, null);
 });
 
 // ---------------------------------------------------------------------------

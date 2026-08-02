@@ -3,10 +3,10 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-jscad-stl-validator,
-# wave-4 batch-4c extension-quality backfill). jscad_stl_validator.ts and
-# jscad/stl_validator.ts are unmodified — every suite drives
+# wave-4 batch-4c extension-quality backfill). Behavior updated in
+# 2026.08.02.1 (LB2-LB5 real fixes, see CHANGELOG.md) — every suite drives
 # model.methods.<m>.execute() / StlValidator.validate() against synthetic
-# fixtures, characterizing already-shipped behavior.
+# fixtures.
 schemaVersion: 1
 extension: jscad-stl-validator
 tests:

@@ -1,5 +1,96 @@
 # Changelog
 
+## 2026.08.02.1
+
+Real-fixes the four remaining latent bugs (LB2–LB5) tracked in the LOCAL
+`jscad-stl-validator-latent-bugs` issue-lifecycle model (NEVER a swamp.club Lab
+issue). LB1 (path traversal, fixed in `2026.08.01.1`) is untouched. The pure
+domain service `extensions/models/jscad/stl_validator.ts` — previously declared
+BYTE-FROZEN — is deliberately un-frozen for these fixes; every benign contract
+pin in the test suites stays byte-identical.
+
+**Behavior changes:**
+
+- **LB2 (format misdetection, MEDIUM) — FIXED.** A binary buffer whose 80-byte
+  header happens to spell `"solid"` AND whose claimed (offset-80) triangle count
+  does NOT match the actual buffer size is now correctly classified as
+  **binary** (restoring the real "Size mismatch" diagnosis and the actual
+  triangle data), instead of falling through to the ASCII parser. The
+  discriminator: when the claimed count is `> 0` but the size doesn't match
+  exactly, the buffer's decoded text is checked for ASCII geometry keywords
+  (`facet normal` / `endsolid`); only a buffer that genuinely looks like ASCII
+  text keeps the ASCII path. The existing positive/negative reclassification
+  pins (exact-size-match → binary; claimed-count-0 → ASCII) are unaffected.
+- **LB3 (unbounded read + issues[] amplification, MEDIUM) — FIXED**, in two
+  independent halves:
+  - _Domain half:_ `issues[]` no longer grows linearly with a hostile triangle
+    count. At most 10 individual
+    `Triangle i: contains NaN or
+    Infinity values` strings are pushed; beyond
+    that, one `(<k> further triangle issue(s) suppressed)` note is added, and
+    the existing `<n> degenerate triangle(s) found ...` summary is always kept.
+    The bounding box is now computed with incremental `min`/`max` accumulators
+    instead of retaining a `Triangle[]` array — memory is O(1) in triangle
+    count. Output is byte-identical for triangle counts at or below the cap
+    (single-NaN/single-Infinity pins unaffected).
+  - _Application half:_ added a new **defaulted** global argument `maxFileBytes`
+    (default `268435456`, 256 MiB). `validateFile` now `Deno.stat`s the resolved
+    path and rejects with
+    `Refusing to read "<path>": file exceeds maxFileBytes (<size> > <cap>)`
+    BEFORE calling `Deno.readFile`, so an oversized file is never buffered into
+    memory. Read only from `context.globalArgs` (never per-call arguments),
+    mirroring the `allowedRoots` trust-boundary convention. Order is
+    `resolveStlPath` (policy) → `Deno.stat` size check → `Deno.readFile`,
+    preserving the LB1 traversal pin, the missing-file pin (stat NotFound →
+    `Cannot read`), and the directory pin (stat ok + small size → `readFile`
+    EISDIR → `Cannot read`).
+- **LB4 (weak ASCII validation, LOW) — FIXED.** ASCII validation now parses
+  facets into triangles (grouping vertices in consecutive triples) and runs the
+  SAME degenerate-triangle check as binary (duplicate-vertex OR near-zero
+  cross-product area), via a shared, non-exported `isDegenerateTri` helper. A
+  fully degenerate (duplicate-vertex) ASCII facet is now reported
+  `valid: false`, `degenerateTriangles: 1`, with the same
+  `<n> degenerate triangle(s) found ...` summary as binary, and excluded from
+  the bounding box. Malformed vertex remainders (count not a multiple of 3) are
+  ignored for the geometry check. The canonical (non-degenerate, finite) ASCII
+  contract pins in `jscad/stl_validator_test.ts` are byte-identical.
+- **LB5 (NaN/Infinity asymmetry, binary vs ASCII, LOW) — FIXED.** Folded into
+  the LB4 rewrite: ASCII vertices now run the SAME `isFinite`/`isNaN` guard as
+  binary, via a shared, non-exported `isFiniteCoords` helper. A non-finite ASCII
+  triangle is flagged with a `Triangle i: contains NaN or Infinity
+  values`
+  issue (subject to the LB3 cap), counted as degenerate, and EXCLUDED from the
+  bounding box — so an Infinity-valued coordinate can no longer poison the
+  bounding box's max/min, and an all-NaN facet can no longer produce the
+  nonsensical inverted `min:[Infinity,...]`/`max:[-Infinity,...]` box. Binary
+  and ASCII now classify an identical NaN vertex equivalently.
+- `extensions/models/jscad_stl_validator.ts`: model `version` bumped to
+  `2026.08.02.1`. Added an identity `upgrades[]` entry (the model previously had
+  none) — the only `globalArguments` change is the new defaulted `maxFileBytes`
+  field, so existing instances re-parse cleanly with zod filling the default;
+  the upgrade transform is `(old) => old`.
+- `manifest.yaml` version bumped to `2026.08.02.1` in sync.
+- Test suites: flipped the four buggy pins in
+  `jscad_stl_validator_adversarial_test.ts` (LB2, LB3, LB4, two LB5 cases) to
+  assert the corrected behavior (relabelled `pin:` → `fix:`). Added: a
+  corrupt-but-textual coverage case locking the LB2 discriminator on the ASCII
+  side (`jscad_stl_validator_coverage_test.ts`); ASCII duplicate-vertex and
+  colinear-near-zero-area degenerate coverage cases, parity with the existing
+  binary coverage cases; a binary-vs-ASCII NaN symmetry test; and, in
+  `jscad_stl_validator_methods_test.ts`, `validateFile` accept/reject tests for
+  a small `maxFileBytes` global arg plus a "smuggled per-call `maxFileBytes` has
+  no effect" test mirroring the existing `allowedRoots` smuggle test. Verified
+  the property suite at `FC_NUM_RUNS=5000` with no flakes before landing.
+  Reworded the now-false "BYTE-FROZEN" docstrings in all five test-suite headers
+  and the `quality.yaml` header comment.
+- README.md: bumped the example `typeVersion`; documented `maxFileBytes` beside
+  `allowedRoots`; noted that ASCII validation now performs the same
+  degenerate/finite checks as binary.
+- `quality.yaml`: re-stamped from a real
+  `swamp extension quality
+  manifest.yaml --json` run; unchanged Grade A (no
+  new dependencies).
+
 ## 2026.08.01.1
 
 Fixes the HIGH-severity path-traversal / arbitrary-file-read finding (LB1) in
@@ -57,10 +148,12 @@ examples) are unaffected.
 - README.md: documented the `validateFile` operator-trust boundary and the
   opt-in `allowedRoots` confinement, including the residual "report reflects
   file bytes" oracle risk to keep in mind when narrowing `allowedRoots`.
-- LB2/LB3/LB4/LB5 remain pinned as characterized (not fixed) latent bugs — out
-  of scope for this fix, tracked in the same issue-lifecycle model. The sibling
-  `jscad-stl-slicer` extension shares the same unconfined-path pattern;
-  deliberately NOT fixed here — tracked as its own follow-up.
+- LB2/LB3/LB4/LB5 were, at the time of this release, pinned as characterized
+  (not fixed) latent bugs — out of scope for this fix, tracked in the same
+  issue-lifecycle model. **All four were subsequently fixed in `2026.08.02.1`**
+  (see above). The sibling `jscad-stl-slicer` extension shares the same
+  unconfined-path pattern; deliberately NOT fixed here — tracked as its own
+  follow-up.
 
 ## Unreleased
 
@@ -112,9 +205,11 @@ and the model `version` stays `2026.07.16.2`.
   tokens like `"."` and `"1e400"` can be injected). Also added
   `extensions/models/fixtures/PROVENANCE.md` declaring the synthetic-only
   provenance.
-- 5 already-shipped latent bugs are PINNED (characterized as CURRENT behavior,
-  not fixed) and tracked in the LOCAL `jscad-stl-validator-latent-bugs`
-  issue-lifecycle model (NEVER filed to the swamp.club Lab):
+- 5 already-shipped latent bugs were PINNED at the time of this release
+  (characterized as then-CURRENT behavior, not fixed) and tracked in the LOCAL
+  `jscad-stl-validator-latent-bugs` issue-lifecycle model (NEVER filed to the
+  swamp.club Lab). **LB1 was fixed in `2026.08.01.1`; LB2–LB5 were fixed in
+  `2026.08.02.1`** — none remain latent:
   1. **`validateFile` arbitrary-file-read / path traversal (HIGH)** --
      `filePath` is passed to `Deno.readFile` verbatim, with no allow-list, no
      confinement to any base directory, and no realpath check. Any absolute
