@@ -2,18 +2,23 @@
  * Adversarial suite: attacker's/hostile-network perspective over
  * `@magistr/anilist`'s single upstream contract (the public AniList GraphQL
  * API) plus its ClickHouse charting sink. Covers the two HTTP-200 "hostile
- * success" crash classes, the 429/5xx retry-with-backoff paths (under
- * FakeTime), the fragile 429-in-body detection + module-level shared
- * rate-limit state (both filed as latent bugs in the local
- * `anilist-latent-bugs` issue-lifecycle model — pinned here, NOT fixed),
- * argv-injection guards for the `swamp` subprocess boundary, credential
- * non-leak across every response-body-echoing throw site, hostile activity
- * payload guards, and a fixtures-secret-scan over the full committed corpus.
+ * success" crash classes (FIXED: null-data guard, non-JSON-body guard), the
+ * 429/5xx retry-with-backoff paths (under FakeTime), the 429-in-body
+ * detection (FIXED: robust to a numeric-string or absent `status`) and the
+ * rate-limit state (FIXED: per-invocation via `makeGql()`, no module-level
+ * coupling) — all four were filed as latent bugs (AL1-AL4) in the local
+ * `anilist-latent-bugs` issue-lifecycle model and are fixed as of
+ * `2026.08.02.1`; the six pins below now assert the FIXED behavior instead of
+ * characterizing the bug. Also covers argv-injection guards for the `swamp`
+ * subprocess boundary, credential non-leak across every
+ * response-body-echoing throw site, hostile activity payload guards, and a
+ * fixtures-secret-scan over the full committed corpus.
  *
- * anilist.ts is UNMODIFIED (byte-frozen) — every test here PINS current
- * behavior, including behavior that is a documented latent bug. See
- * `CHANGELOG.md`'s "Follow-up issues" section and the local
- * `anilist-latent-bugs` model for the bug catalogue this suite backs.
+ * anilist.ts is an active fix target here, not a characterization-only
+ * surface — see `CHANGELOG.md`'s `2026.08.02.1` entry for the AL1-AL4 fix
+ * summary and the local `anilist-latent-bugs` model for the bug catalogue
+ * this suite originally pinned and now verifies as fixed. The pure-helper
+ * surface and the GraphQL query/mutation consts are untouched.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
@@ -262,55 +267,62 @@ Deno.test("PIN (anilist got this right): a 200 response with errors[] present ca
 });
 
 // ---------------------------------------------------------------------------
-// (b) HTTP-200 + data:null + NO errors[] — uncaught TypeError downstream
-// (BUG, filed in anilist-latent-bugs). Pinned on `search` (non-fetchAll) AND
-// on `recent-activity`'s activities loop (which is NOT wrapped in a
-// try/catch, unlike the user-id resolution step — this crashes the WHOLE
-// fan-out, not just one user).
+// (b) HTTP-200 + data:null + NO errors[] — FIXED: gql() now throws a typed
+// Error instead of letting the downstream `data.<Field>` dereference crash
+// with an uncaught TypeError. Pinned on `search` (non-fetchAll) AND on
+// `recent-activity`'s activities loop, which is now try/caught per-user
+// (mirroring the user-id resolution step) so one hostile response is
+// recorded in usersFailed instead of aborting the whole fan-out.
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG PIN: search — 200+data:null+no-errors is NOT special-cased by gql() (only json.errors is checked); the caller's `data.Page.pageInfo` dereference then crashes with an uncaught TypeError", async () => {
+Deno.test("FIX PIN: search — 200+data:null+no-errors is now guarded by gql(): it throws a typed Error, not an uncaught TypeError from the caller's `data.Page.pageInfo` dereference", async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [queryRoute("SEARCH_MATCH", { data: null })],
     async () => {
-      await assertRejects(
+      const err = await assertRejects(
         () => run("search", { query: "Nebula" }, ctx),
-        TypeError,
+        Error,
+        "null data and no errors",
       );
+      assert(!(err instanceof TypeError));
     },
   );
 });
 
-Deno.test("BUG PIN: recent-activity's per-page activities fetch (unlike the user-id resolution step, which IS try/caught) is not guarded — a 200+data:null+no-errors response on the activities query crashes the ENTIRE fan-out for every tracked user, not just the one whose page returned it", async () => {
-  const { ctx } = makeCtx();
+Deno.test("FIX PIN: recent-activity's per-user activities fetch is now try/caught (mirroring the user-id resolution step) — a 200+data:null+no-errors response on the activities query for one user is recorded in usersFailed and the fan-out completes instead of crashing for every tracked user", async () => {
+  const { ctx, written } = makeCtx();
   await withFetchStub(
     [
       queryRoute("User(name: $name)", userIdFixture),
       queryRoute("activities(", { data: null }),
     ],
     async () => {
-      await assertRejects(
-        () =>
-          run("recent-activity", {
-            usernames: ["fixture_watcher"],
-            telegramModel: "",
-            dryRun: true,
-          }, ctx),
-        TypeError,
-      );
+      await run("recent-activity", {
+        usernames: ["fixture_watcher"],
+        telegramModel: "",
+        dryRun: true,
+      }, ctx);
     },
   );
+  const feed = written.find((w) => w.spec === "activityFeed")!;
+  const usersFailed = feed.payload.usersFailed as Array<
+    { name: string; reason: string }
+  >;
+  assertEquals(usersFailed.length, 1);
+  assertEquals(usersFailed[0].name, "fixture_watcher");
+  assert(usersFailed[0].reason.includes("null data and no errors"));
+  assertEquals(feed.payload.newCount, 0);
 });
 
 // ---------------------------------------------------------------------------
-// (c) Non-JSON 200 body — uncaught SyntaxError (BUG, filed). resp.ok is
-// checked before .json() is ever called, so a WAF/CDN error page served at
-// HTTP 200 is never mapped into the "AniList API error <status>" message the
-// contract suite pins for actual HTTP failures.
+// (c) Non-JSON 200 body — FIXED: gql() now reads the body once via text()
+// and guards JSON.parse, mapping a WAF/CDN error page served at HTTP 200
+// into the same handled "AniList API error" shape the contract suite pins
+// for actual HTTP failures, instead of an uncaught SyntaxError.
 // ---------------------------------------------------------------------------
 
-Deno.test("BUG PIN: a 200-OK response with a non-JSON body crashes gql() with an uncaught SyntaxError, not a handled AniList-specific error", async () => {
+Deno.test("FIX PIN: a 200-OK response with a non-JSON body is now caught by gql() and re-thrown as a handled AniList-specific error, not an uncaught SyntaxError", async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [(req, body) => {
@@ -323,10 +335,12 @@ Deno.test("BUG PIN: a 200-OK response with a non-JSON body crashes gql() with an
       });
     }],
     async () => {
-      await assertRejects(
+      const err = await assertRejects(
         () => run("get", { id: 90001 }, ctx),
-        SyntaxError,
+        Error,
+        "non-JSON 200 response body",
       );
+      assert(!(err instanceof SyntaxError));
     },
   );
 });
@@ -483,72 +497,83 @@ Deno.test("RETRY: a 429-in-body (200 status, errors[] contains status:429) sleep
 });
 
 // ---------------------------------------------------------------------------
-// BUG PIN: 429-in-body detection is FRAGILE — keys on an EXACT `e.status ===
-// 429` equality (a strict number comparison). Any shape drift (status as a
-// string, or the field renamed/absent) silently bypasses the dedicated retry
-// path and falls through to the generic "AniList GraphQL errors" throw
-// instead. Filed in anilist-latent-bugs.
+// FIX PIN: 429-in-body detection is now ROBUST — a numeric-string `status`
+// coerces to the numeric check, and a missing `status` falls back to a
+// rate-limit keyword match on `message`. Both now retry (sleep 60s) instead
+// of falling through to the generic "AniList GraphQL errors" throw.
 // ---------------------------------------------------------------------------
 
-Deno.test('BUG PIN: a 429-in-body whose `status` field is the STRING "429" (not the number 429) is NOT recognized by the exact `e.status === 429` check — it falls through to the generic errors-throw instead of retrying', async () => {
-  const { ctx } = makeCtx();
-  await withFetchStub(
-    [queryRoute("Media(id: $id)", {
-      errors: [{ message: "Too Many Requests.", status: "429" }],
-      data: null,
-    })],
-    async () => {
-      const err = await assertRejects(
-        () => run("get", { id: 90001 }, ctx),
-        Error,
-      );
-      assert(
-        (err as Error).message.startsWith("AniList GraphQL errors:"),
-        `expected the generic errors-throw (retry path bypassed) since status is a string, got: ${
-          (err as Error).message
-        }`,
-      );
-    },
-  );
-});
-
-Deno.test("BUG PIN: a 429-in-body with NO `status` field at all (message says 'rate limit' but the shape omits status) also bypasses the dedicated retry path", async () => {
-  const { ctx } = makeCtx();
-  await withFetchStub(
-    [queryRoute("Media(id: $id)", {
-      errors: [{ message: "You are being rate limited." }],
-      data: null,
-    })],
-    async () => {
-      const err = await assertRejects(
-        () => run("get", { id: 90001 }, ctx),
-        Error,
-      );
-      assert((err as Error).message.startsWith("AniList GraphQL errors:"));
-    },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// BUG PIN: module-level rateLimit COUPLES unrelated requests within one
-// process — a low-remaining/future-reset response from one call forces an
-// UNRELATED later call to pre-flight-sleep. Filed in anilist-latent-bugs.
-// ---------------------------------------------------------------------------
-
-Deno.test("BUG PIN: the module-level `rateLimit` object couples completely unrelated calls — a low-remaining response from ONE method forces the NEXT, logically independent method call to pre-flight-sleep", async () => {
+Deno.test('FIX PIN: a 429-in-body whose `status` field is the STRING "429" (not the number 429) is now recognized by the robust rate-limit predicate — it sleeps 60s then retries instead of falling through to the generic errors-throw', async () => {
   using time = new FakeTime();
-  const { ctx } = makeCtx();
-  // Prime to a known-healthy baseline regardless of what any earlier test (in
-  // this file or a sibling suite sharing the same module instance for the
-  // whole `deno test` run) left behind.
+  const { ctx, written } = makeCtx();
+  let calls = 0;
+  const t0 = time.now;
   await withFetchStub(
-    [queryRoute("Media(id: $id)", mediaDetailsFixture, 200, {
-      "X-RateLimit-Remaining": "90",
-      "X-RateLimit-Reset": "0",
-    })],
+    [(req, body) => {
+      if (!isAniListHost(req) || !body.query.includes("Media(id: $id)")) {
+        return undefined;
+      }
+      calls++;
+      if (calls === 1) {
+        return jsonRes({
+          errors: [{ message: "Too Many Requests.", status: "429" }],
+          data: null,
+        });
+      }
+      return jsonRes(mediaDetailsFixture);
+    }],
     () => drainAndAwait(time, run("get", { id: 90001 }, ctx)),
   );
+  assertEquals(calls, 2);
+  assertElapsedAtLeast(
+    time.now - t0,
+    60_000,
+    "429-in-body (string status) wait",
+  );
+  assert(written.find((w) => w.spec === "media"));
+});
 
+Deno.test("FIX PIN: a 429-in-body with NO `status` field at all (message says 'rate limit') is now recognized via the message-keyword fallback — it sleeps 60s then retries instead of falling through to the generic errors-throw", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  let calls = 0;
+  const t0 = time.now;
+  await withFetchStub(
+    [(req, body) => {
+      if (!isAniListHost(req) || !body.query.includes("Media(id: $id)")) {
+        return undefined;
+      }
+      calls++;
+      if (calls === 1) {
+        return jsonRes({
+          errors: [{ message: "You are being rate limited." }],
+          data: null,
+        });
+      }
+      return jsonRes(mediaDetailsFixture);
+    }],
+    () => drainAndAwait(time, run("get", { id: 90001 }, ctx)),
+  );
+  assertEquals(calls, 2);
+  assertElapsedAtLeast(
+    time.now - t0,
+    60_000,
+    "429-in-body (message-keyword) wait",
+  );
+  assert(written.find((w) => w.spec === "media"));
+});
+
+// ---------------------------------------------------------------------------
+// FIX PIN: rate-limit state is now PER-INVOCATION (`makeGql()` closure) —
+// a low-remaining/future-reset response from one method call can no longer
+// force an UNRELATED later call to pre-flight-sleep.
+// ---------------------------------------------------------------------------
+
+Deno.test("FIX PIN: rate-limit state is now per-invocation (no module-level `rateLimit`) — a low-remaining response from ONE method call no longer forces the NEXT, logically independent method call to pre-flight-sleep", async () => {
+  using time = new FakeTime();
+  const { ctx } = makeCtx();
+  // Leave `get`'s OWN gql-invocation state at low-remaining/future-reset;
+  // this must not leak into any other invocation's (fresh) state.
   const futureResetSec = Math.floor(time.now / 1000) + 5;
   await withFetchStub(
     [queryRoute("Media(id: $id)", mediaDetailsFixture, 200, {
@@ -564,9 +589,10 @@ Deno.test("BUG PIN: the module-level `rateLimit` object couples completely unrel
     () => drainAndAwait(time, run("search", { query: "Nebula" }, ctx)),
   );
   const waited = time.now - t0;
-  assert(
-    waited > 0,
-    `expected the second, UNRELATED search() call to incur a pre-flight wait purely because a PRIOR, different method left rateLimit.remaining<=1 with a future resetAt; waited ${waited}ms`,
+  assertEquals(
+    waited,
+    0,
+    `expected the second, UNRELATED search() call to have its OWN fresh rate-limit state (no pre-flight wait); waited ${waited}ms`,
   );
 });
 

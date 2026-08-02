@@ -10,9 +10,11 @@
  * test task, large for the nightly `test:soak` — mirrors the
  * seadex/musicbrainz/porkbun precedent exactly).
  *
- * anilist.ts is UNMODIFIED (byte-frozen) — every property here characterizes
- * already-shipped behavior over the full input space, not just the concrete
- * examples in the coverage suite.
+ * These pure helpers are untouched by the `2026.08.02.1` AL1-AL4 fixes (which
+ * are scoped to `gql()`'s request/retry path and its call sites — see
+ * `anilist_adversarial_test.ts`); every property here still characterizes
+ * already-shipped, unchanged behavior over the full input space, not just
+ * the concrete examples in the coverage suite.
  */
 import fc from "npm:fast-check@4.8.0";
 import {

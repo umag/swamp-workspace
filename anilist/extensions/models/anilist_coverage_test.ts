@@ -12,8 +12,10 @@
  * strategy: "+ examples in coverage"); their fast-check GENERATIVE invariants
  * live in `anilist_property_test.ts`.
  *
- * anilist.ts is UNMODIFIED (byte-frozen) — every test here characterizes
- * already-shipped behavior; no new behavior is being driven out.
+ * These pure helpers are untouched by the `2026.08.02.1` AL1-AL4 fixes (which
+ * are scoped to `gql()`'s request/retry path and its call sites — see
+ * `anilist_adversarial_test.ts`); every test here still characterizes
+ * already-shipped, unchanged behavior.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
