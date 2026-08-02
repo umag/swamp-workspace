@@ -2,8 +2,9 @@
 <!--
   SYNTHETIC fixture — hand-authored, never captured from fragrantica.com.
   See ../PROVENANCE.md. An accord bar whose inline width exceeds 100% —
-  pins parseAccords's unclamped-strength behavior (see the adversarial
-  suite: bug is that strength is never Math.min(100, ...)'d).
+  pins parseAccords's CLAMPED strength (fragrantica-latent-bugs #10, closed:
+  strength is now Math.min(100, Math.max(0, ...))'d, so this fixture's
+  width:120% bar is recorded as strength 100, not 120).
 -->
 <html lang="en">
   <head>

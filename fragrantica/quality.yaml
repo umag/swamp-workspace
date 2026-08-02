@@ -3,10 +3,11 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance by ext-quality-bf-fragrantica
-# (wave-3 scrapers child of ext-quality-test-backfill). fragrantica.ts is
-# BYTE-FROZEN by this change — every listed test file characterizes/pins
-# already-shipped behavior; no production code changed and no
-# manifest/model version bump.
+# (wave-3 scrapers child of ext-quality-test-backfill), then real-fixed by
+# the fix/fragrantica-latent-bugs change (LB4–LB12 closed; LB10's
+# false-positive selector and LB12's verbatim-storage decision stay
+# documented, accepted residuals — see CHANGELOG.md's 2026.08.02.1 entry).
+# fragrantica.ts and the model/manifest version WERE bumped by this change.
 #
 # Role map (each pre-existing file assigned to exactly ONE honest role — the
 # scaffolder originally dumped fragrantica_test.ts under contract-fixture,

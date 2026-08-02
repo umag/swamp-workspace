@@ -74,7 +74,7 @@ plus never running a live call in the first place.
 | `malformed/non-html.txt`              | A non-HTML 200 body — pins `fetchPage`'s missing `Content-Type` check / silent-empty parse (adversarial suite)                                |
 | `malformed/missing-pyramid.html`      | A structurally-drifted page (no `#pyramid`, no itemprop markup) — pins `parsePerfume`'s no-minimum-field guard (adversarial suite)            |
 | `malformed/cloudflare-challenge.html` | Cloudflare/Turnstile interstitial wording — pins `fetchPage`'s challenge-detection message (adversarial suite)                                |
-| `malformed/accord-over-100.html`      | A `width:120%` accord bar — pins `parseAccords`'s unclamped strength (adversarial suite)                                                      |
+| `malformed/accord-over-100.html`      | A `width:120%` accord bar — pins `parseAccords`'s CLAMPED strength, fragrantica-latent-bugs #10, closed (adversarial suite)                    |
 
 ## A documented parsing quirk this corpus deliberately preserves
 

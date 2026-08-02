@@ -1,10 +1,14 @@
 /**
  * Adversarial suite: hostile/boundary inputs, tampered/malformed responses,
- * SSRF surfaces, redirect handling, and injection-inert output — every test
- * here PINS current (including current-but-risky) behavior, it never fixes
- * it. fragrantica.ts is UNMODIFIED by this change (byte-freeze).
+ * SSRF surfaces, redirect handling, and injection-inert output.
  *
- * Every "pin:" test corresponds to a latent bug tracked in the LOCAL
+ * Tests are labeled "fixed:" when they assert CLOSED behavior (the fix is
+ * live in fragrantica.ts, LB4–LB9/LB11) and "pin:" when they characterize a
+ * residual, accepted-by-decision risk that is intentionally NOT fixed
+ * (LB10's false-positive selector, LB12's lossless-storage contract — both
+ * documented inline at the test and in CHANGELOG.md).
+ *
+ * Every test here corresponds to a latent bug tracked in the LOCAL
  * `fragrantica-latent-bugs` @magistr/issue-lifecycle model (never the
  * swamp.club Lab — see CLAUDE.md's Anti-Bypass rule and the plan's
  * potentialChallenges). Hostile hosts/IPs stay inside RFC 5737
@@ -12,7 +16,12 @@
  * `.invalid`) ranges; the real-world cloud-metadata target
  * 169.254.169.254 is named only in a comment, never fetched.
  */
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+} from "jsr:@std/assert@1";
 import { model } from "./fragrantica.ts";
 
 const BASE = "https://fragrantica.example";
@@ -362,15 +371,15 @@ Deno.test("fixed: a redesigned page with none of the expected selectors now thro
 });
 
 // ---------------------------------------------------------------------------
-// Bug 4 — redirect-follow bypasses host intent (MEDIUM)
+// Bug 4 — redirect-follow bypasses host intent (MEDIUM, closed)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: fetchPage issues fetch() with default redirect handling — no explicit redirect:'manual' guard (MEDIUM)", async () => {
-  // fragrantica-latent-bugs #4. fragrantica.ts's fetch() call never sets
-  // `redirect`, so it defaults to "follow" — a 302 from the requested host
-  // to an arbitrary Location is followed transparently, compounding bug #1's
-  // SSRF surface. We assert the captured RequestInit carries no redirect
-  // override (the mechanism), since a stubbed fetch never itself redirects.
+Deno.test("fixed: fetchPage issues fetch() with redirect:'manual' — no transparent redirect-follow (MEDIUM closed)", async () => {
+  // fragrantica-latent-bugs #4, closed. fetchPage now sets redirect: "manual"
+  // on every fetch() call (including every redirect hop), so a 3xx response
+  // is handed back to fragrantica.ts instead of being followed transparently
+  // by the runtime -- every hop is re-validated against the host allowlist
+  // before being followed (see the two tests below).
   const { ctx } = makeCtx();
   const original = globalThis.fetch;
   let capturedInit: RequestInit | undefined;
@@ -394,20 +403,93 @@ Deno.test("pin: fetchPage issues fetch() with default redirect handling — no e
   }
   assertEquals(
     capturedInit?.redirect,
-    undefined,
-    "no explicit redirect policy is set — the runtime default ('follow') applies",
+    "manual",
+    "redirect:'manual' is set so a 3xx response is inspected, not auto-followed",
   );
 });
 
+Deno.test("fixed: a 302 redirect to a hostile RFC 5737 host is rejected — the hostile host is NEVER fetched (MEDIUM closed)", async () => {
+  const startUrl = `${BASE}/perfume/Testhouse/Fakebloom-Nova-101.html`;
+  const hostileTarget = "http://198.51.100.30/perfume/Anything/Name-1.html";
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => {
+        if (req.url === startUrl) {
+          return new Response("", {
+            status: 302,
+            headers: { location: hostileTarget },
+          });
+        }
+        return undefined;
+      },
+      pageRoute({ [hostileTarget]: MINIMAL_PERFUME_HTML }),
+    ],
+    async (calls) => {
+      await assertRejects(
+        () =>
+          run(
+            "get-perfume",
+            { url: "/perfume/Testhouse/Fakebloom-Nova-101.html" },
+            ctx,
+          ),
+        Error,
+        "disallowed host",
+      );
+      assertEquals(
+        calls.length,
+        1,
+        "only the initial (allowlisted) request is made — the hostile redirect target is never fetched",
+      );
+    },
+  );
+});
+
+Deno.test("fixed: a 302 redirect to an allowlisted *.fragrantica.com hop is followed to substance (MEDIUM closed)", async () => {
+  const startUrl = `${BASE}/perfume/Testhouse/Fakebloom-Nova-101.html`;
+  const followTarget =
+    "https://de.fragrantica.com/perfume/Testhouse/Fakebloom-Nova-101.html";
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => {
+        if (req.url === startUrl) {
+          return new Response("", {
+            status: 302,
+            headers: { location: followTarget },
+          });
+        }
+        return undefined;
+      },
+      pageRoute({ [followTarget]: MINIMAL_PERFUME_HTML }),
+    ],
+    async (calls) => {
+      await run(
+        "get-perfume",
+        { url: "/perfume/Testhouse/Fakebloom-Nova-101.html" },
+        ctx,
+      );
+      assertEquals(
+        calls.length,
+        2,
+        "the initial request PLUS the allowlisted redirect hop",
+      );
+      assertEquals(calls[1].url, followTarget);
+    },
+  );
+  const res = written.find((w) => w.spec === "perfume")!;
+  assertEquals(res.payload.brand, "Testhouse");
+});
+
 // ---------------------------------------------------------------------------
-// Bug 5 — second-order SSRF via DuckDuckGo poisoning (MEDIUM)
+// Bug 5 — second-order SSRF via DuckDuckGo poisoning (MEDIUM, closed)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a DuckDuckGo result pointing at a hostile host is dereferenced without a base-domain check (second-order SSRF, MEDIUM)", async () => {
-  // fragrantica-latent-bugs #5. resolveNoteUrl / list-by-designer's ddg
-  // fallback accept the FIRST result matching the /notes/ or /designers/
-  // path shape on ANY host — a poisoned/MITM'd DuckDuckGo response can
-  // redirect the subsequent fetch to an attacker-controlled host.
+Deno.test("fixed: a DuckDuckGo result pointing at a hostile host is rejected — the hostile host is NEVER fetched (second-order SSRF closed, MEDIUM)", async () => {
+  // fragrantica-latent-bugs #5, closed. resolveNoteUrl's DuckDuckGo-resolved
+  // hit is now checked with assertHostAllowed BEFORE it is ever fetched -- a
+  // poisoned/MITM'd DuckDuckGo response pointing at an attacker-controlled
+  // host is rejected instead of dereferenced.
   const hostileNoteUrl = "http://198.51.100.20/notes/Poisoned-9.html";
   const { ctx } = makeCtx();
   await withFetchStub(
@@ -416,23 +498,56 @@ Deno.test("pin: a DuckDuckGo result pointing at a hostile host is dereferenced w
       pageRoute({ [hostileNoteUrl]: "<html><body></body></html>" }),
     ],
     async (calls) => {
-      await run("list-by-note", { note: "some plain note name" }, ctx);
-      assertEquals(calls.length, 2);
+      await assertRejects(
+        () => run("list-by-note", { note: "some plain note name" }, ctx),
+        Error,
+        "disallowed host",
+      );
       assertEquals(
-        calls[1].url,
-        hostileNoteUrl,
-        "the poisoned DDG result was fetched with no host allowlist",
+        calls.length,
+        1,
+        "only the DuckDuckGo POST is made — the poisoned hit is never fetched",
+      );
+    },
+  );
+});
+
+Deno.test("fixed: list-by-designer's DuckDuckGo-resolved hit is ALSO rejected when it points at a hostile host (second-order SSRF closed, MEDIUM)", async () => {
+  const hostileDesignerUrl = "http://198.51.100.21/designers/Poisoned.html";
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [
+      duckDuckGoRoute(() => ddgPage([hostileDesignerUrl])),
+      pageRoute({ [hostileDesignerUrl]: "<html><body></body></html>" }),
+    ],
+    async (calls) => {
+      await assertRejects(
+        () =>
+          run(
+            "list-by-designer",
+            { designer: "some plain house name" },
+            ctx,
+          ),
+        Error,
+        "disallowed host",
+      );
+      assertEquals(
+        calls.length,
+        1,
+        "only the DuckDuckGo POST is made — the poisoned hit is never fetched",
       );
     },
   );
 });
 
 // ---------------------------------------------------------------------------
-// Bug 6 — unbounded note fan-out (MEDIUM)
+// Bug 6 — unbounded note fan-out (MEDIUM, closed)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: find-by-notes has no upper bound on notes[] length — an N-note array triggers N sequential fetches (MEDIUM)", async () => {
-  // fragrantica-latent-bugs #6. The zod schema is `.min(1)` with no `.max()`.
+Deno.test("fixed: find-by-notes rejects a notes[] array longer than maxNotes BEFORE any fetch (MEDIUM closed)", async () => {
+  // fragrantica-latent-bugs #6, closed. A `maxNotes` global arg (default 20)
+  // now caps notes.length; exceeding it throws before the fan-out loop makes
+  // a single fetch.
   const NOTE_COUNT = 25;
   const notes = Array.from(
     { length: NOTE_COUNT },
@@ -445,23 +560,66 @@ Deno.test("pin: find-by-notes has no upper bound on notes[] length — an N-note
   }
   const { ctx } = makeCtx();
   await withFetchStub([pageRoute(pages)], async (calls) => {
-    await run("find-by-notes", { notes }, ctx);
-    assertEquals(
-      calls.length,
-      NOTE_COUNT,
-      "one fetch per requested note, uncapped",
+    await assertRejects(
+      () => run("find-by-notes", { notes }, ctx),
+      Error,
+      "exceeds",
     );
+    assertEquals(calls.length, 0, "the cap is enforced before any fetch");
+  });
+});
+
+Deno.test("fixed: find-by-notes accepts exactly the default maxNotes (20) — one fetch per note", async () => {
+  const NOTE_COUNT = 20;
+  const notes = Array.from(
+    { length: NOTE_COUNT },
+    (_, i) => `Note${i}-${i + 1}`,
+  );
+  const pages: Record<string, string> = {};
+  for (let i = 0; i < NOTE_COUNT; i++) {
+    pages[`${BASE}/notes/Note${i}-${i + 1}.html`] =
+      "<html><body></body></html>";
+  }
+  const { ctx } = makeCtx();
+  await withFetchStub([pageRoute(pages)], async (calls) => {
+    await run("find-by-notes", { notes }, ctx);
+    assertEquals(calls.length, NOTE_COUNT);
+  });
+});
+
+Deno.test("fixed: globalArgs.maxNotes overrides the default cap", async () => {
+  const NOTE_COUNT = 3;
+  const notes = Array.from(
+    { length: NOTE_COUNT },
+    (_, i) => `Note${i}-${i + 1}`,
+  );
+  const pages: Record<string, string> = {};
+  for (let i = 0; i < NOTE_COUNT; i++) {
+    pages[`${BASE}/notes/Note${i}-${i + 1}.html`] =
+      "<html><body></body></html>";
+  }
+  const { ctx } = makeCtx({ baseUrl: BASE, maxNotes: 2 });
+  await withFetchStub([pageRoute(pages)], async (calls) => {
+    await assertRejects(
+      () => run("find-by-notes", { notes }, ctx),
+      Error,
+      "exceeds",
+    );
+    assertEquals(calls.length, 0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Bug 7 — no fetch timeout / AbortSignal (MEDIUM, documented not executed)
+// Bug 7 — no fetch timeout / AbortSignal (MEDIUM, closed)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: fetchPage's fetch() call carries no AbortSignal/timeout — a hung response would stall the method forever (MEDIUM)", async () => {
-  // fragrantica-latent-bugs #7. We don't actually hang a test (that would
-  // make CI slow/flaky); instead we assert the captured RequestInit has no
-  // `signal`, which is the mechanism that would let a caller bound the wait.
+Deno.test("fixed: fetchPage's fetch() call carries an AbortSignal/timeout (MEDIUM closed)", async () => {
+  // fragrantica-latent-bugs #7, closed. fetchPage now runs under withTimeout,
+  // an AbortController whose signal aborts after globalArgs.timeoutMs
+  // (default 15000ms) — a hung response is now bounded instead of stalling
+  // the method forever. We don't actually hang a test (that would make CI
+  // slow/flaky); instead we assert the captured RequestInit carries a real
+  // AbortSignal.
   const { ctx } = makeCtx();
   const original = globalThis.fetch;
   let capturedInit: RequestInit | undefined;
@@ -483,14 +641,13 @@ Deno.test("pin: fetchPage's fetch() call carries no AbortSignal/timeout — a hu
   } finally {
     globalThis.fetch = original;
   }
-  assertEquals(
-    capturedInit?.signal,
-    undefined,
-    "no AbortSignal is attached to the request",
+  assert(
+    capturedInit?.signal instanceof AbortSignal,
+    "an AbortSignal is attached to the request",
   );
 });
 
-Deno.test("pin: duckDuckGo's POST also carries no AbortSignal/timeout (MEDIUM)", async () => {
+Deno.test("fixed: duckDuckGo's POST also carries an AbortSignal/timeout (MEDIUM closed)", async () => {
   const { ctx } = makeCtx();
   const original = globalThis.fetch;
   let capturedInit: RequestInit | undefined;
@@ -508,19 +665,20 @@ Deno.test("pin: duckDuckGo's POST also carries no AbortSignal/timeout (MEDIUM)",
   } finally {
     globalThis.fetch = original;
   }
-  assertEquals(capturedInit?.signal, undefined);
+  assert(capturedInit?.signal instanceof AbortSignal);
 });
 
 // ---------------------------------------------------------------------------
-// Bug 8 — duplicate-note double-count in find-by-notes (MEDIUM correctness)
+// Bug 8 — duplicate-note double-count in find-by-notes (MEDIUM correctness,
+// closed)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: passing the SAME note twice in find-by-notes double-counts every perfume on that page as matching ALL notes (MEDIUM correctness)", async () => {
-  // fragrantica-latent-bugs #8. The fan-out loop fetches each element of
-  // notes[] independently with no de-dup of the resolved URL, so
-  // notes=["Vetiver-4","Vetiver-4"] fetches the SAME page twice and every
-  // perfume on it ends up "matching" both (mode=all's needed threshold ==
-  // notes.length == 2), even though only one distinct note was ever supplied.
+Deno.test("fixed: passing the SAME note twice in find-by-notes fetches it only ONCE and does not double-count (MEDIUM correctness closed)", async () => {
+  // fragrantica-latent-bugs #8, closed. The fan-out loop now dedups by the
+  // RESOLVED note URL: notes=["Vetiver-4","Vetiver-4"] resolves to the same
+  // URL both times, so the second occurrence is skipped entirely (no second
+  // fetch), and `need` is computed from the DISTINCT note count, not
+  // args.notes.length.
   const html = `<!doctype html><html><body>
     <a href="/perfume/Testhouse/Fakebloom-Nova-101.html">Fakebloom Nova</a>
   </body></html>`;
@@ -529,7 +687,11 @@ Deno.test("pin: passing the SAME note twice in find-by-notes double-counts every
     [pageRoute({ [`${BASE}/notes/Vetiver-4.html`]: html })],
     async (calls) => {
       await run("find-by-notes", { notes: ["Vetiver-4", "Vetiver-4"] }, ctx);
-      assertEquals(calls.length, 2, "the identical note page is fetched TWICE");
+      assertEquals(
+        calls.length,
+        1,
+        "the identical note page is fetched only ONCE",
+      );
     },
   );
   const res = written.find((w) => w.spec === "noteIntersection")!;
@@ -537,19 +699,20 @@ Deno.test("pin: passing the SAME note twice in find-by-notes double-counts every
   assertEquals(results.length, 1);
   assertEquals(
     results[0].matchedNotes,
-    2,
-    "the single perfume is credited with matching BOTH (duplicated) note entries",
+    1,
+    "matched against the single DISTINCT note, not the duplicated count",
   );
 });
 
 // ---------------------------------------------------------------------------
-// Bug 9 — instanceSlug resource-name collision (LOW)
+// Bug 9 — instanceSlug resource-name collision (LOW, closed)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: two distinct search queries that collapse to the same slug clobber each other's written resource name (LOW)", async () => {
-  // fragrantica-latent-bugs #9. instanceSlug replaces every run of non-
-  // alnum characters with a single '-', so "A/B" and "A B" (and "A-B")
-  // all produce the identical slug "A-B" -> identical writeResource name.
+Deno.test("fixed: two distinct search queries that would have collapsed to the same slug no longer collide (LOW closed)", async () => {
+  // fragrantica-latent-bugs #9, closed. instanceSlug now appends a
+  // deterministic 8-hex-char FNV-1a hash of the RAW input, so "A/B" and
+  // "A B" (which both collapse to the same lossy base "A-B") get distinct
+  // instance names instead of clobbering each other's written resource.
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [duckDuckGoRoute(() => ddgPage([]))],
@@ -559,10 +722,11 @@ Deno.test("pin: two distinct search queries that collapse to the same slug clobb
     },
   );
   const names = written.filter((w) => w.spec === "search").map((w) => w.name);
-  assertEquals(
+  assertEquals(names.length, 2);
+  assertNotEquals(
     names[0],
     names[1],
-    "distinct queries 'A/B' and 'A B' collide on the same instance slug",
+    "distinct queries 'A/B' and 'A B' no longer collide on the same instance slug",
   );
 });
 
@@ -570,8 +734,12 @@ Deno.test("pin: two distinct search queries that collapse to the same slug clobb
 // Bug 10 — parseAccords unclamped strength / false positives (LOW)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: parseAccords never clamps strength to 100 — a width:120% bar is recorded as strength 120 (LOW)", async () => {
-  // fragrantica-latent-bugs #10. Reachable through get-perfume's parsing.
+Deno.test("fixed: parseAccords clamps strength to 100 — a width:120% bar is recorded as strength 100 (LOW closed)", async () => {
+  // fragrantica-latent-bugs #10, closed (clamp only). The false-positive
+  // selector match on ANY colored width: bar (next test) is a SEPARATE,
+  // accepted residual risk -- it cannot be fixed here without breaking the
+  // byte-frozen perfume.html accords contract pin, since real accord bars
+  // and this synthetic "unrelated progress bar" share identical markup shape.
   const html = `<!doctype html><html><body>
     <div itemprop="brand"><span itemprop="name">Testhouse</span></div>
     <div style="background:#ff00ff;width:120%;">overdriven</div>
@@ -593,10 +761,10 @@ Deno.test("pin: parseAccords never clamps strength to 100 — a width:120% bar i
   const accords = res.payload.accords as Array<
     { name: string; strength: number }
   >;
-  assertEquals(accords, [{ name: "overdriven", strength: 120 }]);
+  assertEquals(accords, [{ name: "overdriven", strength: 100 }]);
 });
 
-Deno.test("pin: parseAccords matches ANY colored div with a width style, not just the real accord-bar markup (false-positive risk, LOW)", async () => {
+Deno.test("pin: parseAccords matches ANY colored div with a width style, not just the real accord-bar markup (accepted residual, not separable, LOW)", async () => {
   const html = `<!doctype html><html><body>
     <div itemprop="brand"><span itemprop="name">Testhouse</span></div>
     <div style="background:red;width:33%;">unrelated progress bar</div>
@@ -622,12 +790,41 @@ Deno.test("pin: parseAccords matches ANY colored div with a width style, not jus
 });
 
 // ---------------------------------------------------------------------------
-// Bug 11 — hardcoded fimgs.net thumbnail ignores baseUrl (LOW)
+// Bug 11 — hardcoded fimgs.net thumbnail ignores baseUrl (LOW, closed)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: the perfume thumbnail is ALWAYS built from the hardcoded fimgs.net host, even when baseUrl is overridden (LOW)", async () => {
-  // fragrantica-latent-bugs #11. refFromPerfumeUrl's thumbnail field ignores
-  // the `base` argument entirely: `https://fimgs.net/mdimg/...` is a literal.
+Deno.test("fixed: imageBaseUrl overrides the perfume thumbnail host (LOW closed)", async () => {
+  // fragrantica-latent-bugs #11, closed. refFromPerfumeUrl/parsePerfume now
+  // thread an `imageBase` parameter (globalArgs.imageBaseUrl, defaulting to
+  // the unchanged "https://fimgs.net") through to the thumbnail URL --
+  // overriding it no longer requires overriding baseUrl (which stays
+  // fragrantica-page-specific).
+  const { ctx, written } = makeCtx({
+    baseUrl: "https://mirror.example",
+    imageBaseUrl: "https://custom-img.example",
+  });
+  await withFetchStub(
+    [pageRoute({
+      "https://mirror.example/perfume/Testhouse/Fakebloom-Nova-101.html":
+        MINIMAL_PERFUME_HTML,
+    })],
+    async () => {
+      await run(
+        "get-perfume",
+        { url: "/perfume/Testhouse/Fakebloom-Nova-101.html" },
+        ctx,
+      );
+    },
+  );
+  const res = written.find((w) => w.spec === "perfume")!;
+  assertEquals(
+    res.payload.thumbnail,
+    "https://custom-img.example/mdimg/perfume-thumbs/375x500.101.jpg",
+    "thumbnail host follows the imageBaseUrl override",
+  );
+});
+
+Deno.test("pin: WITHOUT an imageBaseUrl override, the thumbnail still defaults to fimgs.net even when baseUrl is overridden (unchanged default)", async () => {
   const { ctx, written } = makeCtx({ baseUrl: "https://mirror.example" });
   await withFetchStub(
     [pageRoute({
@@ -646,19 +843,21 @@ Deno.test("pin: the perfume thumbnail is ALWAYS built from the hardcoded fimgs.n
   assertEquals(
     res.payload.thumbnail,
     "https://fimgs.net/mdimg/perfume-thumbs/375x500.101.jpg",
-    "thumbnail host stays fimgs.net regardless of the configured baseUrl",
+    "default thumbnail host is unchanged",
   );
 });
 
 // ---------------------------------------------------------------------------
-// Bug 12 — stored parsed values unsanitized (LOW, inert here)
+// Bug 12 — stored parsed values unsanitized (LOW, accepted by decision)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a <script>-bearing note/brand name is stored VERBATIM, unsanitized (LOW, inert — this model never renders it)", async () => {
-  // fragrantica-latent-bugs #12. parsePerfume performs no output encoding or
-  // stripping; the raw textContent is written straight into the resource.
-  // Documented as a trust-boundary note for downstream consumers, not fixed
-  // here (fragrantica.ts is byte-frozen).
+Deno.test("pin: a <script>-bearing note/brand name is stored VERBATIM — intentional lossless-storage contract, not a bug (accepted by decision)", async () => {
+  // fragrantica-latent-bugs #12, accepted by decision (not fixed). parsePerfume
+  // performs no output encoding or stripping BY DESIGN: sanitizing at parse
+  // time would corrupt legitimate brand/note names, and this model never
+  // renders its stored data -- encoding is a render-time responsibility for
+  // whichever downstream consumer displays it. See parsePerfume's doc
+  // comment in fragrantica.ts for the full rationale.
   const html = `<!doctype html><html><body>
     <div itemprop="brand"><span itemprop="name">&lt;script&gt;alert(1)&lt;/script&gt;</span></div>
   </body></html>`;

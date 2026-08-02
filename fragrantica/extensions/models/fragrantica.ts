@@ -20,6 +20,10 @@ const DEFAULT_BASE = "https://www.fragrantica.com";
 const DEFAULT_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+const DEFAULT_IMAGE_BASE = "https://fimgs.net";
+const DEFAULT_TIMEOUT_MS = 15000;
+const DEFAULT_MAX_NOTES = 20;
+const MAX_REDIRECT_HOPS = 5;
 
 const GlobalArgsSchema = z.object({
   baseUrl: z
@@ -32,6 +36,25 @@ const GlobalArgsSchema = z.object({
     .string()
     .optional()
     .describe("Override the HTTP User-Agent used for requests."),
+  timeoutMs: z
+    .number()
+    .optional()
+    .describe(
+      "Per-fetchPage/duckDuckGo request timeout in milliseconds (default 15000). " +
+        "Spans every redirect hop of a single fetchPage call, not each hop individually.",
+    ),
+  maxNotes: z
+    .number()
+    .optional()
+    .describe(
+      "Maximum notes[] length find-by-notes will fan out over (default 20).",
+    ),
+  imageBaseUrl: z
+    .string()
+    .optional()
+    .describe(
+      "Override the base host used to build perfume thumbnail URLs (default https://fimgs.net).",
+    ),
 });
 
 // --- host allowlist (SSRF guard) --------------------------------------------
@@ -44,11 +67,14 @@ const GlobalArgsSchema = z.object({
 // dot boundary, which would wrongly allow lookalikes like
 // "evilfragrantica.com" or "fragrantica.com.attacker.example".
 //
-// This guard lives ONLY at the caller-input normalizers (normalizePerfumeUrl,
-// resolveNoteUrl's direct-URL branch, list-by-designer's direct-URL branch) —
-// deliberately NOT inside fetchPage, and deliberately NOT applied to the
-// DuckDuckGo-resolved branches of resolveNoteUrl/list-by-designer, which stay
-// a documented, deferred second-order-SSRF risk (fragrantica-latent-bugs #5).
+// The guard is enforced at every caller-input normalizer — normalizePerfumeUrl,
+// resolveNoteUrl's direct-URL AND DuckDuckGo-resolved branches, list-by-designer's
+// direct-URL AND DuckDuckGo-resolved branches — closing the second-order SSRF a
+// poisoned/MITM'd DuckDuckGo hit would otherwise open (fragrantica-latent-bugs
+// #5, closed) — AND inside fetchPage itself, which re-validates every redirect
+// hop before following it: fetch() now passes redirect: "manual" and a bounded
+// loop (max 5 hops) re-checks each Location target before fetching it
+// (fragrantica-latent-bugs #4, closed).
 
 function hostAllowed(
   url: string,
@@ -95,55 +121,106 @@ function parse(html: string): Doc {
   return new DOMParser().parseFromString(html, "text/html");
 }
 
+/**
+ * Run `fn` under a single AbortController whose signal aborts after `ms`
+ * milliseconds (fragrantica-latent-bugs #7, closed) — never
+ * `AbortSignal.timeout()`, since that can't be composed with fetchPage's
+ * redirect loop, which needs ONE controller/timer spanning every hop
+ * (fragrantica-latent-bugs #4/#7 cross-bug: the overall budget covers the
+ * whole call, not each hop individually). `clearTimeout` always runs in
+ * `finally`, whether `fn` resolves or throws.
+ */
+async function withTimeout<T>(
+  ms: number,
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fn(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchPage(
   url: string,
-  context: { globalArgs?: { userAgent?: string; baseUrl?: string } },
+  context: {
+    globalArgs?: { userAgent?: string; baseUrl?: string; timeoutMs?: number };
+  },
 ): Promise<string> {
   const ua = context.globalArgs?.userAgent || DEFAULT_UA;
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": ua,
-      "Accept":
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-  });
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    const challenged =
-      /cloudflare|cf-chl|turnstile|attention required|just a moment/i.test(
-        body,
+  const timeoutMs = context.globalArgs?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const headers = {
+    "User-Agent": ua,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+  return await withTimeout(timeoutMs, async (signal) => {
+    // fragrantica-latent-bugs #4, closed: `redirect: "manual"` means a
+    // 3xx/opaqueredirect response is handed back to us instead of being
+    // followed transparently by the runtime — every hop's Location target is
+    // re-validated against the host allowlist (assertHostAllowed) BEFORE it
+    // is ever fetched, in a loop bounded to MAX_REDIRECT_HOPS. An opaque
+    // redirect (or one with no Location header) can't be inspected, so it
+    // throws rather than being silently followed.
+    let currentUrl = url;
+    let response: Response | undefined;
+    for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+      const res = await fetch(currentUrl, {
+        headers,
+        redirect: "manual",
+        signal,
+      });
+      const isRedirect = res.type === "opaqueredirect" ||
+        (res.status >= 300 && res.status < 400);
+      if (!isRedirect) {
+        response = res;
+        break;
+      }
+      const location = res.headers.get("location");
+      if (!location) {
+        throw new Error(
+          `Redirect response with no Location header (or an opaque redirect) for ${currentUrl}`,
+        );
+      }
+      if (hop === MAX_REDIRECT_HOPS) {
+        throw new Error(
+          `Too many redirects (>${MAX_REDIRECT_HOPS}) fetching ${url}`,
+        );
+      }
+      const nextUrl = absUrl(location, currentUrl);
+      assertHostAllowed(nextUrl, context);
+      currentUrl = nextUrl;
+    }
+    if (!response) {
+      throw new Error(
+        `Too many redirects (>${MAX_REDIRECT_HOPS}) fetching ${url}`,
       );
-    throw new Error(
-      `Fetch failed (${response.status}) for ${url}` +
-        (challenged
-          ? " — Fragrantica returned a Cloudflare challenge (rate-limited/blocked). Retry later or slow down."
-          : ""),
-    );
-  }
-  // Post-redirect final-URL re-validation: only applied when the REQUESTED
-  // url itself was already allowlisted (allowedOrigin) — this keeps the
-  // deferred DuckDuckGo-resolved second-order-SSRF pin (#5) inert, since that
-  // path calls fetchPage on a url that was never allowlisted to begin with.
-  // Deliberately NOT `redirect: "manual"` (that would flip the deferred
-  // redirect-follow pin, #4) — this is a post-fetch guard, not a preventive
-  // one. Constructed Response objects (unit test stubs) have response.url
-  // === "" and never trip this check.
-  const allowedOrigin = hostAllowed(url, context);
-  if (allowedOrigin && response.url && !hostAllowed(response.url, context)) {
-    throw new Error(
-      `Refusing response from a disallowed host after redirect: ${response.url}`,
-    );
-  }
-  const contentType = response.headers.get("content-type") ?? "";
-  if (
-    contentType && !/text\/html|application\/xhtml\+xml/i.test(contentType)
-  ) {
-    throw new Error(
-      `Unexpected Content-Type "${contentType}" for ${url} — expected an HTML page.`,
-    );
-  }
-  return response.text();
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      const challenged =
+        /cloudflare|cf-chl|turnstile|attention required|just a moment/i.test(
+          body,
+        );
+      throw new Error(
+        `Fetch failed (${response.status}) for ${url}` +
+          (challenged
+            ? " — Fragrantica returned a Cloudflare challenge (rate-limited/blocked). Retry later or slow down."
+            : ""),
+      );
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    if (
+      contentType && !/text\/html|application\/xhtml\+xml/i.test(contentType)
+    ) {
+      throw new Error(
+        `Unexpected Content-Type "${contentType}" for ${url} — expected an HTML page.`,
+      );
+    }
+    return await response.text();
+  });
 }
 
 function absUrl(href: string, base: string): string {
@@ -174,10 +251,16 @@ function slugToText(slug: string): string {
 
 const PERFUME_HREF = /\/perfume\/([^/]+)\/(.+?)-(\d+)\.html/;
 
-/** Build a lightweight perfume reference from a /perfume/<Brand>/<Name>-<id>.html URL. */
+/**
+ * Build a lightweight perfume reference from a /perfume/<Brand>/<Name>-<id>.html
+ * URL. `imageBase` (fragrantica-latent-bugs #11, closed) defaults to the
+ * unchanged "https://fimgs.net" host, so every existing 2-arg call site stays
+ * byte-identical; pass globalArgs.imageBaseUrl through to override it.
+ */
 export function refFromPerfumeUrl(
   href: string,
   base: string,
+  imageBase: string = DEFAULT_IMAGE_BASE,
 ): {
   name: string;
   brand?: string;
@@ -196,7 +279,7 @@ export function refFromPerfumeUrl(
     url,
     id,
     thumbnail: id
-      ? `https://fimgs.net/mdimg/perfume-thumbs/375x500.${id}.jpg`
+      ? `${imageBase}/mdimg/perfume-thumbs/375x500.${id}.jpg`
       : undefined,
   };
 }
@@ -245,6 +328,7 @@ function collectPerfumeRefs(
   base: string,
   cap = 500,
   preferText = false,
+  imageBase: string = DEFAULT_IMAGE_BASE,
 ) {
   const seen = new Set<string>();
   const refs: ReturnType<typeof refFromPerfumeUrl>[] = [];
@@ -254,7 +338,7 @@ function collectPerfumeRefs(
     const url = absUrl(href, base);
     if (seen.has(url)) continue;
     seen.add(url);
-    const ref = refFromPerfumeUrl(url, base);
+    const ref = refFromPerfumeUrl(url, base, imageBase);
     if (preferText) ref.name = preferLinkName(a, ref);
     refs.push(ref);
     if (refs.length >= cap) break;
@@ -327,31 +411,60 @@ export function parseAccords(doc: Doc) {
     if (text.length === 0 || text.length > 40) continue;
     if (seen.has(text)) continue;
     seen.add(text);
-    accords.push({ name: text, strength: Math.round(parseFloat(wm[1])) });
+    // fragrantica-latent-bugs #10, closed: clamp to [0, 100] — a malformed
+    // width:120% bar (or any other out-of-range inline style) no longer
+    // produces a strength value outside a percentage's valid range.
+    const strength = Math.min(100, Math.max(0, Math.round(parseFloat(wm[1]))));
+    accords.push({ name: text, strength });
     if (accords.length >= 30) break;
   }
   return accords;
 }
 
-function parseAlsoLike(doc: Doc, base: string, selfUrl: string) {
+function parseAlsoLike(
+  doc: Doc,
+  base: string,
+  selfUrl: string,
+  imageBase: string = DEFAULT_IMAGE_BASE,
+) {
   const heads = [...doc.querySelectorAll("h1, h2, h3, h4")];
   const heading = heads.find((h: Doc) =>
     /also like|reminds/i.test(h.textContent ?? "")
   );
   if (!heading) return [];
   const container = heading.closest("div")?.parentElement ?? doc;
-  return collectPerfumeRefs(container, base, 40, true).filter((r) =>
+  return collectPerfumeRefs(container, base, 40, true, imageBase).filter((r) =>
     r.url !== selfUrl
   );
 }
 
-function parsePerfume(html: string, url: string, base: string) {
+/**
+ * Parse a fetched perfume page into its full detail record.
+ *
+ * fragrantica-latent-bugs #12, accepted by decision (not a bug to fix): every
+ * text field below (brand, description, note/accord names, ...) is stored
+ * VERBATIM — this function performs no output encoding or HTML/script
+ * stripping on parsed page text. That is an intentional lossless-storage
+ * contract, not an oversight: sanitizing at parse time would corrupt
+ * legitimate brand/perfume/note names that happen to contain markup-like
+ * characters, and this model never renders its stored data — it only ever
+ * writes it via `writeResource` as structured JSON for another caller to
+ * read. Encoding/escaping is therefore a render-time responsibility that
+ * belongs to whichever downstream consumer eventually displays this data in
+ * an HTML/terminal/markdown context, not to this parser.
+ */
+function parsePerfume(
+  html: string,
+  url: string,
+  base: string,
+  imageBase: string = DEFAULT_IMAGE_BASE,
+) {
   const doc = parse(html);
   const og = (prop: string) =>
     doc.querySelector(`meta[property="${prop}"]`)?.getAttribute("content") ??
       "";
 
-  const ref = refFromPerfumeUrl(url, base);
+  const ref = refFromPerfumeUrl(url, base, imageBase);
   // pageBrand is PAGE-derived only (itemprop selectors) — kept separate from
   // the final `brand` field (which falls back to the URL-derived ref.brand)
   // so the min-field substance guard below can't be satisfied by URL shape
@@ -430,12 +543,12 @@ function parsePerfume(html: string, url: string, base: string) {
       : undefined,
     description,
     thumbnail: id
-      ? `https://fimgs.net/mdimg/perfume-thumbs/375x500.${id}.jpg`
+      ? `${imageBase}/mdimg/perfume-thumbs/375x500.${id}.jpg`
       : (og("og:image") || undefined),
     perfumers,
     accords,
     notes,
-    similar: parseAlsoLike(doc, base, url),
+    similar: parseAlsoLike(doc, base, url, imageBase),
     timestamp: new Date().toISOString(),
     hasPageSubstance,
   };
@@ -446,25 +559,33 @@ function parsePerfume(html: string, url: string, base: string) {
 /** Run a DuckDuckGo HTML search and return the de-referenced result URLs. */
 async function duckDuckGo(
   query: string,
-  context: { globalArgs?: { userAgent?: string } },
+  context: { globalArgs?: { userAgent?: string; timeoutMs?: number } },
 ): Promise<string[]> {
   const ua = context.globalArgs?.userAgent || DEFAULT_UA;
-  const response = await fetch("https://html.duckduckgo.com/html/", {
-    method: "POST",
-    headers: {
-      "User-Agent": ua,
-      "Content-Type": "application/x-www-form-urlencoded",
-      "Accept": "text/html",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    body: new URLSearchParams({ q: query }).toString(),
+  const timeoutMs = context.globalArgs?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // fragrantica-latent-bugs #7, closed: the POST + body read share a single
+  // AbortController/timer (see withTimeout above `fetchPage`) instead of
+  // running with no timeout at all.
+  const body = await withTimeout(timeoutMs, async (signal) => {
+    const response = await fetch("https://html.duckduckgo.com/html/", {
+      method: "POST",
+      headers: {
+        "User-Agent": ua,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "text/html",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      body: new URLSearchParams({ q: query }).toString(),
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error(
+        `DuckDuckGo search failed (${response.status}). It may be rate-limiting; retry shortly.`,
+      );
+    }
+    return await response.text();
   });
-  if (!response.ok) {
-    throw new Error(
-      `DuckDuckGo search failed (${response.status}). It may be rate-limiting; retry shortly.`,
-    );
-  }
-  const doc = parse(await response.text());
+  const doc = parse(body);
   const urls: string[] = [];
   for (const a of doc.querySelectorAll("a.result__a")) {
     let href = a.getAttribute("href") ?? "";
@@ -503,9 +624,12 @@ async function resolveNoteUrl(
       `Could not resolve note "${v}" to a /notes/ page. Pass the exact slug (e.g. Vetiver-4) or the full URL.`,
     );
   }
-  // Deliberately NOT host-allowlisted: fragrantica-latent-bugs #5 (second-
-  // order SSRF via DuckDuckGo poisoning) is a documented, deferred risk.
-  return found.split("#")[0].split("?")[0];
+  const resolved = found.split("#")[0].split("?")[0];
+  // fragrantica-latent-bugs #5, closed: the resolved hit is host-allowlisted
+  // before use — closes the second-order SSRF a poisoned/MITM'd DuckDuckGo
+  // response would otherwise allow.
+  assertHostAllowed(resolved, context);
+  return resolved;
 }
 
 function noteKeyFromUrl(url: string, fallback: string): string {
@@ -590,12 +714,34 @@ const PerfumeDetailSchema = z.object({
 
 // --- input normalisers -----------------------------------------------------
 
+/**
+ * FNV-1a 32-bit hash of `input`, as 8 lowercase hex characters. Used by
+ * `instanceSlug` (fragrantica-latent-bugs #9, closed) to disambiguate
+ * `writeResource` instance-name slugs: collapsing every run of non-alnum
+ * characters to a single "-" made distinct raw inputs like "A/B" and "A B"
+ * collapse to the identical slug "A-B" and silently clobber each other's
+ * written resource. Appending a hash of the RAW, pre-slugification input
+ * gives distinct raw inputs distinct instance names while staying fully
+ * deterministic for the same raw input.
+ */
+function fnv1aHex(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 function instanceSlug(input: string): string {
-  return input
+  const hash = fnv1aHex(input);
+  // Reserve 9 chars ("-" + 8 hex) out of the 80-char cap for the hash suffix.
+  const base = input
     .replace(/^https?:\/\//, "")
     .replace(/[^a-zA-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "result";
+    .slice(0, 80 - 1 - hash.length) || "result";
+  return `${base}-${hash}`;
 }
 
 function normalizePerfumeUrl(
@@ -626,11 +772,22 @@ function normalizePerfumeUrl(
  * `similar` (just the "People who like this also like" list), `list-by-designer`
  * and `list-by-note` (enumerate a house or note page), and `find-by-notes`
  * (fan-out that intersects several note pages to hunt a note combination). No
- * credentials required.
+ * credentials required. Optional `timeoutMs`/`maxNotes`/`imageBaseUrl` global
+ * args (all defaulted) tune the fetch timeout, the find-by-notes fan-out cap,
+ * and the thumbnail image host.
  */
 export const model = {
   type: "@magistr/fragrantica",
-  version: "2026.07.31.1",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.31.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix LB4–LB12; adds defaulted globalArgs timeoutMs/maxNotes/imageBaseUrl + injective instanceSlug; no resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     search: {
@@ -687,6 +844,8 @@ export const model = {
         context: any,
       ) => {
         const base = context.globalArgs?.baseUrl || DEFAULT_BASE;
+        const imageBase = context.globalArgs?.imageBaseUrl ||
+          DEFAULT_IMAGE_BASE;
         const limit = args.limit ?? 20;
         const urls = await duckDuckGo(`fragrantica ${args.query}`, context);
         const seen = new Set<string>();
@@ -696,7 +855,7 @@ export const model = {
           if (!path) continue;
           // Collapse locale domains (fragrantica.es/.ru/…) onto the base domain.
           const canonical = base.replace(/\/$/, "") + path[0];
-          const ref = refFromPerfumeUrl(canonical, base);
+          const ref = refFromPerfumeUrl(canonical, base, imageBase);
           const key = ref.id !== undefined ? `id:${ref.id}` : canonical;
           if (seen.has(key)) continue;
           seen.add(key);
@@ -735,9 +894,16 @@ export const model = {
         context: any,
       ) => {
         const base = context.globalArgs?.baseUrl || DEFAULT_BASE;
+        const imageBase = context.globalArgs?.imageBaseUrl ||
+          DEFAULT_IMAGE_BASE;
         const url = normalizePerfumeUrl(args.url, base, context);
         const html = await fetchPage(url, context);
-        const { hasPageSubstance, ...perfume } = parsePerfume(html, url, base);
+        const { hasPageSubstance, ...perfume } = parsePerfume(
+          html,
+          url,
+          base,
+          imageBase,
+        );
         if (!hasPageSubstance) {
           // fragrantica-latent-bugs #3, closed: reject before writeResource
           // instead of silently "succeeding" with an empty-ish record built
@@ -773,11 +939,13 @@ export const model = {
         context: any,
       ) => {
         const base = context.globalArgs?.baseUrl || DEFAULT_BASE;
+        const imageBase = context.globalArgs?.imageBaseUrl ||
+          DEFAULT_IMAGE_BASE;
         const url = normalizePerfumeUrl(args.url, base, context);
         const html = await fetchPage(url, context);
         const doc = parse(html);
-        const results = parseAlsoLike(doc, base, url);
-        const name = refFromPerfumeUrl(url, base).name;
+        const results = parseAlsoLike(doc, base, url, imageBase);
+        const name = refFromPerfumeUrl(url, base, imageBase).name;
         const handle = await context.writeResource(
           "similar",
           instanceSlug(url),
@@ -825,14 +993,17 @@ export const model = {
               `Could not resolve designer "${v}" to a /designers/ page. Pass the exact slug (e.g. Yves-Saint-Laurent) or the full URL.`,
             );
           }
-          // Deliberately NOT host-allowlisted: fragrantica-latent-bugs #5
-          // (second-order SSRF via DuckDuckGo poisoning) is a documented,
-          // deferred risk.
           url = found.split("#")[0].split("?")[0];
+          // fragrantica-latent-bugs #5, closed: the resolved hit is host-
+          // allowlisted before use — closes the second-order SSRF a
+          // poisoned/MITM'd DuckDuckGo response would otherwise allow.
+          assertHostAllowed(url, context);
         }
+        const imageBase = context.globalArgs?.imageBaseUrl ||
+          DEFAULT_IMAGE_BASE;
         const html = await fetchPage(url, context);
         const doc = parse(html);
-        const results = collectPerfumeRefs(doc, base);
+        const results = collectPerfumeRefs(doc, base, 500, false, imageBase);
         const key = (url.match(/\/designers\/([^/]+)\.html/) ?? [])[1] ?? v;
         const handle = await context.writeResource(
           "listing",
@@ -864,10 +1035,12 @@ export const model = {
         context: any,
       ) => {
         const base = context.globalArgs?.baseUrl || DEFAULT_BASE;
+        const imageBase = context.globalArgs?.imageBaseUrl ||
+          DEFAULT_IMAGE_BASE;
         const url = await resolveNoteUrl(args.note, base, context);
         const html = await fetchPage(url, context);
         const doc = parse(html);
-        const results = collectPerfumeRefs(doc, base);
+        const results = collectPerfumeRefs(doc, base, 500, false, imageBase);
         const key = noteKeyFromUrl(url, args.note.trim());
         const handle = await context.writeResource(
           "listing",
@@ -913,8 +1086,20 @@ export const model = {
         context: any,
       ) => {
         const base = context.globalArgs?.baseUrl || DEFAULT_BASE;
+        const imageBase = context.globalArgs?.imageBaseUrl ||
+          DEFAULT_IMAGE_BASE;
         const mode = args.mode ?? "all";
         const limit = args.limit ?? 50;
+
+        // fragrantica-latent-bugs #6, closed: cap notes[] length BEFORE any
+        // fetch — an unbounded fan-out (one fetch per requested note) is
+        // rejected up front rather than making the caller pay for it.
+        const maxNotes = context.globalArgs?.maxNotes ?? DEFAULT_MAX_NOTES;
+        if (args.notes.length > maxNotes) {
+          throw new Error(
+            `notes[] length (${args.notes.length}) exceeds the configured maxNotes cap (${maxNotes}).`,
+          );
+        }
 
         // Fan out: fetch every requested note page.
         const noteMeta: { key: string; url: string; count: number }[] = [];
@@ -923,11 +1108,24 @@ export const model = {
           string,
           { ref: ReturnType<typeof refFromPerfumeUrl>; matched: number }
         >();
+        // fragrantica-latent-bugs #8, closed: dedup by the RESOLVED note URL
+        // — a note argument repeated (directly, or indirectly via two
+        // different raw args resolving to the same page) is fetched at most
+        // ONCE, and `need` below is computed from the DISTINCT note count
+        // actually processed, not the raw args.notes.length.
+        const seenNoteUrls = new Set<string>();
+        let distinctNoteCount = 0;
         for (const noteArg of args.notes) {
           const url = await resolveNoteUrl(noteArg, base, context);
+          if (seenNoteUrls.has(url)) continue;
+          seenNoteUrls.add(url);
+          distinctNoteCount++;
           const refs = collectPerfumeRefs(
             parse(await fetchPage(url, context)),
             base,
+            500,
+            false,
+            imageBase,
           );
           noteMeta.push({
             key: noteKeyFromUrl(url, noteArg.trim()),
@@ -945,7 +1143,7 @@ export const model = {
           }
         }
 
-        const need = mode === "all" ? args.notes.length : 1;
+        const need = mode === "all" ? distinctNoteCount : 1;
         const results = [...acc.values()]
           .filter((e) => e.matched >= need)
           .sort((a, b) =>
