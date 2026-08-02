@@ -1,13 +1,17 @@
 /**
  * Coverage suite: regression tests closing gaps a code reviewer found — every
  * `|| []` / `|| default` falsy guard on BOTH sides, both `sshExecSql` mode
- * flags, its warning-vs-real-error stderr filter, `db-exec`'s `parseInt`
- * fallback, `ensure-podcast-dirs`'s subdir-empty variants, the failed-envelope
- * message/code fallback, and a security pin on the `password`/`username`
- * `.meta({ sensitive })` annotations.
+ * flags (now `-json`/`-readonly`), its warning-vs-real-error stderr filter
+ * (now SURFACES a warning-only failure instead of swallowing it — LB8),
+ * `db-exec`'s `parseInt` fallback over its single combined write+changes()
+ * session (LB4), `ensure-podcast-dirs`'s subdir-empty variants, the
+ * failed-envelope message/code fallback, and a security pin on the
+ * `password`/`username` `.meta({ sensitive })` annotations.
  *
- * gonic.ts is BYTE-FROZEN — every test here PINS current behavior. It is not
- * red-green TDD.
+ * gonic.ts is no longer wholly byte-frozen — this change fixes LB3/LB4/LB8
+ * (read-only db-query enforcement, connection-scoped db-exec change count,
+ * surfaced warning-only SSH failures); every other test here still PINS
+ * already-shipped, unrelated behavior.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { z } from "npm:zod@4";
@@ -447,10 +451,11 @@ Deno.test("guard: db-query — a whitespace-only stdout (trim() is falsy) yields
 });
 
 // ---------------------------------------------------------------------------
-// sshExecSql jsonMode: "-json" vs "" flag — pinned command-line difference
+// sshExecSql jsonMode/readOnly: "-json -readonly" vs "" flags — pinned
+// command-line difference
 // ---------------------------------------------------------------------------
 
-Deno.test("guard: db-query passes '-json' while db-exec passes NO flag, for the identical dbPath", async () => {
+Deno.test("guard: db-query passes '-json -readonly' while db-exec passes NO flag, for the identical dbPath", async () => {
   const { ctx } = makeCtx();
   const commandLines: string[] = [];
   await withCommandStub(
@@ -463,21 +468,26 @@ Deno.test("guard: db-query passes '-json' while db-exec passes NO flag, for the 
       await run("db-exec", { sql: "DELETE FROM x" }, ctx);
     },
   );
-  assertEquals(commandLines[0], "sqlite3 -json '/data/gonic.db'");
-  // db-exec issues two invocations (write, then SELECT changes()); BOTH omit
-  // -json, since jsonMode is passed as `false` for both — note the DOUBLE
-  // space: sshExecSql's template `sqlite3 ${flags} '${dbPath}'` leaves an
-  // extra space when flags is the empty string.
+  assertEquals(commandLines[0], "sqlite3 -json -readonly '/data/gonic.db'");
+  // db-exec now issues exactly ONE combined invocation (write + SELECT
+  // changes() on the SAME connection); it omits both -json and -readonly,
+  // since jsonMode/readOnly are both `false` — note the DOUBLE space:
+  // sshExecSql's template `sqlite3 ${flags} '${dbPath}'` leaves an extra
+  // space when flags is the empty string.
   assertEquals(commandLines[1], "sqlite3  '/data/gonic.db'");
-  assertEquals(commandLines[2], "sqlite3  '/data/gonic.db'");
+  assertEquals(
+    commandLines.length,
+    2,
+    "db-exec is a single combined invocation, not two",
+  );
 });
 
 // ---------------------------------------------------------------------------
-// sshExecSql: warning-only stderr on failure (swallowed) vs a real error
+// sshExecSql: warning-only stderr on failure now SURFACES vs a real error
 // ---------------------------------------------------------------------------
 
-Deno.test("guard: sshExecSql SWALLOWS a warning-only stderr even when success is false — no throw", async () => {
-  const { ctx, written } = makeCtx();
+Deno.test("guard: sshExecSql SURFACES a warning-only stderr when success is false — throws instead of swallowing", async () => {
+  const { ctx } = makeCtx();
   await withCommandStub(
     () => ({
       success: false,
@@ -485,11 +495,13 @@ Deno.test("guard: sshExecSql SWALLOWS a warning-only stderr even when success is
       stderr:
         "Warning: Permanently added 'gonic.example.com' (ED25519) to the list of known hosts.\n",
     }),
-    () => run("db-query", { sql: "SELECT 1" }, ctx),
+    () =>
+      assertRejects(
+        () => run("db-query", { sql: "SELECT 1" }, ctx),
+        Error,
+        "sqlite3 failed:",
+      ),
   );
-  // No throw — the (empty, post-filter) rows come back normally.
-  const res = written.find((w) => w.spec === "dbResult")!;
-  assertEquals(res.payload.rows, []);
 });
 
 Deno.test("guard: sshExecSql DOES throw when stderr has a real (non-warning) line, even mixed with a warning", async () => {
@@ -512,18 +524,14 @@ Deno.test("guard: sshExecSql DOES throw when stderr has a real (non-warning) lin
 });
 
 // ---------------------------------------------------------------------------
-// db-exec: parseInt(countOut) || 0 fallback
+// db-exec: parseInt(lastLine) || 0 fallback, from the single combined
+// write+SELECT changes() session
 // ---------------------------------------------------------------------------
 
 Deno.test("guard: db-exec — a non-numeric count output (parseInt -> NaN) falls back to changes: 0", async () => {
   const { ctx, written } = makeCtx();
-  let call = 0;
   await withCommandStub(
-    () => {
-      call++;
-      if (call === 1) return { success: true, stdout: "", stderr: "" };
-      return { success: true, stdout: "not-a-number\n", stderr: "" };
-    },
+    () => ({ success: true, stdout: "not-a-number\n", stderr: "" }),
     () => run("db-exec", { sql: "UPDATE x SET y = 1" }, ctx),
   );
   const res = written.find((w) => w.spec === "dbResult")!;
@@ -532,13 +540,8 @@ Deno.test("guard: db-exec — a non-numeric count output (parseInt -> NaN) falls
 
 Deno.test("guard: db-exec — a zero-padded count output parses to its numeric value (e.g. '007' -> 7)", async () => {
   const { ctx, written } = makeCtx();
-  let call = 0;
   await withCommandStub(
-    () => {
-      call++;
-      if (call === 1) return { success: true, stdout: "", stderr: "" };
-      return { success: true, stdout: "007\n", stderr: "" };
-    },
+    () => ({ success: true, stdout: "007\n", stderr: "" }),
     () => run("db-exec", { sql: "UPDATE x SET y = 1" }, ctx),
   );
   const res = written.find((w) => w.spec === "dbResult")!;

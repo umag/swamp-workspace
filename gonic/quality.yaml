@@ -3,9 +3,12 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-gonic, wave 2c of
-# the Phase D extension-quality backfill). gonic.ts is BYTE-FROZEN — every
+# the Phase D extension-quality backfill). gonic.ts is no longer wholly
+# byte-frozen: 2026.08.02.1 real-fixed LB3/LB4/LB5/LB7/LB8/LB9 (the local
+# gonic-latent-bugs issue-lifecycle model's remaining open findings) — every
 # suite drives model.methods.<m>.execute() against a stubbed fetch + stubbed
-# Deno.Command + fake context, characterizing already-shipped behavior.
+# Deno.Command + fake context, now verifying the fixes where flipped and
+# characterizing unrelated already-shipped behavior elsewhere.
 schemaVersion: 1
 extension: gonic
 tests:
