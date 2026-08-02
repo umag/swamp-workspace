@@ -1,5 +1,86 @@
 # Changelog
 
+## 2026.08.02.1
+
+Real-fixes the six remaining latent bugs (LB2-LB7) characterized by the test
+backfill and pinned in `2026.07.16.2`, tracked and resolved via the local
+`career-kb-latent-bugs` issue-lifecycle model (NEVER filed to the swamp.club
+Lab). LB1 (path traversal, fixed in `2026.08.01.1`) is untouched and both its
+pins stay green. All fixes converge on one chokepoint per bug; the
+contract-fixture suite (`career_kb_test.ts`) and the methods suite
+(`career_kb_methods_test.ts`) are byte-identical to `2026.08.01.1`.
+
+- **LB2 (MEDIUM) all-out-of-range CARINAS -> NaN mean mislabeled "high"**:
+  `assess`'s CARINAS branch now guards `vals.length === 0` and reports a
+  distinct `{ mean: null, band: "no valid input", interpretation: "..." }` state
+  instead of letting `0/0 = NaN` fall through every `<` comparison into the
+  STRONGEST band. `AssessmentSchema.carinas.mean` widened to
+  `z.number().nullable()` (backward-compatible; existing numeric-mean resources
+  stay valid).
+- **LB3 (MEDIUM) resource-name slug collision across search/assess/read**: added
+  `shortHash()` (FNV-1a-32, base36) and `resourceName()` (a `slugify()` prefix
+  plus a `shortHash()` suffix over the full input) next to `slugify`;
+  `search`/`read`/`assess` now key their written resource on `resourceName(...)`
+  instead of `slugify(...)`, so distinct inputs that `slugify` alone would
+  collapse no longer collide, while identical input still yields an identical
+  name (idempotent overwrite preserved). Charset stays `[a-z0-9-]`, length stays
+  <= 48.
+- **LB4 (MEDIUM) one bad/missing source aborts the whole catalog build**:
+  `loadSources` now reads each entry inside a `try/catch`; a failure is
+  `console.warn`'d and skipped instead of aborting `index()`/`search()`/bare-
+  slug `read()` entirely -- the catalog (or search pool) still covers every
+  source that DID load.
+- **LB5 (LOW) empty `clusters: []` disabled filtering entirely**: `sourceList`
+  now branches on `clusters.length` directly (not
+  `clusters && clusters.length
+  ? filter : index`), so an explicit empty array
+  matches zero sources, as its shape implies, instead of falling back to the
+  full unfiltered index. The `undefined` branch (returning the full index) is
+  defensive only -- the schema default means `clusters` is never actually
+  `undefined` at runtime.
+- **LB6 (LOW) no size cap on read()/index()**: added a defaulted global arg
+  `maxFileBytes` (default 1,000,000, safely above the largest real source ~20
+  KB). `readRef` now calls `Deno.stat()` before `Deno.readTextFile()` and throws
+  a clear error naming the file and its size when it exceeds the cap.
+- **LB7 (LOW/info) verbatim unsanitized content storage -- BY DESIGN**: decided
+  lossless-by-design (this model returns source markdown to an agent/LLM
+  consumer, not a trusted-HTML renderer -- stripping markup would corrupt
+  legitimate research content) and made the contract explicit and testable:
+  `DocumentSchema.content` gets a `.describe(...)` naming it
+  untrusted-must-sanitize, and `read`'s method description carries the same
+  caveat. No change to stored bytes.
+- Bumped `manifest.yaml` and `model.version` to CalVer `2026.08.02.1`. Added an
+  identity `upgrades[]` entry (`fromVersion: "2026.08.01.1"`) -- the sole new
+  global arg (`maxFileBytes`) is defaulted (schema fills it at parse time for
+  existing instances) and no new resource-schema field was added (LB2 widens an
+  existing field to nullable; LB7 adds field metadata only), so
+  `upgradeAttributes: (old) => old` is correct.
+- Flipped the LB2/LB3/LB4/LB5/LB6 pins in `career_kb_adversarial_test.ts` from
+  characterizing the bug to asserting the fixed behavior (each renamed with
+  `-- FIXED`), re-framed the LB7 pin to assert BOTH lossless preservation AND
+  the documented untrusted-content contract (renamed `-- BY DESIGN`), and added
+  new both-side/resilience tests: LB2 (all-out-of-range and
+  one-in-range-among-out-of-range, in `career_kb_coverage_test.ts`), LB3
+  (determinism, distinctness, charset+length of `resourceName`/`shortHash`, in
+  `career_kb_coverage_test.ts`), LB4 (`search()` resilience over the same
+  one-bad-two-good corpus, in `career_kb_adversarial_test.ts`), LB6 (a positive
+  under-cap read, and an `index()` run over one oversized + one small entry that
+  synergizes with the LB4 fix, both in `career_kb_adversarial_test.ts`). Updated
+  the "refuted: globalArguments carries no secret-shaped field" test to the new
+  two-key shape (`["clusters", "maxFileBytes"]`) -- the one intentional
+  non-byte-identical change to an otherwise-frozen negative test, driven by the
+  legitimate `maxFileBytes` schema extension. Flipped the property suite's (e)
+  branch (`career_kb_property_test.ts`) to assert a null mean and a
+  `"no valid input"` band on the all-out-of-range side.
+- `quality.yaml`: re-stamped from a real
+  `swamp extension quality career-kb/manifest.yaml --json` run; header comment
+  rewritten to drop the byte-frozen/no-version-bump wording now that
+  `career_kb.ts` and `manifest.yaml` are real-fixed. All five suites stay
+  `present` and Grade A / 100%.
+- `README.md`: documented the new `maxFileBytes` global arg and the `read`
+  content untrusted-must-sanitize contract. `.claude/skills/career/SKILL.md`:
+  updated the resource-naming description (slug + content hash).
+
 ## 2026.08.01.1
 
 Fixes the HIGH latent bug characterized (pinned, not fixed) by the test backfill

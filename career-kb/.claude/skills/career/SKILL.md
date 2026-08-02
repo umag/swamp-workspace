@@ -88,7 +88,8 @@ fidelity rule below.
 ## Reading a method's output
 
 Each run writes a JSON data artifact (named `main` for the catalog; a slug of
-the input for search/assess/read). Fetch the most recent:
+the input plus a short content hash for search/assess/read). Fetch the most
+recent:
 
 ```bash
 name=$(swamp data list career --json | python3 -c "import sys,json;d=json.load(sys.stdin);items=[i for g in d['groups'] if g['type']=='resource' for i in g['items']];items.sort(key=lambda i:i['createdAt']);print(items[-1]['name'])")

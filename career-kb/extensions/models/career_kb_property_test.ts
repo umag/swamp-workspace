@@ -18,8 +18,8 @@
  *  (e) assess (carinas) -- for ANY non-empty array of finite numbers,
  *      execute() never throws; if the array contains at least one value in
  *      [1,5] the resulting mean is a finite number in [1,5], and if it
- *      contains NONE the mean is NaN and the band is "high" -- this
- *      generalizes the LB2 pin (career-kb-latent-bugs) across the input
+ *      contains NONE the mean is null and the band is "no valid input" --
+ *      this generalizes the LB2 FIX (career-kb-latent-bugs) across the input
  *      space instead of one example.
  *  (f) search flow invariant -- for ANY query string against the shared
  *      fixture corpus, search() never throws, hits.length <= topK, hits are
@@ -145,7 +145,7 @@ Deno.test("property: assess() never throws for ANY situation string (no carinas)
 // array with at least one in-range value always yields a finite mean.
 // ---------------------------------------------------------------------------
 
-Deno.test("property: assess() with ANY non-empty array of finite numbers as carinas never throws, and the NaN/'high' outcome (LB2) holds exactly when NO value is in [1,5]", async () => {
+Deno.test("property: assess() with ANY non-empty array of finite numbers as carinas never throws, and the null-mean/'no valid input' outcome (LB2 fix) holds exactly when NO value is in [1,5]", async () => {
   await fc.assert(
     fc.asyncProperty(
       fc.array(fc.double({ noNaN: true, noDefaultInfinity: true }), {
@@ -159,15 +159,15 @@ Deno.test("property: assess() with ANY non-empty array of finite numbers as cari
           context,
         );
         const a = writes[0].data as {
-          carinas?: { mean: number; band: string };
+          carinas?: { mean: number | null; band: string };
         };
         if (!a.carinas) return false;
         const inRange = carinas.filter((n) => n >= 1 && n <= 5);
         if (inRange.length === 0) {
-          return Number.isNaN(a.carinas.mean) && a.carinas.band === "high";
+          return a.carinas.mean === null && a.carinas.band === "no valid input";
         }
-        return Number.isFinite(a.carinas.mean) && a.carinas.mean >= 1 &&
-          a.carinas.mean <= 5;
+        return Number.isFinite(a.carinas.mean) && a.carinas.mean! >= 1 &&
+          a.carinas.mean! <= 5;
       },
     ),
     FC_RUNS,

@@ -2,14 +2,17 @@
  * Coverage suite for @magistr/career-kb (career_kb.ts) -- sweeps guards and
  * branches the contract-fixture/methods/adversarial suites don't already
  * exercise on BOTH sides (STANDARD.md's coverage role: "if someone deletes
- * this guard, does a test go red?"). career_kb.ts is UNMODIFIED; every test
- * here PINS existing behavior.
+ * this guard, does a test go red?"). Most tests here PIN pre-existing
+ * behavior; the LB2/LB3 sections below cover both sides of the two
+ * career-kb-latent-bugs FIXES (`assess`'s empty-CARINAS-range guard and the
+ * `resourceName()` helper) added in 2026.08.02.1.
  *
  * Most of these drive the exported PURE helpers (`buildEntry`,
- * `parseFrontmatter`, `extractSections`, `getSection`, `asArray`, `tokenize`)
- * directly -- no fixtures needed. Two tests (the multi-cluster filter and the
- * phrase-bonus scoring boundary) need the model's `search`/`index` methods
- * against the shared, committed `fixtures/references/` corpus.
+ * `parseFrontmatter`, `extractSections`, `getSection`, `asArray`, `tokenize`,
+ * `resourceName`, `shortHash`) directly -- no fixtures needed. Two tests (the
+ * multi-cluster filter and the phrase-bonus scoring boundary) need the
+ * model's `search`/`index` methods against the shared, committed
+ * `fixtures/references/` corpus.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
@@ -19,6 +22,8 @@ import {
   getSection,
   model,
   parseFrontmatter,
+  resourceName,
+  shortHash,
   tokenize,
 } from "./career_kb.ts";
 
@@ -214,4 +219,82 @@ Deno.test("read: a bare filename carrying '.md' but no cluster prefix still reso
   );
   const doc = model.resources.document.schema.parse(writes[0].data);
   assertEquals(doc.file, "ama/fixture-ama-example.md");
+});
+
+// ===========================================================================
+// LB2 FIX both-side coverage (career-kb-latent-bugs) -- empty-CARINAS-range
+// guard in assess()
+// ===========================================================================
+
+Deno.test("assess (LB2 FIX): all CARINAS values out of [1,5] yield mean:null, band:'no valid input'", async () => {
+  const { context, writes } = makeContext();
+  await model.methods.assess.execute(
+    { situation: "stuck", carinas: [-1, 0, 9, 100] },
+    context,
+  );
+  const a = model.resources.assessment.schema.parse(writes[0].data);
+  assertEquals(a.carinas?.mean, null);
+  assertEquals(a.carinas?.band, "no valid input");
+});
+
+Deno.test("assess (LB2 FIX): one in-range value among out-of-range values still yields a finite mean over the valid subset", async () => {
+  const { context, writes } = makeContext();
+  await model.methods.assess.execute(
+    { situation: "stuck", carinas: [0, 9, 4, 100] },
+    context,
+  );
+  const a = model.resources.assessment.schema.parse(writes[0].data);
+  assertEquals(a.carinas?.mean, 4);
+  assert(
+    a.carinas?.band !== "no valid input",
+    "a genuinely in-range value must still be scored, not swallowed by the empty-range guard",
+  );
+  assert(a.carinas?.interpretation.includes("ignored"));
+});
+
+// ===========================================================================
+// LB3 FIX both-side coverage (career-kb-latent-bugs) -- resourceName()
+// ===========================================================================
+
+Deno.test("resourceName (LB3 FIX): identical input always yields an identical name (idempotent overwrite preserved)", () => {
+  const a = resourceName("Fixture Career Situation, One!");
+  const b = resourceName("Fixture Career Situation, One!");
+  assertEquals(a, b);
+});
+
+Deno.test("resourceName (LB3 FIX): the two punctuation-differing situations from the LB3 pin map to distinct names", () => {
+  const a = resourceName("Fixture Career Situation, One!");
+  const b = resourceName("Fixture Career Situation: One?");
+  assert(a !== b);
+});
+
+Deno.test("resourceName (LB3 FIX): charset is [a-z0-9-], length <= 48, and the result is never empty, even for hostile inputs", () => {
+  const inputs = [
+    "",
+    "   ",
+    "!!!???...",
+    "a".repeat(500),
+    "MIXED Case With Punctuation!!",
+    " control-chars",
+  ];
+  for (const input of inputs) {
+    const name = resourceName(input);
+    assert(name.length > 0, `resourceName("${input}") must never be empty`);
+    assert(
+      name.length <= 48,
+      `resourceName("${input}") must be <= 48 chars, got ${name.length}`,
+    );
+    assert(
+      /^[a-z0-9-]+$/.test(name),
+      `resourceName("${input}") = "${name}" must match [a-z0-9-]+`,
+    );
+  }
+});
+
+Deno.test("shortHash (LB3 FIX): is a deterministic 7-char base36 string", () => {
+  const h1 = shortHash("some input");
+  const h2 = shortHash("some input");
+  assertEquals(h1, h2);
+  assertEquals(h1.length, 7);
+  assert(/^[a-z0-9]+$/.test(h1));
 });
