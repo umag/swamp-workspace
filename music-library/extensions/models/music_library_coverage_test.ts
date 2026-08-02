@@ -38,14 +38,17 @@
  *    whole-library) — currently exercised nowhere else, even though
  *    `running()`'s resource lookup depends on this naming holding exactly.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import {
   bpmResourceName,
   buildCube,
   classifyVerify,
+  confineContainerPath,
   findDupes,
   fixEncoding,
   isPlaceholder,
+  median,
+  normalizeSegments,
   parseBpmLine,
 } from "./music_library.ts";
 
@@ -307,4 +310,95 @@ Deno.test("bpmResourceName: three branches — whole library, pathPrefix scope, 
   // a path takes priority over a pathPrefix when both happen to be set
   const both = bpmResourceName("a/b.mp3", "prefix");
   assert(both.startsWith("bpm-file-"));
+});
+
+// ---------------------------------------------------------------------------
+// normalizeSegments / confineContainerPath (music-library-latent-bugs LB2)
+// ---------------------------------------------------------------------------
+
+Deno.test("normalizeSegments: drops empty and '.' segments, splits on both '/' and '\\\\'", () => {
+  assertEquals(normalizeSegments("a//b/./c"), ["a", "b", "c"]);
+  assertEquals(normalizeSegments("a\\b\\c"), ["a", "b", "c"]);
+});
+
+Deno.test("normalizeSegments: '..' pops the previous segment when one exists", () => {
+  assertEquals(normalizeSegments("a/b/../c"), ["a", "c"]);
+  assertEquals(normalizeSegments("a/../b"), ["b"]);
+});
+
+Deno.test("normalizeSegments: '..' past an empty segment stack throws (escapes root)", () => {
+  assertThrows(() => normalizeSegments("../a"), Error, "escapes");
+  assertThrows(() => normalizeSegments("a/../../b"), Error, "escapes");
+});
+
+Deno.test("confineContainerPath: a clean library-relative path resolves under containerMusicRoot unchanged", () => {
+  assertEquals(
+    confineContainerPath(
+      "/mnt/user/music",
+      "/music",
+      "Artist/Album/01 - Track.mp3",
+    ),
+    "/music/Artist/Album/01 - Track.mp3",
+  );
+});
+
+Deno.test("confineContainerPath: a hostMusicRoot-prefixed absolute path maps to the container root", () => {
+  assertEquals(
+    confineContainerPath(
+      "/mnt/user/music",
+      "/music",
+      "/mnt/user/music/Artist/Album/01 - Track.mp3",
+    ),
+    "/music/Artist/Album/01 - Track.mp3",
+  );
+});
+
+Deno.test("confineContainerPath: an internal (non-escaping) '..' still resolves, just normalized", () => {
+  assertEquals(
+    confineContainerPath("/mnt/user/music", "/music", "Artist/../Other/x.mp3"),
+    "/music/Other/x.mp3",
+  );
+});
+
+Deno.test("confineContainerPath: '../' traversal past the root throws instead of resolving outside containerMusicRoot", () => {
+  assertThrows(
+    () =>
+      confineContainerPath(
+        "/mnt/user/music",
+        "/music",
+        "../../../etc/passwd",
+      ),
+    Error,
+    "escapes",
+  );
+});
+
+Deno.test("confineContainerPath: a containerMusicRoot-prefixed absolute path carrying '../' is rejected too, not just the bare relative form", () => {
+  assertThrows(
+    () =>
+      confineContainerPath(
+        "/mnt/user/music",
+        "/music",
+        "/music/../../etc/passwd",
+      ),
+    Error,
+    "escapes",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// median (music-library-latent-bugs LB5)
+// ---------------------------------------------------------------------------
+
+Deno.test("median: empty array is null", () => {
+  assertEquals(median([]), null);
+});
+
+Deno.test("median: odd-length array returns the exact middle value", () => {
+  assertEquals(median([1, 2, 3]), 2);
+});
+
+Deno.test("median: even-length array averages the two middle values (NOT the upper one)", () => {
+  assertEquals(median([100, 200]), 150);
+  assertEquals(median([1, 2, 3, 4]), 2.5);
 });
