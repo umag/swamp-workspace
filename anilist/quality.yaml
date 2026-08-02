@@ -3,10 +3,11 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-anilist, wave-2c
-# full-build child of the Phase D extension-quality backfill). anilist.ts is
-# unmodified — every suite drives model.methods.<m>.execute() against a
-# stubbed fetch, characterizing already-shipped behavior over the public
-# AniList GraphQL API and the ClickHouse charting sink.
+# full-build child of the Phase D extension-quality backfill). Every suite
+# drives model.methods.<m>.execute() against a stubbed fetch. As of
+# `2026.08.02.1`, AL1-AL4 (see CHANGELOG.md) are real fixes to gql()'s
+# request/retry path; the adversarial suite's six re-pinned assertions now
+# verify the fixed behavior instead of characterizing the bug.
 schemaVersion: 1
 extension: anilist
 tests:
@@ -50,5 +51,5 @@ docs:
     justification: anilist bundles no Claude skill — a bare GraphQL wrapper model, nothing to document as a skill
 ratchet:
   rubricVersion: 3
-  baselinePercentage: 92
-  label: "92% — symbols-docs (JSDoc coverage) is the only unearned factor; anilist.ts is byte-frozen by this change so it cannot be added here"
+  baselinePercentage: 100
+  label: "100% (14/14, allPassed) — measured via `swamp extension quality anilist/manifest.yaml --json` after the 2026.08.02.1 AL1-AL4 fix; symbols-docs earned by JSDoc'ing the ~23 exported symbols in anilist.ts"

@@ -1,11 +1,72 @@
 # Changelog
 
-## Unreleased
+## 2026.08.02.1
 
-Test backfill to the STANDARD.md five-suite quality bar (wave-2c, full build,
-`ext-quality-bf-anilist`, child of `ext-quality-test-backfill`). No behavior
-change — `anilist.ts` and `manifest.yaml` are byte-for-byte unchanged and the
-model `version` stays `2026.07.27.1`.
+Real fixes for the four latent bugs (AL1-AL4) filed against `gql()`'s
+request/retry path in the local `anilist-latent-bugs` issue-lifecycle model,
+plus the test-backfill work that originally characterized them (both land in
+this one release). `anilist.ts` is modified — the four fixes are localized to
+`gql()`, its rate-limit state, and the call sites that thread the new
+per-invocation client through; the pure-helper surface and every GraphQL
+query/mutation const are untouched.
+
+### Fixed
+
+- **AL1** — a 200 response with `{data:null}` and no `errors[]` no longer
+  null-derefs downstream with an uncaught `TypeError`: `gql()` now throws a
+  typed `Error` ("200 response with null data and no errors") when both are
+  absent. `recent-activity`'s per-user activities fetch is now wrapped in a
+  try/catch (mirroring the existing user-id-resolution step), so one user's
+  hostile/malformed page is recorded in `usersFailed` and the fan-out continues
+  for every other tracked user instead of aborting the whole run.
+- **AL2** — a non-JSON 200 response body (e.g. a WAF/CDN error page) no longer
+  crashes `gql()` with an uncaught `SyntaxError`: the body is now read once via
+  `response.text()` and the `JSON.parse` is guarded, producing the same handled
+  `AniList API error: non-JSON 200 response body: <body>` shape the non-ok path
+  already used.
+- **AL3** — 429-in-body detection no longer relies on an exact
+  `e.status === 429` numeric equality: a numeric-string status (`"429"`), or a
+  missing `status` field paired with a rate-limit-shaped `message` ("rate limit"
+  / "too many request"), are now both recognized and retried (sleep 60s) instead
+  of falling through to the generic `AniList GraphQL errors:` throw.
+- **AL4** — the module-level `rateLimit` object (shared by every request in the
+  process) is gone. `gql()` is now built per-invocation via
+  `makeGql(authToken?)`, which closes over its own `{remaining, resetAt}` state;
+  `fetchAllPages`/`refreshMetadata` take the caller's `gql` client as a
+  parameter instead of reaching for a module-level one, and every method's
+  `execute()` creates exactly one client for its own invocation. A
+  low-remaining/future-reset response from one method call can no longer force
+  an unrelated later call to pre-flight-sleep. Deleting the global means any
+  un-migrated call site fails `deno task check` rather than silently reverting
+  to shared state.
+
+Adversarial suite: six pins flipped from characterizing the bug to asserting the
+fix (`anilist_adversarial_test.ts`) — the two `data:null` pins (`search` and
+`recent-activity`), the non-JSON-body pin, the two 429-in-body-shape pins (now
+FakeTime retry-success assertions matching the numeric-status sibling), and the
+module-`rateLimit`-coupling pin (now asserts independent per-invocation state,
+`waited === 0`). The contract-fixture, methods, coverage, and
+property-invariant-flow suites are unaffected by the fix (they exercise
+well-formed fixtures) — 144 tests before and after, same count, six assertions
+changed shape. Suite header comments across all five test files reworded: the
+four suites above still characterize unchanged behavior, and the adversarial
+suite now documents AL1-AL4 as fixed rather than pinned bugs.
+
+`manifest.yaml`/`anilist.ts` version bumped to `2026.08.02.1`; added an identity
+`upgrades[]` entry (`toVersion: "2026.08.02.1"`,
+`upgradeAttributes: (old) => old`) since `globalArguments` is unchanged. JSDoc
+added to the ~23 exported symbols in `anilist.ts` (converted from `//` block
+comments), earning the `symbols-docs` quality factor now that `anilist.ts` is an
+active fix target rather than a frozen characterization surface —
+`quality.yaml`'s ratchet moves from a measured 92% to a measured 100% (14/14,
+`allPassed`).
+
+Out of scope: `update-progress`/`set-score`'s mutation paths use raw
+`fetch`+`resp.json()` (not `gql()`), share AL2's non-JSON-body shape, but are
+not in the filed catalogue and are already null-safe via optional chaining —
+left unchanged.
+
+### Test backfill (wave-2c, `ext-quality-bf-anilist`, child of `ext-quality-test-backfill`)
 
 - Added `extensions/models/anilist_test.ts` (contract-fixture — pins the
   concrete AniList GraphQL wire shapes for all 11 methods from
@@ -20,13 +81,14 @@ model `version` stays `2026.07.27.1`.
   note below; the ingest-scores end-to-end characterization migrated here),
   `anilist_adversarial_test.ts` (adversarial — the HTTP-200-with-`errors[]` pin
   (anilist correctly THROWS here, unlike the seadex/seanime swallow-bug class),
-  the two BUG-class hostile-200 pins (`data:null`-no-errors uncaught TypeError;
-  non-JSON-200-body uncaught SyntaxError), 429/5xx retry-with-backoff under
-  FakeTime, two BUG pins on the fragile 429-in-body `e.status===429`
-  exact-equality check, a BUG pin on the module-level shared `rateLimit`
-  coupling unrelated calls, a hostile-activity-payload guard pin, argv-injection
-  guards (`isValidModelName`, `telegramChatId`), credential non-leak across
-  every response-body-echoing throw site
+  the two hostile-200 pins (`data:null`-no-errors, non-JSON-200-body — both
+  characterized as bugs when this suite was first added, and FIXED later in this
+  same release, see "Fixed" above), 429/5xx retry-with-backoff under FakeTime,
+  two pins on the fragile 429-in-body `e.status===429` exact-equality check
+  (likewise later fixed), a pin on the module-level shared `rateLimit` coupling
+  unrelated calls (likewise later fixed), a hostile-activity-payload guard pin,
+  argv-injection guards (`isValidModelName`, `telegramChatId`), credential
+  non-leak across every response-body-echoing throw site
   (`gql`/`update-progress`/`set-score`/`clickhouseInsert`/
   `clickhouseDistinctMediaIds`) plus Bearer/`X-ClickHouse-Key` header checks,
   and a fixtures-secret-scan with a per-pattern poisoned-sanity backstop),
@@ -55,42 +117,19 @@ model `version` stays `2026.07.27.1`.
   themselves.
 - `README.md`: refreshed from the stale 4-method doc (which also showed the
   WRONG instance type `@magistr/api`@`2026.05.25.1`) to the real 11-method
-  surface, correct type/version (`@magistr/anilist`@`2026.07.27.1`), and the
-  `accessToken`/`clickhouse*` globalArguments the mutation and charting methods
-  require.
+  surface, correct type/version (`@magistr/anilist`@`2026.07.27.1` at the time,
+  now `2026.08.02.1`), and the `accessToken`/`clickhouse*` globalArguments the
+  mutation and charting methods require.
 - `quality.yaml`: all five required suites plus `docs.readme`/`docs.changelog`
   flip from `backlog` to `present`; `docs.skill` recorded `na` (anilist bundles
   no Claude skill — a bare GraphQL wrapper model, nothing to document as a
   skill); `watch`/`canary` stay `backlog` (exempt from the allowlist gate per
   STANDARD.md). `ratchet` is a MEASURED score
   (`swamp extension quality manifest.yaml --json`), not assumed/copied from a
-  sibling.
+  sibling — re-measured again for the `2026.08.02.1` fix (see "Fixed" above).
 - Removed from `quality-allowlist.txt` in the same change (shrink-only guard —
   `quality-offenders.baseline.txt` is untouched, write-once, anilist stays
   listed there forever as the immutable seed record).
-
-## Follow-up issues (pinned here, not fixed — anilist.ts is byte-frozen)
-
-Tracked in the local `anilist-latent-bugs` issue-lifecycle model (these are
-latent bugs in our own extension, not swamp-product issues, so they are NOT
-filed to the swamp.club Lab): a 200 response with `{data:null}` and no
-`errors[]` present is not special-cased by `gql()`, so downstream call sites
-(`search`, `fetchAllPages`, `userlist`, `recent-activity`'s activities loop)
-null-deref it with an uncaught `TypeError` — the `recent-activity` case is
-especially sharp since that loop is NOT wrapped in a try/catch (unlike the
-user-id resolution step), so it crashes the entire fan-out for every tracked
-user; a non-JSON 200 response body crashes `gql()` with an uncaught
-`SyntaxError` instead of a handled AniList-specific error, since `resp.ok` is
-checked before `.json()` is ever called; the 429-in-body detection keys on an
-exact `e.status === 429` numeric equality, so a same-meaning error shaped even
-slightly differently (status as a string, or the field renamed/absent) silently
-bypasses the dedicated retry path and falls through to the generic errors-throw;
-and the module-level mutable `rateLimit` object is shared across every request
-in the process (not scoped per-call), so a low-remaining/future-reset response
-from one method call forces a completely unrelated later call to
-pre-flight-sleep. NOTE: unlike the seadex/seanime swallow-bug class, anilist
-DOES correctly check `json.errors` and throws on a legitimate
-200-with-`errors[]` response — the above is the milder residual class.
 
 ## 2026.07.27.1
 

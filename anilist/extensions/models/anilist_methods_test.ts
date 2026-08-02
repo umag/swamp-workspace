@@ -6,9 +6,12 @@
  * `.execute()` against a stubbed `globalThis.fetch` and a fake ExecContext —
  * mirroring the porkbun/seadex/musicbrainz harness pattern.
  *
- * anilist.ts is UNMODIFIED (byte-frozen) by this change — every test here is
- * a characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * This suite characterizes the model's method-level behavior — happy paths
+ * and error-handling shape — which is unaffected by the `2026.08.02.1`
+ * AL1-AL4 fixes to `gql()`'s internal request/retry path (see
+ * `anilist_adversarial_test.ts` for those); every test here still uses
+ * healthy/well-formed fixtures, so it never exercises the fixed hostile-200
+ * or rate-limit-detection code paths.
  *
  * SUBPROCESS BOUNDARY (mandatory constraint, adversarial review HIGH #1):
  * recent-activity's delivery path (`sendTelegram`/`sendRichTelegram`) spawns a
@@ -24,9 +27,10 @@
  * suite instead.
  *
  * Every stubbed 200 response carries healthy X-RateLimit-* headers (see
- * `jsonRes` below) so this file's tests can never leave the anilist.ts
- * module-level shared `rateLimit` object poisoned for a later test in this or
- * a sibling suite (they share one module instance for the whole test run).
+ * `jsonRes` below) purely so no test in this file incurs gql()'s pre-flight
+ * wait. Rate-limit state is per-invocation (`makeGql()`, since
+ * `2026.08.02.1`), so headers here can no longer leak into a later test in
+ * this or a sibling suite.
  */
 import {
   assert,

@@ -2,13 +2,6 @@ import { z } from "npm:zod@4";
 
 const ANILIST_API = "https://graphql.anilist.co";
 
-// Rate limiter: AniList allows 30 req/min (degraded) / 90 req/min (normal).
-// We track remaining from response headers and sleep when needed.
-const rateLimit = {
-  remaining: 30,
-  resetAt: 0,
-};
-
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -17,91 +10,140 @@ function sleep(ms: number) {
 // must fail fast rather than retry forever.
 const MAX_RATE_LIMIT_RETRIES = 3;
 
-async function gql(
-  query: string,
-  variables: Record<string, unknown> = {},
-  attempt = 0,
-  authToken?: string,
-) {
-  // Pre-flight: if we know we're out of budget, wait for reset
-  if (rateLimit.remaining <= 1 && rateLimit.resetAt > Date.now()) {
-    const waitMs = rateLimit.resetAt - Date.now() + 500;
-    await sleep(waitMs);
-  }
+/**
+ * Build a per-invocation AniList GraphQL client. AniList allows 30 req/min
+ * (degraded) / 90 req/min (normal); remaining budget is tracked from response
+ * headers and slept against pre-flight when needed — but that state lives in
+ * this closure, NOT a module-level singleton, so one invocation's
+ * low-remaining/future-reset response can never force an unrelated later
+ * call (a different method, or the same method on a later run) to
+ * pre-flight-sleep. Callers make exactly one `makeGql()` per method
+ * invocation and thread the returned client through every `gql()` call (and
+ * into `fetchAllPages`/`refreshMetadata`) that invocation makes.
+ */
+function makeGql(authToken?: string) {
+  const rateLimit = { remaining: 30, resetAt: 0 };
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-  // AniList's degraded mode serves empty activity results to unauthenticated
-  // clients — authenticated reads keep working (and see followers-only feeds).
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
-
-  const response = await fetch(ANILIST_API, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ query, variables }),
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  // Update rate limit state from headers
-  const limitRemaining = response.headers.get("X-RateLimit-Remaining");
-  const limitReset = response.headers.get("X-RateLimit-Reset");
-  if (limitRemaining !== null) {
-    rateLimit.remaining = parseInt(limitRemaining, 10);
-  }
-  if (limitReset !== null) {
-    rateLimit.resetAt = parseInt(limitReset, 10) * 1000;
-  }
-
-  // Handle 429 with retry
-  if (response.status === 429) {
-    if (attempt >= MAX_RATE_LIMIT_RETRIES) {
-      throw new Error(
-        `AniList rate limit: ${MAX_RATE_LIMIT_RETRIES} retries exhausted`,
-      );
+  return async function gql(
+    query: string,
+    variables: Record<string, unknown> = {},
+    attempt = 0,
+  ) {
+    // Pre-flight: if we know we're out of budget, wait for reset
+    if (rateLimit.remaining <= 1 && rateLimit.resetAt > Date.now()) {
+      const waitMs = rateLimit.resetAt - Date.now() + 500;
+      await sleep(waitMs);
     }
-    const retryAfter = response.headers.get("Retry-After");
-    const waitSec = retryAfter ? parseInt(retryAfter, 10) : 60;
-    await sleep(waitSec * 1000);
-    return gql(query, variables, attempt + 1, authToken);
-  }
 
-  if (!response.ok) {
-    const text = await response.text();
-    // AniList intermittently 5xxs (esp. in degraded mode) — retry transient
-    // server errors with a short backoff before giving up. A scheduled run
-    // that fails on one 500 loses its whole window (stateless serve runs).
-    if (response.status >= 500 && attempt < MAX_RATE_LIMIT_RETRIES) {
-      await sleep(5_000 * (attempt + 1));
-      return gql(query, variables, attempt + 1, authToken);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    // AniList's degraded mode serves empty activity results to unauthenticated
+    // clients — authenticated reads keep working (and see followers-only feeds).
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
+    const response = await fetch(ANILIST_API, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    // Update rate limit state from headers
+    const limitRemaining = response.headers.get("X-RateLimit-Remaining");
+    const limitReset = response.headers.get("X-RateLimit-Reset");
+    if (limitRemaining !== null) {
+      rateLimit.remaining = parseInt(limitRemaining, 10);
     }
-    throw new Error(`AniList API error ${response.status}: ${text}`);
-  }
+    if (limitReset !== null) {
+      rateLimit.resetAt = parseInt(limitReset, 10) * 1000;
+    }
 
-  const json = await response.json();
-  if (json.errors) {
-    // AniList can return 200 with a 429 error in the body
-    const rateLimitError = json.errors.find(
-      (e: { status?: number }) => e.status === 429,
-    );
-    if (rateLimitError) {
+    // Handle 429 with retry
+    if (response.status === 429) {
       if (attempt >= MAX_RATE_LIMIT_RETRIES) {
         throw new Error(
           `AniList rate limit: ${MAX_RATE_LIMIT_RETRIES} retries exhausted`,
         );
       }
-      await sleep(60_000);
-      return gql(query, variables, attempt + 1, authToken);
+      const retryAfter = response.headers.get("Retry-After");
+      const waitSec = retryAfter ? parseInt(retryAfter, 10) : 60;
+      await sleep(waitSec * 1000);
+      return gql(query, variables, attempt + 1);
     }
-    throw new Error(
-      `AniList GraphQL errors: ${
-        json.errors.map((e: { message: string }) => e.message).join(", ")
-      }`,
-    );
-  }
-  return json.data;
+
+    if (!response.ok) {
+      const text = await response.text();
+      // AniList intermittently 5xxs (esp. in degraded mode) — retry transient
+      // server errors with a short backoff before giving up. A scheduled run
+      // that fails on one 500 loses its whole window (stateless serve runs).
+      if (response.status >= 500 && attempt < MAX_RATE_LIMIT_RETRIES) {
+        await sleep(5_000 * (attempt + 1));
+        return gql(query, variables, attempt + 1);
+      }
+      throw new Error(`AniList API error ${response.status}: ${text}`);
+    }
+
+    // Read the body ONCE as text, then guard the parse — mirrors the
+    // non-ok text path above, so a WAF/CDN error page served at HTTP 200
+    // (non-JSON body) is mapped into a handled AniList-specific error
+    // instead of an uncaught SyntaxError.
+    const text = await response.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(
+        `AniList API error: non-JSON 200 response body: ${text.slice(0, 200)}`,
+      );
+    }
+    if (json.errors) {
+      // AniList can return 200 with a 429 error in the body. `status` may be
+      // a number, a numeric string, or absent entirely with only a
+      // rate-limit message in play — match all three so a misshapen error
+      // body can't silently bypass the dedicated retry path and fall
+      // through to the generic errors-throw below.
+      const isRateLimited = json.errors.some(
+        (e: { status?: unknown; message?: unknown }) => {
+          const s = typeof e.status === "string" ? Number(e.status) : e.status;
+          if (s === 429) return true;
+          const m = String(e.message ?? "").toLowerCase();
+          return m.includes("rate limit") || m.includes("too many request");
+        },
+      );
+      if (isRateLimited) {
+        if (attempt >= MAX_RATE_LIMIT_RETRIES) {
+          throw new Error(
+            `AniList rate limit: ${MAX_RATE_LIMIT_RETRIES} retries exhausted`,
+          );
+        }
+        await sleep(60_000);
+        return gql(query, variables, attempt + 1);
+      }
+      throw new Error(
+        `AniList GraphQL errors: ${
+          json.errors.map((e: { message: string }) => e.message).join(", ")
+        }`,
+      );
+    }
+    // A 200 with no errors[] but also no data is a hostile/malformed
+    // response — every caller derefs `data.<Field>` unconditionally, so
+    // guard here rather than let it surface as an uncaught TypeError two or
+    // three frames downstream.
+    if (json.data == null) {
+      throw new Error(
+        "AniList API error: 200 response with null data and no errors",
+      );
+    }
+    return json.data;
+  };
 }
+
+// The client makeGql() returns — threaded explicitly through
+// fetchAllPages/refreshMetadata and every method's execute(), never a
+// module-level singleton.
+type Gql = ReturnType<typeof makeGql>;
 
 const GlobalArgsSchema = z.object({
   mediaType: z.enum(["ANIME", "MANGA"]).default("ANIME").describe(
@@ -219,8 +261,10 @@ query ($id: Int!) {
   }
 }`;
 
-// NOTE: byte-unchanged query body (still a bare `score`, not the decimal
-// ingest format). Only `export` was added so tests can pin that invariant.
+/**
+ * NOTE: byte-unchanged query body (still a bare `score`, not the decimal
+ * ingest format). Only `export` was added so tests can pin that invariant.
+ */
 export const USERLIST_QUERY = `
 query ($userName: String!, $type: MediaType, $status: MediaListStatus) {
   MediaListCollection(userName: $userName, type: $type, status: $status) {
@@ -248,7 +292,7 @@ query ($userName: String!, $type: MediaType, $status: MediaListStatus) {
 // `score(format:` and `duration` live ONLY on these two consts.
 // ---------------------------------------------------------------------------
 
-// Per-user scored-list ingest: COMPLETED + CURRENT, decimal score, chunked.
+/** Per-user scored-list ingest: COMPLETED + CURRENT, decimal score, chunked. */
 export const LIST_INGEST_QUERY = `
 query ($userName: String, $chunk: Int, $perChunk: Int) {
   MediaListCollection(userName: $userName, type: ANIME, status_in: [COMPLETED, CURRENT], chunk: $chunk, perChunk: $perChunk, sort: SCORE_DESC) {
@@ -264,9 +308,11 @@ query ($userName: String, $chunk: Int, $perChunk: Int) {
   }
 }`;
 
-// Metadata batch: every source field for the 17 non-default anilist_metadata
-// columns. startDate is selected once and fans out to start_year + start_date
-// downstream.
+/**
+ * Metadata batch: every source field for the 17 non-default anilist_metadata
+ * columns. startDate is selected once and fans out to start_year + start_date
+ * downstream.
+ */
 export const METADATA_INGEST_QUERY = `
 query ($ids: [Int], $page: Int, $perPage: Int) {
   Page(page: $page, perPage: $perPage) {
@@ -359,8 +405,11 @@ query ($type: MediaType, $sort: [MediaSort], $page: Int, $perPage: Int) {
 }`;
 
 // Paginate through all pages of a query, collecting media results.
-// Caps at maxPages to avoid runaway requests.
+// Caps at maxPages to avoid runaway requests. Takes the caller's `gql`
+// client (per-invocation rate-limit state) rather than reaching for a
+// module-level one.
 async function fetchAllPages(
+  gql: Gql,
   query: string,
   variables: Record<string, unknown>,
   maxPages: number,
@@ -533,10 +582,13 @@ type RawMedia = {
   coverImage?: { large?: string | null } | null;
 };
 
-// Format an AniList {year,month,day} to a ClickHouse Date string, or null.
-// Mirrors fetch_metadata.py:format_date (all three parts present, month/day in
-// range, a real calendar date) PLUS the ClickHouse Date floor of 1970-01-01.
-// Used for both start_date and end_date; a null result never poisons a batch.
+/**
+ * Format an AniList {year,month,day} to a ClickHouse Date string, or null.
+ * Mirrors fetch_metadata.py:format_date (all three parts present, month/day
+ * in range, a real calendar date) PLUS the ClickHouse Date floor of
+ * 1970-01-01. Used for both start_date and end_date; a null result never
+ * poisons a batch.
+ */
 export function formatDate(d: DateParts | null | undefined): string | null {
   if (!d) return null;
   const { year, month, day } = d;
@@ -560,12 +612,14 @@ export function formatDate(d: DateParts | null | undefined): string | null {
   return `${p(year, 4)}-${p(month, 2)}-${p(day, 2)}`;
 }
 
-// Build user_scores rows for one user. CRITICAL: user_name is byte-identical to
-// the caller's spelling (the usernames-file string) — never lowercased, never
-// AniList's canonical casing — because user_scores ORDER BY (user_name,
-// media_id) is case-sensitive and the charts filter user_name IN <file
-// strings>. Keeps numeric scores 0<=s<=10 INCLUDING zero (the ReplacingMergeTree
-// tombstone); drops null / out-of-range.
+/**
+ * Build user_scores rows for one user. CRITICAL: user_name is byte-identical
+ * to the caller's spelling (the usernames-file string) — never lowercased,
+ * never AniList's canonical casing — because user_scores ORDER BY
+ * (user_name, media_id) is case-sensitive and the charts filter user_name IN
+ * <file strings>. Keeps numeric scores 0<=s<=10 INCLUDING zero (the
+ * ReplacingMergeTree tombstone); drops null / out-of-range.
+ */
 export function buildScoreRows(
   userName: string,
   entries: Array<{ mediaId?: number | null; score?: number | null }>,
@@ -582,8 +636,10 @@ export function buildScoreRows(
   return rows;
 }
 
-// All media ids in a user's list, regardless of score (metadata is fetched for
-// every entry seen, not just scored ones), deduped.
+/**
+ * All media ids in a user's list, regardless of score (metadata is fetched
+ * for every entry seen, not just scored ones), deduped.
+ */
 export function collectMediaIds(
   entries: Array<{ mediaId?: number | null; score?: number | null }>,
 ): number[] {
@@ -594,10 +650,12 @@ export function collectMediaIds(
   return [...ids];
 }
 
-// Map one AniList media object to an anilist_metadata JSONEachRow object.
-// Pre-validated per row: a bad start/end date becomes null (start_year still
-// set from the year alone), so one malformed date can never drop the batch.
-// tags is the named-tuple column: isMediaSpoiler is coerced to 0/1 (UInt8).
+/**
+ * Map one AniList media object to an anilist_metadata JSONEachRow object.
+ * Pre-validated per row: a bad start/end date becomes null (start_year still
+ * set from the year alone), so one malformed date can never drop the batch.
+ * tags is the named-tuple column: isMediaSpoiler is coerced to 0/1 (UInt8).
+ */
 export function buildMetadataRow(m: RawMedia): Record<string, unknown> {
   const studios = (m.studios?.nodes ?? [])
     .filter((s): s is { name: string } => !!s && typeof s.name === "string")
@@ -636,11 +694,12 @@ export function buildMetadataRow(m: RawMedia): Record<string, unknown> {
 // Fetch metadata for a set of media ids (batched at AniList's 50/page cap) and
 // upsert into anilist_metadata. Returns the number of rows written. Rows are
 // validated by buildMetadataRow before assembly, so a single bad date never
-// drops its 50-row batch.
+// drops its 50-row batch. Takes the caller's `gql` client (already bound to
+// whatever auth token that invocation needs) rather than a module-level one.
 async function refreshMetadata(
+  gql: Gql,
   cfg: ClickHouseConfig,
   mediaIds: number[],
-  authToken: string | undefined,
   batchSize: number,
 ): Promise<number> {
   let written = 0;
@@ -650,8 +709,6 @@ async function refreshMetadata(
     const d = await gql(
       METADATA_INGEST_QUERY,
       { ids, page: 1, perPage: batchSize },
-      0,
-      authToken,
     );
     const media = (d?.Page?.media ?? []) as RawMedia[];
     const rows = media
@@ -675,8 +732,13 @@ async function refreshMetadata(
 // recent-activity: pure helpers (exported for tests)
 // ---------------------------------------------------------------------------
 
+/** Telegram's hard per-message character limit; formatActivityMessages
+ * chunks output at this boundary. */
 export const TELEGRAM_MESSAGE_LIMIT = 4096;
 
+/** One normalized AniList list-activity event, after the raw GraphQL
+ * response has been flattened and defaulted (see the mapper in
+ * `recent-activity`'s execute). */
 export type ActivityItem = {
   id: number;
   createdAt: number;
@@ -690,6 +752,9 @@ export type ActivityItem = {
   score: number | null;
 };
 
+/** Per-user dedupe cursor persisted across `recent-activity` runs: the
+ * cached AniList userId plus the last delivered activity id / window
+ * floor. */
 export type ActivityCursor = {
   users: Record<string, {
     userId: number;
@@ -698,12 +763,15 @@ export type ActivityCursor = {
   }>;
 };
 
-// Parse a usernames file: anilist.co profile URLs or bare usernames, one per
-// line. Blank lines and #-comments are skipped. A line that is neither a valid
-// AniList profile URL nor a bare username is REJECTED (reported with its
-// 1-based line number), never silently dropped — the caller logs rejections
-// so a partial parse failure (e.g. a ".../user/Foo/animelist" URL that misses
-// the anchored regex) is visible instead of quietly shrinking the tracked set.
+/**
+ * Parse a usernames file: anilist.co profile URLs or bare usernames, one per
+ * line. Blank lines and #-comments are skipped. A line that is neither a
+ * valid AniList profile URL nor a bare username is REJECTED (reported with
+ * its 1-based line number), never silently dropped — the caller logs
+ * rejections so a partial parse failure (e.g. a ".../user/Foo/animelist" URL
+ * that misses the anchored regex) is visible instead of quietly shrinking
+ * the tracked set.
+ */
 export function parseUsernamesFile(
   text: string,
 ): { accepted: string[]; rejected: { line: number; text: string }[] } {
@@ -738,26 +806,34 @@ const CONSUMPTION_STATUSES = [
   "completed",
 ];
 
+/** True when an activity's status is consumption (watched/read/completed),
+ * not list housekeeping (planning/paused/dropped). */
 export function isConsumptionActivity(a: ActivityItem): boolean {
   return CONSUMPTION_STATUSES.includes(a.status.toLowerCase());
 }
 
-// Model names reach a `swamp` subprocess argv — must not look like a CLI flag.
+/** Model names reach a `swamp` subprocess argv — must not look like a CLI
+ * flag. */
 export function isValidModelName(name: string): boolean {
   return /^[A-Za-z0-9_][A-Za-z0-9_-]*$/.test(name);
 }
 
+/** Escape a string for safe interpolation into Telegram HTML parse-mode
+ * text. */
 export function escapeHtml(s: string): string {
   return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-// Keep activities newer than the user's cursor. Users that never had a
-// delivered activity use their pinned window floor (lastSeenCreatedAt, set
-// when the user was first resolved and only moved forward after a successful
-// run) so a failed send cannot silently lose their items to a shifting
-// relative lookback; users with no entry at all fall back to the lookback
-// cutoff. Users are isolated: one user's cursor never filters another.
+/**
+ * Keep activities newer than the user's cursor. Users that never had a
+ * delivered activity use their pinned window floor (lastSeenCreatedAt, set
+ * when the user was first resolved and only moved forward after a
+ * successful run) so a failed send cannot silently lose their items to a
+ * shifting relative lookback; users with no entry at all fall back to the
+ * lookback cutoff. Users are isolated: one user's cursor never filters
+ * another.
+ */
 export function filterNewActivities(
   activities: ActivityItem[],
   cursor: ActivityCursor,
@@ -772,9 +848,11 @@ export function filterNewActivities(
   });
 }
 
-// Pagination stop condition: pages are sorted ID_DESC, so once the oldest
-// item on a page is below every user's lastSeenActivityId AND older than the
-// lookback cutoff, later pages cannot contain anything new.
+/**
+ * Pagination stop condition: pages are sorted ID_DESC, so once the oldest
+ * item on a page is below every user's lastSeenActivityId AND older than
+ * the lookback cutoff, later pages cannot contain anything new.
+ */
 export function hasReachedOldActivities(
   pageActivities: ActivityItem[],
   cursor: ActivityCursor,
@@ -789,10 +867,12 @@ export function hasReachedOldActivities(
   return oldest.createdAt <= lookbackCutoff && oldest.id <= minLastSeen;
 }
 
-// Advance per-user cursors to the max delivered activity id. Never moves a
-// cursor backwards. Called ONLY with activities whose Telegram delivery was
-// confirmed (or that need no delivery) — a failed send holds the cursor so
-// the next run retries (at-least-once delivery).
+/**
+ * Advance per-user cursors to the max delivered activity id. Never moves a
+ * cursor backwards. Called ONLY with activities whose Telegram delivery was
+ * confirmed (or that need no delivery) — a failed send holds the cursor so
+ * the next run retries (at-least-once delivery).
+ */
 export function advanceCursor(
   cursor: ActivityCursor,
   sentActivities: ActivityItem[],
@@ -810,11 +890,13 @@ export function advanceCursor(
   return { users };
 }
 
-// Render activities as Telegram HTML messages, grouped by user, chunked at
-// the Telegram limit. Every interpolated field is HTML-escaped; titles link
-// to their AniList page when known. Score is shown only when set (> 0).
-// ASCII-only chrome (no emoji, plain dashes) and compact lines so the common
-// case is a single chunk.
+/**
+ * Render activities as Telegram HTML messages, grouped by user, chunked at
+ * the Telegram limit. Every interpolated field is HTML-escaped; titles link
+ * to their AniList page when known. Score is shown only when set (> 0).
+ * ASCII-only chrome (no emoji, plain dashes) and compact lines so the
+ * common case is a single chunk.
+ */
 export function formatActivityMessages(
   activities: ActivityItem[],
 ): string[] {
@@ -857,8 +939,8 @@ export function formatActivityMessages(
 // Rich Message (Bot API 10.2 block) rendering
 // ---------------------------------------------------------------------------
 
-// One display row per (user, show): the user's activity for that title in this
-// digest, collapsed.
+/** One display row per (user, show): the user's activity for that title in
+ * this digest, collapsed. */
 export type MergedShow = {
   userName: string;
   mediaId: number;
@@ -885,9 +967,12 @@ function progressNumbers(progress: string | null): number[] {
   return out;
 }
 
-// Compress a set of integers into a compact, HONEST range string: contiguous
-// runs collapse ("1,2,3" -> "1-3", "70,71,72,73" -> "70-73"), gaps are kept
-// ("1,2,3,7" -> "1-3, 7"). Never implies an episode that was not watched.
+/**
+ * Compress a set of integers into a compact, HONEST range string:
+ * contiguous runs collapse ("1,2,3" -> "1-3", "70,71,72,73" -> "70-73"),
+ * gaps are kept ("1,2,3,7" -> "1-3, 7"). Never implies an episode that was
+ * not watched.
+ */
 export function compressRanges(nums: number[]): string {
   const uniq = [...new Set(nums)].sort((a, b) => a - b);
   if (uniq.length === 0) return "";
@@ -922,11 +1007,13 @@ function verbUnit(
   return null;
 }
 
-// Collapse a run of activities into one display row per (user, show):
-// consecutive episodes/chapters merge into a range, and a "completed" folds
-// into the same show's progress line. Preserves first-appearance order of both
-// users and shows. Operates on a COPY — the caller's list (which drives the
-// dedupe cursor) is never mutated or reordered.
+/**
+ * Collapse a run of activities into one display row per (user, show):
+ * consecutive episodes/chapters merge into a range, and a "completed" folds
+ * into the same show's progress line. Preserves first-appearance order of
+ * both users and shows. Operates on a COPY — the caller's list (which
+ * drives the dedupe cursor) is never mutated or reordered.
+ */
 export function mergeActivities(activities: ActivityItem[]): MergedShow[] {
   const order: string[] = [];
   const groups = new Map<string, ActivityItem[]>();
@@ -1021,11 +1108,14 @@ function showLine(show: MergedShow): unknown[] {
   return parts;
 }
 
-// Build a Bot API 10.2 Rich Message (InputRichMessage) as a plain text digest
-// grouped by user — one paragraph per user holding the bold, profile-linked
-// username followed by their merged activity lines (bulleted, titles linked).
-// No imagery: the grouped heading keeps every line attributed without banners
-// splitting them. Returns the InputRichMessage object (caller stringifies it).
+/**
+ * Build a Bot API 10.2 Rich Message (InputRichMessage) as a plain text
+ * digest grouped by user — one paragraph per user holding the bold,
+ * profile-linked username followed by their merged activity lines
+ * (bulleted, titles linked). No imagery: the grouped heading keeps every
+ * line attributed without banners splitting them. Returns the
+ * InputRichMessage object (caller stringifies it).
+ */
 export function buildRichMessage(
   merged: MergedShow[],
 ): Record<string, unknown> {
@@ -1176,10 +1266,25 @@ const ActivityItemSchema = z.object({
   score: z.number().nullable(),
 });
 
+/**
+ * The `@magistr/anilist` swamp model: a thin wrapper over the public AniList
+ * GraphQL API (`search`, `get`, `userlist`, `trending`, `watching`,
+ * `seasonal`, `update-progress`, `set-score`) plus two fan-out pipelines —
+ * `recent-activity` (Telegram notifier) and `ingest-scores` /
+ * `refresh-metadata` (ClickHouse charting sink).
+ */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.07.27.1",
+  version: "2026.08.02.1",
   globalArguments: GlobalArgsSchema,
+  upgrades: [
+    {
+      toVersion: "2026.08.02.1",
+      description:
+        "hostile-200 crash guards (null-data + non-JSON-body) + robust 429-in-body detection + per-invocation rate-limit state; no globalArguments schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   resources: {
     search: {
       description: "Anime/manga search results",
@@ -1412,9 +1517,11 @@ export const model = {
         context: ExecContext,
       ) => {
         const type = args.type || context.globalArgs.mediaType;
+        const gql = makeGql();
 
         if (args.fetchAll) {
           const { media, pageInfo } = await fetchAllPages(
+            gql,
             SEARCH_QUERY,
             { search: args.query, type },
             5,
@@ -1454,6 +1561,7 @@ export const model = {
         id: z.number().describe("AniList media ID"),
       }),
       execute: async (args: { id: number }, context: ExecContext) => {
+        const gql = makeGql();
         const data = await gql(DETAILS_QUERY, { id: args.id });
         const media = data.Media;
 
@@ -1499,6 +1607,7 @@ export const model = {
         };
         if (args.status) variables.status = args.status;
 
+        const gql = makeGql();
         const data = await gql(USERLIST_QUERY, variables);
         const lists = (data.MediaListCollection.lists || []).map(
           (list: {
@@ -1558,9 +1667,11 @@ export const model = {
         context: ExecContext,
       ) => {
         const type = args.type || context.globalArgs.mediaType;
+        const gql = makeGql();
 
         if (args.fetchAll) {
           const { media, pageInfo } = await fetchAllPages(
+            gql,
             TRENDING_QUERY,
             { type, sort: [args.sort] },
             5,
@@ -1616,6 +1727,7 @@ export const model = {
           writeResource: (n: string, k: string, v: unknown) => Promise<unknown>;
         },
       ) => {
+        const gql = makeGql();
         const data = await gql(WATCHING_QUERY, { userName: args.userName });
         const collection = data.MediaListCollection as {
           lists: Array<{
@@ -1703,6 +1815,7 @@ export const model = {
         const season = args.season ?? defaultSeason;
         const seasonYear = args.seasonYear ?? now.getFullYear();
         const type = context.globalArgs.mediaType;
+        const gql = makeGql();
 
         const data = await gql(SEASONAL_QUERY, {
           season,
@@ -1863,12 +1976,15 @@ export const model = {
           );
         }
 
-        // Resolve mediaId from title if not provided directly
+        // Resolve mediaId from title if not provided directly. Unauthenticated
+        // — matches the mutation itself, which authenticates separately below
+        // via the raw fetch + Bearer header (this lookup never sends auth).
         let mediaId = args.mediaId;
         if (!mediaId) {
           if (!args.title) {
             throw new Error("Either mediaId or title must be provided.");
           }
+          const gql = makeGql();
           const searchResult = await gql(
             `query ($search: String!) { Media(search: $search, type: ANIME) { id title { romaji english } } }`,
             { search: args.title },
@@ -2002,6 +2118,7 @@ export const model = {
         // empty activity lists to anonymous clients) and can see
         // followers-only activity feeds.
         const auth = context.globalArgs.accessToken;
+        const gql = makeGql(auth);
         if (args.telegramModel && !isValidModelName(args.telegramModel)) {
           throw new Error(
             `Invalid telegramModel "${args.telegramModel}": must match [A-Za-z0-9_][A-Za-z0-9_-]*`,
@@ -2065,7 +2182,7 @@ export const model = {
             continue;
           }
           try {
-            const d = await gql(USER_ID_QUERY, { name }, 0, auth);
+            const d = await gql(USER_ID_QUERY, { name });
             if (!d.User?.id) throw new Error("user not found");
             tracked.push({ name, userId: d.User.id });
             cursor.users[key] = {
@@ -2115,53 +2232,65 @@ export const model = {
           const userFloor =
             cursor.users[name.toLowerCase()]?.lastSeenCreatedAt ??
               lookbackCutoff;
-          for (let page = 1; page <= args.maxPages; page++) {
-            const d = await gql(
-              ACTIVITIES_QUERY,
-              {
-                userId,
-                createdAtGreater: userFloor,
-                page,
-                perPage: 50,
-              },
-              0,
-              auth,
-            );
-            const items = (d.Page.activities ?? [])
-              .filter((a: { id?: number }) => a && typeof a.id === "number")
-              .map((a: {
-                id: number;
-                createdAt: number;
-                status: string | null;
-                progress: string | null;
-                user: { id: number; name: string } | null;
-                media: {
-                  id: number;
-                  siteUrl: string | null;
-                  title: { romaji: string | null; english: string | null };
-                } | null;
-              }): ActivityItem => ({
-                id: a.id,
-                createdAt: a.createdAt,
-                userId: a.user?.id ?? 0,
-                userName: a.user?.name ?? "",
-                status: a.status ?? "",
-                progress: a.progress ?? null,
-                mediaId: a.media?.id ?? 0,
-                title: a.media?.title?.romaji ?? a.media?.title?.english ??
-                  "?",
-                siteUrl: a.media?.siteUrl ?? null,
-                score: null,
-              }));
-            rawActivities.push(...items);
-            if (!d.Page.pageInfo.hasNextPage) break;
-            if (hasReachedOldActivities(items, cursor, lookbackCutoff)) break;
-            if (page === args.maxPages) {
-              pageCapHit = true;
-              warn(
-                `Activity page cap (${args.maxPages}) hit for ${name} with more pages remaining — older new activities may be skipped this run`,
+          // Per-user try/catch (mirrors the user-id resolution step above):
+          // a hostile/malformed activities response for ONE user (now a
+          // typed Error from gql()'s null-data guard, not an uncaught
+          // TypeError) is recorded in usersFailed and the fan-out continues
+          // for every other tracked user, instead of aborting the whole run.
+          try {
+            for (let page = 1; page <= args.maxPages; page++) {
+              const d = await gql(
+                ACTIVITIES_QUERY,
+                {
+                  userId,
+                  createdAtGreater: userFloor,
+                  page,
+                  perPage: 50,
+                },
               );
+              const items = (d.Page.activities ?? [])
+                .filter((a: { id?: number }) => a && typeof a.id === "number")
+                .map((a: {
+                  id: number;
+                  createdAt: number;
+                  status: string | null;
+                  progress: string | null;
+                  user: { id: number; name: string } | null;
+                  media: {
+                    id: number;
+                    siteUrl: string | null;
+                    title: { romaji: string | null; english: string | null };
+                  } | null;
+                }): ActivityItem => ({
+                  id: a.id,
+                  createdAt: a.createdAt,
+                  userId: a.user?.id ?? 0,
+                  userName: a.user?.name ?? "",
+                  status: a.status ?? "",
+                  progress: a.progress ?? null,
+                  mediaId: a.media?.id ?? 0,
+                  title: a.media?.title?.romaji ?? a.media?.title?.english ??
+                    "?",
+                  siteUrl: a.media?.siteUrl ?? null,
+                  score: null,
+                }));
+              rawActivities.push(...items);
+              if (!d.Page.pageInfo.hasNextPage) break;
+              if (hasReachedOldActivities(items, cursor, lookbackCutoff)) {
+                break;
+              }
+              if (page === args.maxPages) {
+                pageCapHit = true;
+                warn(
+                  `Activity page cap (${args.maxPages}) hit for ${name} with more pages remaining — older new activities may be skipped this run`,
+                );
+              }
             }
+          } catch (e) {
+            usersFailed.push({ name, reason: String(e).slice(0, 200) });
+            warn(
+              `Could not fetch activities for "${name}" (continuing with other tracked users): ${e}`,
+            );
           }
         }
 
@@ -2183,8 +2312,6 @@ export const model = {
                 mediaIds: [...new Set(fresh.map((a) => a.mediaId))],
                 perPage: 50,
               },
-              0,
-              auth,
             );
             const scores = new Map<string, number | null>(
               (d.Page.mediaList ?? []).map((
@@ -2331,6 +2458,7 @@ export const model = {
         const warn = (m: string) => context.logger?.warn?.(m);
         const info = (m: string) => context.logger?.info?.(m);
         const auth = context.globalArgs.accessToken;
+        const gql = makeGql(auth);
         const cfg = clickhouseConfig(context.globalArgs);
 
         // Username source: file preferred (accepted names only, casing
@@ -2387,8 +2515,6 @@ export const model = {
             const d = await gql(
               LIST_INGEST_QUERY,
               { userName, chunk, perChunk: args.perChunk },
-              0,
-              auth,
             );
             chunksFetched++;
             const collection = d?.MediaListCollection;
@@ -2456,9 +2582,9 @@ export const model = {
           (id) => !existingMeta.has(id),
         );
         const metadataRowsWritten = await refreshMetadata(
+          gql,
           cfg,
           missingMediaIds,
-          auth,
           args.metadataBatchSize,
         );
 
@@ -2493,6 +2619,7 @@ export const model = {
         const info = (m: string) => context.logger?.info(m);
         const cfg = clickhouseConfig(context.globalArgs);
         const auth = context.globalArgs.accessToken;
+        const gql = makeGql(auth);
         const scoreIds = await clickhouseDistinctMediaIds(cfg, "user_scores");
         const haveMeta = await clickhouseDistinctMediaIds(
           cfg,
@@ -2503,9 +2630,9 @@ export const model = {
           `refresh-metadata: ${missing.length} of ${scoreIds.size} score media ids lack metadata`,
         );
         const written = await refreshMetadata(
+          gql,
           cfg,
           missing,
-          auth,
           args.metadataBatchSize,
         );
         const handle = await context.writeResource(

@@ -12,8 +12,10 @@
  * All fixtures are pure doc-derived synthetic data — see
  * `anilist/fixtures/PROVENANCE.md`. Every test here is offline: fixtures are
  * fed through a stubbed `globalThis.fetch`, no network call is ever made.
- * anilist.ts is UNMODIFIED (byte-frozen) by this change — every test here
- * characterizes already-shipped behavior.
+ * This suite characterizes the wire-shape contract, which is unaffected by
+ * the `2026.08.02.1` AL1-AL4 fixes to `gql()`'s request/retry path (see
+ * `anilist_adversarial_test.ts` for those) — the query/mutation consts and
+ * every resource shape pinned here are untouched.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import {
@@ -155,12 +157,12 @@ async function withFetchStub(
 }
 
 /** Every stubbed 200 response carries HEALTHY rate-limit headers by default
- * (remaining=90, reset=epoch-0-already-elapsed) so the module-level shared
- * `rateLimit` state (see anilist.ts line 7) can never leave gql()'s pre-flight
- * wait armed for a LATER, unrelated test in this or a sibling suite — every
- * test file importing anilist.ts shares the SAME module instance for the
- * whole `deno test` run. Tests that specifically want to exercise a
- * low-remaining/429 state override these explicitly. */
+ * (remaining=90, reset=epoch-0-already-elapsed) so no test in this file
+ * incurs gql()'s pre-flight wait. Rate-limit state is per-invocation
+ * (`makeGql()`, since `2026.08.02.1`) so this is purely a per-test
+ * convenience now, not a cross-test isolation requirement — one test's
+ * headers can no longer leak into another's. Tests that specifically want to
+ * exercise a low-remaining/429 state override these explicitly. */
 function jsonRes(
   body: unknown,
   status = 200,
