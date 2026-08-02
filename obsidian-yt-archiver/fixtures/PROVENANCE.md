@@ -96,17 +96,18 @@ fixture carries no line-pinned content and is left to ordinary `deno
 fmt`
 reformatting.
 
-## Latent bugs this corpus exists to pin
+## Latent bugs this corpus exists to pin (all now FIXED)
 
-Eight already-shipped latent bugs are characterized against this corpus and
-tracked in the LOCAL `obsidian-yt-archiver-latent-bugs` issue-lifecycle model
-(never filed to the swamp.club Lab): path traversal via the `folder` argument
-reaching `outside/escape-note.md` (LB2, HIGH), request-forgery via arbitrary
-`videoIds` reaching other TubeArchivist endpoints on the same host (LB1,
-MEDIUM), conflated fetch-fail/401/500 error handling causing mass re-queue (LB3,
-MEDIUM), absence of any fetch timeout (LB4, MEDIUM), unbounded sequential per-id
-fetches with whole-file reads (LB5, LOW-MED), the 200-char error-body truncation
+Eight latent bugs were characterized against this corpus and are tracked in the
+LOCAL `obsidian-yt-archiver-latent-bugs` issue-lifecycle model (never filed to
+the swamp.club Lab); as of 2026.08.02.1 all eight are FIXED and this corpus now
+regression-guards each fix: path traversal via the `folder` argument reaching
+`outside/escape-note.md` (LB2, HIGH, fixed 2026.08.01.1), request-forgery via
+arbitrary `videoIds` reaching other TubeArchivist endpoints on the same host
+(LB1, MEDIUM), conflated fetch-fail/401/500 error handling causing mass re-queue
+(LB3, MEDIUM), absence of any fetch timeout (LB4, MEDIUM), unbounded sequential
+per-id fetches with no cap (LB5, LOW-MED), the 200-char raw error-body echo
 (LB6, LOW — token never leaked), the default `redirect: "follow"` (LB7, LOW),
 and a non-JSON 200 response resolving to a blank "archived" record (LB8, LOW).
 See `../CHANGELOG.md` and the adversarial suite's per-test doc comments for the
-full characterization of each.
+full characterization of each fix.

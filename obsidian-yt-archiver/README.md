@@ -17,6 +17,11 @@ your Obsidian vault), `tubearchivistUrl` (the TubeArchivist base URL), and
 `tubearchivistToken` (your TubeArchivist API token). Store the token in a vault
 rather than inline.
 
+Every TubeArchivist request has a 30s timeout and is capped at 500 video ids per
+call; a genuine transport/auth/server failure (or an unexpected redirect or
+non-JSON response) now SURFACES as an error instead of being silently treated as
+"not archived" and re-queued.
+
 ```yaml
 type: "@magistr/obsidian-yt-archiver"
 typeVersion: "2026.03.28.1"

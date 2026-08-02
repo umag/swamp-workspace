@@ -3,10 +3,11 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-obsidian-yt-archiver,
-# wave-4 batch-4b of the extension-quality backfill). obsidian_yt_archiver.ts
-# is unmodified — every suite drives model.methods.<m>.execute() against a
-# REAL temporary vault directory + a stubbed fetch, characterizing
-# already-shipped behavior.
+# wave-4 batch-4b of the extension-quality backfill). 2026.08.02.1 fixed all
+# seven remaining latent bugs (LB1, LB3-LB8; LB2 fixed earlier) in
+# obsidian_yt_archiver.ts — every suite still drives
+# model.methods.<m>.execute() against a REAL temporary vault directory + a
+# stubbed fetch, now characterizing the hardened, fixed behavior.
 schemaVersion: 1
 extension: obsidian-yt-archiver
 tests:

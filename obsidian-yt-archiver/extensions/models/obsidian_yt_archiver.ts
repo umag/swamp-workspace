@@ -47,36 +47,151 @@ function extractYoutubeIds(
 
 // --- TubeArchivist API helpers ---
 
+/** Every taApi caller passes a fixed-size, sequential id list -- this bounds
+ * how large that list may be, so a huge vault/argument can never turn into
+ * an unbounded run of sequential per-id HTTP calls (LB5). Enforced by
+ * REJECTING (never silently slicing/dropping), before any fetch happens.
+ *
+ * Both this and the timeout below are module CONSTANTS, not global args:
+ * test harnesses pass `globalArgs` raw, never through
+ * `model.globalArguments.parse()`, so a zod `.default()` would never fire in
+ * tests anyway -- keeping both as constants keeps `GlobalArgsSchema` at
+ * exactly 3 keys. */
+const MAX_VIDEO_IDS = 500;
+
+function assertVideoIdCap(ids: string[]): void {
+  if (ids.length > MAX_VIDEO_IDS) {
+    throw new Error(
+      `too many video ids: ${ids.length} exceeds the cap of ${MAX_VIDEO_IDS}`,
+    );
+  }
+}
+
+/** Every taApi call must complete within this long, or it is aborted and the
+ * failure surfaces like any other transport error (LB4). */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+
+/** Thrown for any non-2xx (or redirect/host-mismatch/non-JSON) TubeArchivist
+ * response. Carries `.status` so callers can distinguish a genuine "not
+ * archived" 404 from every other failure mode (LB3). */
+class TaHttpError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "TaHttpError";
+  }
+}
+
+/** True ONLY for a genuine "not archived" signal. Every other taApi failure
+ * -- auth/server/timeout/network/redirect/non-JSON -- is NOT "not archived"
+ * and must surface (re-thrown), never silently re-queued (LB3). One shared
+ * predicate, checked identically at all three per-id call sites. */
+function isNotArchived(e: unknown): boolean {
+  return e instanceof TaHttpError && e.status === 404;
+}
+
+/** Collapses whitespace runs and caps the result at 120 chars, so a
+ * thrown-error message can never echo more than a short, greppable snippet
+ * of a TubeArchivist response body (LB6). The auth token is never part of
+ * this text at all (it is header-only) -- this only bounds body exposure. */
+function redactBody(text: string): string {
+  const s = text.replace(/\s+/g, " ").trim();
+  return s.length > 120 ? `${s.slice(0, 120)}…` : s;
+}
+
+/** Confines a caller-supplied videoId to a single, opaque
+ * `/api/video/<id>/` path segment. `encodeURIComponent` percent-encodes any
+ * `/`, `..`, or host-shaped id into inert characters within that one
+ * segment, so it can never reach a different TubeArchivist endpoint (LB1).
+ * Every benign id used across the suites (`[A-Za-z0-9_-]`) encodes to
+ * itself, so this is IDENTITY for the common case -- one shared helper, used
+ * at all three GET-path build sites. */
+const taVideoPath = (id: string): string =>
+  `/api/video/${encodeURIComponent(id)}/`;
+
 async function taApi(
   host: string,
   token: string,
   method: string,
   path: string,
   body?: unknown,
+  expectJson = true,
 ): Promise<unknown> {
-  const url = `${host.replace(/\/+$/, "")}${path}`;
+  const cleanHost = host.replace(/\/+$/, "");
+  const url = `${cleanHost}${path}`;
+  const expectedHost = new URL(cleanHost).host;
   const opts: RequestInit = {
     method,
     headers: {
       Authorization: `Token ${token}`,
       "Content-Type": "application/json",
     },
+    // Never auto-follow a redirect to a possibly-different host -- handled
+    // explicitly below instead (LB7).
+    redirect: "manual",
   };
   if (body !== undefined) {
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(url, opts);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      `TA ${method} ${path}: ${res.status} - ${text.slice(0, 200)}`,
-    );
+
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    DEFAULT_REQUEST_TIMEOUT_MS,
+  );
+  try {
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+
+    // A 3xx is not followed (redirect: "manual" above); "opaqueredirect" is
+    // what a real cross-origin manual-redirect fetch yields (LB7).
+    if (
+      res.type === "opaqueredirect" ||
+      (res.status >= 300 && res.status < 400)
+    ) {
+      throw new TaHttpError(
+        res.status,
+        `TA ${method} ${path}: unexpected redirect (not followed)`,
+      );
+    }
+
+    // Defense in depth: if the final response URL is ever populated (a real
+    // fetch, not a test stub, which leaves it ""), it must still be the same
+    // host the operator configured.
+    if (res.url) {
+      const responseHost = new URL(res.url).host;
+      if (responseHost !== expectedHost) {
+        throw new TaHttpError(
+          res.status,
+          `TA ${method} ${path}: response host ${responseHost} != ${expectedHost}`,
+        );
+      }
+    }
+
+    if (!res.ok) {
+      const text = await res.text();
+      const snippet = redactBody(text);
+      throw new TaHttpError(
+        res.status,
+        `TA ${method} ${path}: ${res.status}${snippet ? ` - ${snippet}` : ""}`,
+      );
+    }
+
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      // The two fire-and-forget POSTs don't need a JSON body back; every
+      // GET metadata check does -- a non-JSON 2xx there is surfaced, never
+      // silently treated as a blank "archived" record (LB8).
+      if (!expectJson) return {};
+      throw new TaHttpError(
+        res.status,
+        `TA ${method} ${path}: expected application/json, got "${
+          ct || "(none)"
+        }"`,
+      );
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
   }
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    return res.json();
-  }
-  return {};
 }
 
 // --- Vault filesystem helpers ---
@@ -156,7 +271,7 @@ const ResolvedSchema = z.object({
 /** Obsidian YouTube archiver model: scans a vault for YouTube links, queues them in TubeArchivist, and resolves video metadata. */
 export const model = {
   type: "@magistr/obsidian-yt-archiver",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     scan: {
@@ -250,6 +365,7 @@ export const model = {
           const unique = new Set(links.map((l) => l.videoId));
           videoIds = [...unique];
         }
+        assertVideoIdCap(videoIds);
 
         const alreadyArchived: Array<{
           videoId: string;
@@ -269,7 +385,7 @@ export const model = {
               tubearchivistUrl,
               tubearchivistToken,
               "GET",
-              `/api/video/${id}/`,
+              taVideoPath(id),
             ) as Record<string, unknown>;
             const channel = data.channel as Record<string, unknown> | undefined;
             alreadyArchived.push({
@@ -280,8 +396,12 @@ export const model = {
               taUrl: `${tubearchivistUrl}/video/${id}`,
               archived: true,
             });
-          } catch {
-            toQueue.push(id);
+          } catch (e) {
+            if (isNotArchived(e)) {
+              toQueue.push(id);
+            } else {
+              throw e;
+            }
           }
         }
 
@@ -298,6 +418,7 @@ export const model = {
                 status: "pending",
               })),
             },
+            false,
           );
           // Trigger download
           await taApi(
@@ -305,6 +426,8 @@ export const model = {
             tubearchivistToken,
             "POST",
             "/api/task/by-name/download_pending/",
+            undefined,
+            false,
           );
         }
 
@@ -341,6 +464,7 @@ export const model = {
           }
           videoIds = [...ids];
         }
+        assertVideoIdCap(videoIds);
 
         const videos: Array<{
           videoId: string;
@@ -358,7 +482,7 @@ export const model = {
               tubearchivistUrl,
               tubearchivistToken,
               "GET",
-              `/api/video/${id}/`,
+              taVideoPath(id),
             ) as Record<string, unknown>;
             const channel = data.channel as Record<string, unknown> | undefined;
             videos.push({
@@ -369,8 +493,12 @@ export const model = {
               taUrl: `${tubearchivistUrl}/video/${id}`,
               archived: true,
             });
-          } catch {
-            unresolvedIds.push(id);
+          } catch (e) {
+            if (isNotArchived(e)) {
+              unresolvedIds.push(id);
+            } else {
+              throw e;
+            }
           }
         }
 
@@ -416,6 +544,7 @@ export const model = {
           }
         }
         const uniqueIds = [...new Set(links.map((l) => l.videoId))];
+        assertVideoIdCap(uniqueIds);
 
         await context.writeResource("scan", "main", {
           links,
@@ -442,7 +571,7 @@ export const model = {
               tubearchivistUrl,
               tubearchivistToken,
               "GET",
-              `/api/video/${id}/`,
+              taVideoPath(id),
             ) as Record<string, unknown>;
             const channel = data.channel as Record<string, unknown> | undefined;
             videos.push({
@@ -453,8 +582,12 @@ export const model = {
               taUrl: `${tubearchivistUrl}/video/${id}`,
               archived: true,
             });
-          } catch {
-            toQueue.push(id);
+          } catch (e) {
+            if (isNotArchived(e)) {
+              toQueue.push(id);
+            } else {
+              throw e;
+            }
           }
         }
 
@@ -470,12 +603,15 @@ export const model = {
                 status: "pending",
               })),
             },
+            false,
           );
           await taApi(
             tubearchivistUrl,
             tubearchivistToken,
             "POST",
             "/api/task/by-name/download_pending/",
+            undefined,
+            false,
           );
         }
 
