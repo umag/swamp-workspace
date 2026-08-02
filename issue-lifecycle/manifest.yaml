@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/issue-lifecycle"
-version: "2026.07.16.2"
+version: "2026.08.02.1"
 description: |
   Issue lifecycle model with 9 bundled Claude Code skills for DDD, TDD,
   moldable development, and parallel code review.
@@ -34,27 +34,36 @@ description: |
   ```
 
   `approve_plan` requires full matrix coverage AND zero open CRITICAL AND
-  zero open HIGH findings. `close` works from any state.
+  zero open HIGH findings AND no reviewer FAIL verdict. `tests_approved`
+  enforces the same gate autonomously (override bypasses both dimensions).
+  `close` works from any state. `start` refuses to overwrite an in-flight
+  issue (any state other than complete/closed) unless `force:true` is
+  passed.
 
   ## Methods
 
-  - `start` — file a new issue
+  - `start` — file a new issue (refuses to overwrite an in-flight issue
+    unless `force:true`)
   - `triage` — classify with optional confidence/regression/reproduction
   - `record_prior_art` — record existing UAT scenarios and KB entries
   - `record_reproduction` — record/update the bug-reproduction outcome after
     triage (optional; callable from triaged or planned)
   - `plan` — create/revise plan with DDD analysis, TDD strategy, review matrix
   - `review_plan` — enter plan review phase
-  - `record_review` — record one reviewer's findings
-  - `approve_plan` — approve (gated on coverage + zero blocking findings)
+  - `record_review` — record one reviewer's findings (a second submission in
+    the same round replaces, not appends)
+  - `approve_plan` — approve (gated on coverage + zero blocking findings +
+    no FAIL verdict)
   - `reject_plan` — reject with auto/human source tracking
   - `implement` — start TDD on a branch (enters `writing_tests`)
   - `review_tests` — enter test review phase
   - `iterate_tests` — loop back on test-review findings (bumps testReviewIteration)
   - `tests_approved` — tests clean → write code (autonomous gate; supports
-    `override_reason` for explicit human force-approve after 5-iteration cap)
+    `override_reason` for explicit human force-approve after 5-iteration cap,
+    bypassing both the blocking-findings and FAIL-verdict gates)
   - `review_code` — enter code review phase
-  - `resolve_findings` — record resolutions, snapshot round
+  - `resolve_findings` — record resolutions keyed per matching reviewer,
+    snapshot round
   - `iterate` — return to implementation (bumps codeReviewIteration)
   - `harvest` — record UAT/KB improvement proposals
   - `complete` — mark done

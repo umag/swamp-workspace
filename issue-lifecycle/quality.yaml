@@ -2,29 +2,34 @@
 # This file is then HAND-MAINTAINED: the scaffolder never overwrites an
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
-# Backfilled to full five-suite compliance by ext-quality-bf-issue-lifecycle
-# (wave-4 batch-4d, FINAL batch of the extension quality program).
+# Five-suite compliance shipped by ext-quality-bf-issue-lifecycle (wave-4
+# batch-4d) and carried forward by the 2026.08.02.1 latent-bug real-fix.
 # issue_lifecycle.ts (1881 LOC, pure logic — no fetch/subprocess/file I/O; a
-# 13-state x 20-method state machine) and manifest.yaml are BYTE-FROZEN by
-# this change — every listed test file characterizes/pins already-shipped
-# behavior; no production code changed and no model/version bump.
+# 13-state x 20-method state machine) now ships four real fixes (IL-1, IL-2,
+# IL-4, IL-7) with model version bumped 2026.07.16.2 -> 2026.08.02.1 via an
+# identity `upgrades[]` entry (no globalArguments/resource-schema change).
+# Three latent bugs (IL-3, IL-5, IL-6) are explicitly re-affirmed as
+# intentional behavior, not fixed — see the LOCAL issue-lifecycle-latent-bugs
+# issue-lifecycle model for the full triage (never the swamp.club Lab).
 #
 # Role map (the scaffolder originally dumped both pre-existing test files
 # under contract-fixture, which is correct here — they stay there; the four
-# new suites below are additive, not a redistribution):
+# suites below are additive, not a redistribution):
 #   contract-fixture        -> issue_lifecycle.test.ts (pre-existing, 52
-#                               tests, kept verbatim; also the fake-context
-#                               harness every new suite file below reuses as
-#                               its own copy) + issue_lifecycle_docs.test.ts
-#                               (pre-existing model<->skill-docs drift guard)
-#   methods                  -> issue_lifecycle_methods_test.ts (new)
-#   adversarial               -> issue_lifecycle_adversarial_test.ts (new;
-#                               also pins IL-1..IL-5 + IL-7, see the LOCAL
-#                               issue-lifecycle-latent-bugs issue-lifecycle
-#                               model — never the swamp.club Lab)
-#   coverage                  -> issue_lifecycle_coverage_test.ts (new)
-#   property-invariant-flow  -> issue_lifecycle_property_test.ts (new;
-#                               pins IL-6 via frozen-clock exclusion)
+#                               tests, kept byte-identical; also the
+#                               fake-context harness every other suite file
+#                               reuses as its own copy) + issue_lifecycle_
+#                               docs.test.ts (pre-existing model<->skill-docs
+#                               drift guard)
+#   methods                  -> issue_lifecycle_methods_test.ts
+#   adversarial               -> issue_lifecycle_adversarial_test.ts —
+#                               asserts the FIXED behavior for IL-1/2/4/7 and
+#                               re-affirms IL-3/5 as by-design
+#   coverage                  -> issue_lifecycle_coverage_test.ts (incl. the
+#                               new failingReviewers() pure-function coverage)
+#   property-invariant-flow  -> issue_lifecycle_property_test.ts — P5
+#                               rewritten for the fixed approve_plan gate;
+#                               P4 re-affirms IL-6 via frozen-clock exclusion
 schemaVersion: 1
 extension: issue-lifecycle
 tests:

@@ -1,21 +1,22 @@
 // Copyright 2026 magistr.
 // SPDX-License-Identifier: MIT
 //
-// COVERAGE suite (ext-quality-bf-issue-lifecycle, wave-4 batch-4d).
-// issue_lifecycle.ts is BYTE-FROZEN by this change. Guard-throw regression
-// tests for all 17 guardState call sites (triage, record_prior_art,
-// record_reproduction, plan, review_plan, record_review, approve_plan,
-// reject_plan, implement, review_tests, iterate_tests, tests_approved,
-// review_code, resolve_findings, iterate, harvest, complete) already live
-// in issue_lifecycle_methods_test.ts (one success + one guard-throw per
-// method) — this file fills the BRANCH gaps the methods/adversarial suites
-// don't reach: allMatrixReviewersRecorded across every reviewMatrix
-// dimension, hasBlockingFindings' full status filter, both branches of
-// iterate's double-snapshot guard, reject_plan/iterate/iterate_tests'
-// zod `source` default, record_reproduction's create-vs-merge branches,
-// plan's planVersion-bump predicate (keyed on `data.plan`, not on which of
-// the two guarded states you're in), and complete's silently-discarded
-// `summary` argument.
+// COVERAGE suite (ext-quality-bf-issue-lifecycle, wave-4 batch-4d; latent-bug
+// real-fix in 2026.08.02.1 added the failingReviewers() pure-function
+// coverage below). Guard-throw regression tests for all 17 guardState call
+// sites (triage, record_prior_art, record_reproduction, plan, review_plan,
+// record_review, approve_plan, reject_plan, implement, review_tests,
+// iterate_tests, tests_approved, review_code, resolve_findings, iterate,
+// harvest, complete) already live in issue_lifecycle_methods_test.ts (one
+// success + one guard-throw per method) — this file fills the BRANCH gaps
+// the methods/adversarial suites don't reach: allMatrixReviewersRecorded
+// across every reviewMatrix dimension, hasBlockingFindings' full status
+// filter, failingReviewers' verdict-only filter, both branches of iterate's
+// double-snapshot guard, reject_plan/iterate/iterate_tests' zod `source`
+// default, record_reproduction's create-vs-merge branches, plan's
+// planVersion-bump predicate (keyed on `data.plan`, not on which of the two
+// guarded states you're in), and complete's silently-discarded `summary`
+// argument.
 //
 // Harness is a byte-identical copy of issue_lifecycle.test.ts's fake context.
 
@@ -23,6 +24,7 @@ import { assertEquals, assertExists } from "jsr:@std/assert@1";
 
 import {
   allMatrixReviewersRecorded,
+  failingReviewers,
   type Finding,
   hasBlockingFindings,
   type IssueState,
@@ -312,6 +314,61 @@ Deno.test("coverage: hasBlockingFindings counts only the still-'open' findings i
     high: 1,
     total: 2,
   });
+});
+
+// ============================================================================
+// failingReviewers — pure-function coverage (IL-2 fix helper)
+// ============================================================================
+
+Deno.test("coverage: failingReviewers returns an empty array when no reviewer recorded FAIL", () => {
+  const reviews: ReviewResult[] = [
+    {
+      reviewer: "review-code",
+      verdict: "PASS",
+      timestamp: "2026-07-31T00:00:00.000Z",
+      findings: [],
+    },
+    {
+      reviewer: "review-adversarial",
+      verdict: "SUGGEST_CHANGES",
+      timestamp: "2026-07-31T00:00:00.000Z",
+      findings: [],
+    },
+  ];
+  assertEquals(failingReviewers(reviews), []);
+});
+
+Deno.test("coverage: failingReviewers lists every reviewer whose verdict is FAIL, regardless of findings", () => {
+  const reviews: ReviewResult[] = [
+    {
+      reviewer: "review-code",
+      verdict: "FAIL",
+      timestamp: "2026-07-31T00:00:00.000Z",
+      findings: [],
+    },
+    {
+      reviewer: "review-adversarial",
+      verdict: "FAIL",
+      timestamp: "2026-07-31T00:00:00.000Z",
+      findings: [
+        finding("review-adversarial", "CRITICAL", "x", "resolved"),
+      ],
+    },
+    {
+      reviewer: "review-security",
+      verdict: "PASS",
+      timestamp: "2026-07-31T00:00:00.000Z",
+      findings: [],
+    },
+  ];
+  assertEquals(failingReviewers(reviews), [
+    "review-code",
+    "review-adversarial",
+  ]);
+});
+
+Deno.test("coverage: failingReviewers on an empty reviews array returns an empty array", () => {
+  assertEquals(failingReviewers([]), []);
 });
 
 // ============================================================================
