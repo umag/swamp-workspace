@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/seadex"
-version: "2026.08.02.1"
+version: "2026.08.02.2"
 description: |
   SeaDex (releases.moe) — best-release recommendations for anime, lookups by
   AniList ID.
@@ -27,6 +27,9 @@ paths:
 
 models:
   - extensions/models/seadex.ts
+
+reports:
+  - extensions/reports/seadex_upgrades.ts
 
 additionalFiles:
   - README.md
