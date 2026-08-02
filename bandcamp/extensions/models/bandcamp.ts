@@ -41,6 +41,27 @@ function tokenCacheKey(clientId: string, clientSecret: string): string {
   return JSON.stringify([clientId, clientSecret]);
 }
 
+// Bounded fetch timeout (bandcamp-latent-bugs #5): every fetch site
+// (getToken, bcPost, and each redirect hop in fetchPage) routes through this
+// helper instead of calling `fetch` directly, so a hung/slow upstream can
+// never block a call -- and the model's lock -- indefinitely. `clearTimeout`
+// runs in `finally`, so the timer is always cleared on success, on a thrown
+// error, AND on every redirect hop, never just the happy path.
+const FETCH_TIMEOUT_MS = 30_000;
+
+async function timedFetch(
+  input: string,
+  init: RequestInit,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getToken(clientId: string, clientSecret: string) {
   const now = Date.now();
   const key = tokenCacheKey(clientId, clientSecret);
@@ -60,7 +81,7 @@ async function getToken(clientId: string, clientSecret: string) {
     body.set("grant_type", "client_credentials");
   }
 
-  const response = await fetch(TOKEN_URL, {
+  const response = await timedFetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -101,7 +122,7 @@ async function bcPost(
     );
   }
   const token = await getToken(clientId, clientSecret);
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await timedFetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -159,7 +180,7 @@ function assertAllowedHost(rawUrl: string): URL {
 async function fetchPage(url: string) {
   let current = assertAllowedHost(url).toString();
   for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
-    const response = await fetch(current, {
+    const response = await timedFetch(current, {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; SwampBot/1.0)",
         Accept: "text/html",
@@ -251,7 +272,7 @@ function parseSearchResults(html: string, itemType: string) {
   return { results, total };
 }
 
-function parseAlbumPage(html: string) {
+function parseAlbumPage(html: string, warn?: (msg: string) => void) {
   const doc = new DOMParser().parseFromString(html, "text/html");
 
   // extract JSON-LD
@@ -261,7 +282,13 @@ function parseAlbumPage(html: string) {
   if (ldScript?.textContent) {
     try {
       ld = JSON.parse(ldScript.textContent);
-    } catch { /* ignore */ }
+    } catch (err) {
+      // Real failure (script present, parse threw) -- surface it instead of
+      // silently resolving as if the blob had simply been absent
+      // (bandcamp-latent-bugs #4). Message is generic: never interpolate the
+      // raw textContent (could carry injected content) or any credential.
+      warn?.(`bandcamp: album JSON-LD parse failed: ${(err as Error).name}`);
+    }
   }
 
   // extract tralbum data from embedded script
@@ -272,14 +299,32 @@ function parseAlbumPage(html: string) {
     const text = s.textContent || "";
     const match = text.match(/var\s+TralbumData\s*=\s*(\{[\s\S]*?\});?\s*$/m);
     if (match) {
+      // Real Bandcamp TralbumData is valid JSON -- try a direct parse FIRST.
+      // Only on failure fall back to a cleanup pass that strips `//`-style
+      // comments while PROTECTING any `scheme://` value: the old
+      // unconditional `.replace(/\/\/.*/g, "")` truncated the blob at the
+      // first "https://" it contained, losing everything after it --
+      // including the JSON's own closing brackets -- and silently dropping
+      // every track (bandcamp-latent-bugs #3).
       try {
-        // clean JS object to JSON (handle single quotes, trailing commas)
-        const cleaned = match[1]
-          .replace(/\/\/.*/g, "")
-          .replace(/,\s*}/g, "}")
-          .replace(/,\s*]/g, "]");
-        tralbum = JSON.parse(cleaned);
-      } catch { /* ignore parse errors */ }
+        tralbum = JSON.parse(match[1]);
+      } catch {
+        try {
+          const cleaned = match[1]
+            .replace(/(^|[^:])\/\/.*$/gm, "$1")
+            .replace(/,\s*}/g, "}")
+            .replace(/,\s*]/g, "]");
+          tralbum = JSON.parse(cleaned);
+        } catch (err) {
+          // Both the direct parse AND the cleanup fallback failed -- a
+          // genuine parse failure, not merely a comment/trailing-comma
+          // quirk. Surface it (bandcamp-latent-bugs #4) instead of silently
+          // resolving with tracks=[].
+          warn?.(
+            `bandcamp: album TralbumData parse failed: ${(err as Error).name}`,
+          );
+        }
+      }
     }
   }
 
@@ -343,14 +388,21 @@ function parseAlbumPage(html: string) {
     artist,
     releaseDate,
     artUrl,
-    about: about.slice(0, 500),
+    // Code-point-safe truncation (bandcamp-latent-bugs #7): a plain
+    // `.slice(0, 500)` cuts on UTF-16 code UNITS and can split a surrogate
+    // pair straddling the boundary, emitting a lone unpaired high surrogate.
+    // `Array.from` iterates by code point, so an astral character at the
+    // boundary is kept or dropped WHOLE. The invariant this now upholds is
+    // "<= 500 code points", not "<= 500 UTF-16 code units" -- for astral
+    // input the returned string's `.length` (code units) can exceed 500.
+    about: Array.from(about).slice(0, 500).join(""),
     tags,
     tracks,
     trackCount: tracks.length,
   };
 }
 
-function parseArtistPage(html: string) {
+function parseArtistPage(html: string, warn?: (msg: string) => void) {
   const doc = new DOMParser().parseFromString(html, "text/html");
 
   const name = doc.querySelector(
@@ -386,7 +438,13 @@ function parseArtistPage(html: string) {
   if (ldScript?.textContent) {
     try {
       ld = JSON.parse(ldScript.textContent);
-    } catch { /* ignore */ }
+    } catch (err) {
+      // Real failure (script present, parse threw) -- surface it instead of
+      // silently resolving as if the blob had simply been absent
+      // (bandcamp-latent-bugs #4). Message is generic: never interpolate the
+      // raw textContent (could carry injected content) or any credential.
+      warn?.(`bandcamp: artist JSON-LD parse failed: ${(err as Error).name}`);
+    }
   }
 
   const discographyFromLd = (ld.album || ld.discography || []).map((
@@ -402,12 +460,37 @@ function parseArtistPage(html: string) {
   return {
     name: name || ld.name || "",
     location,
-    bio: bio.slice(0, 500),
+    // Code-point-safe truncation (bandcamp-latent-bugs #7) -- see the
+    // matching comment in parseAlbumPage's `about` field.
+    bio: Array.from(bio).slice(0, 500).join(""),
     imageUrl,
     url: ld["@id"] || "",
     discography: discographyFromLd.length > 0 ? discographyFromLd : albums,
     albumCount: Math.max(discographyFromLd.length, albums.length),
   };
+}
+
+/**
+ * Derives a swamp resource instance name from a source URL (bandcamp-latent
+ * -bugs #6): a readable 47-char sanitized slug plus a 12-hex-char SHA-256
+ * suffix of the FULL raw URL. Two different URLs sharing the same first
+ * 47 sanitized characters no longer collide on the identical resource name
+ * -- each gets its own collision-resistant suffix (<= 47 + 1 + 12 = 60
+ * chars total). The same URL always hashes to the same suffix, so
+ * re-running a get-* method against the same URL still idempotently
+ * overwrites its own prior resource, never a different URL's.
+ */
+async function urlResourceName(raw: string): Promise<string> {
+  const slug = raw.replace(/^https?:\/\//, "").replace(/[^a-zA-Z0-9]/g, "-")
+    .slice(0, 47);
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(raw),
+  );
+  const hex = Array.from(new Uint8Array(buf)).map((b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("").slice(0, 12);
+  return `${slug}-${hex}`;
 }
 
 // --- resource schemas ---
@@ -530,7 +613,18 @@ const TaskResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/bandcamp",
-  version: "2026.07.31.1",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.31.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "No-op: internal robustness fixes (TralbumData parse recovery, " +
+        "parse-failure warnings, fetch timeouts, hashed resource names, " +
+        "code-point-safe truncation); no globalArguments/schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     search: {
@@ -729,11 +823,11 @@ export const model = {
           url = url.replace(/\/$/, "") + "/music";
         }
         const html = await fetchPage(url);
-        const artist = parseArtistPage(html);
-        const instanceName = url.replace(/https?:\/\//, "").replace(
-          /[^a-zA-Z0-9]/g,
-          "-",
-        ).slice(0, 60);
+        const artist = parseArtistPage(
+          html,
+          (m) => context.logger?.warning?.(m),
+        );
+        const instanceName = await urlResourceName(url);
         const handle = await context.writeResource(
           "artistDetail",
           instanceName,
@@ -757,11 +851,11 @@ export const model = {
       }),
       execute: async (args, context) => {
         const html = await fetchPage(args.url);
-        const album = parseAlbumPage(html);
-        const instanceName = args.url.replace(/https?:\/\//, "").replace(
-          /[^a-zA-Z0-9]/g,
-          "-",
-        ).slice(0, 60);
+        const album = parseAlbumPage(
+          html,
+          (m) => context.logger?.warning?.(m),
+        );
+        const instanceName = await urlResourceName(args.url);
         const handle = await context.writeResource(
           "albumDetail",
           instanceName,
@@ -781,11 +875,12 @@ export const model = {
       }),
       execute: async (args, context) => {
         const html = await fetchPage(args.url);
-        const album = parseAlbumPage(html); // track pages have same structure
-        const instanceName = args.url.replace(/https?:\/\//, "").replace(
-          /[^a-zA-Z0-9]/g,
-          "-",
-        ).slice(0, 60);
+        // track pages have same structure as album pages
+        const album = parseAlbumPage(
+          html,
+          (m) => context.logger?.warning?.(m),
+        );
+        const instanceName = await urlResourceName(args.url);
         const handle = await context.writeResource(
           "albumDetail",
           instanceName,

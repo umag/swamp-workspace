@@ -3,11 +3,11 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance by ext-quality-bf-bandcamp
-# (wave-3 scraper child of ext-quality-test-backfill). bandcamp.ts is
-# BYTE-FROZEN by this change — every listed test file characterizes/pins
-# already-shipped behavior (including 7 latent bugs tracked in the LOCAL
-# bandcamp-latent-bugs issue-lifecycle model, never filed to the Lab); no
-# production code changed and no manifest/model version bump.
+# (wave-3 scraper child of ext-quality-test-backfill). As of 2026.08.02.1,
+# all 7 latent bugs tracked in the LOCAL bandcamp-latent-bugs issue-lifecycle
+# model (never filed to the Lab) are FIXED — see CHANGELOG.md. Every listed
+# test file still characterizes/pins the model's current behavior; the five
+# suites were re-run against the fixed source to re-derive every pin.
 #
 # Role map:
 #   contract-fixture        -> bandcamp_test.ts

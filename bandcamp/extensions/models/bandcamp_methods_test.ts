@@ -5,8 +5,9 @@
  * error path, driven through `model.methods.<m>.arguments.parse()` +
  * `.execute()` against a stubbed `globalThis.fetch` and a fake context.
  *
- * bandcamp.ts is UNMODIFIED -- every test here is a characterization test
- * that PINS the model's current, already-shipped behavior.
+ * Every test here is a characterization test that PINS the model's current,
+ * already-shipped behavior (as of 2026.08.02.1 -- see CHANGELOG.md for the
+ * bandcamp-latent-bugs #3-#7 fixes).
  *
  * IMPORTANT -- module-global token cache (see bandcamp-latent-bugs #2):
  * `cachedToken` is a `let` at module scope, shared across every Deno.test in
