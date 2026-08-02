@@ -1,25 +1,30 @@
 /**
- * Adversarial suite: SSRF via `apiUrl` (no host allowlist — syntax-only
- * validation), YAML-frontmatter injection via raw `uname`/`tags`
- * interpolation in the Obsidian builder, the unbounded `while(true)`
- * pagination loop's missing-mid refetch-page-1 defect (bounded, terminating
- * stub), three DISTINCT non-array/malformed-response failure shapes across
- * getMessages/getThread/getUser (round-2 review finding — do not conflate
- * them), a dedicated getUser empty-array pin, unguarded `JSON.parse` on a
- * non-JSON 200 body, no AbortSignal/timeout anywhere, Retry-After ignored,
- * a unicode astral-plane title-slice split, the getMessages resource-name
- * clobber when both uname and tag are given, and a mechanical
- * fixtures-secret-scan (reframed — juick has no credentials, see
+ * Adversarial suite: FIXED (juick-latent-bugs, all 8 LBs) — SSRF via
+ * `apiUrl` is now closed by a default-deny `allowedHosts` allowlist plus an
+ * unconditional loopback/link-local/private-IP-literal backstop, re-applied
+ * on every redirect hop (LB1); YAML-frontmatter injection via raw
+ * `uname`/`tags` interpolation in the Obsidian builder is now escaped (LB2);
+ * the unbounded `while(true)` pagination loop now stops when the cursor
+ * fails to advance AND is hard-capped by `maxPages` (LB3); an unguarded
+ * `JSON.parse` on a non-JSON 200 body now throws a domain error (LB4); the
+ * three DISTINCT non-array/malformed-response failure shapes across
+ * getMessages/getThread/getUser are now coerced/validated instead of sailing
+ * through or throwing a bare TypeError (LB5); a unicode astral-plane
+ * title-slice split is fixed by slicing on code points (LB6); every request
+ * now carries an AbortSignal (`timeout` global arg) and 429/503 responses
+ * surface `Retry-After` in the thrown error (LB7); the getMessages
+ * resource-name clobber when both uname and tag are given is fixed by
+ * folding both into the name (LB8); plus a mechanical fixtures-secret-scan
+ * (unaffected by this change — juick has no credentials, see
  * fixtures/PROVENANCE.md).
  *
- * juick.ts is UNMODIFIED — every test here PINS current behavior (including
- * behavior that is a real, documented gap) rather than proposing a fix. Every
- * pinned gap here is filed under the LOCAL `juick-latent-bugs` model, never
- * fixed in this change. The fetch stub is cast `as unknown as typeof
+ * Every "FIXED" test below replaces a same-named "pin" test that used to
+ * characterize the gap rather than fix it — see git history / CHANGELOG.md
+ * for the before/after. The fetch stub is cast `as unknown as typeof
  * globalThis.fetch` (deno 2.8.3 toolchain pin).
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
-import { model } from "./juick.ts";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { model, yamlDq } from "./juick.ts";
 import messages from "../../fixtures/messages.json" with { type: "json" };
 import thread from "../../fixtures/thread.json" with { type: "json" };
 import user from "../../fixtures/user.json" with { type: "json" };
@@ -68,9 +73,10 @@ type Call = { input: Request | URL | string; init: RequestInit | undefined };
 type Route = (req: Request) => Response | Promise<Response> | undefined;
 
 /** Fetch stub that ALSO captures the raw (input, init) pair passed to
- * `fetch()` — needed to prove no AbortSignal was ever threaded through,
- * since `new Request(input, init)` always synthesizes an implicit `.signal`
- * even when the caller passed none (musicbrainz-adversarial pattern). */
+ * `fetch()` — needed to prove an AbortSignal (and `redirect: "manual"`) is
+ * threaded through, since `new Request(input, init)` always synthesizes an
+ * implicit `.signal` even when the caller passed none (musicbrainz-
+ * adversarial pattern). */
 async function withFetchStub(
   routes: Route[],
   fn: (calls: Request[], rawCalls: Call[]) => Promise<unknown>,
@@ -108,10 +114,9 @@ function json(body: unknown, status = 200) {
 /** Route for a single-page getUserPosts scenario: the FIRST `/messages`
  * request (no `before_mid` yet) returns `msgs`, every subsequent request
  * (now carrying `before_mid`) returns an empty batch to terminate the
- * source's unbounded `while(true)` pagination loop. Every getUserPosts test
- * in this file MUST use a terminating route like this one — a route that
- * always returns a non-empty batch hangs the test itself (round-1/round-2
- * review finding). */
+ * source's pagination loop. Every getUserPosts test in this file MUST use a
+ * terminating route like this one — a route that always returns a non-empty
+ * batch hangs the test itself (round-1/round-2 review finding). */
 function singlePage(msgs: Array<Record<string, unknown>>): Route {
   return (req: Request) => {
     const url = new URL(req.url);
@@ -121,33 +126,27 @@ function singlePage(msgs: Array<Record<string, unknown>>): Route {
 }
 
 // ---------------------------------------------------------------------------
-// SSRF — apiUrl has no host allowlist; z.string().url() validates SYNTAX only
+// SSRF (LB1) — default-deny allowedHosts + unconditional private-IP backstop
 // ---------------------------------------------------------------------------
 
-Deno.test("SSRF: an internal/metadata-service apiUrl is fetched VERBATIM — no host allowlist anywhere", async () => {
+Deno.test("FIXED (juick-latent-bugs LB1): an internal/metadata-service apiUrl is rejected before any fetch happens", async () => {
   const { ctx } = makeCtx({
     apiUrl: "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
   });
   await withFetchStub(
     [() => json([])],
     async (calls) => {
-      await run("getMessages", {}, ctx);
+      await assertRejects(() => run("getMessages", {}, ctx), Error);
       assertEquals(
-        calls[0].url,
-        "http://169.254.169.254/latest/meta-data/iam/security-credentials/messages",
-        "the exact SSRF target is what gets requested — apiUrl is concatenated raw",
+        calls.length,
+        0,
+        "the private-IP-literal backstop rejects the URL before fetch is ever called",
       );
     },
   );
 });
 
-Deno.test("SSRF: z.string().url() on the apiUrl global argument validates URL SYNTAX ONLY, not host — an internal address parses cleanly", () => {
-  // Documents the single guard's actual reach: GlobalArgsSchema declares
-  // `apiUrl: z.string().url()`. This is satisfied by ANY syntactically valid
-  // URL, including a loopback or link-local metadata address — there is no
-  // host/scheme allowlist layered on top. The network-less default test task
-  // (deno.json's `test` has no --allow-net) is the true backstop in CI, not
-  // this schema.
+Deno.test("FIXED (juick-latent-bugs LB1): z.string().url() still validates URL SYNTAX ONLY (host-agnostic), but getMessages now REJECTS every syntactically-valid hostile apiUrl — while a real api.juick.com apiUrl still succeeds through the SAME path (non-vacuous control)", async () => {
   const hostileButSyntacticallyValid = [
     "http://169.254.169.254/",
     "http://localhost:22/",
@@ -155,22 +154,92 @@ Deno.test("SSRF: z.string().url() on the apiUrl global argument validates URL SY
     "http://internal.corp.local/",
   ];
   for (const apiUrl of hostileButSyntacticallyValid) {
+    // The schema itself is unchanged — it still only validates URL syntax.
     const parsed = model.globalArguments.parse({ apiUrl }) as {
       apiUrl: string;
     };
     assertEquals(
       parsed.apiUrl,
       apiUrl,
-      `${apiUrl} must parse cleanly — z.string().url() has no host check`,
+      `${apiUrl} must still parse cleanly — z.string().url() has no host check`,
     );
+
+    // ...but the METHOD now rejects it: the allowlist/private-IP guard lives
+    // in juickApi, not in the schema.
+    const { ctx } = makeCtx({ apiUrl });
+    await withFetchStub([() => json([])], async (calls) => {
+      await assertRejects(() => run("getMessages", {}, ctx), Error);
+      assertEquals(calls.length, 0, `${apiUrl} must never reach fetch`);
+    });
   }
+
+  // Non-vacuous control: the SAME code path (juickApi, default
+  // allowedHosts) succeeds for the real api.juick.com host.
+  const { ctx: controlCtx } = makeCtx({ apiUrl: "https://api.juick.com" });
+  await withFetchStub([() => json([])], async (calls) => {
+    await run("getMessages", {}, controlCtx);
+    assertEquals(
+      calls.length,
+      1,
+      "api.juick.com is allowed by the default allowedHosts — the guard does not vacuously reject everything",
+    );
+  });
+});
+
+Deno.test("FIXED (juick-latent-bugs LB1): a private-IP-literal host is rejected EVEN IF explicitly present in allowedHosts — the private-IP backstop is unconditional", async () => {
+  const { ctx } = makeCtx({
+    apiUrl: "http://169.254.169.254/",
+    allowedHosts: ["169.254.169.254", "api.juick.com"],
+  });
+  await withFetchStub(
+    [() => json([])],
+    async (calls) => {
+      const err = await assertRejects(
+        () => run("getMessages", {}, ctx),
+        Error,
+      );
+      assert(
+        !/unrouted request/i.test(err.message),
+        "must fail on the private-IP guard, not because the stub had no matching route",
+      );
+      assertEquals(
+        calls.length,
+        0,
+        "even an explicit allowedHosts entry cannot resurrect a private-IP-literal target",
+      );
+    },
+  );
+});
+
+Deno.test("FIXED (juick-latent-bugs LB1): an allowlisted host that 3xx-redirects to an internal/link-local Location is rejected on the redirect hop — the internal host is never fetched", async () => {
+  const { ctx } = makeCtx({ apiUrl: "https://api.juick.com" });
+  await withFetchStub(
+    [(req) => {
+      const url = new URL(req.url);
+      if (url.hostname === "api.juick.com") {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "http://169.254.169.254/latest/meta-data/" },
+        });
+      }
+      return undefined;
+    }],
+    async (calls) => {
+      await assertRejects(() => run("getMessages", {}, ctx), Error);
+      assertEquals(
+        calls.length,
+        1,
+        "only the initial api.juick.com request happens — the redirect target is never fetched",
+      );
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
-// YAML-frontmatter injection — raw uname/tags interpolation in the builder
+// YAML-frontmatter injection (LB2) — uname/tags now escaped
 // ---------------------------------------------------------------------------
 
-Deno.test("INJECTION: a hostile uname containing a quote and a newline corrupts the YAML frontmatter's source:/author: lines — only title is escaped", async () => {
+Deno.test("FIXED (juick-latent-bugs LB2): a hostile uname containing a quote and a newline no longer corrupts the YAML frontmatter — source:/author: are now escaped exactly like title", async () => {
   const { ctx, written } = makeCtx();
   const hostileUname = 'evil"\nadmin: true\nx';
   await withFetchStub(
@@ -187,21 +256,30 @@ Deno.test("INJECTION: a hostile uname containing a quote and a newline corrupts 
   const posts = (res.payload as { posts: Array<{ obsidianContent: string }> })
     .posts;
   const md = posts[0].obsidianContent;
+  const safeUname = yamlDq(hostileUname);
   assert(
-    md.includes(`source: "https://juick.com/${hostileUname}/9001"`),
-    "the raw hostile uname is interpolated verbatim into source: — a newline injects a new YAML key",
+    md.includes(`source: "https://juick.com/${safeUname}/9001"`),
+    "the escaped uname is interpolated into source: — no raw newline survives",
   );
   assert(
-    md.includes(`author: "${hostileUname}"`),
-    "the raw hostile uname is interpolated verbatim into author: too",
+    md.includes(`author: "${safeUname}"`),
+    "the escaped uname is interpolated into author: too",
   );
+  // Scope the "no injected key" check to the actual YAML frontmatter block
+  // (between the opening and closing `---` markers) — the raw (unescaped)
+  // uname still appears verbatim later in the plain-markdown "> Original:"
+  // backlink line, which is body text, not YAML, and is unaffected by this
+  // fix (out of LB2's scope: only source:/author: were hostile YAML sinks).
+  const fmMatch = md.match(/^---\n([\s\S]*?)\n---\n/);
+  assert(fmMatch, "the YAML frontmatter block must be present");
+  const frontmatter = fmMatch![1];
   assert(
-    md.includes("admin: true"),
-    "the injected `admin: true` line lands as its own YAML frontmatter key — this is the injection",
+    !frontmatter.split("\n").some((line) => line.trim() === "admin: true"),
+    "the injected `admin: true` must NOT land as its own line inside the YAML frontmatter block",
   );
 });
 
-Deno.test("INJECTION: a hostile tag with a newline and a leading '- ' injects an extra YAML list item under tags:", async () => {
+Deno.test("FIXED (juick-latent-bugs LB2): a hostile tag with a newline and a leading '- ' no longer injects an extra YAML list item under tags:", async () => {
   const { ctx, written } = makeCtx();
   const hostileTag = "x\n  - injected-list-item";
   await withFetchStub(
@@ -219,9 +297,17 @@ Deno.test("INJECTION: a hostile tag with a newline and a leading '- ' injects an
   const posts = (res.payload as { posts: Array<{ obsidianContent: string }> })
     .posts;
   const md = posts[0].obsidianContent;
+  const tagLines = md.split("tags:\n")[1].split("---")[0].split("\n").filter((
+    l,
+  ) => l.length > 0);
+  assertEquals(
+    tagLines.length,
+    2,
+    "exactly two list items: the base 'juick' tag plus the (now single-line) hostile tag — no standalone injected entry",
+  );
   assert(
-    md.includes(`  - ${hostileTag}\n`),
-    "the tag is only colon-replaced (juick.ts's `tag.replace(/:/g, '-')`) — a raw newline + list-item marker passes straight through and injects an extra YAML list entry",
+    !md.includes("\n  - injected-list-item\n"),
+    "the newline is collapsed to a space — 'injected-list-item' never starts its own list line",
   );
 });
 
@@ -240,17 +326,11 @@ Deno.test("pin: a tag CONTAINING a colon is the only thing sanitized — colons 
 });
 
 // ---------------------------------------------------------------------------
-// Unbounded `while (true)` pagination — missing-mid refetches page 1 forever
+// Pagination (LB3) — stops on a stuck cursor AND is hard-capped by maxPages
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a batch whose LAST message has no `mid` makes `beforeMid` undefined, so the NEXT request re-issues the IDENTICAL page-1 query (infinite loop in production — pinned here with a call-counting stub that terminates on the 2nd call)", async () => {
+Deno.test("FIXED (juick-latent-bugs LB3): a batch whose LAST message has no `mid` now STOPS pagination after the one batch instead of re-issuing the identical page-1 query forever", async () => {
   const { ctx, written } = makeCtx();
-  // batch[1] deliberately omits `mid` — MessageSchema is `.passthrough()`, so
-  // the wire can send this. `beforeMid = batch[batch.length-1].mid` becomes
-  // `undefined`; `if (beforeMid)` is then false, so the SECOND request has NO
-  // before_mid at all — an identical query string to the first request. A
-  // real server that keeps answering this query loops forever; this stub
-  // terminates the test by returning [] on the SECOND matching call.
   const pathologicalBatch = [
     { mid: 100, body: "has a mid", replies: 0 },
     { body: "no mid field on this one", replies: 0 },
@@ -264,7 +344,7 @@ Deno.test("pin: a batch whose LAST message has no `mid` makes `beforeMid` undefi
         url.search === "?uname=missing-mid-victim"
       ) {
         baseQueryCalls++;
-        return baseQueryCalls === 1 ? json(pathologicalBatch) : json([]);
+        return json(pathologicalBatch);
       }
       return undefined;
     }],
@@ -274,34 +354,31 @@ Deno.test("pin: a batch whose LAST message has no `mid` makes `beforeMid` undefi
         { uname: "missing-mid-victim", withComments: false },
         ctx,
       );
-      const baseQueryUrls = calls
-        .map((c) => new URL(c.url).search)
-        .filter((s) => s === "?uname=missing-mid-victim");
       assertEquals(
-        baseQueryUrls.length,
-        2,
-        "the SAME page-1 query string was requested twice — before_mid never advanced past the missing-mid message",
+        calls.length,
+        1,
+        "only ONE request is made — a missing mid now stops the loop instead of silently re-issuing the same page-1 query",
       );
     },
   );
-  assertEquals(baseQueryCalls, 2);
+  assertEquals(baseQueryCalls, 1);
   const res = written.find((w) => w.spec === "userPosts")!;
   const posts = (res.payload as { posts: unknown[] }).posts;
   assertEquals(
     posts.length,
     2,
-    "both messages from the one successfully-processed batch are kept — only the CURSOR is broken, not the batch itself",
+    "both messages from the one successfully-fetched batch are still kept — only the CURSOR stops, the batch itself is unaffected",
   );
 });
 
-Deno.test("pin: a server that always echoes the SAME page (ignores before_mid) also loops the request unbounded — pinned with a call-counting stub", async () => {
+Deno.test("FIXED (juick-latent-bugs LB3): a server that always echoes the SAME page (ignores before_mid) now stops after 2 requests instead of looping unbounded", async () => {
   const repeatedBatch = [{ mid: 200, body: "always the same", replies: 0 }];
   const { ctx } = makeCtx();
   let calls = 0;
   await withFetchStub(
     [() => {
       calls++;
-      return calls <= 2 ? json(repeatedBatch) : json([]);
+      return json(repeatedBatch);
     }],
     async () => {
       await run(
@@ -313,17 +390,51 @@ Deno.test("pin: a server that always echoes the SAME page (ignores before_mid) a
   );
   assertEquals(
     calls,
+    2,
+    "request 1 advances before_mid to 200; request 2 gets the identical page again (before_mid stayed 200 — cursor didn't advance) and the loop stops there",
+  );
+});
+
+Deno.test("FIXED (juick-latent-bugs LB3): maxPages caps getUserPosts — a server that ALWAYS returns a fresh, ever-advancing page is still stopped after maxPages requests", async () => {
+  const { ctx, written } = makeCtx({
+    apiUrl: "https://api.juick.com",
+    maxPages: 3,
+  });
+  let mid = 1000;
+  let calls = 0;
+  await withFetchStub(
+    [() => {
+      calls++;
+      return json([{ mid: mid--, body: "always another page", replies: 0 }]);
+    }],
+    async () => {
+      await run(
+        "getUserPosts",
+        { uname: "endless-server-victim", withComments: false },
+        ctx,
+      );
+    },
+  );
+  assertEquals(
+    calls,
     3,
-    "the loop kept requesting (with an ever-advancing before_mid=200 that the fixture server ignores) until the stub finally broke the cycle on the 3rd call",
+    "maxPages=3 stops the loop after exactly 3 page fetches, even though the cursor advances every time and the server would happily keep paginating forever",
+  );
+  const res = written.find((w) => w.spec === "userPosts")!;
+  const posts = (res.payload as { posts: unknown[] }).posts;
+  assertEquals(
+    posts.length,
+    3,
+    "all 3 fetched pages' single message each is kept",
   );
 });
 
 // ---------------------------------------------------------------------------
-// Three DISTINCT non-array / malformed-response failure shapes (round-2
-// review finding — getMessages/getThread/getUser fail DIFFERENTLY)
+// Three DISTINCT non-array / malformed-response failure shapes (LB5) — now
+// coerced/validated instead of sailing through or throwing a bare TypeError
 // ---------------------------------------------------------------------------
 
-Deno.test("pin (shape 1/3): getMessages — a non-array truthy `data` (object) sails into the `z.array(MessageSchema)` resource schema and FAILS validation (unlike porkbun's z.any(), this actually throws at writeResource in the real runtime)", async () => {
+Deno.test("FIXED (juick-latent-bugs LB5 shape 1/3): getMessages — a non-array truthy `data` (object) is now coerced to [] exactly like the falsy case, and the written resource passes its OWN schema", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [() => json({ unexpected: "object shape", not: "an array" })],
@@ -335,92 +446,70 @@ Deno.test("pin (shape 1/3): getMessages — a non-array truthy `data` (object) s
   const payload = res.payload as { messages: unknown; count: unknown };
   assertEquals(
     payload.messages,
-    { unexpected: "object shape", not: "an array" },
-    "`data || []` only guards the FALSY case — a truthy non-array object sails through unchanged",
+    [],
+    "a non-array truthy object is now coerced to [] — Array.isArray(data) replaces the old `data || []`",
   );
-  assertEquals(
-    payload.count,
-    undefined,
-    "`(data || []).length` reads `.length` off a plain object -> undefined",
-  );
+  assertEquals(payload.count, 0);
   const validation = model.resources.messages.schema.safeParse(payload);
   assert(
-    !validation.success,
-    "the REAL resource schema (z.array(MessageSchema) for `messages`) rejects this payload — writeResource would throw in the real swamp runtime, unlike the fake test context above which just records it",
+    validation.success,
+    "the coerced payload now passes the real resource schema — writeResource would no longer throw in the real swamp runtime",
   );
 });
 
-Deno.test("pin (shape 2/3): getThread — a non-array truthy `data` (object) throws a TypeError from `items.slice(1)` BEFORE any resource is written", async () => {
+Deno.test("FIXED (juick-latent-bugs LB5 shape 2/3): getThread — a non-array truthy `data` (object) no longer throws a TypeError; post defaults to {} and comments to []", async () => {
   const { ctx, written } = makeCtx();
-  let threw: unknown;
   await withFetchStub(
     [() => json({ unexpected: "object", not: "an array" })],
     async () => {
-      try {
-        await run("getThread", { mid: 1 }, ctx);
-      } catch (err) {
-        threw = err;
-      }
+      await run("getThread", { mid: 1 }, ctx);
     },
   );
-  assert(
-    threw instanceof TypeError,
-    "items.slice is not a function on a plain object",
-  );
-  assertEquals(
-    written.find((w) => w.spec === "thread"),
-    undefined,
-    "no resource is written — the TypeError happens before writeResource is ever called",
-  );
+  const res = written.find((w) => w.spec === "thread")!;
+  const payload = res.payload as { post: unknown; comments: unknown };
+  assertEquals(payload.post, {});
+  assertEquals(payload.comments, []);
 });
 
-Deno.test("pin (shape 3/3): getUser — a non-array truthy `data` (object) is passed through AS-IS (not data[0]) and would fail UserSchema if it lacks uid/uname", async () => {
+Deno.test("FIXED (juick-latent-bugs LB5 shape 3/3): getUser — a non-array truthy `data` (object) that fails UserSchema now throws a domain error instead of being written through as-is", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [() => json({ error: "not a user, not an array" })],
     async () => {
-      await run("getUser", { uname: "x" }, ctx);
+      await assertRejects(
+        () => run("getUser", { uname: "x" }, ctx),
+        Error,
+        "invalid user response",
+      );
     },
   );
-  const res = written.find((w) => w.spec === "userProfile")!;
   assertEquals(
-    res.payload,
-    { error: "not a user, not an array" },
-    "Array.isArray(data) is false for a plain object -> `user = data`, passed through unchanged",
-  );
-  const validation = model.resources.userProfile.schema.safeParse(res.payload);
-  assert(
-    !validation.success,
-    "UserSchema requires uid (number) and uname (string) — this hostile shape fails validation",
+    written.find((w) => w.spec === "userProfile"),
+    undefined,
+    "no resource is written when the shape fails validation",
   );
 });
 
-Deno.test("pin: getUser on an EMPTY array `[]` — data[0] is undefined, a DISTINCT trigger from the non-array shapes above", async () => {
+Deno.test("FIXED (juick-latent-bugs LB5): getUser on an EMPTY array `[]` — data[0] is undefined, which now also throws a domain error instead of writing `undefined` through", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [() => json([])],
     async () => {
-      await run("getUser", { uname: "ghost" }, ctx);
+      await assertRejects(
+        () => run("getUser", { uname: "ghost" }, ctx),
+        Error,
+        "invalid user response",
+      );
     },
   );
-  const res = written.find((w) => w.spec === "userProfile")!;
-  assertEquals(
-    res.payload,
-    undefined,
-    "Array.isArray([]) is true -> data[0] on an empty array is undefined",
-  );
-  const validation = model.resources.userProfile.schema.safeParse(res.payload);
-  assert(
-    !validation.success,
-    'writeResource("userProfile", ..., undefined) fails UserSchema\'s required fields',
-  );
+  assertEquals(written.find((w) => w.spec === "userProfile"), undefined);
 });
 
 // ---------------------------------------------------------------------------
-// Unguarded JSON.parse — a non-JSON 200 body throws a bare SyntaxError
+// JSON.parse (LB4) — a non-JSON 200 body now throws a domain error
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a non-JSON 200 response body (e.g. an HTML error page from a misconfigured proxy) surfaces as an unmapped SyntaxError", async () => {
+Deno.test("FIXED (juick-latent-bugs LB4): a non-JSON 200 response body (e.g. an HTML error page from a misconfigured proxy) now surfaces as a Juick domain Error, not a bare SyntaxError", async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [() =>
@@ -429,15 +518,17 @@ Deno.test("pin: a non-JSON 200 response body (e.g. an HTML error page from a mis
         headers: { "Content-Type": "text/html" },
       })],
     async () => {
-      let threw: unknown;
-      try {
-        await run("getMessages", {}, ctx);
-      } catch (err) {
-        threw = err;
-      }
+      const err = await assertRejects(
+        () => run("getMessages", {}, ctx),
+        Error,
+      );
       assert(
-        threw instanceof SyntaxError,
-        "juickApi's `JSON.parse(text)` has no try/catch — this is NOT mapped to a Juick-domain error",
+        !(err instanceof SyntaxError),
+        "juickApi's JSON.parse is now wrapped — this must NOT be a bare SyntaxError",
+      );
+      assert(
+        err.message.includes("invalid JSON response"),
+        "the domain error message identifies the failure as an invalid JSON response",
       );
     },
   );
@@ -456,26 +547,32 @@ Deno.test("pin: an empty 200 body (no content) parses to `null`, not an error �
 });
 
 // ---------------------------------------------------------------------------
-// No AbortSignal/timeout anywhere; Retry-After is never read
+// AbortSignal/timeout + Retry-After (LB7)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: no method ever passes an AbortSignal to fetch — a hung api.juick.com endpoint would hang the call forever", async () => {
+Deno.test('FIXED (juick-latent-bugs LB7): every request now carries an AbortSignal and uses redirect: "manual" — a hung api.juick.com endpoint can no longer hang the call forever', async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [() => json([])],
     async (_calls, rawCalls) => {
       await run("getMessages", {}, ctx);
       assertEquals(rawCalls.length, 1);
+      const init = rawCalls[0].init;
+      assert(init !== undefined, "fetch is now called with an init object");
+      assert(
+        init!.signal instanceof AbortSignal,
+        "an AbortSignal is threaded through to fetch",
+      );
       assertEquals(
-        rawCalls[0].init,
-        undefined,
-        "juickApi calls `fetch(url)` with no second argument at all — no signal, no headers, nothing",
+        init!.redirect,
+        "manual",
+        'redirect: "manual" is required so redirect Locations can be re-validated (LB1)',
       );
     },
   );
 });
 
-Deno.test("pin: a 503 WITH a Retry-After header still throws immediately — the header is never read, and no retry is attempted", async () => {
+Deno.test("FIXED (juick-latent-bugs LB7): a 503 WITH a Retry-After header still throws (no auto-retry), but the header value is now surfaced in the error message", async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [() =>
@@ -484,32 +581,49 @@ Deno.test("pin: a 503 WITH a Retry-After header still throws immediately — the
         headers: { "Retry-After": "120" },
       })],
     async (calls) => {
-      let threw: unknown;
-      try {
-        await run("getMessages", {}, ctx);
-      } catch (err) {
-        threw = err;
-      }
-      assert(threw instanceof Error);
-      assert((threw as Error).message.includes("503"));
+      const err = await assertRejects(
+        () => run("getMessages", {}, ctx),
+        Error,
+      );
+      assert(err.message.includes("503"));
+      assert(
+        err.message.includes("120"),
+        "the Retry-After value is now included in the thrown error message",
+      );
       assertEquals(
         calls.length,
         1,
-        "no retry was attempted despite Retry-After",
+        "still no retry is attempted — Retry-After is surfaced, not acted on",
       );
     },
   );
 });
 
+Deno.test("FIXED (juick-latent-bugs LB7): juickApi aborts an in-flight request once `timeout` elapses — a hung endpoint no longer hangs the call forever", async () => {
+  const { ctx } = makeCtx({ apiUrl: "https://api.juick.com", timeout: 20 });
+  await withFetchStub(
+    [(req) =>
+      new Promise<Response>((_resolve, reject) => {
+        req.signal.addEventListener("abort", () => {
+          reject(
+            new DOMException("The signal has been aborted", "AbortError"),
+          );
+        });
+      })],
+    async () => {
+      await assertRejects(() => run("getMessages", {}, ctx), DOMException);
+    },
+  );
+});
+
 // ---------------------------------------------------------------------------
-// Unicode astral-plane split in the title slice
+// Unicode astral-plane split (LB6) — fixed by slicing on code points
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a title whose 80th UTF-16 code unit lands inside an astral surrogate pair leaks a LONE (unpaired) surrogate into both title and obsidianPath", async () => {
+Deno.test("FIXED (juick-latent-bugs LB6): a title whose 80th CODE POINT lands on an astral emoji keeps the surrogate pair intact — slicing now happens by code point, not UTF-16 code unit", async () => {
   const { ctx, written } = makeCtx();
   // 79 ASCII chars + one astral emoji (2 UTF-16 code units: a high surrogate
-  // then a low surrogate). slice(0, 80) keeps the 79 ASCII chars plus ONLY
-  // the emoji's high surrogate, splitting the pair.
+  // then a low surrogate, but exactly ONE code point).
   const prefix = "x".repeat(79);
   const astral = "\u{1F600}"; // 😀 U+1F600, encoded as a surrogate pair
   const body = prefix + astral + " trailing text that must be cut off";
@@ -523,27 +637,29 @@ Deno.test("pin: a title whose 80th UTF-16 code unit lands inside an astral surro
   const posts = (res.payload as {
     posts: Array<{ obsidianPath: string }>;
   }).posts;
-  // title isn't a separate field on the written post object (it's baked into
-  // obsidianContent/obsidianPath) — recover it from obsidianPath, which is
-  // `${folder}/${date ? date + " " : ""}${title}` with no date here (the
-  // fixture message carries no timestamp).
   const recoveredTitle = posts[0].obsidianPath.slice("juick/".length);
-  assertEquals(recoveredTitle.length, 80);
-  const lastCharCode = recoveredTitle.charCodeAt(79);
-  assert(
-    lastCharCode >= 0xd800 && lastCharCode <= 0xdbff,
-    `expected a lone HIGH surrogate at position 79 (got 0x${
-      lastCharCode.toString(16)
-    }) — slice(0,80) split the astral pair`,
+  assertEquals(
+    Array.from(recoveredTitle).length,
+    80,
+    "80 CODE POINTS are kept: 79 'x' plus the whole emoji as ONE code point",
+  );
+  assertEquals(
+    recoveredTitle.length,
+    81,
+    "the UTF-16 length is 81 — the emoji still costs 2 code units, but both stay paired",
+  );
+  assertEquals(
+    Array.from(recoveredTitle).at(-1),
+    astral,
+    "the emoji survives whole — no lone/unpaired surrogate",
   );
 });
 
 // ---------------------------------------------------------------------------
-// getMessages resource-name clobber — tag is silently dropped from the NAME
-// when uname is also present (though the query itself includes both)
+// getMessages resource-name clobber (LB8) — fixed by folding tag into name
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: getMessages with BOTH uname and tag — the query includes both params, but the written resource NAME uses only uname (tag is dropped from the name)", async () => {
+Deno.test("FIXED (juick-latent-bugs LB8): getMessages with BOTH uname and tag — the resource NAME now folds in the tag instead of silently dropping it", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [() => json([])],
@@ -557,20 +673,12 @@ Deno.test("pin: getMessages with BOTH uname and tag — the query includes both 
   const res = written.find((w) => w.spec === "messages")!;
   assertEquals(
     res.name,
-    "feed_alice",
-    "the resource NAME collapses to feed_<uname>, silently ignoring tag — two different tag-scoped feeds for the same uname would clobber each other's persisted resource",
+    "feed_alice_tag_music",
+    "the resource NAME now encodes both uname and tag, matching the query",
   );
 });
 
-Deno.test("pin: two DIFFERENT tag-scoped feeds for the SAME uname both resolve to the IDENTICAL resource name — the actual clobber mechanism", async () => {
-  // In the real swamp runtime, writeResource is keyed on instance name (per
-  // the memory note: "context.readResource(name) is keyed on instance name
-  // ONLY, not per-spec"), so a SECOND call with the same computed name
-  // overwrites the first call's persisted resource. Our fake context here
-  // just appends to an array (it doesn't simulate that overwrite), so this
-  // test proves the actual clobbering MECHANISM — both calls compute the
-  // same name — the same technique porkbun's own "create's writeResource
-  // uses the SAME fixed resource name" pin uses for an analogous defect.
+Deno.test("FIXED (juick-latent-bugs LB8): two DIFFERENT tag-scoped feeds for the SAME uname now resolve to DIFFERENT resource names — no more clobber", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub([() => json([])], async () => {
     await run("getMessages", { uname: "alice", tag: "music" }, ctx);
@@ -579,8 +687,12 @@ Deno.test("pin: two DIFFERENT tag-scoped feeds for the SAME uname both resolve t
   const names = written.filter((w) => w.spec === "messages").map((w) => w.name);
   assertEquals(
     names,
-    ["feed_alice", "feed_alice"],
-    "both the music-tagged and sports-tagged feed queries write the IDENTICAL resource name — the second call clobbers the first in a real persisted instance",
+    ["feed_alice_tag_music", "feed_alice_tag_sports"],
+    "the two tag-scoped feeds now write to DISTINCT resource names",
+  );
+  assert(
+    names[0] !== names[1],
+    "the two names must differ — this is the fix for the clobber",
   );
 });
 
