@@ -1,11 +1,53 @@
 # Changelog
 
-## Unreleased
+## 2026.08.02.1
+
+Real-fixes the four latent bugs the adversarial suite characterized in the prior
+test-backfill release, bumps the model `version` `2026.07.21.1` ->
+`2026.08.02.1` with an identity `upgrades[]` entry (no `globalArguments` or
+resource-schema change), and flips the four bug pins in
+`comfyui_adversarial_test.ts` from asserting the buggy output to asserting the
+corrected output.
+
+- **Fix 1 (MED):** `generate` no longer records a seed it never applied. A new
+  `appliedSeed`
+  (`seed !== undefined && seedNodeId !== undefined ? seed :
+  undefined`) is
+  what gets patched into the graph AND what gets recorded — an explicit `seed`
+  with no known `seedNodeId`/`template` is now honestly recorded as `null`
+  instead of misrepresenting the render.
+- **Fix 2 (MED):** `ComfyClient.waitForResult` now throws
+  `ComfyUI render failed for prompt <id> (status: error)` when a history entry
+  reports `status_str: "error"` AND produced zero images, instead of treating
+  `completed: true` as unconditional success. An errored render that still
+  produced at least one image is unaffected and still returns normally.
+- **Fix 3 (LOW):** `snapshotServer` (backing both `lookup` and `sync`) now
+  checks `res.ok` before `res.json()`, throwing
+  `ComfyUI /system_stats failed: <status> <statusText>` on a non-2xx response —
+  instead of a raw unmapped `SyntaxError` on a non-JSON 500 body, or silently
+  writing `comfyuiVersion: undefined` on a well-formed-but-empty JSON 500 body.
+- **Fix 4 (LOW):** `saveImages` now joins `img.subfolder` into the saved path
+  (`${outputDir}/${subfolder}/${filename}`, creating the subfolder directory as
+  needed) instead of dropping it — two images that share a filename but live in
+  different ComfyUI subfolders no longer collide on disk.
+- `comfyui_adversarial_test.ts`: flipped the four `pin:` tests (seed-record,
+  errored-render, `snapshotServer` x2, `saveImages` subfolder-collision) to
+  assert the corrected behavior, and corrected the suite header, which
+  previously said `comfyui.ts` was "UNMODIFIED". The multi-image-orphan pin and
+  the apiKey-echo pin are unchanged — they document intentionally unfixed
+  behavior.
+- `lib/comfy_client.test.ts`: added two `waitForResult` tests covering both
+  sides of the new `errored && images.length === 0` guard — an errored+
+  imageless render rejects, an errored render with at least one image still
+  resolves.
+
+### Prior test-backfill (originally shipped as `Unreleased`)
 
 Test backfill to the STANDARD.md five-suite quality bar (wave 2c gap-check child
 of the extension-quality backfill program, `ext-quality-test-backfill`). No
-behavior change — `comfyui.ts`, its libs, and the bundled workflow JSON are
-byte-frozen; the model `version` stays `2026.07.21.1`.
+behavior change to this prior release — `comfyui.ts`, its libs, and the bundled
+workflow JSON were byte-frozen at the time; the model `version` stayed
+`2026.07.21.1`.
 
 - Gap-checked the 8 pre-existing test files by ROLE (not filename) and mapped
   them into the STANDARD.md suites: `methods` = `base.test.ts` +
@@ -30,8 +72,10 @@ byte-frozen; the model `version` stays `2026.07.21.1`.
   caption/bbox input, credential-leak assertions across both the standard
   API-key and Claude Code OAuth-token auth shapes, and a fixtures-secret-scan
   (`sk-ant-api`/`sk-ant-oat` shapes + a high-entropy pattern + a sanity poison
-  test). Also PINS four found bugs (characterized, NOT fixed — tracked in the
-  LOCAL `comfyui-latent-bugs` issue-lifecycle model, never filed to the Lab):
+  test). Also PINNED four found bugs at the time (characterized, not yet fixed —
+  tracked in the LOCAL `comfyui-latent-bugs` issue-lifecycle model, never filed
+  to the Lab). **All four are now FIXED in `2026.08.02.1` above** — the pins
+  were flipped to assert the corrected behavior:
   1. `generate` records a seed it never applied when no `seedNodeId`/ `template`
      resolves — `patched` stays the unmodified base graph while the `generation`
      resource still claims the caller's explicit `seed`, misrepresenting what

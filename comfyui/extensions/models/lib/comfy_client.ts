@@ -135,8 +135,14 @@ export class ComfyClient {
     while (true) {
       const entry = await this.getHistory(promptId);
       if (entry) {
-        const done = entry.status?.completed === true ||
-          this.collectImages(entry).length > 0;
+        const images = this.collectImages(entry);
+        const errored = entry.status?.status_str === "error";
+        if (errored && images.length === 0) {
+          throw new Error(
+            `ComfyUI render failed for prompt ${promptId} (status: ${entry.status?.status_str})`,
+          );
+        }
+        const done = entry.status?.completed === true || images.length > 0;
         if (done) return entry;
       }
       if (Date.now() - start >= timeoutMs) {
