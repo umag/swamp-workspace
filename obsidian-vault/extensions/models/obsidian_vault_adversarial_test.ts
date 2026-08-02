@@ -4,16 +4,19 @@
 // the filesystem attack surface (path traversal, symlink escape, YAML/
 // frontmatter injection, ReDoS).
 //
-// obsidian_vault.ts is BYTE-FROZEN. Every test in this file PINS current
-// behavior — including seven KNOWN BUGS cataloged and tracked in the LOCAL
-// `obsidian-vault-latent-bugs` issue-lifecycle model (never the swamp.club
-// Lab — this is our own extension). A pinned test's comment always starts
-// with `pin: KNOWN BUG (SEVERITY, obsidian-vault-latent-bugs #N)` so no
-// reviewer or future edit mistakes a pin for something safe to "fix" here.
-// This file also characterizes the defenses that DO hold (fs path
+// As of 2026.08.02.1, obsidian_vault.ts is no longer byte-frozen: the seven
+// latent bugs this file used to characterize as accepted behavior
+// (CRLF-frontmatter data loss, ReDoS alternation, backslash traversal,
+// digest/search resource bounds, digest backend enforcement, calendar-date
+// validation, trash overwrite) have all been real-fixed. Every test that used
+// to be tagged as characterizing one of those numbered bugs has been
+// converted into a REGRESSION test asserting the fixed behavior instead —
+// that history lives in the LOCAL `obsidian-vault-latent-bugs`
+// issue-lifecycle model (never the swamp.club Lab — this is our own
+// extension), not in this file's comments anymore.
+// This file still also characterizes the defenses that DO hold (fs path
 // confinement, symlink refusal, YAML-injection prevention, the maxBodyChars
-// privacy default) as POSITIVE tests — not everything adversarial here is a
-// bug.
+// privacy default) as POSITIVE tests, unchanged by this fix.
 import {
   assert,
   assertEquals,
@@ -29,6 +32,7 @@ import {
   readProperties,
   resolveVaultPath,
   resolveVaultPathSafe,
+  splitFrontmatter,
 } from "./obsidian_vault.ts";
 
 const FIXTURES = new URL("./fixtures/", import.meta.url).pathname;
@@ -290,7 +294,7 @@ Deno.test("error handling (testing dimension): a CLI failure that mentions a mis
 // ---------------------------------------------------------------------------
 
 Deno.test(
-  "pin: KNOWN BUG (LOW, obsidian-vault-latent-bugs #7) — a second delete of a recreated same-named note silently overwrites the earlier trashed copy",
+  "fixed (obsidian-vault-latent-bugs #7): a second delete of a recreated same-named note no longer clobbers the earlier trashed copy",
   async () => {
     await withVault(async (root) => {
       await Deno.mkdir(`${root}/notes`);
@@ -307,11 +311,32 @@ Deno.test(
       const del2 = fsContext(root);
       await run("delete", { file: "notes/x.md" }, del2.context);
 
-      // The first version is gone — Deno.rename silently replaced it. Trash
-      // is therefore NOT a reliable multi-version recovery mechanism; this is
-      // the current, deferred behavior, not something this change fixes.
+      // The first trashed copy must still be intact — uniqueTrashPath gave
+      // the second delete a distinct destination instead of overwriting it.
       assertEquals(
         await Deno.readTextFile(`${root}/.trash/notes/x.md`),
+        "first version",
+        "the first trashed copy must survive a second delete of the same path",
+      );
+
+      // ...and the second copy must exist too, under a distinct name, fully
+      // enumerable and recoverable.
+      const entries: string[] = [];
+      for await (const entry of Deno.readDir(`${root}/.trash/notes`)) {
+        entries.push(entry.name);
+      }
+      assertEquals(
+        entries.length,
+        2,
+        "both trashed copies must be enumerable in .trash/notes",
+      );
+      const secondName = entries.find((n) => n !== "x.md");
+      assert(
+        secondName !== undefined,
+        "a distinctly-named second copy must exist",
+      );
+      assertEquals(
+        await Deno.readTextFile(`${root}/.trash/notes/${secondName}`),
         "second version",
       );
     });
@@ -343,16 +368,30 @@ Deno.test("idempotency: propertySet applied twice with the same value produces b
 // ---------------------------------------------------------------------------
 
 Deno.test(
-  "pin: KNOWN BUG (LOW, obsidian-vault-latent-bugs #5) — digest ignores an explicit backend=cli and silently runs on the filesystem anyway",
+  "fixed (obsidian-vault-latent-bugs #5): digest rejects an explicit backend=cli instead of silently running on the filesystem",
   async () => {
     await withVault(async (root) => {
       await Deno.writeTextFile(`${root}/note.md`, "# Heading\n\nbody text");
       const a = fsContext(root, { backend: "cli" });
       // digest is NOT in CLI_ONLY_METHODS, so selectBackend(..., "digest")
-      // does not throw for backend=cli — but the method discards that
-      // return value entirely and always calls withVaultRoot + the fs walk.
-      // No Obsidian CLI call is ever attempted, even though the caller
-      // explicitly asked for the cli backend.
+      // does not throw on its own for backend=cli — the method itself must
+      // now check the returned backend and refuse to fall through to the fs
+      // walk when the caller explicitly asked for cli.
+      await assertRejects(
+        () => run("digest", { maxFiles: 2000, maxBodyChars: 0 }, a.context),
+        Error,
+        "filesystem",
+      );
+    });
+  },
+);
+
+Deno.test(
+  "digest still runs normally under backend=auto with vaultRoot set",
+  async () => {
+    await withVault(async (root) => {
+      await Deno.writeTextFile(`${root}/note.md`, "# Heading\n\nbody text");
+      const a = fsContext(root, { backend: "auto" });
       await run("digest", { maxFiles: 2000, maxBodyChars: 0 }, a.context);
       assertEquals(a.captured[0].attrs.fileCount, 1);
     });
@@ -360,22 +399,49 @@ Deno.test(
 );
 
 Deno.test(
-  "pin: KNOWN BUG (MED, obsidian-vault-latent-bugs #3) — a backslash path is treated as one literal segment, not a traversal attempt (POSIX-only guard)",
+  "fixed (obsidian-vault-latent-bugs #3): a backslash path is now treated as a traversal attempt, not one literal segment",
   () => {
-    // On Windows, "\\" is a directory separator and this string would escape
-    // the vault root; normalizeSegments splits only on "/", so on POSIX (and
-    // in this model's own string-level view of the path) it is one odd but
-    // in-bounds filename, not two ".." traversal segments.
-    const p = resolveVaultPath(cfg(), "..\\..\\etc\\passwd");
-    assertEquals(p.vaultRelativePath, "..\\..\\etc\\passwd");
+    // Previously, normalizeSegments split only on "/", so on POSIX (and in
+    // this model's own string-level view of the path) a backslash-separated
+    // string was treated as one odd but in-bounds filename rather than two
+    // ".." traversal segments. normalizeSegments now splits on both "/" and
+    // "\\", closing that Windows-shaped hole even on a POSIX host.
+    assertThrows(
+      () => resolveVaultPath(cfg(), "..\\..\\etc\\passwd"),
+      Error,
+      "escapes vault root",
+    );
   },
 );
 
 Deno.test(
-  "pin: KNOWN BUG (LOW, obsidian-vault-latent-bugs #6) — inferDate accepts impossible calendar dates",
+  "a mixed forward/backslash traversal attempt is also rejected",
   () => {
-    assertEquals(inferDate("2026-02-31-standup.md"), "2026-02-31");
-    assertEquals(inferDate("2026-04-31-standup.md"), "2026-04-31");
+    // Documents the hardening tradeoff explicitly: a legitimate filename that
+    // happens to contain a literal backslash (rare, but possible on a POSIX
+    // filesystem) would now also be rejected as a path segment separator —
+    // accepted here as the safer default for a personal notes vault.
+    assertThrows(
+      () => resolveVaultPath(cfg(), "a\\..\\..\\escape.md"),
+      Error,
+      "escapes vault root",
+    );
+  },
+);
+
+Deno.test(
+  "fixed (obsidian-vault-latent-bugs #6): inferDate now rejects impossible calendar dates",
+  () => {
+    assertEquals(inferDate("2026-02-31-standup.md"), null);
+    assertEquals(inferDate("2026-04-31-standup.md"), null);
+  },
+);
+
+Deno.test(
+  "inferDate accepts Feb 29 on a leap year and rejects it on a non-leap year",
+  () => {
+    assertEquals(inferDate("2024-02-29-standup.md"), "2024-02-29");
+    assertEquals(inferDate("2026-02-29-standup.md"), null);
   },
 );
 
@@ -415,7 +481,7 @@ Deno.test("API contract: argv is a real array, not a shell string — a hostile 
 // ---------------------------------------------------------------------------
 
 Deno.test(
-  "pin: KNOWN BUG (MED, obsidian-vault-latent-bugs #4) — signalHits are unbounded in memory; only the output field is sliced to 500",
+  "fixed (obsidian-vault-latent-bugs #4): signalHits are now bounded in memory — the rollup count stays TRUE while the output array is capped and truncated is set",
   async () => {
     await withVault(async (root) => {
       const lines = Array.from(
@@ -435,23 +501,68 @@ Deno.test(
       }[];
       const hits = a.captured[0].attrs.signalHits as unknown[];
       assertEquals(rollups[0].count, 600, "the TRUE total is not capped");
-      assertEquals(hits.length, 500, "only the OUTPUT array is capped at 500");
+      assertEquals(hits.length, 500, "the OUTPUT array is capped at 500");
+      assertEquals(
+        a.captured[0].attrs.truncated,
+        true,
+        "capping signalHits below the true count must be visible via truncated",
+      );
     });
   },
 );
 
 Deno.test(
-  "pin: KNOWN BUG (MED, obsidian-vault-latent-bugs #4) — digest and search read a whole file with no per-file byte bound",
+  "fixed (obsidian-vault-latent-bugs #4): digest now skips a file over the byte cap instead of reading it whole",
   async () => {
     await withVault(async (root) => {
-      const oneMegabyte = "x".repeat(1_000_000);
-      await Deno.writeTextFile(`${root}/huge.md`, oneMegabyte);
+      // > MAX_SCAN_FILE_BYTES (2_000_000)
+      const overCap = "x".repeat(2_500_000);
+      await Deno.writeTextFile(`${root}/huge.md`, overCap);
       const a = fsContext(root);
-      // No size guard exists — this completes rather than being rejected for
-      // exceeding a per-file limit (there is no such limit to trip).
       await run("digest", { maxFiles: 2000, maxBodyChars: 0 }, a.context);
+      assertEquals(
+        a.captured[0].attrs.fileCount,
+        0,
+        "the oversized file must be skipped, not read",
+      );
+      assertEquals(a.captured[0].attrs.truncated, true);
+    });
+  },
+);
+
+Deno.test(
+  "digest still fully reads a normal-sized file under the byte cap",
+  async () => {
+    await withVault(async (root) => {
+      await Deno.writeTextFile(
+        `${root}/normal.md`,
+        "# Heading\n\nsome body text here",
+      );
+      const a = fsContext(root);
+      await run("digest", { maxFiles: 2000, maxBodyChars: 0 }, a.context);
+      assertEquals(a.captured[0].attrs.fileCount, 1);
+      assertEquals(a.captured[0].attrs.truncated, false);
       const entry = (a.captured[0].attrs.files as Record<string, unknown>[])[0];
-      assertEquals(entry.wordCount, 1);
+      assertEquals(entry.wordCount, 6);
+    });
+  },
+);
+
+Deno.test(
+  "search also skips a file over the byte cap instead of reading it whole",
+  async () => {
+    await withVault(async (root) => {
+      // > MAX_SCAN_FILE_BYTES (2_000_000)
+      const overCap = "x needle x".repeat(300_000);
+      await Deno.writeTextFile(`${root}/huge.md`, overCap);
+      const a = fsContext(root);
+      await run("search", { query: "needle" }, a.context);
+      assertEquals(
+        a.captured[0].attrs.results,
+        [],
+        "the oversized file must be skipped, producing no matches",
+      );
+      assertEquals(a.captured[0].attrs.truncated, true);
     });
   },
 );
@@ -543,23 +654,22 @@ Deno.test("fs attack surface: YAML/frontmatter injection is prevented — a valu
 });
 
 Deno.test(
-  "pin: KNOWN BUG (HIGH, obsidian-vault-latent-bugs #1) — a CRLF frontmatter note's properties are silently invisible to readProperties",
+  "fixed (obsidian-vault-latent-bugs #1): a CRLF frontmatter note's properties are now visible to readProperties",
   () => {
-    // Constructed inline (not solely from the committed fixture) so the pin
+    // Constructed inline (not solely from the committed fixture) so this
     // holds even if a future Git configuration ever normalizes line endings
     // on checkout.
     const crlf = "---\r\ntitle: CRLF sample note\r\nstatus: draft\r\n---\r\n" +
       "\r\n# CRLF sample body\r\n\r\nBody text after CRLF frontmatter.\r\n";
     assertEquals(
       readProperties(crlf),
-      {},
-      "silently wrong: not {} would mean the bug is fixed",
+      { title: "CRLF sample note", status: "draft" },
     );
   },
 );
 
 Deno.test(
-  "pin: KNOWN BUG (HIGH, obsidian-vault-latent-bugs #1) — the CRLF fixture on disk still carries real \\r bytes (guards against silent Git normalization)",
+  "regression guard: the CRLF fixture on disk still carries real \\r bytes (guards against silent Git normalization)",
   () => {
     const onDisk = fixture("crlf-frontmatter.md");
     assert(onDisk.includes("\r\n"), "fixture must retain literal CRLF bytes");
@@ -567,7 +677,7 @@ Deno.test(
 );
 
 Deno.test(
-  "pin: KNOWN BUG (HIGH, obsidian-vault-latent-bugs #1) — setProperties on a CRLF note PREPENDS a second frontmatter block instead of merging into the existing one",
+  "fixed (obsidian-vault-latent-bugs #1): setProperties on a CRLF note merges into the existing frontmatter block instead of prepending a second one",
   async () => {
     await withVault(async (root) => {
       const crlf =
@@ -582,36 +692,93 @@ Deno.test(
       );
       const next = await Deno.readTextFile(`${root}/note.md`);
       const fenceCount = (next.match(/^---$/gm) ?? []).length;
-      assertEquals(fenceCount, 4, "TWO frontmatter-looking blocks now exist");
+      assertEquals(fenceCount, 2, "exactly one frontmatter block, not two");
       const props = readProperties(next);
-      // Only the NEW block is visible; the CRLF note's original title/status
-      // are now silently buried inside what readProperties treats as body.
-      assertEquals(props, { status: "active" });
-      assert(
-        next.includes("title: CRLF sample note"),
-        "the original title text still exists in the file...",
-      );
-      assertEquals(
-        props.title,
-        undefined,
-        "...but it is no longer reachable as a property — this is the corruption",
-      );
+      // The original title survives the merge and stays reachable as a real
+      // property — status is updated, title is carried through untouched.
+      assertEquals(props, { title: "CRLF sample note", status: "active" });
     });
   },
 );
 
 Deno.test(
-  "pin: KNOWN BUG (MED, obsidian-vault-latent-bugs #2) — an alternation-based catastrophic regex passes the nested-quantifier guard",
+  "regression (obsidian-vault-latent-bugs #1): a CRLF note round-trips end to end through a real temp vault — write, setProperties, read back",
+  async () => {
+    await withVault(async (root) => {
+      const crlf =
+        "---\r\ntitle: CRLF sample note\r\nstatus: draft\r\n---\r\n" +
+        "\r\n# CRLF sample body\r\n\r\nBody text after CRLF frontmatter.\r\n";
+      await Deno.writeTextFile(`${root}/note.md`, crlf);
+      const a = fsContext(root);
+      await run(
+        "setProperties",
+        { file: "note.md", properties: { status: "archived", tag: "x" } },
+        a.context,
+      );
+      const b = fsContext(root);
+      await run("properties", { file: "note.md" }, b.context);
+      const props = b.captured[0].attrs.properties as Record<string, unknown>;
+      assertEquals(
+        props,
+        { title: "CRLF sample note", status: "archived", tag: "x" },
+        "the original title survives, the changed key is updated, the new key is added",
+      );
+      const next = await Deno.readTextFile(`${root}/note.md`);
+      const fenceCount = (next.match(/^---$/gm) ?? []).length;
+      assertEquals(
+        fenceCount,
+        2,
+        "no duplicate frontmatter block after a real write",
+      );
+    });
+  },
+);
+
+Deno.test("splitFrontmatter recognizes a CRLF opening fence (---\\r\\n)", () => {
+  const split = splitFrontmatter(
+    "---\r\ntitle: T\r\n---\r\nbody\r\n",
+  );
+  assert(split.hasFrontmatter, "a CRLF opening fence must be recognized");
+  assertEquals(readProperties(`---\r\n${split.raw}---\r\n`), { title: "T" });
+});
+
+Deno.test("splitFrontmatter is byte-identical for an LF note (the CRLF fix does not touch the LF path)", () => {
+  const lf = "---\ntitle: T\nstatus: draft\n---\n\nbody\n";
+  const split = splitFrontmatter(lf);
+  assertEquals(split, {
+    raw: "title: T\nstatus: draft\n",
+    body: "\nbody\n",
+    hasFrontmatter: true,
+  });
+});
+
+Deno.test(
+  "fixed (obsidian-vault-latent-bugs #2): an alternation-based catastrophic regex is now rejected by the guard",
   () => {
-    // The guard's regex only matches a single parenthesized group followed by
-    // its own quantifier — it does not account for alternation-based
-    // catastrophic backtracking. This only asserts that the pattern COMPILES
-    // (passes the guard); it deliberately does not exercise the pattern
-    // against a real line, which could hang the test runner.
-    const matcher = buildSearchMatcher("(a|a)+", true, false);
-    assertEquals(typeof matcher, "function");
-    const matcher2 = buildSearchMatcher("(a|ab)*", true, false);
-    assertEquals(typeof matcher2, "function");
+    // The nested-quantifier guard alone only matched a single parenthesized
+    // group followed by its own quantifier — it did not account for
+    // alternation-based catastrophic backtracking. ALTERNATION_QUANTIFIER
+    // closes that hole.
+    assertThrows(
+      () => buildSearchMatcher("(a|a)+", true, false),
+      Error,
+      "quantifier",
+    );
+    assertThrows(
+      () => buildSearchMatcher("(a|ab)*", true, false),
+      Error,
+      "quantifier",
+    );
+  },
+);
+
+Deno.test(
+  "a non-quantified alternation still compiles and matches (the accepted tradeoff: only a QUANTIFIED alternation group is rejected)",
+  () => {
+    const matcher = buildSearchMatcher("(cat|dog)", true, false);
+    assert(matcher("I have a cat"));
+    assert(matcher("I have a dog"));
+    assert(!matcher("I have a fish"));
   },
 );
 

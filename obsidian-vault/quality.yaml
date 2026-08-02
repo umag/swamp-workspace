@@ -3,15 +3,16 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-obsidian-vault,
-# the LAST entry on quality-allowlist.txt — this backfill takes the Phase D
-# program to 100%). obsidian_vault.ts is BYTE-FROZEN — every new suite drives
-# model.methods.<m>.execute() against a fake context (fs methods over a
-# Deno.makeTempDir vault) or a stubbed Deno.Command (the 11 CLI-only
-# methods), characterizing already-shipped behavior. Seven latent bugs found
-# during the round-1 adversarial/security plan review, plus one more (#8)
-# found while writing the methods/coverage suites themselves, are pinned as
-# characterization tests and cataloged in the LOCAL
-# obsidian-vault-latent-bugs issue-lifecycle model (never the swamp.club Lab).
+# the LAST entry on quality-allowlist.txt — this backfill took the Phase D
+# program to 100%). Eight latent bugs fixed in 2026.08.02.1 (CRLF-frontmatter
+# data loss, ReDoS alternation guard, backslash traversal, digest/search byte
+# + signalHits bounds, digest backend enforcement, calendar-date validation,
+# trash overwrite, real setProperties/propertyRemove action) — former
+# `pin: KNOWN BUG` characterization tests in the adversarial and coverage
+# suites are now regression tests asserting the fixed behavior. History
+# remains cataloged in the LOCAL obsidian-vault-latent-bugs issue-lifecycle
+# model (never the swamp.club Lab). Ratchet numbers below are re-stamped from
+# a real `swamp extension quality` run against 2026.08.02.1.
 schemaVersion: 1
 extension: obsidian-vault
 tests:

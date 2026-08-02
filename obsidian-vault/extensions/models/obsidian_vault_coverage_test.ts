@@ -4,15 +4,21 @@
 // a SPECIFIC guard or branch that a code reviewer could delete without any
 // existing test going red.
 //
-// obsidian_vault.ts is BYTE-FROZEN. Two tests below (marked `pin: KNOWN BUG`)
-// characterize a NEWLY DISCOVERED latent bug found while writing this exact
-// suite — obsidian-vault-latent-bugs #8, filed alongside the seven bugs the
-// approved plan's adversarial review already cataloged. Writing an exhaustive
-// methods/coverage suite is precisely the kind of exercise that surfaces
-// bugs static review missed; #8 is reported the same way as #1-#7 (a local,
-// non-blocking, `accepted` finding — never a swamp.club Lab issue).
+// As of 2026.08.02.1: two tests below used to characterize a NEWLY DISCOVERED
+// latent bug found while writing this exact suite — obsidian-vault-latent-bugs
+// #8, filed alongside the seven bugs the approved plan's adversarial review
+// already cataloged (writing an exhaustive methods/coverage suite is
+// precisely the kind of exercise that surfaces bugs static review missed).
+// #8 has now been real-fixed the same way as #1-#7, and both tests below were
+// converted from bug-characterizing pins into regression tests asserting the
+// real (computed, not hardcoded) write-action signal.
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
-import { model, propertyTypeHint, selectBackend } from "./obsidian_vault.ts";
+import {
+  model,
+  propertyTypeHint,
+  readProperties,
+  selectBackend,
+} from "./obsidian_vault.ts";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -274,17 +280,16 @@ Deno.test("selectBackend: a CLI-only method WITH a headless alternative names it
 });
 
 // ---------------------------------------------------------------------------
-// pin: KNOWN BUG (MED, obsidian-vault-latent-bugs #8) — operationResult.action
-// is a hardcoded literal for setProperties and propertyRemove, not the real
-// write outcome. classifyWrite's own doc comment promises "a real idempotency
-// signal"; these two methods compute (setProperties) or could compute
-// (propertyRemove) that signal and then discard it in favor of a fixed
-// string, so a caller branching on `action` to skip downstream work on a true
-// no-op is misled every time.
+// fixed (obsidian-vault-latent-bugs #8): operationResult.action used to be a
+// hardcoded literal for setProperties and propertyRemove, not the real write
+// outcome. classifyWrite's own doc comment promises "a real idempotency
+// signal"; both methods now compute that signal via classifyWrite and report
+// it instead of a fixed string, so a caller branching on `action` to skip
+// downstream work on a true no-op is no longer misled.
 // ---------------------------------------------------------------------------
 
 Deno.test(
-  "pin: KNOWN BUG (MED, obsidian-vault-latent-bugs #8) — setProperties reports action:'updated' for a brand-new file, an unchanged repeat, AND a real change alike",
+  "fixed (obsidian-vault-latent-bugs #8): setProperties reports the real action — created, unchanged, or updated",
   async () => {
     await withVault(async (root) => {
       const created = fsContext(root);
@@ -293,12 +298,12 @@ Deno.test(
         { file: "note.md", properties: { status: "active" } },
         created.context,
       );
-      assertEquals(created.captured[0].attrs.action, "updated");
+      assertEquals(created.captured[0].attrs.action, "created");
       const stat1 = await Deno.stat(`${root}/note.md`);
 
       // Same properties again — the file is byte-identical afterwards (a
-      // TRUE no-op, confirmed via mtime), yet the reported action is
-      // unchanged from the first ("created") call.
+      // TRUE no-op, confirmed via mtime), and the reported action now says
+      // so too.
       const repeat = fsContext(root);
       await run(
         "setProperties",
@@ -313,12 +318,11 @@ Deno.test(
       );
       assertEquals(
         repeat.captured[0].attrs.action,
-        "updated",
-        "misleading: a true no-op still reports 'updated'",
+        "unchanged",
+        "a true no-op now reports 'unchanged', not a misleading 'updated'",
       );
 
-      // A genuine change reports the SAME literal — not distinguishable from
-      // the no-op case above by inspecting `action` alone.
+      // A genuine change is now distinguishable from the no-op above.
       const changed = fsContext(root);
       await run(
         "setProperties",
@@ -331,30 +335,45 @@ Deno.test(
 );
 
 Deno.test(
-  "pin: KNOWN BUG (MED, obsidian-vault-latent-bugs #8) — propertyRemove reports action:'updated' even when the file was never written (absent key, or no frontmatter at all)",
+  "fixed (obsidian-vault-latent-bugs #8): propertyRemove reports 'unchanged' for a true no-op and 'updated' for a real removal",
   async () => {
     await withVault(async (root) => {
       await Deno.writeTextFile(
         `${root}/note.md`,
-        "---\ntitle: T\n---\n\nbody\n",
+        "---\ntitle: T\nstatus: draft\n---\n\nbody\n",
       );
       const before = await Deno.stat(`${root}/note.md`);
-      const a = fsContext(root);
+      const noop = fsContext(root);
       await run(
         "propertyRemove",
         { file: "note.md", name: "never-existed" },
-        a.context,
+        noop.context,
       );
-      const after = await Deno.stat(`${root}/note.md`);
+      const afterNoop = await Deno.stat(`${root}/note.md`);
       assertEquals(
         before.mtime?.getTime(),
-        after.mtime?.getTime(),
+        afterNoop.mtime?.getTime(),
         "no write actually happened",
       );
       assertEquals(
-        a.captured[0].attrs.action,
-        "updated",
-        "misleading: no write happened, but action still says 'updated'",
+        noop.captured[0].attrs.action,
+        "unchanged",
+        "no write happened, and action now says so instead of a misleading 'updated'",
+      );
+
+      // A real removal DOES change the file and reports "updated".
+      const removal = fsContext(root);
+      await run(
+        "propertyRemove",
+        { file: "note.md", name: "status" },
+        removal.context,
+      );
+      assertEquals(removal.captured[0].attrs.action, "updated");
+      const finalContent = await Deno.readTextFile(`${root}/note.md`);
+      assertEquals(
+        readProperties(finalContent).status,
+        undefined,
+        "the property must actually be gone after a real removal",
       );
     });
   },

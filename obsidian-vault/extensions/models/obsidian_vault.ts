@@ -251,7 +251,7 @@ function trimTrailingSlash(value: string): string {
 
 function normalizeSegments(path: string): string[] {
   const segments: string[] = [];
-  for (const raw of path.split("/")) {
+  for (const raw of path.split(/[/\\]/)) {
     if (!raw || raw === ".") continue;
     if (raw === "..") {
       if (segments.length === 0) {
@@ -491,7 +491,7 @@ export interface FrontmatterSplit {
 
 /** Split a note into its frontmatter block and body. */
 export function splitFrontmatter(content: string): FrontmatterSplit {
-  if (!content.startsWith("---\n")) {
+  if (!content.startsWith("---\n") && !content.startsWith("---\r\n")) {
     return { raw: "", body: content, hasFrontmatter: false };
   }
   const lines = content.split("\n");
@@ -563,10 +563,28 @@ export function classifyWrite(
   return existing === next ? "unchanged" : "updated";
 }
 
+// --- Scan limits -----------------------------------------------------------
+
+// search and digest both walk arbitrary vault content; an unbounded read of a
+// single huge file (a pasted log, an export dump) would defeat the point of
+// scanning the vault "once" cheaply. Files over this size are skipped rather
+// than read, with truncated=true so the caller knows the corpus is partial.
+const MAX_SCAN_FILE_BYTES = 2_000_000;
+// digest's signalHits array is per-line output meant for a human to skim, not
+// a place to accumulate unbounded memory for a vault-wide keyword scan. The
+// per-keyword rollup counts and file lists are tracked independently of this
+// cap so the reported totals stay true even once the array itself is capped.
+const MAX_SIGNAL_HITS = 500;
+
 // --- Search --------------------------------------------------------------
 
 const MAX_PATTERN_LENGTH = 512;
 const NESTED_QUANTIFIER = /\([^()]*[+*][^()]*\)\s*[*+]/;
+// An alternation whose branches share a prefix (or one contains the other)
+// backtracks catastrophically once the group itself is quantified — the
+// nested-quantifier guard above only catches a quantifier *inside* the group,
+// not this shape.
+const ALTERNATION_QUANTIFIER = /\([^()]*\|[^()]*\)\s*[*+]/;
 
 /** Build a line predicate for search, rejecting patterns that could hang. */
 export function buildSearchMatcher(
@@ -580,7 +598,7 @@ export function buildSearchMatcher(
         `Search pattern is too long (${query.length} characters, limit ${MAX_PATTERN_LENGTH}).`,
       );
     }
-    if (NESTED_QUANTIFIER.test(query)) {
+    if (NESTED_QUANTIFIER.test(query) || ALTERNATION_QUANTIFIER.test(query)) {
       throw new Error(
         `Search pattern rejected: a nested unbounded quantifier can backtrack catastrophically over a large vault. Pattern: ${query}`,
       );
@@ -668,9 +686,20 @@ export function inferDate(name: string): string | null {
   const m = name.match(DATE_RE);
   if (!m) return null;
   const [, year, month, day] = m;
+  const yearNum = Number(year);
   const monthNum = Number(month);
   const dayNum = Number(day);
   if (monthNum < 1 || monthNum > 12 || dayNum < 1 || dayNum > 31) return null;
+  // Range checks alone accept impossible dates (e.g. 2026-02-31). Round-trip
+  // through UTC and reject anything that rolled over into the next month.
+  const date = new Date(Date.UTC(yearNum, monthNum - 1, dayNum));
+  if (
+    date.getUTCFullYear() !== yearNum ||
+    date.getUTCMonth() !== monthNum - 1 ||
+    date.getUTCDate() !== dayNum
+  ) {
+    return null;
+  }
   return `${year}-${month}-${day}`;
 }
 
@@ -698,6 +727,40 @@ async function readTextIfExists(path: string): Promise<string | null> {
     if (err instanceof Deno.errors.NotFound) return null;
     throw err;
   }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await Deno.lstat(path);
+    return true;
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return false;
+    throw err;
+  }
+}
+
+/**
+ * Return a path guaranteed not to collide with anything already on disk.
+ *
+ * A same-named note deleted twice (delete, recreate, delete again) would
+ * otherwise have its second .trash rename silently clobber the first —
+ * Deno.rename overwrites an existing destination with no warning. Each
+ * collision gets a fresh UUID suffix before the extension, re-checked in a
+ * loop so even a pathological run of prior collisions cannot produce a
+ * second clobber.
+ */
+async function uniqueTrashPath(path: string): Promise<string> {
+  if (!(await pathExists(path))) return path;
+  const slash = path.lastIndexOf("/");
+  const dot = path.lastIndexOf(".");
+  const hasExt = dot > slash;
+  const base = hasExt ? path.slice(0, dot) : path;
+  const ext = hasExt ? path.slice(dot) : "";
+  let candidate: string;
+  do {
+    candidate = `${base}-${crypto.randomUUID()}${ext}`;
+  } while (await pathExists(candidate));
+  return candidate;
 }
 
 /**
@@ -908,7 +971,7 @@ const nowIso = () => new Date().toISOString();
 /** Obsidian vault model: notes, search, tags, links, daily notes, frontmatter, and a corpus digest, over either the Obsidian CLI or a mounted vault directory. */
 export const model = {
   type: "@magistr/obsidian/vault",
-  version: "2026.07.27.1",
+  version: "2026.08.02.1",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",
@@ -928,6 +991,13 @@ export const model = {
       toVersion: "2026.07.27.1",
       description:
         "Add headless filesystem backend, bulk frontmatter merge, and corpus digest",
+      upgradeAttributes: (old) => old,
+    },
+    {
+      fromVersion: "2026.07.27.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "Fix eight latent bugs: CRLF-frontmatter data loss, ReDoS alternation guard, backslash traversal, digest/search byte + signalHits bounds, digest backend enforcement, calendar-date validation, trash overwrite, real setProperties/propertyRemove action",
       upgradeAttributes: (old) => old,
     },
   ],
@@ -1473,7 +1543,8 @@ export const model = {
               trashPath,
               globalArgs.defaultDirectoryMode as number,
             );
-            await Deno.rename(target.absolutePath, trashPath);
+            const finalTrashPath = await uniqueTrashPath(trashPath);
+            await Deno.rename(target.absolutePath, finalTrashPath);
           }
           context.logger?.info?.("Deleted {file}", {
             file: target.vaultRelativePath,
@@ -1579,6 +1650,11 @@ export const model = {
               truncated = true;
               break;
             }
+            const stat = await Deno.stat(path);
+            if (stat.size > MAX_SCAN_FILE_BYTES) {
+              truncated = true;
+              continue;
+            }
             const text = await Deno.readTextFile(path);
             const lines = text.split(/\r?\n/);
             const relative = relativeFromRoot(vaultRoot, path);
@@ -1655,7 +1731,12 @@ export const model = {
         allowDotObsidian: z.boolean().optional(),
       }),
       execute: async (args, context) => {
-        selectBackend(context.globalArgs, "digest");
+        const backend = selectBackend(context.globalArgs, "digest");
+        if (backend === "cli") {
+          throw new Error(
+            "digest runs only on the filesystem backend — it needs vaultRoot, not the Obsidian index. Use backend=auto or fs.",
+          );
+        }
         const globalArgs = await withVaultRoot(context.globalArgs);
         const root = await resolveVaultPathSafe(globalArgs, args.folder ?? "", {
           allowDotObsidian: args.allowDotObsidian,
@@ -1684,6 +1765,10 @@ export const model = {
         const files: Record<string, unknown>[] = [];
         const signalHits: { keyword: string; file: string; line: string }[] =
           [];
+        // Tracked independently of signalHits so the reported count/files
+        // stay TRUE totals even after the output array itself is capped.
+        const keywordCounts = new Map<string, number>();
+        const keywordFiles = new Map<string, Set<string>>();
         let truncated = false;
         let totalWords = 0;
 
@@ -1702,6 +1787,12 @@ export const model = {
             break;
           }
 
+          const stat = await Deno.stat(path);
+          if (stat.size > MAX_SCAN_FILE_BYTES) {
+            truncated = true;
+            continue;
+          }
+
           const text = await Deno.readTextFile(path);
           const relative = relativeFromRoot(vaultRoot, path);
           const words = text.split(/\s+/).filter(Boolean).length;
@@ -1712,11 +1803,26 @@ export const model = {
               const lower = line.toLowerCase();
               for (let i = 0; i < keywordsLower.length; i++) {
                 if (lower.includes(keywordsLower[i])) {
-                  signalHits.push({
-                    keyword: keywords[i],
-                    file: relative,
-                    line: line.trim().slice(0, 240),
-                  });
+                  const keyword = keywords[i];
+                  keywordCounts.set(
+                    keyword,
+                    (keywordCounts.get(keyword) ?? 0) + 1,
+                  );
+                  let fileSet = keywordFiles.get(keyword);
+                  if (!fileSet) {
+                    fileSet = new Set<string>();
+                    keywordFiles.set(keyword, fileSet);
+                  }
+                  fileSet.add(relative);
+                  if (signalHits.length < MAX_SIGNAL_HITS) {
+                    signalHits.push({
+                      keyword,
+                      file: relative,
+                      line: line.trim().slice(0, 240),
+                    });
+                  } else {
+                    truncated = true;
+                  }
                 }
               }
             }
@@ -1753,14 +1859,11 @@ export const model = {
           .map((f) => f.inferredDate)
           .filter((d): d is string => typeof d === "string")
           .sort();
-        const rollups = keywords.map((keyword) => {
-          const hits = signalHits.filter((h) => h.keyword === keyword);
-          return {
-            keyword,
-            count: hits.length,
-            files: uniq(hits.map((h) => h.file)).slice(0, 50),
-          };
-        }).sort((a, b) => b.count - a.count);
+        const rollups = keywords.map((keyword) => ({
+          keyword,
+          count: keywordCounts.get(keyword) ?? 0,
+          files: [...(keywordFiles.get(keyword) ?? [])].slice(0, 50),
+        })).sort((a, b) => b.count - a.count);
 
         context.logger?.info?.(
           "Digest complete: {count} notes, {words} words, truncated={truncated}",
@@ -1778,7 +1881,7 @@ export const model = {
             latest: dates[dates.length - 1] ?? null,
           },
           signalRollups: rollups,
-          signalHits: signalHits.slice(0, 500),
+          signalHits,
           files,
         });
         return { dataHandles: [handle] };
@@ -2172,6 +2275,7 @@ export const model = {
       execute: async (args, context) => {
         const backend = selectBackend(context.globalArgs, "setProperties");
         const entries = Object.entries(args.properties);
+        let action: WriteAction = "updated";
 
         if (backend === "fs") {
           const globalArgs = await withVaultRoot(context.globalArgs);
@@ -2180,7 +2284,7 @@ export const model = {
           });
           const existing = await readTextIfExists(target.absolutePath) ?? "";
           const next = mergeProperties(existing, args.properties);
-          const action = classifyWrite(
+          action = classifyWrite(
             existing.length ? existing : null,
             next,
           );
@@ -2222,7 +2326,7 @@ export const model = {
             operation: "setProperties",
             file: args.file,
             success: true,
-            action: "updated",
+            action,
             message: `Merged ${entries.length} properties`,
             timestamp: nowIso(),
           },
@@ -2240,6 +2344,7 @@ export const model = {
       }),
       execute: async (args, context) => {
         const backend = selectBackend(context.globalArgs, "propertyRemove");
+        let action: WriteAction = "updated";
 
         if (backend === "fs") {
           const globalArgs = await withVaultRoot(context.globalArgs);
@@ -2248,7 +2353,11 @@ export const model = {
           });
           const existing = await Deno.readTextFile(target.absolutePath);
           const next = removeProperty(existing, args.name);
-          if (next !== existing) {
+          // existing is always a non-null string here (readTextFile throws on
+          // a missing file), so this can only resolve to "unchanged" or
+          // "updated" — never "created".
+          action = classifyWrite(existing, next);
+          if (action !== "unchanged") {
             await writeAtomic(
               target.absolutePath,
               next,
@@ -2269,7 +2378,7 @@ export const model = {
             operation: "property:remove",
             file: args.file,
             success: true,
-            action: "updated",
+            action,
             message: `Removed ${args.name}`,
             timestamp: nowIso(),
           },
