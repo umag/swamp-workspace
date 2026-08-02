@@ -1,5 +1,77 @@
 # Changelog
 
+## 2026.08.02.1
+
+Fixes the remaining seven latent bugs -- LB1, LB3, LB4, LB5, LB6, LB7, LB8 --
+tracked in the LOCAL `obsidian-yt-archiver-latent-bugs` issue-lifecycle model
+(NEVER filed to the swamp.club Lab -- see CLAUDE.md's anti-bypass rule). LB2 was
+already fixed in 2026.08.01.1 and is untouched here. No new npm/jsr dependency
+was added (`jsr:@std/path@1` remains the only non-builtin import; `deno.lock` is
+unchanged) and no resource schema or `globalArguments` shape changed -- the
+version bump is a pure identity upgrade.
+
+- **LB1 (MEDIUM, path traversal / request-forgery via `videoIds`):** added a
+  shared `taVideoPath(id)` helper (`encodeURIComponent`) used at all three
+  GET-path build sites (archive/resolve/sync). A `../`-laden or
+  absolute-URL-shaped id is now percent-encoded into ONE opaque
+  `/api/video/<id>/` path segment instead of reaching a different TA endpoint on
+  the same host. Identity for every benign id used across the suites
+  (`[A-Za-z0-9_-]`) -- every byte-frozen contract/methods URL pin stays
+  unchanged.
+- **LB3 (MEDIUM, conflated error handling -> mass re-queue):** `taApi` now
+  throws a typed `TaHttpError` carrying `.status` on any non-2xx/redirect/
+  non-JSON response. A shared `isNotArchived(e)` predicate treats ONLY a genuine
+  404 as "not archived" (queue/unresolved); every other failure
+  (401/403/500/502/503/timeout/network/redirect/non-JSON) is re-thrown and
+  surfaces instead of being silently re-queued alongside real not-archived ids.
+- **LB4 (MEDIUM, no fetch timeout):** every `taApi` call now passes an
+  `AbortController`-backed `signal` with a 30s default timeout
+  (`DEFAULT_REQUEST_TIMEOUT_MS`), cleared in a single `finally` so no timer ever
+  leaks (satisfies Deno's op-sanitizer on every code path: success,
+  redirect-throw, `!ok`-throw, non-JSON-throw, network-throw).
+- **LB5 (LOW-MED, unbounded sequential per-id fetch):** a shared
+  `assertVideoIdCap(ids)` REJECTS (never silently slices/drops) any id list
+  longer than `MAX_VIDEO_IDS = 500`, checked once per method immediately after
+  the id list is resolved (archive/resolve/sync), before any fetch fires.
+  Sequential per-id execution order is unchanged -- no batching/concurrency was
+  introduced.
+- **LB6 (LOW, error body truncated to 200 raw chars):** replaced the raw
+  200-char slice with `redactBody()` -- collapses whitespace runs and caps the
+  result at 120 chars (plus an ellipsis) before it is interpolated into any
+  thrown message. The auth token was already header-only and remains never part
+  of this text.
+- **LB7 (LOW, default `redirect:"follow"`):** `taApi` now passes
+  `redirect: "manual"` on every call, plus an explicit guard that throws on any
+  3xx status or an `"opaqueredirect"` response type (surfaced, never silently
+  followed to a possibly-different host) and a defense-in-depth
+  host-revalidation check against the operator-configured `tubearchivistUrl`.
+- **LB8 (LOW, non-JSON 200 -> blank "archived" record):** `taApi` gained an
+  `expectJson` parameter (default `true`). Every per-id metadata GET check now
+  surfaces (throws) on a 2xx response whose content-type is not
+  `application/json`, instead of silently returning `{}` and recording a blank
+  `archived: true` entry. The two fire-and-forget POST calls (`/api/download/`,
+  `download_pending`) pass `expectJson: false` and keep their existing
+  `{}`-on-non-JSON behavior -- zero POST-shape regression.
+- **Test suites:** flipped every LB1/LB3/LB4/LB5/LB6/LB7/LB8 characterization
+  pin in `obsidian_yt_archiver_adversarial_test.ts` from "the bug is present" to
+  `fixed (... FIXED)` (mostly `assertRejects`), added new cases (LB3's 401/500
+  split, LB5's 501-id cap-reject, LB7's 302-reject), and flipped the coverage
+  suite's no-content-type-header-200 test to `assertRejects` (LB8). Rewrote the
+  property suite's `(b)`/`(b-resolve)` "archive()/ resolve() never throw for ANY
+  status" properties -- directly contradicted by the LB3/LB7/LB8 fixes -- into a
+  `(b1)` never-throws property scoped to {genuine JSON-200, genuine 404} and a
+  NEW `(b2)` surfaces property scoped to {redirect, 4xx/5xx, non-JSON 200},
+  partitioning every GET-check outcome the suite generates with no overlap.
+  LB2's fix and every byte-frozen contract/methods pin stay green, unchanged.
+- **Adversarial + security review follow-up:** added two coverage-closing tests
+  the reviews flagged as untested claims -- a raw network-level failure
+  (`fetch()` itself rejecting, not an HTTP error response) surfacing correctly
+  through the LB3 catch/rethrow chain, and the LB7 host-revalidation
+  defense-in-depth branch (previously unreachable by any stub, since a
+  directly-constructed `Response` always leaves `url` empty -- now exercised via
+  `Object.defineProperty` shadowing `res.url`).
+- `manifest.yaml` and `model.version` bumped to `2026.08.02.1`.
+
 ## 2026.08.01.1
 
 Fixes LB2 (HIGH, path traversal), tracked in the LOCAL

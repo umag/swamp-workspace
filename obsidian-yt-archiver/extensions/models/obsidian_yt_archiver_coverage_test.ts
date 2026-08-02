@@ -4,10 +4,12 @@
  * left unguarded (a branch with no test protecting it -- if someone deletes
  * the guard, one of these goes red).
  *
- * obsidian_yt_archiver.ts is UNMODIFIED -- every test here characterizes
+ * As of 2026.08.02.1, one test below (the no-content-type-header case) was
+ * flipped to `assertRejects` alongside the LB8 fix in
+ * obsidian_yt_archiver.ts -- every other test here characterizes unchanged,
  * already-shipped behavior.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./obsidian_yt_archiver.ts";
 
 // ---------------------------------------------------------------------------
@@ -337,25 +339,25 @@ Deno.test("coverage: a TA response where channel is explicitly null does not thr
 // taApi: Content-Type response header entirely absent (not just non-JSON)
 // ---------------------------------------------------------------------------
 
-Deno.test("coverage: a 200 response with NO content-type header at all takes the same {} fallback path as an explicit non-JSON content-type", async () => {
+Deno.test("coverage: a 200 response with NO content-type header at all is SURFACED (rejected) -- same non-JSON guard as an explicit non-JSON content-type (LB8)", async () => {
   const v = await makeMinimalVault({});
   try {
     const { ctx, written } = makeCtx(globalArgs(v.vaultPath));
     await withFetchStub(
       [() => new Response("ignored body", { status: 200 })],
-      () => run("archive", { videoIds: ["fixtureAAA1"] }, ctx) as Promise<void>,
-    );
-    const res = written.find((w) => w.spec === "archive")!;
-    assertEquals(
-      (res.payload.alreadyArchived as Array<Record<string, unknown>>)[0],
-      {
-        videoId: "fixtureAAA1",
-        title: "",
-        channel: "",
-        published: "",
-        taUrl: `${TA_URL}/video/fixtureAAA1`,
-        archived: true,
+      async () => {
+        await assertRejects(
+          () =>
+            run("archive", { videoIds: ["fixtureAAA1"] }, ctx) as Promise<
+              void
+            >,
+        );
       },
+    );
+    assertEquals(
+      written.find((w) => w.spec === "archive"),
+      undefined,
+      "a surfaced GET-check error must abort before the archive resource is ever written",
     );
   } finally {
     await v.cleanup();
