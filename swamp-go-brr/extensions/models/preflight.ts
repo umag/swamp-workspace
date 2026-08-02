@@ -1,4 +1,5 @@
 import { z } from "npm:zod@4";
+import { pathEscapes } from "./lib/acl.ts";
 
 // @magistr/swamp-go-brr/preflight — codebase-AGNOSTIC substrate for a gobrr run.
 // It does NOT bake any language toolchain: the gate image depends on the codebase
@@ -236,6 +237,15 @@ export async function scaffoldRepo(
   write: FileWriter,
   i: ScaffoldInput,
 ): Promise<{ repoScope: string; base: string; changedPaths: string[] }> {
+  // Pre-validate EVERY file's path before any write (issue swamp-go-brr-latent-bugs
+  // B2, fail-closed, no partial scaffold): a `../`-traversal (or absolute/whitespace)
+  // ScaffoldFile.path previously joined straight into `${repoPath}/${path}` with no
+  // guard, escaping repoPath into its parent.
+  for (const f of i.files) {
+    if (pathEscapes(f.path)) {
+      throw new Error(`unsafe scaffold path: ${f.path}`);
+    }
+  }
   const changedPaths: string[] = [];
   for (const f of i.files) {
     await write(`${i.repoPath}/${f.path}`, f.content);
@@ -316,7 +326,16 @@ function substrateFrom(g: z.infer<typeof GlobalArgs>): SubstrateOpts {
 /** @internal — the preflight model definition; invoke its methods via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/preflight",
-  version: "2026.07.16.2",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix B2: scaffoldRepo now pre-validates every ScaffoldFile.path with pathEscapes BEFORE any write, rejecting a `../`-traversal (or absolute/whitespace) path with `unsafe scaffold path: <path>` instead of writing it straight into repoPath's parent. Fail-closed, no partial scaffold. No resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgs,
   resources: {
     pinned: {

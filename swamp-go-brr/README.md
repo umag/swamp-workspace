@@ -92,17 +92,38 @@ leaves are I/O-bound on the model API). Raise it as RAM allows, and validate the
 pool with a probe leaf after `fabric_up`. See `references/concurrency.md` in the
 bundled skill for the netns + version-pin requirements.
 
+### ssh transport: host-key verification and timeouts
+
+`docker-verify` and `source-integration`'s local `jj` invocations both wrap
+their `Deno.Command` calls in a client-side timeout (`AbortController` +
+`setTimeout`, always cleared in `finally`); on expiry the child is killed and
+the call is fail-closed (`docker-verify` records `exitCode=124`;
+`source-integration`'s `jj` calls are treated as a `transport` failure).
+
+`docker-verify`'s ssh transport is **secure by default**:
+`StrictHostKeyChecking=accept-new` (TOFU — trusts an unseen host key on first
+contact, but _refuses_ a host whose stored key later changes) with ssh's own
+`known_hosts` file, never a blanket `UserKnownHostsFile=/dev/null`. Global args
+(all optional, all additive-defaulted):
+
+| Global arg (model)                           | Default        | Purpose                                                                                                                                                                                                                    |
+| -------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verifyTimeoutMs` (`docker-verify`)          | `1800000`      | Client-side wall-clock budget (ms) for the whole ssh verify invocation (handshake + remote `docker run`).                                                                                                                  |
+| `sshStrictHostKeyChecking` (`docker-verify`) | `"accept-new"` | ssh host-key mode: `accept-new` \| `yes` \| `no`. `"no"` is a documented **insecure opt-out** (restores the historical `UserKnownHostsFile=/dev/null` pairing) for environments that cannot maintain a `known_hosts` file. |
+| `sshKnownHostsFile` (`docker-verify`)        | ssh's default  | Override `UserKnownHostsFile` explicitly (independent of `sshStrictHostKeyChecking`).                                                                                                                                      |
+| `jjTimeoutMs` (`source-integration`)         | `120000`       | Client-side wall-clock budget (ms) for each local `jj` invocation (`new`/`diff`/`log`).                                                                                                                                    |
+
 ---
 
 ## Reference — the models
 
-| Model                | Owns                                                                                                                                                                                                                                                                                                             |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preflight`          | Phase-0 substrate (Docker only): ensure the local OCI registry, digest-pin the gate image, emit the run `config`.                                                                                                                                                                                                |
-| `gobrr`              | The PURE Run/DAG state machine: scheduler (lease TTL/heartbeat/reap, concurrency gate, stall), follow-up expansion, run caps, and the derived projections (`hydrate`, `complete`, `emit_otlp`). Never touches the filesystem or network.                                                                         |
-| `source-integration` | Host code-ownership: `build_workorder` (read the allowlist file slice into the leaf prompt, no-clone) and `apply` (parse the `@@EDIT` envelope, write each task as a per-task base-isolated `jj` change behind a realpath-anchored allowlist ACL, return host-observed `changedPaths` + a secret-scrubbed diff). |
-| `docker-verify`      | The deterministic green gate: run the host-pinned verify command to completion in a hardened, network-less, token-less, read-only container; return the raw exit code.                                                                                                                                           |
-| `otlp-export`        | The loop's only network egress: POST `gobrr`'s derived `traceOtlp`/`metricsOtlp` over OTLP/HTTP (https) to a configurable collector; best-effort, credentials from a vault CEL.                                                                                                                                  |
+| Model                | Owns                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preflight`          | Phase-0 substrate (Docker only): ensure the local OCI registry, digest-pin the gate image, emit the run `config`. Rejects a `../`-traversal `ScaffoldFile.path` before any write (fail-closed).                                                                                                                                                                                                                  |
+| `gobrr`              | The PURE Run/DAG state machine: scheduler (lease TTL/heartbeat/reap, concurrency gate, stall), follow-up expansion, run caps, and the derived projections (`hydrate`, `complete`, `emit_otlp`). Never touches the filesystem or network.                                                                                                                                                                         |
+| `source-integration` | Host code-ownership: `build_workorder` (read the allowlist file slice into the leaf prompt, no-clone) and `apply` (parse the `@@EDIT` envelope, write each task as a per-task base-isolated `jj` change behind a realpath-anchored allowlist ACL — refusing an existing symlink at the write target and re-confining the written path afterward — return host-observed `changedPaths` + a secret-scrubbed diff). |
+| `docker-verify`      | The deterministic green gate: run the host-pinned verify command to completion, over a timeout-bounded ssh transport (secure-by-default host-key verification), in a hardened, network-less, token-less, read-only container; return the raw exit code.                                                                                                                                                          |
+| `otlp-export`        | The loop's only network egress: POST `gobrr`'s derived `traceOtlp`/`metricsOtlp` over OTLP/HTTP (https) to a configurable collector; best-effort, credentials from a vault CEL.                                                                                                                                                                                                                                  |
 
 The executor is a separate extension, **`@magistr/firecracker`** (its `fabric`
 runs each leaf as one `claude --print` in a microVM). Per-leaf usage capture

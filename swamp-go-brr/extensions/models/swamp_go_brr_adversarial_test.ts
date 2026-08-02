@@ -1,50 +1,66 @@
 // Adversarial suite for @magistr/swamp-go-brr: attacker's-perspective
 // characterization of the real injection/leak surface at the EXECUTE level,
-// plus pins for the eight known-but-unfixed latent bugs (B1..B8) tracked in
-// the LOCAL `swamp-go-brr-latent-bugs` issue-lifecycle bug model (NEVER the
-// Lab, per this repo's tracking convention).
+// plus pins for the eight latent bugs (B1..B8) tracked in the LOCAL
+// `swamp-go-brr-latent-bugs` issue-lifecycle bug model (NEVER the Lab, per
+// this repo's tracking convention). All eight are now REAL-FIXED (release
+// 2026.08.02.1) — every "fixed: B<n>" test below asserts the FIXED behavior;
+// none of them characterize a remaining gap.
 //
-// gobrr.ts / docker_verify.ts / source_integration.ts / preflight.ts / lib/*
-// are UNMODIFIED — every "pin: KNOWN <BUG-ID>" test here characterizes a REAL,
-// already-shipped behavior; a fix is out of scope for this test-only backfill.
-//
-// Bugs pinned here:
-//   B1 (MED) — docker-verify's `verify()` (sshExecRaw) has NO client-side
-//      timeout on the remote command's runtime; ssh's own ConnectTimeout=10
-//      bounds only the handshake.
-//   B2 (MED) — preflight's `scaffoldRepo` joins `ScaffoldFile.path` directly
-//      into `${repoPath}/${path}` with no traversal guard — a `../` path
-//      escapes repoPath (blast radius is within-temp: the caller controls
-//      repoPath, typically a freshly-created scratch dir).
-//   B3 (MED) — lib/ssh.ts hardcodes `StrictHostKeyChecking=no` +
-//      `UserKnownHostsFile=/dev/null` — MITM-susceptible.
-//   B4 (LOW) — lib/scrub.ts's generic `key=value` pattern is a deliberate
-//      false-positive-prone over-approximation (redacts benign text shaped
-//      like a secret) and scrubSecrets has no input-size cap of its own —
-//      callers tail-bound AFTER scrubbing, not before.
-//   B5 (LOW) — scrubSecrets has NO coverage for a bare high-entropy secret
-//      with no recognizable key word (documented as an accepted gap in the
-//      source's own comment).
-//   B6 (LOW) — source-integration's local `jjRun` has no timeout and does not
-//      pass `--no-pager`.
-//   B7 (LOW) — `parseGitDiffPaths`'s `a/(.+?) b/` regex mis-splits a path
-//      containing a literal " b/" substring — UNREACHABLE via the real
-//      `apply()` flow because `pathEscapes` already rejects any
-//      whitespace-containing path upstream of the ACL guard.
-//   B8 (LOW) — `apply()`'s per-file write is resolve-then-write, not atomic:
-//      a symlink swapped into place between `resolveWithinRepo`'s check and
-//      the actual `Deno.writeTextFileSync` escapes the repo (TOCTOU).
+// Bugs fixed here:
+//   B1 (MED) — docker-verify's `verify()` (sshExecRaw) now enforces a
+//      client-side timeout (new `verifyTimeoutMs` global arg) wrapping the
+//      WHOLE ssh invocation (handshake + remote command); on expiry the child
+//      is killed via AbortController and exitCode=124 is recorded
+//      (fail-closed). ssh's own ConnectTimeout=10 still bounds only the
+//      handshake, as before.
+//   B2 (MED) — preflight's `scaffoldRepo` now pre-validates every
+//      `ScaffoldFile.path` with `pathEscapes` BEFORE any write; a `../` path
+//      is rejected (`unsafe scaffold path: …`) instead of escaping repoPath.
+//   B3 (MED) — lib/ssh.ts now defaults to `StrictHostKeyChecking=accept-new`
+//      (TOFU) with ssh's own known_hosts file — never a blanket
+//      `UserKnownHostsFile=/dev/null`. The historical insecure pairing is
+//      reachable only via the documented `sshStrictHostKeyChecking="no"`
+//      opt-out.
+//   B4 (LOW) — lib/scrub.ts's generic `key=value` pattern's value floor was
+//      raised `{8,}` → `{11,}`, so a short (<11 char) benign `token=`-shaped
+//      value like `abc12345` no longer false-positives; `scrubSecrets` now
+//      imposes its own tail-preserving `MAX_SCRUB_BYTES` cap independent of
+//      any caller-side bound.
+//   B5 (LOW) — scrubSecrets now redacts a BARE high-entropy run (≥32 chars,
+//      mixing lower/upper/digit) even with no recognizable key word ahead
+//      of it.
+//   B6 (LOW) — source-integration's local `jjRun` now carries `--no-pager`
+//      on every invocation and enforces a client-side timeout (new
+//      `jjTimeoutMs` global arg), mirroring lib/ssh.ts's AbortController
+//      pattern.
+//   B7 (LOW) — `parseGitDiffPaths` now splits a `diff --git a/<A> b/<B>`
+//      header at the ` b/` boundary where the two halves are EQUAL, so a
+//      path containing a literal " b/" substring (e.g. `weird b/file.ts`) no
+//      longer mis-splits. Still unreachable via the real `apply()` flow
+//      either way (`pathEscapes` rejects any whitespace-containing path
+//      upstream), which the CONTRAST test below continues to pin unchanged.
+//   B8 (LOW) — `apply()`'s per-file write now goes through
+//      `lib/acl.ts`'s `safeWriteWithinRepo`: it refuses an existing symlink
+//      at the final path component (no-follow) and, after the write lands,
+//      re-confines the real path under repoRoot — detecting and best-effort
+//      cleaning up a TOCTOU ancestor-symlink-swap race instead of silently
+//      leaving an escaped write in place.
 import {
   assert,
   assertEquals,
   assertRejects,
+  assertThrows,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { model as siModel } from "./source_integration.ts";
 import { model as dvModel } from "./docker_verify.ts";
 import { model as preflightModel } from "./preflight.ts";
 import { model as otlpExportModel } from "./otlp_export.ts";
-import { pathEscapes, resolveWithinRepo } from "./lib/acl.ts";
-import { scrubSecrets } from "./lib/scrub.ts";
+import {
+  confineWrittenPath,
+  pathEscapes,
+  resolveWithinRepo,
+} from "./lib/acl.ts";
+import { MAX_SCRUB_BYTES, scrubSecrets } from "./lib/scrub.ts";
 import { parseGitDiffPaths } from "./source_integration.ts";
 
 // ---------------------------------------------------------------------------
@@ -141,6 +157,96 @@ function stubSpawnCommand(
   return () => {
     // deno-lint-ignore no-explicit-any
     (globalThis as any).Deno.Command = orig;
+  };
+}
+
+/** Like stubDirectOutput, but also records whether `Deno.Command` received an
+ * AbortSignal (`opts.signal`) — used by the B1/B6 client-side-timeout pins to
+ * assert the timeout is actually WIRED, not just that a fast call still works. */
+function stubDirectOutputCaptureSignal(
+  responder: (cmd: string, args: string[]) => CommandResult,
+): { restore: () => void; sawSignal: () => boolean } {
+  // deno-lint-ignore no-explicit-any
+  const orig = (globalThis as any).Deno.Command;
+  let sawSignal = false;
+  class FakeCommand {
+    #cmd: string;
+    #args: string[];
+    constructor(
+      cmd: string,
+      opts?: { args?: string[]; signal?: AbortSignal },
+    ) {
+      this.#cmd = cmd;
+      this.#args = opts?.args ?? [];
+      if (opts?.signal) sawSignal = true;
+    }
+    output() {
+      const r = responder(this.#cmd, this.#args);
+      return Promise.resolve({
+        code: r.code,
+        stdout: new TextEncoder().encode(r.stdout),
+        stderr: new TextEncoder().encode(r.stderr),
+      });
+    }
+  }
+  // deno-lint-ignore no-explicit-any
+  (globalThis as any).Deno.Command = FakeCommand;
+  return {
+    restore: () => {
+      // deno-lint-ignore no-explicit-any
+      (globalThis as any).Deno.Command = orig;
+    },
+    sawSignal: () => sawSignal,
+  };
+}
+
+/** Simulates a HUNG child process: `output()` only resolves once the passed
+ * AbortSignal fires 'abort' (as a real killed-by-signal Deno.Command child
+ * eventually would), never on its own. Used by the B1/B6 timeout-FIRES pins —
+ * proves the production code's own AbortController+setTimeout actually aborts
+ * a genuinely-hanging call, rather than merely wiring an unused signal. */
+function stubHangUntilAbort(): {
+  restore: () => void;
+  sawSignal: () => boolean;
+} {
+  // deno-lint-ignore no-explicit-any
+  const orig = (globalThis as any).Deno.Command;
+  let sawSignal = false;
+  class FakeCommand {
+    #signal?: AbortSignal;
+    constructor(
+      _cmd: string,
+      opts?: { args?: string[]; signal?: AbortSignal },
+    ) {
+      this.#signal = opts?.signal;
+      if (this.#signal) sawSignal = true;
+    }
+    output(): Promise<
+      { code: number; stdout: Uint8Array; stderr: Uint8Array }
+    > {
+      return new Promise((resolve) => {
+        const finish = () =>
+          resolve({
+            code: 137, // simulates a SIGTERM/SIGKILL-killed exit
+            stdout: new Uint8Array(),
+            stderr: new Uint8Array(),
+          });
+        if (this.#signal?.aborted) {
+          finish();
+          return;
+        }
+        this.#signal?.addEventListener("abort", finish, { once: true });
+      });
+    }
+  }
+  // deno-lint-ignore no-explicit-any
+  (globalThis as any).Deno.Command = FakeCommand;
+  return {
+    restore: () => {
+      // deno-lint-ignore no-explicit-any
+      (globalThis as any).Deno.Command = orig;
+    },
+    sawSignal: () => sawSignal,
   };
 }
 
@@ -516,17 +622,17 @@ Deno.test("otlp-export: a fetch THROW (not just a bad status) never rethrows/abo
 });
 
 // ===========================================================================
-// B1 (MED) — docker-verify: no client-side timeout on the remote command.
+// B1 (MED) — docker-verify: client-side timeout on the remote command.
 // ===========================================================================
 
-Deno.test("pin: KNOWN GAP (MED, swamp-go-brr-latent-bugs B1) — docker-verify's ssh transport has NO client-side timeout on the remote docker run's runtime", async () => {
-  let capturedArgs: string[] = [];
-  const restore = stubDirectOutput((_cmd, args) => {
-    capturedArgs = args;
-    return { code: 0, stdout: "__GOBRR_EXIT__:0\n", stderr: "" };
-  });
+Deno.test("fixed: B1 (swamp-go-brr-latent-bugs) — docker-verify's ssh transport wires a client-side AbortSignal, and a normal (fast) call is unaffected", async () => {
+  const stub = stubDirectOutputCaptureSignal((_cmd, _args) => ({
+    code: 0,
+    stdout: "__GOBRR_EXIT__:0\n",
+    stderr: "",
+  }));
   try {
-    const { writeResource } = collector();
+    const { written, writeResource } = collector();
     const ctx = {
       logger: { info: () => {} },
       globalArgs: { sshHost: "dv.example.com", sshUser: "root" },
@@ -537,28 +643,53 @@ Deno.test("pin: KNOWN GAP (MED, swamp-go-brr-latent-bugs B1) — docker-verify's
       treePath: "/srv/runs/run1/tree",
       verifyCommand: "deno test",
     }, ctx);
+    assert(
+      stub.sawSignal(),
+      "Deno.Command must receive an AbortSignal wired to the client-side timeout",
+    );
+    const res = written.find((w) => w.spec === "result")!;
+    assertEquals(res.data.exitCode, 0, "a normal completion is unaffected");
   } finally {
-    restore();
+    stub.restore();
   }
-  assert(
-    capturedArgs.some((a) => a === "ConnectTimeout=10"),
-    "ssh's ConnectTimeout bounds only the HANDSHAKE",
-  );
-  const remoteCmd = capturedArgs[capturedArgs.length - 1];
-  assert(
-    !/^timeout\s|;\s*timeout\s/.test(remoteCmd),
-    "the remote docker run command itself is never wrapped in a client-side " +
-      "`timeout`, so a hung verify container can hang the ssh session " +
-      "indefinitely past the handshake. pin: KNOWN GAP, not fixed here " +
-      "(source frozen); see swamp-go-brr-latent-bugs B1.",
-  );
+});
+
+Deno.test("fixed: B1 (swamp-go-brr-latent-bugs) — a hung remote verify command is fail-closed to a synthetic exit 124 once verifyTimeoutMs elapses", async () => {
+  const stub = stubHangUntilAbort();
+  try {
+    const { written, writeResource } = collector();
+    const ctx = {
+      logger: { info: () => {} },
+      globalArgs: {
+        sshHost: "dv.example.com",
+        sshUser: "root",
+        verifyTimeoutMs: 20,
+      },
+      writeResource,
+    };
+    await callMethod(dvModel, "verify", {
+      image: "reg/toolchain@sha256:" + "a".repeat(64),
+      treePath: "/srv/runs/run1/tree",
+      verifyCommand: "deno test",
+    }, ctx);
+    const res = written.find((w) => w.spec === "result")!;
+    assertEquals(
+      res.data.exitCode,
+      124,
+      "a hung remote command must be fail-closed to a synthetic timeout exit " +
+        "code, never left to hang past the client-side budget — ssh's own " +
+        "ConnectTimeout bounds only the handshake, not the remote runtime.",
+    );
+  } finally {
+    stub.restore();
+  }
 });
 
 // ===========================================================================
 // B2 (MED, within-temp) — preflight scaffold: ScaffoldFile.path traversal.
 // ===========================================================================
 
-Deno.test("pin: KNOWN GAP (MED, swamp-go-brr-latent-bugs B2) — preflight.scaffold writes a ../-traversal ScaffoldFile.path OUTSIDE repoPath (within-temp blast radius)", async () => {
+Deno.test("fixed: B2 (swamp-go-brr-latent-bugs) — preflight.scaffold rejects a ../-traversal ScaffoldFile.path BEFORE any write, leaving repoPath's parent untouched", async () => {
   const sandbox = await Deno.makeTempDir();
   const repoPath = `${sandbox}/inner`;
   await Deno.mkdir(repoPath, { recursive: true });
@@ -572,18 +703,20 @@ Deno.test("pin: KNOWN GAP (MED, swamp-go-brr-latent-bugs B2) — preflight.scaff
       globalArgs: preflightModel.globalArguments.parse({}),
       writeResource,
     };
-    await callMethod(preflightModel, "scaffold", {
-      repoPath,
-      files: [{ path: "../escaped.txt", content: "ESCAPED" }],
-    }, ctx);
-    const leaked = await Deno.readTextFile(`${sandbox}/escaped.txt`);
-    assertEquals(
-      leaked,
-      "ESCAPED",
-      "a ../ ScaffoldFile.path is written with NO traversal guard — escapes " +
-        "repoPath into its parent. pin: KNOWN GAP, not fixed here (source " +
-        "frozen); see swamp-go-brr-latent-bugs B2. Blast radius is bounded " +
-        "to this test's own temp sandbox (within-temp).",
+    await assertRejects(
+      () =>
+        callMethod(preflightModel, "scaffold", {
+          repoPath,
+          files: [{ path: "../escaped.txt", content: "ESCAPED" }],
+        }, ctx) as Promise<unknown>,
+      Error,
+      "unsafe scaffold path",
+    );
+    await assertRejects(
+      () => Deno.readTextFile(`${sandbox}/escaped.txt`),
+      Deno.errors.NotFound,
+      undefined,
+      "a rejected scaffold must leave NO partial write outside repoPath",
     );
   } finally {
     restore();
@@ -592,10 +725,10 @@ Deno.test("pin: KNOWN GAP (MED, swamp-go-brr-latent-bugs B2) — preflight.scaff
 });
 
 // ===========================================================================
-// B3 (MED) — ssh.ts: StrictHostKeyChecking=no + UserKnownHostsFile=/dev/null.
+// B3 (MED) — ssh.ts: secure-by-default host-key verification.
 // ===========================================================================
 
-Deno.test("pin: KNOWN GAP (MED, swamp-go-brr-latent-bugs B3) — every ssh invocation disables host-key verification (MITM-susceptible)", async () => {
+Deno.test("fixed: B3 (swamp-go-brr-latent-bugs) — ssh host-key verification defaults to accept-new (TOFU), never a blanket /dev/null", async () => {
   let capturedArgs: string[] = [];
   const restore = stubDirectOutput((_cmd, args) => {
     capturedArgs = args;
@@ -616,81 +749,104 @@ Deno.test("pin: KNOWN GAP (MED, swamp-go-brr-latent-bugs B3) — every ssh invoc
   } finally {
     restore();
   }
+  assert(capturedArgs.includes("StrictHostKeyChecking=accept-new"));
+  assert(
+    !capturedArgs.includes("UserKnownHostsFile=/dev/null"),
+    "host-key verification is enabled by default (TOFU) — the blanket " +
+      "/dev/null pairing is no longer the default, closing the MITM gap.",
+  );
+});
+
+Deno.test('fixed: B3 opt-out — sshStrictHostKeyChecking="no" restores the documented insecure /dev/null behavior when explicitly requested', async () => {
+  let capturedArgs: string[] = [];
+  const restore = stubDirectOutput((_cmd, args) => {
+    capturedArgs = args;
+    return { code: 0, stdout: "__GOBRR_EXIT__:0\n", stderr: "" };
+  });
+  try {
+    const { writeResource } = collector();
+    const ctx = {
+      logger: { info: () => {} },
+      globalArgs: {
+        sshHost: "dv.example.com",
+        sshUser: "root",
+        sshStrictHostKeyChecking: "no",
+      },
+      writeResource,
+    };
+    await callMethod(dvModel, "verify", {
+      image: "reg/toolchain@sha256:" + "a".repeat(64),
+      treePath: "/srv/runs/run1/tree",
+      verifyCommand: "deno test",
+    }, ctx);
+  } finally {
+    restore();
+  }
   assert(capturedArgs.includes("StrictHostKeyChecking=no"));
   assert(
     capturedArgs.includes("UserKnownHostsFile=/dev/null"),
-    "host-key pinning is fully disabled — a network-position attacker can " +
-      "MITM the ssh transport undetected. pin: KNOWN GAP, not fixed here " +
-      "(source frozen); see swamp-go-brr-latent-bugs B3.",
+    "the insecure opt-out must remain reachable for environments that " +
+      "cannot maintain a known_hosts file — but only when explicitly requested",
   );
 });
 
 // ===========================================================================
-// B4 (LOW) — scrub.ts: false-positive-prone generic pattern, no size cap.
+// B4 (LOW) — scrub.ts: raised value floor + a size cap of its own.
 // ===========================================================================
 
-Deno.test("pin: KNOWN GAP (LOW, swamp-go-brr-latent-bugs B4) — scrubSecrets redacts a BENIGN, non-secret 'token=' value (false positive, by documented design)", () => {
+Deno.test("fixed: B4 (swamp-go-brr-latent-bugs) — scrubSecrets no longer false-positives on a short (<11 char) benign 'token=' value", () => {
   const benign = "the session token=abc12345 had expired, please retry";
   const out = scrubSecrets(benign);
   assert(
-    !out.includes("abc12345"),
-    "the high-entropy-shaped-but-benign value is redacted — an intentional " +
-      "over-eager tradeoff (per the source's own doc comment: 'prefer " +
-      "redacting a benign-but-secret-shaped string to leaking a real " +
-      "credential'). pin: KNOWN GAP, not fixed here; see " +
-      "swamp-go-brr-latent-bugs B4.",
+    out.includes("abc12345"),
+    "an 8-char benign value now survives — the generic key=value floor was " +
+      "raised from >=8 to >=11 to cut this false-positive class (secrets " +
+      ">=11 chars, incl. all-lowercase-hex, are still caught, per lib/scrub.test.ts)",
   );
 });
 
-Deno.test("pin: KNOWN GAP (LOW, swamp-go-brr-latent-bugs B4) — scrubSecrets has no input-size cap of its own; callers tail-bound AFTER scrubbing, not before", () => {
-  // A large adversarial payload with many false-trigger occurrences is still
-  // scrubbed in full (6 sequential global regex passes over the WHOLE
-  // string) before any caller applies a length cap — e.g. docker_verify's
-  // boundedStdout is `scrubSecrets(stdout).slice(-8000)`, scrub-THEN-slice.
-  const many = Array.from(
-    { length: 500 },
-    (_v, i) => `token=benignvalue${i}number`,
-  ).join(" ");
-  const start = performance.now();
-  const out = scrubSecrets(many);
-  const elapsed = performance.now() - start;
-  assert(!out.includes("benignvalue0number"), "each occurrence is redacted");
+Deno.test("fixed: B4 (swamp-go-brr-latent-bugs) — scrubSecrets now enforces its own tail-preserving MAX_SCRUB_BYTES cap on an oversize adversarial payload", () => {
+  const huge = "x".repeat(MAX_SCRUB_BYTES + 50_000) +
+    " tail-marker token=Abc123xyz99";
+  const out = scrubSecrets(huge);
   assert(
-    elapsed < 5000,
-    "scrubSecrets must not itself impose a size cap or bail out early — it " +
-      "processes the FULL string regardless of size; a truly adversarial " +
-      "(much larger) payload is bounded only by upstream transport limits, " +
-      "not by scrubSecrets. pin: KNOWN GAP, not fixed here; see " +
-      "swamp-go-brr-latent-bugs B4.",
+    out.length <= MAX_SCRUB_BYTES,
+    "scrubSecrets must cap its OWN output length, independent of any " +
+      "caller-side bound — a caller that forgets to bound its input (e.g. " +
+      "build_workorder's raw file read) is no longer exposed to an unbounded scan",
+  );
+  assert(
+    out.includes("tail-marker"),
+    "the cap is TAIL-preserving, so trailing (most-recent) content survives",
+  );
+  assert(
+    !out.includes("Abc123xyz99"),
+    "the trailing secret, within the preserved tail, is still redacted",
   );
 });
 
 // ===========================================================================
-// B5 (LOW) — scrub.ts: bare high-entropy secret with no key word survives.
+// B5 (LOW) — scrub.ts: bare high-entropy secret with no key word.
 // ===========================================================================
 
-Deno.test("pin: KNOWN GAP (LOW, swamp-go-brr-latent-bugs B5) — a bare high-entropy secret with NO recognizable key word is NOT redacted", () => {
+Deno.test("fixed: B5 (swamp-go-brr-latent-bugs) — a bare high-entropy secret with NO recognizable key word is now redacted", () => {
   const bareSecret = "aGVsbG8gd29ybGQgc2VjcmV0S2V5MTIzNDU2Nzg5MA";
   const out = scrubSecrets(`payload=${bareSecret} end`);
   assert(
-    out.includes(bareSecret),
-    "a bare base64-shaped blob with no 'token='/'secret='/etc. key word " +
-      "ahead of it survives untouched — an accepted, DOCUMENTED gap (see " +
-      "the source's own comment: 'NOT caught... secrets with no " +
-      "recognizable key word, and bare base64 blobs not behind a known " +
-      "key'). pin: KNOWN GAP, not fixed here; see swamp-go-brr-latent-bugs " +
-      "B5.",
+    !out.includes(bareSecret),
+    "a bare, ≥32-char run mixing lower/upper/digit is now redacted even " +
+      "with no preceding key word (previously an accepted, documented gap)",
   );
 });
 
 // ===========================================================================
-// B6 (LOW) — source-integration's jjRun: no timeout, no --no-pager.
+// B6 (LOW) — source-integration's jjRun: --no-pager + a client-side timeout.
 // ===========================================================================
 
-Deno.test("pin: KNOWN GAP (LOW, swamp-go-brr-latent-bugs B6) — apply()'s jj invocations carry no --no-pager flag and no timeout wiring", async () => {
+Deno.test("fixed: B6 (swamp-go-brr-latent-bugs) — every jj invocation now carries --no-pager and wires a client-side AbortSignal", async () => {
   await withTempRepo(async (repoRoot) => {
     const capturedArgSets: string[][] = [];
-    const restore = stubDirectOutput((_cmd, args) => {
+    const stub = stubDirectOutputCaptureSignal((_cmd, args) => {
       capturedArgSets.push(args);
       if (args.includes("new")) return { code: 0, stdout: "", stderr: "" };
       if (args.includes("diff")) return { code: 0, stdout: "", stderr: "" };
@@ -717,7 +873,7 @@ Deno.test("pin: KNOWN GAP (LOW, swamp-go-brr-latent-bugs B6) — apply()'s jj in
         }],
       }, ctx);
     } finally {
-      restore();
+      stub.restore();
     }
     assert(
       capturedArgSets.length >= 2,
@@ -725,52 +881,94 @@ Deno.test("pin: KNOWN GAP (LOW, swamp-go-brr-latent-bugs B6) — apply()'s jj in
     );
     for (const args of capturedArgSets) {
       assert(
-        !args.includes("--no-pager"),
-        "no jj invocation passes --no-pager (relies on jj's own non-tty " +
-          "auto-detection instead). pin: KNOWN GAP, not fixed here; see " +
-          "swamp-go-brr-latent-bugs B6.",
+        args.includes("--no-pager"),
+        "every jj invocation must carry --no-pager, not rely solely on jj's " +
+          "own non-tty auto-detection",
       );
+    }
+    assert(
+      stub.sawSignal(),
+      "jjRun must wire an AbortSignal for its client-side timeout",
+    );
+  });
+});
+
+Deno.test("fixed: B6 (swamp-go-brr-latent-bugs) — a hung jj invocation is fail-closed to a transport failure once jjTimeoutMs elapses", async () => {
+  await withTempRepo(async (repoRoot) => {
+    const stub = stubHangUntilAbort();
+    try {
+      const { written, writeResource } = collector();
+      const ctx = {
+        logger: { info: () => {} },
+        globalArgs: { jjPath: "jj", jjTimeoutMs: 20 },
+        writeResource,
+      };
+      const nonce = "n6b";
+      await callMethod(siModel, "apply", {
+        repoScope: repoRoot,
+        base: "base1",
+        tasks: [{
+          taskId: "t1",
+          rawStdout:
+            `<<<GOBRR:${nonce}\n@@NEWFILE a.ts\nx\n@@ENDFILE\nGOBRR:${nonce}>>>`,
+          nonce,
+          writeAllowlist: ["a.ts"],
+        }],
+      }, ctx);
+      const applied = written.find((w) => w.spec === "applied")!;
+      const t1 = (applied.data.results as Record<string, unknown>).t1 as Record<
+        string,
+        unknown
+      >;
+      assertEquals(
+        t1.failureKind,
+        "transport",
+        "a hung `jj new` must be fail-closed to a transport failure (never " +
+          "left to hang indefinitely) once the client-side budget elapses",
+      );
+    } finally {
+      stub.restore();
     }
   });
 });
 
 // ===========================================================================
-// B7 (LOW) — parseGitDiffPaths: " b/" mis-split, unreachable via apply().
+// B7 (LOW) — parseGitDiffPaths: symmetric ' b/' split.
 // ===========================================================================
 
-Deno.test("pin: KNOWN GAP (LOW, swamp-go-brr-latent-bugs B7) — parseGitDiffPaths mis-splits a path containing a literal ' b/' substring", () => {
-  // The non-greedy `a\/(.+?)` stops at the FIRST " b/" it finds, so a path
-  // like "weird b/file.ts" mis-splits the header instead of matching the
-  // true trailing " b/weird b/file.ts".
+Deno.test("fixed: B7 (swamp-go-brr-latent-bugs) — parseGitDiffPaths no longer mis-splits a path containing a literal ' b/' substring", () => {
+  // The OLD non-greedy `a\/(.+?) b\/` stopped at the FIRST " b/" it found; the
+  // new symmetric split scans every " b/" occurrence for the one where the
+  // two halves are EQUAL (true for every non-rename diff).
   const diff = [
     "diff --git a/weird b/file.ts b/weird b/file.ts",
     "new file mode 100644",
   ].join("\n");
   const out = parseGitDiffPaths(diff);
   assert(out.length === 1, "still emits exactly one entry");
-  assert(
-    out[0].path !== "weird b/file.ts",
-    "the mis-split path does NOT equal the true intended path — the regex " +
-      "stopped at the first ' b/' occurrence inside the filename itself. " +
-      "pin: KNOWN GAP, not fixed here; see swamp-go-brr-latent-bugs B7.",
+  assertEquals(
+    out[0].path,
+    "weird b/file.ts",
+    "the true intended path is now recovered exactly, regardless of the " +
+      "literal ' b/' substring inside the filename itself",
   );
 });
 
-Deno.test("safe: CONTRAST — B7 is UNREACHABLE via the real apply() flow, because pathEscapes already rejects any whitespace-containing path upstream", () => {
+Deno.test("safe: CONTRAST — B7 remains UNREACHABLE via the real apply() flow either way, because pathEscapes already rejects any whitespace-containing path upstream", () => {
   assert(
     pathEscapes("weird b/file.ts"),
     "a path containing a space is rejected by the ACL guard (planApply's " +
-      "guard() calls pathEscapes) long before jj ever sees it, so the " +
-      "mis-split in parseGitDiffPaths above can never actually be triggered " +
-      "through apply()'s real input surface.",
+      "guard() calls pathEscapes) long before jj ever sees it, so " +
+      "parseGitDiffPaths's behavior above — buggy or fixed — can never " +
+      "actually be triggered through apply()'s real input surface.",
   );
 });
 
 // ===========================================================================
-// B8 (LOW) — apply(): resolve-then-write TOCTOU symlink-swap.
+// B8 (LOW) — apply(): safeWriteWithinRepo closes the TOCTOU blast radius.
 // ===========================================================================
 
-Deno.test("pin: KNOWN GAP (LOW, swamp-go-brr-latent-bugs B8) — apply()'s resolve-then-write is NOT atomic: a symlink swapped in between escapes the repo (TOCTOU)", async () => {
+Deno.test("fixed: B8 (swamp-go-brr-latent-bugs) — confineWrittenPath detects and cleans up a TOCTOU symlink-swap write that escaped the repo", async () => {
   // realpath'd up front — resolveWithinRepo requires an already-canonical
   // repoRoot (macOS's tmp dirs resolve through /var -> /private/var), exactly
   // as apply()'s execute() does internally via Deno.realPathSync(repoScope).
@@ -778,27 +976,34 @@ Deno.test("pin: KNOWN GAP (LOW, swamp-go-brr-latent-bugs B8) — apply()'s resol
   const outside = Deno.realPathSync(await Deno.makeTempDir());
   try {
     await Deno.mkdir(`${repoRoot}/sub`);
-    // Step 1 (the CHECK) — exactly what apply()'s write loop does first.
+    // Step 1 (the CHECK) — exactly what safeWriteWithinRepo does first.
     const r = resolveWithinRepo(repoRoot, "sub/file.txt");
     assert(r.ok, "the check passes while sub/ is a real, contained directory");
 
     // TOCTOU WINDOW — an attacker with local filesystem access swaps `sub`
     // for a symlink pointing OUTSIDE the repo between the check and the
-    // write. apply() has no re-verification here; it reuses the resolved
-    // `abs` from the stale check, exactly reproduced below.
+    // write, reproduced exactly as before.
     await Deno.remove(`${repoRoot}/sub`, { recursive: true });
     await Deno.symlink(outside, `${repoRoot}/sub`);
 
-    // Step 2 (the WRITE) — same stale `abs`, no re-check, exactly apply()'s shape.
+    // Step 2 (the WRITE) — same stale `abs`; this half of the race is not
+    // closeable in userspace without directory-fd primitives, so it still
+    // lands outside, exactly as the old code's write would have.
     await Deno.writeTextFile(r.abs, "escaped content");
 
-    const leaked = await Deno.readTextFile(`${outside}/file.txt`);
-    assertEquals(
-      leaked,
-      "escaped content",
-      "the write landed OUTSIDE the repo through the swapped symlink — " +
-        "TOCTOU escape confirmed. pin: KNOWN GAP, not fixed here (source " +
-        "frozen); see swamp-go-brr-latent-bugs B8.",
+    // Step 3 (the FIX) — the post-write confinement re-check now DETECTS the
+    // escape, best-effort unlinks it, and throws, instead of silently
+    // letting the escaped write stand forever.
+    assertThrows(
+      () => confineWrittenPath(repoRoot, r.abs),
+      Error,
+      "escaped repo",
+    );
+    await assertRejects(
+      () => Deno.readTextFile(`${outside}/file.txt`),
+      Deno.errors.NotFound,
+      undefined,
+      "confineWrittenPath must unlink the escaped file, not just report it",
     );
   } finally {
     await Deno.remove(repoRoot, { recursive: true });

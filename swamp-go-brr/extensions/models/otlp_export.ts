@@ -84,7 +84,16 @@ const StatusSchema = z.object({
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/otlp-export",
-  version: "2026.07.16.2",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Version-aligned with the other four swamp-go-brr models for the B1-B8 latent-bug real-fix release. No functional change here — otlp-export's transport/redaction behavior is untouched; no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   // endpoint + token come from a vault CEL wired by the workflow; never resolved here.
   globalArguments: z.object({
     endpoint: z.string().default(""),

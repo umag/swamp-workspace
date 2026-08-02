@@ -97,11 +97,21 @@ const TRIGGER_KEYWORDS = [
   "bearer",
   "private_key",
 ];
+// Mirrors lib/scrub.ts's B5 bare-high-entropy rule (issue swamp-go-brr-latent-bugs
+// B5): a ≥32-char run from this charset mixing lower/upper/digit is now redacted
+// with NO key word required. Excluded here too, so arbBenignText keeps its "no
+// false-positive redaction" guarantee on genuinely benign generated text — without
+// this exclusion, fc.string() could occasionally emit such a run and the (a) no-op
+// property below would flake red at a high FC_NUM_RUNS.
+const BARE_HIGH_ENTROPY_RE =
+  /(?=[A-Za-z0-9+/=_-]*[a-z])(?=[A-Za-z0-9+/=_-]*[A-Z])(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]{32,}/;
 const arbBenignText = fc
   .string({ maxLength: 60 })
   .filter((s) => {
     const lower = s.toLowerCase();
-    return !TRIGGER_KEYWORDS.some((k) => lower.includes(k));
+    if (TRIGGER_KEYWORDS.some((k) => lower.includes(k))) return false;
+    if (BARE_HIGH_ENTROPY_RE.test(s)) return false;
+    return true;
   });
 
 Deno.test("property: scrubSecrets is a no-op (no false-positive redaction) on text excluding every trigger keyword", () => {
@@ -127,6 +137,29 @@ Deno.test("property: scrubSecrets never throws, for arbitrary input", () => {
     fc.property(fc.string({ maxLength: 200 }), (s) => {
       scrubSecrets(s);
       return true;
+    }),
+    RUNS,
+  );
+});
+
+// B5 (issue swamp-go-brr-latent-bugs): a BARE high-entropy run (no key word) is
+// redacted for an arbitrary combination of the three required char-classes.
+const LOWER = "abcdefghijklmnopqrstuvwxyz".split("");
+const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const DIGIT = "0123456789".split("");
+const arbBareHighEntropyBlob = fc
+  .array(fc.constantFrom(...LOWER, ...UPPER, ...DIGIT), {
+    minLength: 32,
+    maxLength: 60,
+  })
+  .map((cs) => cs.join(""))
+  .filter((s) => /[a-z]/.test(s) && /[A-Z]/.test(s) && /[0-9]/.test(s));
+
+Deno.test("property: scrubSecrets redacts an arbitrary BARE high-entropy blob (≥32 chars, all 3 char-classes, no key word) embedded in plain surrounding text", () => {
+  fc.assert(
+    fc.property(arbBareHighEntropyBlob, (blob) => {
+      const out = scrubSecrets(`see payload ${blob} thanks`);
+      return !out.includes(blob);
     }),
     RUNS,
   );
