@@ -5,9 +5,12 @@
  * `model.methods.<m>.arguments.parse()` + `.execute()` against a stubbed
  * `globalThis.fetch` and a fake context.
  *
- * victoriametrics.ts is UNMODIFIED by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * As of 2026.08.02.1, victoriametrics.ts has been FIXED (all 11 latent bugs
+ * tracked by victoriametrics-latent-bugs closed — see the adversarial suite
+ * for the flipped pins). Every existing test in THIS file stays
+ * BYTE-IDENTICAL — they only exercise benign, well-formed happy/error paths
+ * the fixes don't touch. One NEW test is added for the VM5 fix (`query`'s
+ * scalar-resultType happy path).
  *
  * TOOLCHAIN NOTE: the fetch stub is bound via a TYPED CONST
  * (`const stub: typeof globalThis.fetch = ...`) with NO
@@ -201,6 +204,20 @@ Deno.test("query: error path — non-ok HTTP throws 'VM query failed: <status> <
       "VM query failed: 500 internal error",
     );
   });
+});
+
+Deno.test("query: scalar resultType happy path (VM5 fix) — maps to a single {metric:{}, value:<parsed number>} row", async () => {
+  const { ctx, written } = makeCtx();
+  const body = {
+    status: "success",
+    data: { resultType: "scalar", result: [1700000000, "7"] },
+  };
+  await withOneResponse(body, 200, async () => {
+    await run("query", { promql: "scalar(7)" }, ctx);
+  });
+  const res = written.find((w) => w.spec === "queryResult")!;
+  assertEquals(res.payload.resultType, "scalar");
+  assertEquals(res.payload.results, [{ metric: {}, value: 7 }]);
 });
 
 // ---------------------------------------------------------------------------

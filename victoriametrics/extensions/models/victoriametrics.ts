@@ -85,10 +85,30 @@ async function rangeQuery(host, port, query, start, end, step) {
 
 function extractValues(result) {
   if (!result.data || !result.data.result || !result.data.result[0]) return [];
-  return result.data.result[0].values.map((v) => ({
+  return result.data.result.flatMap((s) => s.values ?? []).map((v) => ({
     ts: v[0],
     val: parseFloat(v[1]),
   }));
+}
+
+/**
+ * Validates a query-API response before the direct single-query methods
+ * (`query`, `query-range`, `health`) touch it: a `{status:"error"}` envelope
+ * or a body whose `data.result` isn't an array throws a mapped Error instead
+ * of an uncaught TypeError several frames down. `system-overview` and
+ * `container-memory` do NOT go through this — they stay deliberately lenient
+ * (missing/empty data degrades to zeroed stats, not a thrown error).
+ */
+function vmData(result) {
+  if (
+    result.status === "error" ||
+    !Array.isArray(result.data && result.data.result)
+  ) {
+    throw new Error(
+      `VM query error: ${result.error || "response missing data"}`,
+    );
+  }
+  return result.data;
 }
 
 function stats(values) {
@@ -108,7 +128,16 @@ function stats(values) {
  */
 export const model = {
   type: "@magistr/victoriametrics",
-  version: "2026.07.16.2",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Fix all 11 victoriametrics-latent-bugs (multi-series aggregation, resultType dispatch, response/series shape guards, absence+boot flags, negative-topN clamp); no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     "queryResult": {
@@ -145,13 +174,16 @@ export const model = {
       execute: async (args, context) => {
         const { host, port } = context.globalArgs;
         const result = await instantQuery(host, port, args.promql);
+        const data = vmData(result);
         const handle = await context.writeResource("queryResult", "current", {
           query: args.promql,
-          resultType: result.data.resultType,
-          results: result.data.result.map((r) => ({
-            metric: r.metric,
-            value: r.value ? parseFloat(r.value[1]) : null,
-          })),
+          resultType: data.resultType,
+          results: data.resultType === "scalar"
+            ? [{ metric: {}, value: parseFloat(data.result[1]) }]
+            : data.result.map((r) => ({
+              metric: r.metric,
+              value: r.value ? parseFloat(r.value[1]) : null,
+            })),
           timestamp: new Date().toISOString(),
         });
         return { dataHandles: [handle] };
@@ -179,12 +211,13 @@ export const model = {
           end,
           args.stepSeconds,
         );
+        const data = vmData(result);
         const handle = await context.writeResource("queryResult", "current", {
           query: args.promql,
-          resultType: result.data.resultType,
-          results: result.data.result.map((r) => ({
+          resultType: data.resultType,
+          results: data.result.map((r) => ({
             metric: r.metric,
-            values: r.values.map((v) => ({
+            values: (r.values ?? []).map((v) => ({
               timestamp: v[0],
               value: parseFloat(v[1]),
             })),
@@ -197,14 +230,26 @@ export const model = {
 
     "health": {
       description: "Check scrape target health (up/down status)",
-      arguments: z.object({}),
-      execute: async (_args, context) => {
+      arguments: z.object({
+        expectedTargets: z.array(z.string()).default([]).describe(
+          'Target names ("job (instance)") expected to be present; any not seen in the up vector are appended with status:"unknown"',
+        ),
+      }),
+      execute: async (args, context) => {
         const { host, port } = context.globalArgs;
         const result = await instantQuery(host, port, "up");
-        const targets = result.data.result.map((r) => ({
+        const data = vmData(result);
+        const targets = data.result.map((r) => ({
           name: `${r.metric.job} (${r.metric.instance})`,
-          status: parseFloat(r.value[1]) === 1 ? "up" : "down",
+          status: r.value
+            ? (parseFloat(r.value[1]) === 1 ? "up" : "down")
+            : "unknown",
         }));
+        for (const name of args.expectedTargets) {
+          if (!targets.some((t) => t.name === name)) {
+            targets.push({ name, status: "unknown" });
+          }
+        }
         const handle = await context.writeResource("health", "current", {
           targets,
           timestamp: new Date().toISOString(),
@@ -271,35 +316,43 @@ export const model = {
         const loadStats = stats(loadVals);
 
         // Disk I/O per device
-        const diskDevices = (diskData.data.result || []).map((r) => {
-          const vals = r.values.map((v) => parseFloat(v[1]));
-          const mx = Math.max(...vals);
-          return {
-            device: r.metric.device || "unknown",
-            maxIoPercent: Math.round(mx * 10) / 10,
-            avgIoPercent: Math.round(
-              vals.reduce((a, b) => a + b, 0) / vals.length * 10,
-            ) / 10,
-          };
-        }).filter((d) => d.maxIoPercent > 10).sort((a, b) =>
-          b.maxIoPercent - a.maxIoPercent
-        );
+        const diskDevices = (diskData.data?.result || [])
+          .filter((r) => Array.isArray(r.values) && r.values.length > 0)
+          .map((r) => {
+            const vals = r.values.map((v) => parseFloat(v[1]));
+            const mx = Math.max(...vals);
+            return {
+              device: r.metric.device || "unknown",
+              maxIoPercent: Math.round(mx * 10) / 10,
+              avgIoPercent: Math.round(
+                vals.reduce((a, b) => a + b, 0) / vals.length * 10,
+              ) / 10,
+            };
+          }).filter((d) => d.maxIoPercent > 10).sort((a, b) =>
+            b.maxIoPercent - a.maxIoPercent
+          );
 
         // Network
         const netVals = extractValues(netData);
         const netStats = stats(netVals);
 
         // Boot time
-        const bootTs = bootData.data.result[0]
-          ? parseFloat(bootData.data.result[0].value[1])
-          : 0;
-        const bootTime = new Date(bootTs * 1000).toISOString();
-        const uptimeMinutes = Math.round((Date.now() / 1000 - bootTs) / 60);
+        const row = bootData?.data?.result?.[0];
+        const bootTs = row?.value ? parseFloat(row.value[1]) : null;
+        const bootTime = bootTs === null
+          ? "unknown"
+          : new Date(bootTs * 1000).toISOString();
+        const uptimeMinutes = bootTs === null
+          ? 0
+          : Math.round((Date.now() / 1000 - bootTs) / 60);
 
         // Detect anomalies
         const anomalies: string[] = [];
         if (cpuStats.max > 90) {
           anomalies.push(`CPU spike to ${cpuStats.max.toFixed(1)}%`);
+        }
+        if (!cpuVals.length) {
+          anomalies.push("CPU metric absent (no series returned)");
         }
         if (memStats.max > 90) {
           anomalies.push(`Memory peaked at ${memStats.max.toFixed(1)}%`);
@@ -309,8 +362,17 @@ export const model = {
             `Memory consistently high (min ${memStats.min.toFixed(1)}%)`,
           );
         }
+        if (!memVals.length) {
+          anomalies.push("Memory metric absent (no series returned)");
+        }
         if (loadStats.max > 30) {
           anomalies.push(`Load spike to ${loadStats.max.toFixed(1)}`);
+        }
+        if (!loadVals.length) {
+          anomalies.push("Load metric absent (no series returned)");
+        }
+        if (bootTs === null) {
+          anomalies.push("Boot time unavailable");
         }
 
         // Check for metric gaps (reboot indicator)
@@ -401,10 +463,10 @@ export const model = {
           growthPercent: number;
         }> = [];
         for (const r of (result.data.result || [])) {
-          const name = r.metric.name || "unknown";
-          const vals = r.values.map((v) => parseFloat(v[1])).filter((v) =>
-            v > 0
-          );
+          const name = r.metric?.name || "unknown";
+          const vals = (r.values ?? []).map((v) => parseFloat(v[1])).filter((
+            v,
+          ) => v > 0);
           if (!vals.length || Math.max(...vals) < 50 * 1024 * 1024) continue;
 
           const first = vals[0];
@@ -427,7 +489,7 @@ export const model = {
           "containerMemory",
           "current",
           {
-            containers: containers.slice(0, args.topN),
+            containers: containers.slice(0, Math.max(0, args.topN)),
             timestamp: new Date().toISOString(),
           },
         );

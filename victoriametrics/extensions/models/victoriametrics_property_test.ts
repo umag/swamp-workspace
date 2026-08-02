@@ -29,6 +29,14 @@
  * residual LOW — the stub throws "unrouted" otherwise). FakeTime is
  * constructed/disposed INSIDE each fc run via a `using` declaration so the
  * frozen clock is restored between iterations (same residual LOW).
+ *
+ * As of 2026.08.02.1, victoriametrics.ts has been FIXED (all 11 latent bugs
+ * tracked by victoriametrics-latent-bugs closed — see the adversarial suite
+ * for the flipped pins). Every property in THIS file stays BYTE-IDENTICAL:
+ * each generated case is a single well-formed series per metric, so the
+ * VM2 multi-series aggregation fix is a no-op here (flatMap over one series
+ * equals that series), and none of the other fixes are exercised by these
+ * generators either.
  */
 import { assert } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
