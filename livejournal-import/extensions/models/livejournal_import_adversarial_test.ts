@@ -10,16 +10,25 @@
  * still-UNMODIFIED `livejournal_import.ts` until that fix lands -- this is
  * the fix's TDD RED phase, not a characterization of current behavior.
  *
- * LB2-LB8 remain UNMODIFIED-behavior PINS (deferred, not fixed in this
+ * LB7 (operator `folder`/`attachmentsFolder` path traversal on the
+ * attachment disk write, LOW) has ALSO been PROMOTED from a characterization
+ * pin to a fix-verification pin: the LB7 section below now asserts the FIXED
+ * behavior -- the attachment disk path is resolved through the
+ * already-copied string-level `resolveVaultPath` before the post loop, in
+ * BOTH the vaultRoot and CLI-fallback branches, so a hostile `folder`/
+ * `attachmentsFolder` now rejects the whole run fast with "Path escapes
+ * vault root" / "Path is outside vault root" instead of the mkdir/write
+ * silently landing outside the vault.
+ *
+ * LB2-LB6, LB8 remain UNMODIFIED-behavior PINS (deferred, not fixed in this
  * change) -- every other test in this suite still PINS current behavior
  * (including behavior that is a documented latent bug) rather than
  * proposing a fix:
  *   LB2 YAML frontmatter injection via unescaped newlines (MEDIUM), LB3
  *   silent-empty success (MEDIUM), LB4 no fetch/subprocess timeout
  *   (MEDIUM), LB5 unbounded pagination/memory (MEDIUM), LB6 fragile
- *   comment-JSON extraction (LOW), LB7 operator `folder` path traversal on
- *   disk write (LOW), LB8 parseLjDate silent fallthrough (LOW). All 8 bugs
- *   are tracked in the LOCAL `livejournal-import-latent-bugs`
+ *   comment-JSON extraction (LOW), LB8 parseLjDate silent fallthrough (LOW).
+ *   All 8 bugs are tracked in the LOCAL `livejournal-import-latent-bugs`
  *   issue-lifecycle model (NEVER filed to the swamp.club Lab -- see
  *   CLAUDE.md's anti-bypass rule).
  *
@@ -36,7 +45,7 @@
  *     (never a shell string), so shell metacharacters in `vault`/title/tags
  *     pass through as inert array elements, never reaching a shell.
  */
-import { assert, assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model, resolveVaultPathSafe } from "./livejournal_import.ts";
 
 // ---------------------------------------------------------------------------
@@ -838,35 +847,93 @@ Deno.test("pin (livejournal-import-latent-bugs LB6, LOW): a corrupted `Site.page
 });
 
 // ===========================================================================
-// LB7 operator `folder` path traversal on disk write -- LOW
+// LB7 operator `folder` path traversal on disk write -- LOW -- FIXED
 // ===========================================================================
 
-Deno.test("pin (livejournal-import-latent-bugs LB7, LOW): a `folder` global argument containing `..` segments is concatenated into the attachment disk path with no traversal guard (escape target stays SYNTHETIC)", async () => {
+Deno.test("pin (livejournal-import-latent-bugs LB7, LOW -- FIXED): a `folder` global argument containing `..` segments is REJECTED before it reaches the attachment disk path (CLI-fallback branch, no vaultRoot)", async () => {
   const args = { ...GLOBAL_ARGS, folder: "../../fixture-escape-target" };
-  const { mkdirs, writes } = await runSinglePostImport(args, "post_full.html");
-  assert(
-    mkdirs.some((m) => m.includes("../../fixture-escape-target/attachments")),
-    "mkdir path carries the unsanitized traversal segments verbatim",
-  );
-  assert(
-    writes.every((w) =>
-      w.path.includes("../../fixture-escape-target/attachments/")
-    ),
-    "every image write path also carries the unsanitized traversal segments",
-  );
+  const indexHtml = await readFixture("index.html");
+  const postHtml = await readFixture("post_full.html");
+  const { ctx } = makeCtx(args);
+  await withDenoStubs({}, async ({ mkdirs, writes }) => {
+    await withFetchStub(
+      [(req) => {
+        const url = new URL(req.url);
+        if (url.pathname === "/" && !url.searchParams.has("skip")) {
+          return htmlResponse(indexHtml);
+        }
+        if (url.pathname === "/1001.html" || url.pathname === "/1002.html") {
+          return htmlResponse(postHtml);
+        }
+        return binaryResponse();
+      }],
+      async () => {
+        await assertRejects(
+          () => run({}, ctx) as Promise<void>,
+          Error,
+          "Path escapes vault root",
+        );
+      },
+    );
+    assert(
+      mkdirs.every((m) => !m.includes("fixture-escape-target")),
+      "the guard fires before the attachment mkdir ever runs -- no mkdir call may carry the escaped path",
+    );
+    assert(
+      writes.every((w) => !w.path.includes("fixture-escape-target")),
+      "the guard fires before any attachment write -- no write call may carry the escaped path",
+    );
+  });
+});
+
+Deno.test('pin (livejournal-import-latent-bugs LB7, LOW -- FIXED): an absolute `folder` (e.g. "/etc/lj-escape") is REJECTED before it reaches the attachment disk path (CLI-fallback branch, no vaultRoot)', async () => {
+  const args = { ...GLOBAL_ARGS, folder: "/etc/lj-escape" };
+  const indexHtml = await readFixture("index.html");
+  const postHtml = await readFixture("post_full.html");
+  const { ctx } = makeCtx(args);
+  await withDenoStubs({}, async ({ mkdirs, writes }) => {
+    await withFetchStub(
+      [(req) => {
+        const url = new URL(req.url);
+        if (url.pathname === "/" && !url.searchParams.has("skip")) {
+          return htmlResponse(indexHtml);
+        }
+        if (url.pathname === "/1001.html" || url.pathname === "/1002.html") {
+          return htmlResponse(postHtml);
+        }
+        return binaryResponse();
+      }],
+      async () => {
+        await assertRejects(
+          () => run({}, ctx) as Promise<void>,
+          Error,
+          "Path is outside vault root",
+        );
+      },
+    );
+    assert(
+      mkdirs.every((m) => !m.includes("lj-escape")),
+      "the guard fires before the attachment mkdir ever runs -- no mkdir call may carry the escaped absolute path",
+    );
+    assert(
+      writes.every((w) => !w.path.includes("lj-escape")),
+      "the guard fires before any attachment write -- no write call may carry the escaped absolute path",
+    );
+  });
 });
 
 // ===========================================================================
 // path confinement (vaultRoot note-write destination, swamp-workspace #57) --
 // resolveVaultPathSafe, copied verbatim from
-// obsidian-vault/extensions/models/obsidian_vault.ts (PR #56). This is a
-// NEW, separate guard applied ONLY to the note write when vaultRoot is set --
-// it does NOT touch the attachDiskPath mkdir/image-write path above, so LB7
-// (folder traversal on the attachment disk path) remains UNFIXED exactly as
-// pinned above, for both the CLI branch and the vaultRoot branch.
+// obsidian-vault/extensions/models/obsidian_vault.ts (PR #56). This guard
+// was originally applied ONLY to the note write when vaultRoot is set; the
+// attachment disk path now ALSO goes through path confinement (via the
+// already-copied string-level resolveVaultPath, applied before the post
+// loop) -- LB7 is FIXED in both the CLI-fallback branch and the vaultRoot
+// branch.
 // ===========================================================================
 
-Deno.test("path confinement: a '../'-relative 'folder' rejects the NOTE write via resolveVaultPathSafe when vaultRoot is set (LB7's attachDiskPath mkdir is UNCHANGED and still traverses)", async () => {
+Deno.test("path confinement: a '../'-relative 'folder' rejects the run via resolveVaultPath BEFORE any attachment mkdir, when vaultRoot is set (LB7's attachDiskPath mkdir is now ALSO rejected -- LB7 FIXED)", async () => {
   const postHtml = await readFixture("post_full.html");
   const sandboxRoot = await Deno.makeTempDir({
     prefix: "livejournal-import-confinement-sandbox-",
@@ -874,7 +941,7 @@ Deno.test("path confinement: a '../'-relative 'folder' rejects the NOTE write vi
   const vaultRoot = `${sandboxRoot}/vault`;
   await Deno.mkdir(vaultRoot, { recursive: true });
   try {
-    const { ctx, written } = makeCtx({
+    const { ctx } = makeCtx({
       ...GLOBAL_ARGS,
       folder: "../escaped",
       vaultRoot,
@@ -889,32 +956,79 @@ Deno.test("path confinement: a '../'-relative 'folder' rejects the NOTE write vi
           if (url.pathname === "/9001.html") return htmlResponse(postHtml);
           return undefined;
         }],
-        () => run({}, ctx) as Promise<void>,
+        async () => {
+          await assertRejects(
+            () => run({}, ctx) as Promise<void>,
+            Error,
+            "Path escapes vault root",
+          );
+        },
       );
     });
-    // LB7 is UNCHANGED: the attachments mkdir still carries the raw
-    // traversal segments verbatim (this guard was never applied there) --
-    // realMkdir:true means it really landed outside the vault, in sandboxRoot.
-    const attachStat = await Deno.stat(`${sandboxRoot}/escaped/attachments`);
-    assert(attachStat.isDirectory);
-    const result = written.find((w) => w.spec === "result")!;
-    assertEquals(
-      result.payload.notesCreated,
-      0,
-      "the note write itself must be rejected by the NEW confinement guard",
-    );
-    const errors = result.payload.errors as string[];
-    assert(errors.some((e) => e.includes("Path escapes vault root")));
-    // The attachDiskPath mkdir side effect (LB7, unfixed) DOES create
-    // sandboxRoot/escaped -- what must NOT happen is a note landing inside
-    // it: no .md file anywhere under the escaped directory.
-    const escapedEntries: string[] = [];
-    for await (const e of Deno.readDir(`${sandboxRoot}/escaped`)) {
-      escapedEntries.push(e.name);
+    // LB7 FIXED: the attachment mkdir must never have run at all -- the
+    // whole escape-target directory must be ABSENT, not merely empty. This
+    // is the load-bearing, non-vacuous check that the guard fired before
+    // Deno.mkdir, not after it already created the directory.
+    let escapedExists = true;
+    try {
+      await Deno.stat(`${sandboxRoot}/escaped`);
+    } catch {
+      escapedExists = false;
     }
     assert(
-      escapedEntries.every((n) => !n.endsWith(".md")),
-      "no note may land outside the vault directory, even though LB7's attachments mkdir still does",
+      !escapedExists,
+      "sandboxRoot/escaped must not exist at all -- the attachment mkdir never ran",
+    );
+  } finally {
+    await Deno.remove(sandboxRoot, { recursive: true });
+  }
+});
+
+Deno.test("path confinement: an absolute 'folder' (e.g. \"/etc/lj-escape\"-shaped) rejects the run via resolveVaultPath BEFORE any attachment mkdir, when vaultRoot is set (LB7 FIXED, absolute-path variant)", async () => {
+  const postHtml = await readFixture("post_full.html");
+  const sandboxRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-confinement-absolute-",
+  });
+  const vaultRoot = `${sandboxRoot}/vault`;
+  const outsideRoot = `${sandboxRoot}/outside`;
+  await Deno.mkdir(vaultRoot, { recursive: true });
+  try {
+    const { ctx } = makeCtx({
+      ...GLOBAL_ARGS,
+      folder: `${outsideRoot}/lj-escape`,
+      vaultRoot,
+    });
+    await withDenoStubs({ realMkdir: true }, async () => {
+      await withFetchStub(
+        [(req) => {
+          const url = new URL(req.url);
+          if (url.pathname === "/" && !url.searchParams.has("skip")) {
+            return htmlResponse(SINGLE_POST_INDEX_HTML);
+          }
+          if (url.pathname === "/9001.html") return htmlResponse(postHtml);
+          return undefined;
+        }],
+        async () => {
+          await assertRejects(
+            () => run({}, ctx) as Promise<void>,
+            Error,
+            "Path is outside vault root",
+          );
+        },
+      );
+    });
+    // LB7 FIXED (absolute-path variant): the escape target must never have
+    // been created at all -- non-vacuous proof the attachment mkdir never
+    // ran with the absolute, out-of-vault path.
+    let outsideExists = true;
+    try {
+      await Deno.stat(outsideRoot);
+    } catch {
+      outsideExists = false;
+    }
+    assert(
+      !outsideExists,
+      "the absolute-path escape target must not exist at all -- the attachment mkdir never ran",
     );
   } finally {
     await Deno.remove(sandboxRoot, { recursive: true });

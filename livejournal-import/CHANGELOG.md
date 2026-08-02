@@ -1,5 +1,64 @@
 # Changelog
 
+## 2026.08.02.1
+
+Fix for latent bug LB7 (operator `folder`/`attachmentsFolder` path traversal on
+the attachment disk write, LOW) tracked in the LOCAL
+`livejournal-import-latent-bugs` issue-lifecycle model (NEVER filed to the
+swamp.club Lab -- see CLAUDE.md's anti-bypass rule). `model.version` and
+`manifest.yaml` both bump `2026.08.01.1` -> `2026.08.02.1`.
+
+- **LB7 fix**: the attachment disk path (`attachDiskPath`, used for the
+  attachments-folder `mkdir` and every downloaded image's `writeFile`) is now
+  resolved through the already-copied string-level `resolveVaultPath` before the
+  post loop, instead of being built with a raw template-string concatenation
+  (`` `${vaultPath}/${folder}/${attachmentsFolder}` ``). A
+  `folder`/`attachmentsFolder` containing `..` segments or an absolute path now
+  rejects the whole run fast with `"Path escapes vault root"` /
+  `"Path is outside vault root"`, instead of silently landing outside the vault.
+- **Both branches are fixed**: `vaultPath` is `vaultRoot || getVaultPath(vault)`
+  and is non-empty in either case, so the same guard covers the CLI-fallback
+  branch (no `vaultRoot` set) and the headless `vaultRoot` filesystem branch
+  added in `2026.08.01.1`.
+- **Deliberately `resolveVaultPath`, not `resolveVaultPathSafe`**: the
+  attachment path check is string-level only (no `Deno.realPath`/`lstat`),
+  matching the CLI-fallback branch's semantics where the vault directory need
+  not already exist on disk, and keeping the byte-identical
+  `"/fixture/vault/LiveJournal/attachments"` contract in the fixture-based test
+  suites frozen. A malicious symlinked `folder` path segment is still not caught
+  on the attachment side (only the note write's `resolveVaultPathSafe` catches
+  that) -- unchanged from before this fix, and out of LB7's scope (LB7 is
+  specifically about `..`/absolute traversal, not symlink-following).
+- **Fail-fast semantics**: because the guard runs before the post loop and
+  outside any per-post `try`, a hostile `folder`/`attachmentsFolder` now aborts
+  the entire `import` run (the method's promise rejects) rather than recording a
+  soft per-post error. No `result` resource is written in that case -- this is a
+  deliberate, documented difference from the per-post error-accumulation
+  behavior elsewhere in this model.
+- Adversarial suite: the two LB7 pins are flipped from characterizing the
+  traversal to asserting rejection (`assertRejects` on
+  `"Path escapes vault root"` for the CLI-fallback branch, and on the vaultRoot
+  branch's `../escaped` regression case from `2026.08.01.1`, now additionally
+  asserting the escaped directory never gets created at all -- a non-vacuous
+  proof the guard fires before `Deno.mkdir`). Two new absolute-path variants
+  (`"/etc/lj-escape"`-shaped) were added, one per branch, so both the
+  CLI-fallback and vaultRoot branches are exercised against both traversal
+  shapes (`..`-relative and absolute).
+- Coverage suite: added a benign-nested-folder regression (`folder:"sub/dir"`)
+  proving a multi-segment, non-traversal `folder` still works end-to-end
+  (attachments directory created, note written) -- guards against an over-broad
+  fix that would reject every multi-segment folder rather than just
+  `..`/absolute escapes.
+- The other 7 latent bugs tracked in `livejournal-import-latent-bugs` (LB1 SSRF
+  -- already fixed in `2026.07.31.1`; LB2 YAML-newline-injection, LB3
+  silent-empty, LB4 no-timeout, LB5 unbounded-pagination, LB6 fragile
+  comment-JSON, LB8 parseLjDate-fallthrough) are untouched -- their pins still
+  assert current behavior.
+- Added an identity `upgrades[]` entry (`2026.08.01.1 -> 2026.08.02.1`,
+  `upgradeAttributes: (old) => old`, no resource schema change) -- keeps the
+  model-upgrade chain continuous with `final toVersion === model.version`.
+- `manifest.yaml`/model `version`: `2026.08.01.1` -> `2026.08.02.1`.
+
 ## 2026.08.01.1
 
 Adds an optional headless `vaultRoot` filesystem backend to `import`, so the

@@ -757,3 +757,50 @@ Deno.test("branch matrix: vaultRoot + vault BOTH set -- vaultRoot wins, getVault
     await Deno.remove(vaultRoot, { recursive: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// LB7 fix regression: a benign multi-segment 'folder' (no traversal) must
+// keep working -- guards against an over-broad fix that rejects every
+// multi-segment folder instead of just '..'/absolute escapes.
+// ---------------------------------------------------------------------------
+
+Deno.test("LB7 fix, benign case: a nested 'folder' (\"sub/dir\", multiple segments, no traversal) still works -- attachments mkdir'd and the note written, both under vaultRoot/sub/dir", async () => {
+  const vaultRoot = await Deno.makeTempDir({
+    prefix: "livejournal-import-branch-matrix-nested-",
+  });
+  try {
+    const { ctx, written } = makeCtx({
+      ...GLOBAL_ARGS,
+      folder: "sub/dir",
+      vaultRoot,
+    });
+    await withDenoStubs({ realMkdir: true }, async () => {
+      await withFetchStub(
+        singlePostRoutes(),
+        () => run({}, ctx) as Promise<void>,
+      );
+    });
+    const result = written.find((w) => w.spec === "result")!;
+    assertEquals(
+      result.payload.notesCreated,
+      1,
+      "a benign multi-segment folder must not be rejected by the LB7 traversal guard",
+    );
+    const attachStat = await Deno.stat(`${vaultRoot}/sub/dir/attachments`);
+    assert(
+      attachStat.isDirectory,
+      "the attachments directory is created under the nested benign folder",
+    );
+    const entries: string[] = [];
+    for await (const e of Deno.readDir(`${vaultRoot}/sub/dir`)) {
+      if (e.name.endsWith(".md")) entries.push(e.name);
+    }
+    assertEquals(
+      entries.length,
+      1,
+      "exactly one note is written directly under the nested benign folder",
+    );
+  } finally {
+    await Deno.remove(vaultRoot, { recursive: true });
+  }
+});

@@ -26,6 +26,11 @@ const GlobalArgsSchema = z.object({
 // rationale. Swamp bundles each extension independently, so this ~60-line
 // block is duplicated rather than shared across extensions.
 
+/**
+ * The result of resolving a caller-supplied path against a vault root: the
+ * absolute filesystem path, the path relative to the vault, and the vault
+ * root with every symlink resolved (see the `realRoot` field below).
+ */
 export interface VaultPath {
   absolutePath: string;
   vaultRelativePath: string;
@@ -721,7 +726,7 @@ function sanitize(name: string): string {
 /** Swamp model that imports LiveJournal entries (images, tags, mood, now playing, comments) into an Obsidian vault. */
 export const model = {
   type: "@magistr/livejournal/import",
-  version: "2026.08.01.1",
+  version: "2026.08.02.1",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",
@@ -761,6 +766,13 @@ export const model = {
       toVersion: "2026.08.01.1",
       description:
         "Add a headless vaultRoot filesystem backend (swamp-workspace #57, mirrors PR #56's obsidian-vault backend split): the note is written directly to disk via a confined atomic write when vaultRoot is set, instead of the Obsidian CLI. No resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.01.1",
+      toVersion: "2026.08.02.1",
+      description:
+        "LB7 fix: reject operator folder/attachmentsFolder path traversal (../absolute) on the attachment disk path via resolveVaultPath; no resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -810,7 +822,15 @@ export const model = {
         // lookup, which is kept as the fallback.
         const vaultPath = vaultRoot || await getVaultPath(vault);
         const attachFolder = `${folder}/${attachmentsFolder}`;
-        const attachDiskPath = `${vaultPath}/${attachFolder}`;
+        // String-level confinement only (no filesystem access here, and the
+        // CLI-fallback branch's vaultPath need not exist on disk) — same
+        // rejection semantics ("Path escapes vault root" / "Path is outside
+        // vault root") as resolveVaultPathSafe, applied before the post loop
+        // so a hostile folder/attachmentsFolder fails the whole run fast.
+        const attachDiskPath = resolveVaultPath(
+          { vaultRoot: vaultPath },
+          attachFolder,
+        ).absolutePath;
         await Deno.mkdir(attachDiskPath, { recursive: true });
 
         // Collect all post URLs
