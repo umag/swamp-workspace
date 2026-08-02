@@ -25,8 +25,12 @@
  *      min(N, limit) when every generated conversation's message matches
  *      the query (generalizes the coverage suite's single boundary case).
  *  (d) filename invariant -- importToObsidian's note filename stem is
- *      NEVER longer than 80 UTF-16 code units, for any generated JID
- *      local-part (including sanitizeFilename's replace-target characters).
+ *      NEVER longer than 80 Unicode code points, for any generated JID
+ *      local-part (including sanitizeFilename's replace-target characters
+ *      and an astral, surrogate-pair character -- FIXED bug #9's
+ *      code-point-aware slice is what makes this invariant hold at all;
+ *      a raw UTF-16 code-unit slice could split a surrogate pair and this
+ *      property would catch it).
  *  (e) multi-step flow invariant -- for any jid appearing in list()'s OWN
  *      output, read() with that exact jid always finds >=1 match.
  *  (f) vaultRoot import invariant (swamp-workspace #57) -- for any synthetic
@@ -266,11 +270,17 @@ Deno.test("property: search() truncates to exactly min(N, limit) when every gene
 });
 
 // ---------------------------------------------------------------------------
-// (d) filename invariant: sanitizeFilename's slice(0,80) is NEVER exceeded
+// (d) filename invariant: sanitizeFilename's code-point-aware slice(0,80) is
+// NEVER exceeded (FIXED bug #9 -- see the doc comment on this property at
+// the top of the file). The alphabet includes one astral (surrogate-pair)
+// character so the arbitrary can actually generate a JID whose local-part
+// straddles the 80-code-point truncation boundary, making this a
+// non-vacuous regression guard for the fix (a pre-fix UTF-16 code-unit
+// slice would fail this property whenever the pair straddles the boundary).
 // ---------------------------------------------------------------------------
 
 const JID_LOCAL_ALPHABET = Array.from(
-  'abcdefghijklmnopqrstuvwxyz0123456789#:*?"<>|[]{}\\-_. ',
+  'abcdefghijklmnopqrstuvwxyz0123456789#:*?"<>|[]{}\\-_. \u{1F600}',
 );
 const arbJidLocal = fc
   .array(fc.constantFrom(...JID_LOCAL_ALPHABET), {
@@ -279,7 +289,7 @@ const arbJidLocal = fc
   })
   .map((cs) => cs.join(""));
 
-Deno.test("property: importToObsidian's note filename stem is NEVER longer than 80 UTF-16 code units, for any generated JID local-part", async () => {
+Deno.test("property: importToObsidian's note filename stem is NEVER longer than 80 Unicode code points, for any generated JID local-part", async () => {
   await fc.assert(
     fc.asyncProperty(arbJidLocal, async (local) => {
       const jid = `${local}@example.com`;
@@ -309,7 +319,7 @@ Deno.test("property: importToObsidian's note filename stem is NEVER longer than 
               if (!m) return false;
               stem = m[1];
             }
-            return stem !== undefined && stem.length <= 80;
+            return stem !== undefined && Array.from(stem).length <= 80;
           }),
       );
     }),

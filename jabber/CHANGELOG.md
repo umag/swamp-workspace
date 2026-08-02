@@ -1,5 +1,74 @@
 # Changelog
 
+## 2026.08.02.1
+
+Fixes the eight latent bugs (#1-4, #6-9) that were tracked, unfixed, in the
+LOCAL `jabber-latent-bugs` issue-lifecycle model (never filed to the swamp.club
+Lab) as of 2026.08.01.1. **Bug #5 (folder path traversal) is untouched** -- it
+was already fixed in 2026.08.01.1 by the `resolveVaultPathSafe` path-confinement
+change, and that fix's headless `vaultRoot`/PR #141 behavior is unmodified here.
+
+- **#1 (decodeJid resilience)**: `decodeJid` now wraps `decodeURIComponent` in a
+  try/catch and falls back to the `_at_`-replaced raw string on a `URIError`,
+  instead of letting one malformed-`%` filename abort listing -- and therefore
+  every method -- for the WHOLE directory. `list`/`read`/
+  `search`/`importToObsidian` all now RESOLVE against a directory containing a
+  poisoned filename; the poisoned entry surfaces with its fallback jid instead
+  of taking down every other file with it.
+- **#2 (sanitizeFilename collision dedup)**: `importToObsidian` now tracks used
+  filename stems in a `Map` and appends `(2)`, `(3)`, ... on collision (the same
+  pattern `fidonet_msgbase.ts` already uses for its Obsidian note paths),
+  instead of silently letting the second write clobber the first.
+- **#3 (frontmatter/body injection, both vectors)**: added `yamlEscape` (copied
+  verbatim from `livejournal_import.ts`) and applied it to the
+  `title`/`jid`/`account` frontmatter fields (previously only `"` was escaped),
+  plus a new `neutralizeBodyDelimiters` helper that backslash-escapes any
+  message-body LINE that is, once trimmed, exactly a `---`/`***`/`___`
+  delimiter. A `%0A`-encoded JID no longer injects a second `title:` line; a
+  body containing an internal `---` line no longer forges a second frontmatter
+  block. (The prior #3b pin was VACUOUS -- its fixture body started with `---`
+  but rendered inline as ordinary text, never as its own line; the rewritten
+  test uses a body with an internal newline so the injected delimiter is a real
+  line, and is non-vacuous: an unfixed model produces 3 `---` lines, the fixed
+  one produces exactly 2.)
+- **#4 (was live-only, now offline-testable)**: `read` now validates each parsed
+  pipe-format message against the model's own `MessageSchema` and drops (with a
+  `logger.warn`) any that fail -- localizing the damage the same way the #1 fix
+  localizes one bad filename -- instead of letting a malformed
+  timestamp/direction pass straight through untouched. The regression test now
+  directly asserts `model.resources.conversation.schema.parse(payload)` no
+  longer throws, which is exactly the live-instance failure mode this bug used
+  to describe as untestable in this backfill's fake `writeResource` harness.
+- **#6/#7 (obsidian subprocess hardening)**: `getVaultPath` now spawns with an
+  `AbortController`-derived `signal` (a manual `setTimeout`/`clearTimeout` pair,
+  never `AbortSignal.timeout()` -- see the doc comment on `getVaultPath`)
+  bounded by a new `timeoutMs` global argument (default `30000`ms), so a hung
+  Obsidian CLI no longer blocks the import indefinitely. A new `obsidianBin`
+  global argument (default `"obsidian"`, unchanged) lets an operator pin an
+  absolute path instead of the bare PATH-resolved command name.
+- **#8 (unbounded memory)**: a new `maxFileBytes` global argument (default
+  `52428800` = 50 MiB) routes every file read through a new `readFileWithCap`
+  helper, which `Deno.stat`s the file first and skips it (with a warning) if it
+  exceeds the cap, instead of always reading it whole regardless of size. The
+  default is far above any realistic history file, so behavior is unchanged
+  unless an operator explicitly lowers the cap.
+- **#9 (lone-surrogate filename truncation)**: `sanitizeFilename` now slices via
+  `Array.from(cleaned).slice(0, 80).join("")` (Unicode code points) instead of a
+  raw UTF-16 code-unit `.slice(0, 80)`, so a surrogate pair straddling the
+  80-character boundary is never split.
+- Added `upgrades[]` (previously absent on this model): a lineage-repair bridge
+  `2026.07.16.2` -> `2026.08.01.1` (closing the gap left when the
+  headless-vaultRoot change shipped without an `upgrades[]` entry) and this
+  change's own `2026.08.01.1` -> `2026.08.02.1` entry. Neither changes the
+  resource schema.
+- Extended all five test suites with FIXED-behavior pins for the flipped bugs,
+  plus new non-vacuous coverage: a mixed good+poison directory (#1), a rewritten
+  #3b fixture with an internal newline, a `maxFileBytes`-capped skip test (#8),
+  an `obsidianBin`-override pin (#7), and the #9 property test's arbitrary now
+  includes an astral (surrogate-pair) character so the code-point-length
+  invariant is exercised non-vacuously.
+- `manifest.yaml`/model `version`: `2026.08.01.1` -> `2026.08.02.1`.
+
 ## 2026.08.01.1
 
 Adds an optional headless `vaultRoot` filesystem backend to `importToObsidian`,
@@ -27,8 +96,9 @@ argument) nor `vaultRoot` (global argument) is set.
     `` `${vaultPath}/${args.folder}` `` was concatenated unsanitized, so a
     `../`-relative `folder` escaped the vault directory): a traversal attempt is
     now rejected before any directory is created. The other eight tracked latent
-    bugs (#1-4, #6-9) are UNCHANGED and remain pinned in the LOCAL
-    `jabber-latent-bugs` issue-lifecycle model.
+    bugs (#1-4, #6-9) were UNCHANGED as of this release and remained pinned in
+    the LOCAL `jabber-latent-bugs` issue-lifecycle model -- **all eight are now
+    FIXED in 2026.08.02.1 above.**
   * No `npm:yaml` dependency was added -- this model emits brand-new hand-built
     frontmatter into notes it owns, it never round-trips existing frontmatter,
     so PR #56's yaml-`Document` rationale does not apply here. Every hand-built
@@ -88,33 +158,37 @@ stays `2026.07.16.2`.
   adversarial suite falsifies XXE/DOCTYPE/billion-laughs applicability with a
   covered-negative: such a payload embedded in a message body survives
   byte-for-byte as inert literal text.
-- Nine already-shipped latent bugs are PINNED (characterized as CURRENT
-  behavior, not fixed -- `jabber_history.ts` is byte-frozen by this change) and
-  tracked in the LOCAL `jabber-latent-bugs` issue-lifecycle model (NEVER filed
-  to the swamp.club Lab):
+- Nine already-shipped latent bugs were PINNED at the time of this change
+  (characterized as CURRENT behavior, not fixed -- `jabber_history.ts` was
+  byte-frozen by this change) and tracked in the LOCAL `jabber-latent-bugs`
+  issue-lifecycle model (NEVER filed to the swamp.club Lab). **All nine are now
+  FIXED** -- #5 in 2026.08.01.1 above, and #1-4/#6-9 in 2026.08.02.1 (see the
+  top of this file):
   1. **`decodeURIComponent` on a malformed-`%` filename aborts ALL 4 methods
      (MEDIUM)** -- `decodeJid` runs unguarded on every filename inside
      `listHistoryFiles`' `for await` loop; one poisoned filename
      (`bad%ZZ.history`) throws a `URIError` that aborts listing for every OTHER
-     file in the same directory too.
+     file in the same directory too. **FIXED in 2026.08.02.1.**
   2. **`sanitizeFilename` collision silently overwrites notes, data loss
      (MEDIUM)** -- two distinct JIDs (one containing a literal `/`, one already
      containing a literal `-`) can sanitize to the identical filename;
      `importToObsidian`'s returned summary still claims both were written, while
-     only one survives on disk.
+     only one survives on disk. **FIXED in 2026.08.02.1.**
   3. **Obsidian frontmatter/markdown injection from JID or message body
      (MEDIUM)** -- neither the JID nor the message body is escaped for newlines
      anywhere in the markdown-rendering code (only `"` is escaped via
      `.replace(/"/g, '\\"')`). A `%0A`-encoded JID injects a second `title:`
      YAML line; a message body containing a literal `---` line injects a second
-     frontmatter delimiter into the note body.
+     frontmatter delimiter into the note body. **FIXED in 2026.08.02.1.**
   4. **Malformed timestamp/direction -- schema-invalid resource would abort the
      whole run in a REAL swamp instance (MEDIUM, live-only)** -- the blind
      `timestamp + "Z"` append (L80) and the unvalidated `direction` string pass
      straight through the parse layer untouched; this backfill's fake
      `writeResource` never runs the model's own `ConversationSchema` zod
      validation, so only the parse-layer output is pinned here, not the live
-     abort-on-schema-violation behavior.
+     abort-on-schema-violation behavior. **FIXED in 2026.08.02.1** -- now
+     offline-testable via a post-parse `MessageSchema` guard, no longer
+     live-only.
   5. **`importToObsidian`'s `folder` path traversal (MEDIUM)** --
      `` `${vaultPath}/${args.folder}` `` is never sanitized; a `../`-relative
      folder escapes the vault directory entirely (pinned inside our own temp-dir
@@ -123,24 +197,26 @@ stays `2026.07.16.2`.
   6. **No timeout on the `obsidian` subprocess -- import can hang (MEDIUM)** --
      `Deno.Command`'s options carry no `AbortSignal`/timeout anywhere (exit code
      and stderr ARE checked); a real hang is never simulated, only the absence
-     of any timeout mechanism is pinned.
+     of any timeout mechanism is pinned. **FIXED in 2026.08.02.1.**
   7. **`obsidian` binary resolved from bare PATH name -- PATH-hijack risk
      (LOW)** -- `new Deno.Command("obsidian", ...)` never uses an absolute path.
      Paired with a covered-negative: the argv-array API means a vault NAME
      containing shell metacharacters (`; rm -rf ~; echo pwned
      $(whoami)`)
      is forwarded as a single, unsplit argv element -- no shell injection is
-     possible.
+     possible. **FIXED in 2026.08.02.1** -- mitigable via the new `obsidianBin`
+     global argument (default unchanged).
   8. **Unbounded memory -- no streaming or cap (LOW)** -- every method reads
      each history file whole via `Deno.readTextFile` and scans every file in the
      directory; a several-thousand-message single file is read entirely into
-     memory with no size guard anywhere.
+     memory with no size guard anywhere. **FIXED in 2026.08.02.1.**
   9. **Lone-surrogate filename truncation (LOW)** -- `sanitizeFilename`'s
      `.slice(0, 80)` is a raw UTF-16 code-unit cut that can split a surrogate
      pair straddling the boundary, emitting a lone unpaired high surrogate
      (observed to survive as-is when the write fails, or get silently
      substituted with the U+FFFD replacement character by the OS/runtime when
-     the write succeeds -- both are the same underlying bug).
+     the write succeeds -- both are the same underlying bug). **FIXED in
+     2026.08.02.1.**
 - `deno.json`: `test` task now grants
   `--allow-read --allow-write
   --allow-env=FC_NUM_RUNS` (real fixture/temp-dir

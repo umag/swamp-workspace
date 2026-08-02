@@ -332,6 +332,31 @@ Deno.test("importToObsidian: vault (name) branch resolves via the stubbed Deno.C
   });
 });
 
+Deno.test("FIXED (was bug #7): the obsidianBin global argument overrides the bare 'obsidian' command name used to resolve a vault", async () => {
+  await withTempVault(async (resolvedPath) => {
+    const { ctx } = makeCtx(GOOD_HISTORY_DIR);
+    (ctx.globalArgs as Record<string, unknown>).obsidianBin =
+      "/abs/path/to/obsidian";
+    await withCommandStub(
+      (cmd, options) => {
+        assertEquals(cmd, "/abs/path/to/obsidian");
+        assertEquals(options.args, ["vault", "vault=my-vault", "info=path"]);
+        return { success: true, stdout: `${resolvedPath}\n` };
+      },
+      async (calls) => {
+        await run(
+          "importToObsidian",
+          { vault: "my-vault", folder: "Jabber", chatType: "dm" },
+          ctx,
+        );
+        assertEquals(calls.length, 1);
+      },
+    );
+    const stat = await Deno.stat(`${resolvedPath}/Jabber/alice@example.com.md`);
+    assert(stat.isFile);
+  });
+});
+
 Deno.test("importToObsidian: vault (name) resolution failure -- stderr surfaces in the thrown error, no write is attempted", async () => {
   const { ctx } = makeCtx(GOOD_HISTORY_DIR);
   await withCommandStub(
