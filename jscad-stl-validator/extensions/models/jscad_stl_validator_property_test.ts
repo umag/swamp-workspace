@@ -21,8 +21,9 @@
  *      (too-small returns 0 unconditionally; all-zero also returns 0
  *      unconditionally), which would make it flake/fail spuriously.
  *
- * `jscad_stl_validator.ts` / `jscad/stl_validator.ts` are BYTE-FROZEN. All
- * fixture content is synthetic — see fixtures/PROVENANCE.md.
+ * `jscad_stl_validator.ts` / `jscad/stl_validator.ts`: behavior updated in
+ * 2026.08.02.1; the invariants above hold for the fixed behavior too (see
+ * CHANGELOG.md). All fixture content is synthetic — see fixtures/PROVENANCE.md.
  */
 import { assert } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
