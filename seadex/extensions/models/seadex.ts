@@ -268,7 +268,7 @@ function buildResult(
 /** SeaDex (releases.moe) model: best-release recommendations for anime, with lookups by AniList ID, by title, and fan-out batch lookups. */
 export const model = {
   type: "@magistr/seadex",
-  version: "2026.08.02.1",
+  version: "2026.08.02.2",
   reports: ["@magistr/seadex-upgrades"],
   globalArguments: GlobalArgsSchema,
   upgrades: [
@@ -277,6 +277,13 @@ export const model = {
       toVersion: "2026.08.02.1",
       description:
         "Real-fix LB1–LB8; adds summary.errors + upgradeFilter resource; no globalArguments change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.02.2",
+      description:
+        "Bundle the @magistr/seadex-upgrades report (reads the upgradeFilter marker); no resource schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026.08.02.2
+
+Relocates the `@magistr/seadex-upgrades` report from the main `swamp` repo into
+this extension so the workspace becomes its single source of truth.
+`model.version` / `manifest.yaml` bump `2026.08.02.1` → `2026.08.02.2`, with an
+identity `upgrades[]` entry (`upgradeAttributes: (old) => old` — no resource
+schema change).
+
+- Added `extensions/reports/seadex_upgrades.ts` — copied verbatim from the
+  already-fixed main-repo version. Renders anime with available SeaDex best
+  releases, scored/sorted by user metadata (`userScore`/`userStatus`/
+  `userSeason`/`userYear`) passed in via `lookup-many`. Reads the durable
+  `upgradeFilter` marker resource (written by `render-upgrades`) as the
+  authoritative filter source when present — it persists the last-requested
+  filter across report runs regardless of which method triggered the report —
+  falling back to `methodArgs` only when no marker resource exists (e.g. an
+  older seadex model that predates the marker).
+- `manifest.yaml` gains a `reports:` section listing
+  `extensions/reports/seadex_upgrades.ts` (the bundling list); `model.reports`
+  in `extensions/models/seadex.ts` already declared
+  `["@magistr/seadex-upgrades"]` (the model's require list) — both are kept in
+  sync.
+- Added `extensions/reports/seadex_upgrades_test.ts` — stubs `dataRepository` to
+  pin the marker-present-overrides-methodArgs precedence and the
+  no-marker-falls-back-to-methodArgs behavior described above.
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-2b, full build,
