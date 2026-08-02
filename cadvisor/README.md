@@ -23,16 +23,17 @@ biggest (and fastest-growing) memory consumers over a lookback window.
 | `vmComposeDir`   | string | (required)                 | Path to the VictoriaMetrics docker-compose directory |
 | `vmComposeFile`  | string | `compose-vl-single.yml`    | VictoriaMetrics compose file name                    |
 | `vmScrapeConfig` | string | `prometheus-vl-single.yml` | Prometheus scrape config file name                   |
+| `vmPort`         | number | `8428`                     | VictoriaMetrics HTTP API port                        |
 
 SSH is invoked with `BatchMode=yes`, so key-based auth to `host` must already be
-configured for `username`. The VictoriaMetrics HTTP API is assumed to listen on
-port `8428` on `host`.
+configured for `username`. The VictoriaMetrics HTTP API port is configurable via
+`vmPort` (default `8428`) on `host`.
 
 ## Instance configuration
 
 ```yaml
 type: "@magistr/cadvisor"
-typeVersion: "2026.05.25.1"
+typeVersion: "2026.08.02.1"
 name: my-cadvisor
 version: 1
 globalArguments:
@@ -42,6 +43,7 @@ globalArguments:
   vmComposeDir: "/opt/victoriametrics"
   vmComposeFile: "compose-vl-single.yml"
   vmScrapeConfig: "prometheus-vl-single.yml"
+  vmPort: 8428
 methods: {}
 ```
 

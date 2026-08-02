@@ -23,8 +23,10 @@
  *      already include "cadvisor" — for every combination of the two
  *      independent boolean pre-conditions.
  *
- * cadvisor.ts is UNMODIFIED by this change; every property PINS existing,
- * already-shipped behavior.
+ * cadvisor.ts changed only in the six characterized bug fixes (LB2–LB7,
+ * fixed 2026.08.02.1) described in the plan; none of those fixes touch the
+ * invariants below, so every property here continues to PIN already-correct,
+ * unaffected behavior.
  */
 import fc from "npm:fast-check@4.8.0";
 import { model } from "./cadvisor.ts";
@@ -46,6 +48,7 @@ const GLOBAL_ARGS = {
   vmComposeDir: "/opt/victoriametrics",
   vmComposeFile: "compose-vl-single.yml",
   vmScrapeConfig: "prometheus-vl-single.yml",
+  vmPort: 8428,
 };
 
 type Written = { spec: string; name: string; payload: Record<string, unknown> };

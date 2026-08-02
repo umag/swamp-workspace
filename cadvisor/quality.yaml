@@ -3,10 +3,11 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-cadvisor, wave 2c
-# full build of the Phase D extension-quality backfill). cadvisor.ts is
-# unmodified — every suite drives model.methods.<m>.execute() against BOTH
-# a stubbed Deno.Command (SSH) and a stubbed fetch (HTTP), characterizing
-# already-shipped behavior.
+# full build of the Phase D extension-quality backfill); every suite drives
+# model.methods.<m>.execute() against BOTH a stubbed Deno.Command (SSH) and a
+# stubbed fetch (HTTP). As of 2026.08.02.1, all six remaining
+# cadvisor-latent-bugs are fixed and every suite is re-baselined to the fixed
+# behavior — see CHANGELOG.md.
 schemaVersion: 1
 extension: cadvisor
 tests:

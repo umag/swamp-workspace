@@ -3,12 +3,14 @@
  * approved plan — the memLimit `>0 && <1e18` sentinel guard (both sides),
  * deploy's alreadyRunning idempotency short-circuit, the
  * `scrapeConfigured`/`currentConfig.includes("cadvisor")` guard (both sides),
- * top-memory's `first > 0` growthPct guard, and cpuPercent's unused
- * `_numCores` (bug #3 in cadvisor-latent-bugs) — pinned so cpuPercent stays
- * IDENTICAL regardless of core count, catching either a deletion of this
- * guard's surrounding logic or an accidental "fix" that starts normalizing.
+ * top-memory's `first > 0` growthPct guard, and cpuPercent's `numCores`
+ * normalization (bug #3 in cadvisor-latent-bugs, FIXED as of 2026.08.02.1) —
+ * pinned so cpuPercent now scales INVERSELY with core count, catching either
+ * a regression back to the unused `_numCores` bug or an accidental removal
+ * of the normalization.
  *
- * cadvisor.ts is UNMODIFIED; every test here PINS existing behavior.
+ * cadvisor.ts changed only in the six characterized bug fixes (LB2–LB7); the
+ * branches pinned here that are unrelated to those fixes stay byte-identical.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { model } from "./cadvisor.ts";
@@ -20,6 +22,7 @@ const GLOBAL_ARGS = {
   vmComposeDir: "/opt/victoriametrics",
   vmComposeFile: "compose-vl-single.yml",
   vmScrapeConfig: "prometheus-vl-single.yml",
+  vmPort: 8428,
 };
 
 type Written = { spec: string; name: string; payload: Record<string, unknown> };
@@ -369,11 +372,11 @@ Deno.test("guard top-memory: a single-sample series has first===last -> growth=0
 });
 
 // ---------------------------------------------------------------------------
-// Guard: cpuPercent's unused `_numCores` — bug #3 in cadvisor-latent-bugs.
-// Pinned as a regression guard: cpuPercent must stay IDENTICAL across
-// different core counts, since the computed `_numCores` variable is
-// currently discarded. If a future change starts using it, this test goes
-// red — which is the intended signal to update cadvisor-latent-bugs.
+// Guard: cpuPercent's `numCores` normalization — bug #3 in
+// cadvisor-latent-bugs, FIXED as of 2026.08.02.1. Pinned as a regression
+// guard: cpuPercent must now scale INVERSELY with core count (the computed
+// `numCores` variable is applied, not discarded). If a future change stops
+// using it, this test goes red.
 // ---------------------------------------------------------------------------
 
 function twoStatContainer(coreLimit: number, perCoreLen: number) {
@@ -400,7 +403,7 @@ function twoStatContainer(coreLimit: number, perCoreLen: number) {
   };
 }
 
-Deno.test("guard cpuPercent: identical cpu deltas produce the IDENTICAL cpuPercent regardless of spec.cpu.limit (1 core vs 16 cores)", async () => {
+Deno.test("guard cpuPercent: is now normalized per container core count — 1 core stays at the host-relative 100%, 16 cores is divided down to 6.25%", async () => {
   const oneCore = twoStatContainer(1, 1);
   const sixteenCores = twoStatContainer(16, 16);
 
@@ -417,14 +420,58 @@ Deno.test("guard cpuPercent: identical cpu deltas produce the IDENTICAL cpuPerce
     .containers as Array<Record<string, unknown>>)[0];
   const c2 = (written2.find((w) => w.spec === "current")!.payload
     .containers as Array<Record<string, unknown>>)[0];
-  assertEquals(
-    c1.cpuPercent,
-    c2.cpuPercent,
-    "cpuPercent must be identical across core counts — _numCores is computed but never applied (bug #3)",
+  assert(
+    c1.cpuPercent !== c2.cpuPercent,
+    "cpuPercent must now DIFFER across core counts — numCores is applied (bug #3, fixed)",
   );
   assertEquals(
     c1.cpuPercent,
     100,
-    "sanity: 30e9ns delta / 30000ms = 100% host-relative",
+    "sanity: 30e9ns delta / 30000ms = 100% host-relative, / 1 core = 100",
+  );
+  assertEquals(
+    c2.cpuPercent,
+    6.25,
+    "same 100% host-relative delta / 16 cores = 6.25",
+  );
+});
+
+Deno.test("guard cpuPercent: the per_cpu_usage.length FALLBACK (no spec.cpu.limit) also normalizes — 4 detected cores divides the same delta to 25%", async () => {
+  const perCpuUsage = Array.from({ length: 4 }, () => 50000000000);
+  const fallbackContainer = {
+    "/docker/fallbackcase": {
+      aliases: ["fallback-case"],
+      spec: { memory: { limit: 1073741824 } }, // no spec.cpu.limit at all
+      stats: [
+        {
+          timestamp: "2026-07-01T12:00:00Z",
+          memory: { usage: 104857600 },
+          cpu: {
+            usage: { total: 100000000000, per_cpu_usage: perCpuUsage },
+          },
+          network: {},
+        },
+        {
+          timestamp: "2026-07-01T12:00:30Z",
+          memory: { usage: 104857600 },
+          cpu: {
+            usage: { total: 130000000000, per_cpu_usage: perCpuUsage },
+          },
+          network: {},
+        },
+      ],
+    },
+  };
+
+  const { ctx, written } = makeCtx();
+  await withOneResponse(fallbackContainer, 200, async () => {
+    await run("current-metrics", {}, ctx);
+  });
+  const c = (written.find((w) => w.spec === "current")!.payload
+    .containers as Array<Record<string, unknown>>)[0];
+  assertEquals(
+    c.cpuPercent,
+    25,
+    "no spec.cpu.limit -> numCores falls back to per_cpu_usage.length (4); 100% / 4 = 25",
   );
 });

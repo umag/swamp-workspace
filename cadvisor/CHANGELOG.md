@@ -1,5 +1,85 @@
 # Changelog
 
+## 2026.08.02.1
+
+Fixes all six remaining bugs tracked in the local `cadvisor-latent-bugs`
+@magistr/issue-lifecycle model (never filed to the swamp.club Lab, per
+CLAUDE.md's Anti-Bypass rule) — all 7 cadvisor-latent-bugs are now CLOSED. Every
+characterization pin that asserted the buggy behavior is flipped to assert the
+fixed behavior; benign/frozen contract tests and the LB1 `shellEsc` hardening
+stay green, unchanged except where noted below.
+
+- **Fragile `sed` teardown range-delete (bug #2, MED), fixed** — `remove()`'s
+  scrape-config cleanup previously chained three `sed -i` calls, including a
+  range-delete keyed on the `cadvisor` SUBSTRING and an unanchored `- .*:8080`
+  port pattern with no job-name anchoring: a differently named job that merely
+  contained "cadvisor", or that happened to expose port 8080, was silently
+  deleted alongside the real cadvisor job. Replaced with a job-scoped
+  read/filter/heredoc-rewrite (mirroring `deploy()`'s own read/heredoc-append
+  idiom) built on a new pure helper, `removeCadvisorJob(config)`, that drops
+  only the block starting at a line matching `- job_name: cadvisor` (plus its
+  more-indented children, up to the next sibling `- job_name:` or EOF) and the
+  one orphaned preceding blank line. `remove()` stays unconditional (no
+  existence check added) — it now issues 4 SSH calls (stop/rm, read, rewrite, VM
+  restart) instead of 3.
+- **`cpuPercent` not normalized per container core count (bug #3, MED), fixed**
+  — the computed `numCores` (`spec.cpu.limit || per_cpu_usage.length ||
+  1`,
+  previously named `_numCores` and discarded) is now applied:
+  `cpuPercent = (cpuDelta / (timeDelta * 1e6)) * 100 / numCores`. A core-limited
+  container no longer reads as if it owned the whole host (e.g. a 2-core
+  container's 100%-host-relative delta now reports 50%, not 100%).
+- **Empty (but present) `aliases` array collapsed the name to `"unknown"` (bug
+  #4, LOW), fixed** —
+  `info.aliases?.[0] ?? path.split("/").pop() ??
+  "unknown"` now falls back to
+  the cgroup path whenever `aliases[0]` is missing, whether `aliases` is absent
+  OR present-but-empty, instead of only when it's absent entirely.
+- **Unclamped counter-reset deltas went negative (bug #5, LOW), fixed** —
+  `cpuDelta`, `rxDelta`, and `txDelta` are now each clamped with
+  `Math.max(0, ...)`. A container restart or counter wraparound (current sample
+  lower than the previous one) now reports `0`, never a nonsensical negative
+  rate. Positive/happy-path deltas are unaffected.
+- **`README.md` documented a stale `typeVersion` (bug #6, LOW), fixed** — the
+  instance-configuration example's `typeVersion` is updated to the currently
+  shipped `2026.08.02.1`.
+- **`top-memory` hardcoded the VictoriaMetrics port (bug #7, LOW), fixed** — a
+  new `vmPort` global argument (`z.number().default(8428)`, mirroring the
+  sibling `@magistr/victoriametrics` model's `port` field) replaces the
+  hardcoded `const vmPort = 8428` in `top-memory`. Backward-compatible: the
+  default preserves the existing port-8428 behavior for every instance that
+  doesn't set it.
+- Pin flips: the `remove()` happy-path and error-path methods tests, the LB2
+  "SAME commands unconditionally" adversarial pin (now "SAME FOUR commands"),
+  the counter-reset and empty-aliases adversarial pins, the coverage suite's
+  cpuPercent core-count guard (now inverted: 1 core stays at 100%, 16 cores
+  divides to 6.25%), and the contract suite's top-memory port message are all
+  re-baselined to the fixed behavior. New tests: a job-scoping adversarial pin
+  (a sibling job sharing cadvisor's port, and a job whose name merely contains
+  the substring "cadvisor", both survive `removeCadvisorJob` intact) plus a
+  byte-exact
+  `removeCadvisorJob(scrape-config-after.txt) ===
+  scrape-config-before.txt`
+  round-trip unit assertion; a coverage guard for the `per_cpu_usage.length`
+  numCores fallback branch; and a contract test for a non-default `vmPort`.
+- LB2 shifts `remove()`'s SSH call indices (+1 for the read, +1 for the
+  rewrite); the LB1 "hardened: contrast" pin's positional
+  `sshCommandOf(calls[2])` read is updated to `calls[3]` to keep asserting the
+  VM-restart command post-shift — the LB1 fix itself (and its other,
+  `.find`-based pins) stays green and unweakened.
+- Every suite's `GLOBAL_ARGS` test fixture gains `vmPort: 8428` so `top-memory`
+  builds a valid URL under the new schema (an undefined `vmPort` would throw
+  building `http://<host>:undefined/...`).
+- Model `version` and `manifest.yaml` bumped `2026.08.01.1` -> `2026.08.02.1`
+  (in sync). Added an `upgrades[]` array (cadvisor had none before) with a
+  single identity entry from `2026.08.01.1` — no resource schema change, and
+  `vmPort` is additive + defaulted, so old instance attributes parse unchanged.
+- `quality.yaml`: header comment reworded from "cadvisor.ts is unmodified ...
+  characterizing already-shipped behavior" to reflect that the bugs are now
+  fixed and the suites re-baselined to the fixed behavior. All five suites stay
+  present; ratchet re-stamped from a real `swamp extension quality` run (100%,
+  Grade A).
+
 ## 2026.08.01.1
 
 Closes the HIGH remote-shell command-injection finding (bug #1) tracked in the
