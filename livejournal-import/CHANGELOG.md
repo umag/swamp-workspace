@@ -1,5 +1,96 @@
 # Changelog
 
+## 2026.08.02.2
+
+Real fixes for the six remaining latent bugs tracked in the LOCAL
+`livejournal-import-latent-bugs` issue-lifecycle model (NEVER filed to the
+swamp.club Lab -- see CLAUDE.md's anti-bypass rule): **LB2** (YAML frontmatter
+injection), **LB3** (silent-empty success), **LB4** (no fetch/subprocess
+timeout), **LB5** (unbounded pagination), **LB6** (fragile comment-JSON
+extraction), and **LB8** (`parseLjDate` silent fallthrough). `model.version` and
+`manifest.yaml` both bump `2026.08.02.1` -> `2026.08.02.2`. LB1 (SSRF, fixed in
+`2026.07.31.1`) and LB7 (path traversal, fixed in `2026.08.02.1`) are untouched.
+
+- **Two new backward-compatible global arguments**: `timeoutMs` (default
+  `30000`) and `maxPages` (default `1000`), both `.default(...)`-ed in
+  `GlobalArgsSchema` and re-defaulted at the JS destructuring site in `import`'s
+  `execute` (so an existing instance, or any caller that hands the method raw
+  global args without going through the zod schema, behaves identically unless
+  one is set explicitly). Neither is a resource attribute, so the appended
+  `upgrades[]` entry is an identity (`upgradeAttributes: (old) => old`).
+- **LB2 fix (YAML frontmatter injection via unescaped newlines, MEDIUM)**: a new
+  `yamlEscape(s)` helper escapes backslash, `"`, `\n`, `\r`, and other C0
+  control characters (not just `"` as before) in `title`/`mood`/`now_playing`/
+  each tag's INNER frontmatter content -- the surrounding `"…"` quoting is
+  unchanged, so benign input (no backslash/control chars) still produces
+  byte-identical frontmatter. A raw embedded newline in any of those fields can
+  no longer inject a sibling YAML key into the frontmatter.
+- **LB3 fix (silent-empty success, MEDIUM)**: `import` now logs a distinct "no
+  posts found" warning when `collectPostUrls` returns zero URLs, instead of this
+  reading as an ordinary success with no signal that something may be wrong.
+  Logger-only -- `result.errors` stays `[]`.
+- **LB4 fix (no fetch/subprocess timeout, MEDIUM)**: every `fetch` call
+  (index/post fetch via `fetchWithRetry`, image fetch via `fetchImageSafely`)
+  and both `Deno.Command` invocations (`runObsidian`, `getVaultPath`) now carry
+  a `timeoutMs`-bounded `AbortController`/`signal`, always `clearTimeout`-ed in
+  a `finally` block. A manual `setTimeout`/`clearTimeout` pair is used
+  deliberately instead of `AbortSignal.timeout()`, which leaves a pending
+  internal timer the op-sanitizer flags and interacts badly with
+  `@std/testing`'s `FakeTime`. `fetchImageSafely` keeps `redirect: "manual"`
+  alongside the new `signal` -- both are required, neither drops the other.
+- **LB5 fix (unbounded pagination/memory, MEDIUM)**: `collectPostUrls` now stops
+  after `maxPages` index pages (checked before each fetch, so exactly `maxPages`
+  pages are fetched, not one more) and logs a distinct cap-warning when the
+  limit is hit.
+- **LB6 fix (fragile comment-JSON extraction, LOW)**: the `Site.page = {...}`
+  blob is now located with `extractSitePageJson`, a string-aware balanced-brace
+  scan (tracking JSON string/escape state) instead of a regex requiring a
+  literal `};` + whitespace terminator -- a minified, semicolon-less blob
+  (`Site.page={...}</script>`) that the old regex silently dropped now parses
+  correctly. `parsePost` returns a new `commentParseFailed` flag (stays
+  pure/logger-free) set whenever a `Site.page` marker was present but comments
+  could not be recovered from it (unterminated/unbalanced object, or a genuine
+  `JSON.parse` failure); the caller logs a distinct warning when it is set. No
+  `Site.page` marker at all (an ordinary page with no comments) is not a
+  failure.
+- **LB8 fix (`parseLjDate` silent fallthrough, LOW)**: a date string not
+  matching the expected shape now resolves to a module-level sentinel,
+  `"unknown"` (colon-free and space-free, so it stays valid unquoted YAML and
+  slug-safe), instead of the raw text passing through unchanged. The caller logs
+  a distinct warning when the sentinel is hit. `PostSchema.date` is a required
+  `z.string()`, so the sentinel is a mandatory replacement value, not an
+  omission. Valid dates are completely unaffected -- byte-identical to before.
+- **Byte-stability guarantee for benign input**: none of the six fixes change
+  output for well-formed input. `yamlEscape` is byte-identical to the old
+  `.replace(/"/g, '\\"')` when the input has no backslash/control character;
+  `extractSitePageJson` extracts the identical substring the old regex did for
+  every well-formed fixture in this repo; valid dates parse identically; the
+  default `timeoutMs`/`maxPages` are far above anything any existing test or
+  real journal would ever hit.
+- **Tests**: all six LB pins in `livejournal_import_adversarial_test.ts` flip
+  from characterizing the bug to asserting the fix (title suffixed `-- FIXED`),
+  reusing the existing fixtures (`post_injection.html`, `index_empty.html`,
+  `post_full.html`, `post_bad_date.html`, `post_bad_comments.html`). New
+  adversarial coverage: an `isAllowedImageHost` keys-list update
+  (`timeoutMs`/`maxPages` added to the credential-leak covered-negative's
+  expected key set), a `signal instanceof AbortSignal` regression test with a
+  tiny `timeoutMs` and a never-resolving image fetch (per-post error recorded,
+  no crash), and a `maxPages: 3` pagination-cap test against the existing
+  12-page harness. The LB2 pin now parses the captured note's frontmatter with
+  `jsr:@std/yaml` and asserts the injected sibling keys (`and`, `injected`) are
+  absent and `title` round-trips. `livejournal_import_coverage_test.ts` gains
+  one new positive-case test (a semicolon-less minified `Site.page` blob now
+  extracts comments). LB1/LB7 pins are untouched and stay green;
+  contract-fixture, methods, and property suites are unmodified and stay green
+  (soak-verified at `FC_NUM_RUNS=10000`).
+- Added an identity `upgrades[]` entry (`2026.08.02.1 -> 2026.08.02.2`,
+  `upgradeAttributes: (old) => old`, no resource schema change).
+- `deno.lock`: gains the TEST-ONLY dev dependency `jsr:@std/yaml@1` (resolved
+  `1.0.10`, matching the version already pinned in this workspace's
+  `talm-cluster` extension). Source dependencies (`npm:zod@4`,
+  `npm:cheerio@1.0.0`, `npm:domhandler@5.0.3`) are unchanged.
+- `manifest.yaml`/model `version`: `2026.08.02.1` -> `2026.08.02.2`.
+
 ## 2026.08.02.1
 
 Fix for latent bug LB7 (operator `folder`/`attachmentsFolder` path traversal on

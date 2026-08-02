@@ -4,14 +4,18 @@
  * sides, so deleting any one of these guards turns a test red (STANDARD.md's
  * coverage role -- a behavioral regression guard, not a numeric percentage).
  *
- * livejournal_import.ts is UNMODIFIED; every test here PINS existing
- * behavior. htmlToMarkdown/parseLjDate/sanitize/collectPostUrls/parsePost
- * are module-private -- only `model` is exported -- so every branch is
- * reached by driving `model.methods.import.execute()` against a stubbed
- * fetch + stubbed Deno.Command/mkdir/writeFile and inspecting either the
- * written `post` resource or the FULL (untruncated) note content captured
- * from the `obsidian create` command argv (post.text is truncated to 500
- * chars; the note body is not).
+ * Most guards here are UNMODIFIED by the LB2/3/4/5/6/8 fix batch and every
+ * test still PINS existing behavior; the LB6 positive-case test near the
+ * comment-threading section is a new coverage addition verifying the
+ * balanced-brace `Site.page` scanner (LB6 fix) correctly handles a
+ * semicolon-less minified blob the old regex silently dropped.
+ * htmlToMarkdown/parseLjDate/sanitize/collectPostUrls/parsePost are
+ * module-private -- only `model` is exported -- so every branch is reached
+ * by driving `model.methods.import.execute()` against a stubbed fetch +
+ * stubbed Deno.Command/mkdir/writeFile and inspecting either the written
+ * `post` resource or the FULL (untruncated) note content captured from the
+ * `obsidian create` command argv (post.text is truncated to 500 chars; the
+ * note body is not).
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
@@ -386,8 +390,9 @@ Deno.test("image filters: a wrapped link whose href does NOT end in a known imag
 });
 
 // ===========================================================================
-// parseLjDate -- all 12 months, plus the non-matching fallthrough (pinned in
-// the adversarial suite via post_bad_date.html)
+// parseLjDate -- all 12 months. The non-matching fallthrough (now the
+// "unknown" sentinel, LB8 FIXED) is verified in the adversarial suite via
+// post_bad_date.html.
 // ===========================================================================
 
 Deno.test("parseLjDate: all 12 month names resolve to the correct zero-padded ISO month", async () => {
@@ -546,6 +551,37 @@ Deno.test("comments: an entry with NO article text and NO uname is skipped entir
     const createCall = commands.find((c) => c.args[0] === "create")!;
     const content = createCall.args.find((a) => a.startsWith("content="))!;
     assert(!content.includes("## Comments"));
+  });
+});
+
+Deno.test("LB6 fix, positive case: a minified `Site.page={...}` blob with NO trailing semicolon (which the old `};`-terminator regex silently dropped) now extracts comments correctly via the balanced-brace scan", async () => {
+  const indexHtml = await readFixture("index.html");
+  const postHtml = `<html><body>
+<div class="aentry-post__title-text">Fixture Minified Comments Post</div>
+<div class="aentry-head__date"><time>April 10 2018, 08:00</time></div>
+<div class="aentry-post__text"><p>fixture body</p></div>
+<script>Site.page={"comments":[{"uname":"fixture_minified","ctime":"2018-04-11 09:00:00","article":"No trailing semicolon here","parent":0}]}</script>
+</body></html>`;
+  const { ctx } = makeCtx(GLOBAL_ARGS);
+  await withDenoStubs({}, async ({ commands }) => {
+    await withFetchStub(
+      [(req) => {
+        const url = new URL(req.url);
+        if (url.pathname === "/" && !url.searchParams.has("skip")) {
+          return htmlResponse(indexHtml);
+        }
+        return htmlResponse(postHtml);
+      }],
+      () => run({}, ctx) as Promise<void>,
+    );
+    const createCall = commands.find((c) => c.args[0] === "create")!;
+    const content = createCall.args.find((a) => a.startsWith("content="))!;
+    assert(
+      content.includes("## Comments"),
+      "the semicolon-less minified blob must still yield a Comments section",
+    );
+    assert(content.includes("**fixture_minified**"));
+    assert(content.includes("No trailing semicolon here"));
   });
 });
 
