@@ -20,17 +20,35 @@
  * vault root" / "Path is outside vault root" instead of the mkdir/write
  * silently landing outside the vault.
  *
- * LB2-LB6, LB8 remain UNMODIFIED-behavior PINS (deferred, not fixed in this
- * change) -- every other test in this suite still PINS current behavior
- * (including behavior that is a documented latent bug) rather than
- * proposing a fix:
- *   LB2 YAML frontmatter injection via unescaped newlines (MEDIUM), LB3
- *   silent-empty success (MEDIUM), LB4 no fetch/subprocess timeout
- *   (MEDIUM), LB5 unbounded pagination/memory (MEDIUM), LB6 fragile
- *   comment-JSON extraction (LOW), LB8 parseLjDate silent fallthrough (LOW).
- *   All 8 bugs are tracked in the LOCAL `livejournal-import-latent-bugs`
+ * LB2, LB3, LB4, LB5, LB6, LB8 are ALSO now FIXED (this change) -- every
+ * section below for these six bugs asserts the FIXED behavior, not a
+ * characterization of the old buggy behavior:
+ *   LB2 YAML frontmatter injection via unescaped newlines (MEDIUM) --
+ *   `yamlEscape` now escapes backslash/newline/CR/other-control chars (not
+ *   just `"`) in title/mood/now_playing/tags, so injected sibling YAML keys
+ *   are ABSENT from the parsed frontmatter.
+ *   LB3 silent-empty success (MEDIUM) -- a zero-post index now logs a
+ *   distinct "no posts found" warning (logger-only; `result.errors` stays
+ *   `[]`).
+ *   LB4 no fetch/subprocess timeout (MEDIUM) -- every fetch and both
+ *   `Deno.Command` invocations now carry a `timeoutMs`-bounded
+ *   `AbortController`/`signal` (new backward-compatible global arg,
+ *   default 30000).
+ *   LB5 unbounded pagination/memory (MEDIUM) -- `collectPostUrls` now stops
+ *   at a `maxPages` cap (new backward-compatible global arg, default 1000)
+ *   and logs a distinct cap-warning.
+ *   LB6 fragile comment-JSON extraction (LOW) -- the `Site.page` blob is now
+ *   located via a string-aware balanced-brace scan (not a regex requiring a
+ *   literal `};` terminator), and a `commentParseFailed` flag drives a
+ *   distinct logged warning on a genuine parse failure.
+ *   LB8 parseLjDate silent fallthrough (LOW) -- a non-matching date string
+ *   now resolves to the safe, colon/space-free `"unknown"` sentinel (not a
+ *   raw pass-through), with a distinct logged warning.
+ *   All are tracked in the LOCAL `livejournal-import-latent-bugs`
  *   issue-lifecycle model (NEVER filed to the swamp.club Lab -- see
- *   CLAUDE.md's anti-bypass rule).
+ *   CLAUDE.md's anti-bypass rule). LB1 (SSRF, already fixed in 2026.07.31.1)
+ *   and LB7 (path traversal, already fixed in 2026.08.02.1) are untouched by
+ *   this change.
  *
  * It also pins three REFUTED risk classes as covered-negatives -- explicitly
  * checked and found NOT applicable to this model, so a future change that
@@ -46,6 +64,7 @@
  *     pass through as inert array elements, never reaching a shell.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { parse as parseYaml } from "jsr:@std/yaml@1";
 import { model, resolveVaultPathSafe } from "./livejournal_import.ts";
 
 // ---------------------------------------------------------------------------
@@ -697,20 +716,52 @@ Deno.test("redirect hardening (positive multi-hop case): a chain of THREE allowe
 // LB2 YAML frontmatter injection via unescaped newlines -- MEDIUM
 // ===========================================================================
 
-Deno.test('pin (livejournal-import-latent-bugs LB2, MEDIUM): title/mood/now_playing/tags escape only `"`, not embedded newlines -- a raw newline reaches the YAML frontmatter', async () => {
-  const { written } = await runSinglePostImport(
+Deno.test('pin (livejournal-import-latent-bugs LB2, MEDIUM -- FIXED): title/mood/now_playing/tags now escape embedded newlines (and backslash/CR/other control chars), not just `"` -- injected sibling YAML keys are ABSENT from the parsed frontmatter, and title round-trips through the double-quoted scalar', async () => {
+  const { written, commands } = await runSinglePostImport(
     GLOBAL_ARGS,
     "post_injection.html",
   );
+  // The raw `post` RESOURCE field is untouched by the LB2 fix -- it is not
+  // YAML, just a data field, and legitimately keeps the raw embedded
+  // newline. The FIX is scoped to the frontmatter the fix targets: the note
+  // content captured from the `obsidian create` command's `content=` arg.
   const post = written.find((w) => w.spec === "post")!;
-  // The title field itself carries the raw, un-newline-stripped text.
   assert(
     (post.payload.title as string).includes("\n"),
-    "post.title retains the embedded newline verbatim",
+    "post.title (the raw resource field, not YAML) still retains the embedded newline verbatim -- unaffected by the frontmatter-only LB2 fix",
+  );
+
+  const createCall = commands.find((c) => c.args[0] === "create")!;
+  const contentArg = createCall.args.find((a) => a.startsWith("content="))!;
+  const content = contentArg.slice("content=".length);
+  const lines = content.split("\n");
+  const closeIdx = lines.indexOf("---", 1);
+  const frontmatterYaml = lines.slice(1, closeIdx).join("\n");
+  // deno-lint-ignore no-explicit-any
+  const fm = parseYaml(frontmatterYaml) as Record<string, any>;
+
+  assertEquals(
+    "and" in fm,
+    false,
+    "the injected sibling key 'and' (from the title's embedded newline) must be ABSENT from the parsed frontmatter",
+  );
+  assertEquals(
+    "injected" in fm,
+    false,
+    "the injected sibling key 'injected' (from the tag's embedded newline) must be ABSENT from the parsed frontmatter",
   );
   assert(
-    (post.payload.mood as string).includes("\n"),
-    "post.mood retains the embedded newline verbatim",
+    (fm.mood as string).includes("mood: injected"),
+    "the injected 'mood: injected' text stays INSIDE the mood scalar's own value, not promoted to a sibling key",
+  );
+  assert(
+    (fm.now_playing as string).includes("now_playing: injected-track"),
+    "the injected 'now_playing: injected-track' text stays INSIDE the now_playing scalar's own value",
+  );
+  assertEquals(
+    fm.title,
+    'Fixture Title with "quotes"\nand: a folded line',
+    "title round-trips byte-for-byte through the escape (write) / YAML-parse (read) round trip -- the embedded newline survives via the \\n escape, restored on parse",
   );
 });
 
@@ -718,7 +769,7 @@ Deno.test('pin (livejournal-import-latent-bugs LB2, MEDIUM): title/mood/now_play
 // LB3 silent-empty success -- MEDIUM
 // ===========================================================================
 
-Deno.test("pin (livejournal-import-latent-bugs LB3, MEDIUM): an index with zero collectible post urls resolves as an ordinary 'Import complete' success, not an error/warning", async () => {
+Deno.test("pin (livejournal-import-latent-bugs LB3, MEDIUM -- FIXED): an index with zero collectible post urls now logs a DISTINCT 'no posts found' warning, alongside the ordinary 'Import complete' completion log -- result.errors stays [] (logger-only, not an error)", async () => {
   const indexHtml = await readFixture("index_empty.html");
   const { ctx, written, logs } = makeCtx(GLOBAL_ARGS);
   await withDenoStubs({}, async () => {
@@ -729,12 +780,20 @@ Deno.test("pin (livejournal-import-latent-bugs LB3, MEDIUM): an index with zero 
   });
   const result = written.find((w) => w.spec === "result")!;
   assertEquals(result.payload.totalPosts, 0);
-  assertEquals(result.payload.errors, []);
+  assertEquals(
+    result.payload.errors,
+    [],
+    "the zero-posts warning is logger-only -- result.errors must stay empty",
+  );
   assert(
     logs.some((l) =>
       l.includes("Import complete: 0 notes, 0 images. Errors: 0")
     ),
-    "the completion log reads as an ordinary success, no distinct zero-posts warning",
+    "the ordinary completion log line is unchanged",
+  );
+  assert(
+    logs.some((l) => /no posts|0 posts/i.test(l)),
+    "a DISTINCT zero-posts warning must now be logged, not just the ordinary completion line",
   );
 });
 
@@ -742,7 +801,7 @@ Deno.test("pin (livejournal-import-latent-bugs LB3, MEDIUM): an index with zero 
 // LB4 no fetch/subprocess timeout -- MEDIUM
 // ===========================================================================
 
-Deno.test("pin (livejournal-import-latent-bugs LB4, MEDIUM): neither the index/post fetch nor the image fetch pass an AbortSignal/timeout", async () => {
+Deno.test("pin (livejournal-import-latent-bugs LB4, MEDIUM -- FIXED): every index/post fetch and every image fetch now passes an AbortSignal (timeoutMs-bounded)", async () => {
   const indexHtml = await readFixture("index.html");
   const postHtml = await readFixture("post_full.html");
   const { ctx } = makeCtx(GLOBAL_ARGS);
@@ -767,11 +826,14 @@ Deno.test("pin (livejournal-import-latent-bugs LB4, MEDIUM): neither the index/p
   });
   assert(inits.length > 0, "sanity: at least one fetch call happened");
   for (const init of inits) {
-    assertEquals(init?.signal, undefined);
+    assert(
+      init?.signal instanceof AbortSignal,
+      "every fetch must carry a real AbortSignal",
+    );
   }
 });
 
-Deno.test("pin (livejournal-import-latent-bugs LB4): Deno.Command for the obsidian CLI is constructed with no timeout/signal option either", async () => {
+Deno.test("pin (livejournal-import-latent-bugs LB4 -- FIXED): Deno.Command for the obsidian CLI is now constructed with a real AbortSignal option", async () => {
   const indexHtml = await readFixture("index_empty.html");
   const { ctx } = makeCtx(GLOBAL_ARGS);
   await withDenoStubs({}, async ({ commands }) => {
@@ -779,24 +841,87 @@ Deno.test("pin (livejournal-import-latent-bugs LB4): Deno.Command for the obsidi
       [() => htmlResponse(indexHtml)],
       () => run({}, ctx) as Promise<void>,
     );
+    assert(
+      commands.length > 0,
+      "sanity: at least one Deno.Command call happened",
+    );
     for (const c of commands) {
-      assertEquals("signal" in c.options, false);
+      assertEquals("signal" in c.options, true);
+      assert(
+        c.options.signal instanceof AbortSignal,
+        "the Deno.Command signal option must be a real AbortSignal",
+      );
     }
   });
+});
+
+Deno.test("pin (livejournal-import-latent-bugs LB4 -- FIXED, regression): a tiny timeoutMs plus a never-resolving image fetch aborts and records a per-post error, without crashing the whole run", async () => {
+  const args = { ...GLOBAL_ARGS, timeoutMs: 200 };
+  const postHtml = `<html><body>
+<div class="aentry-post__title-text">Fixture Timeout Post</div>
+<div class="aentry-head__date"><time>June 6 2013, 09:00</time></div>
+<div class="aentry-post__text"><img src="https://f-pics.example.com/fixture-never-resolves.jpg"></div>
+</body></html>`;
+  const { ctx, written } = makeCtx(args);
+  await withDenoStubs({}, async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = ((
+      input: Request | URL | string,
+      init?: RequestInit,
+    ) => {
+      const req = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(req.url);
+      if (url.pathname === "/" && !url.searchParams.has("skip")) {
+        return Promise.resolve(htmlResponse(SINGLE_POST_INDEX_HTML));
+      }
+      if (url.pathname === "/9001.html") {
+        return Promise.resolve(htmlResponse(postHtml));
+      }
+      // The image fetch NEVER resolves on its own -- only the timeoutMs
+      // AbortController can end it. Presence-based assertions only (no
+      // real-clock waits beyond timeoutMs itself), per the plan's flake
+      // guidance.
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal) {
+          signal.addEventListener("abort", () => {
+            reject(
+              new DOMException("The signal has been aborted", "AbortError"),
+            );
+          });
+        }
+      });
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      await run({}, ctx);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+  const result = written.find((w) => w.spec === "result")!;
+  assertEquals(
+    result.payload.notesCreated,
+    1,
+    "the post itself still completes -- only the image download fails",
+  );
+  const errors = result.payload.errors as string[];
+  assert(
+    errors.some((e) => e.includes("Image download failed")),
+    "the aborted image fetch must be recorded as a per-post error, not left hanging or crashing the run",
+  );
 });
 
 // ===========================================================================
 // LB5 unbounded pagination/memory -- MEDIUM
 // ===========================================================================
 
-Deno.test("pin (livejournal-import-latent-bugs LB5, MEDIUM): collectPostUrls has NO page cap -- it keeps paging for as many `skip=N` markers as the server offers (bounded here only by the TEST HARNESS, not by the source)", async () => {
-  // The harness itself imposes a hard page cap (PAGE_CAP) purely so the test
-  // terminates -- this characterizes the ABSENCE of any such cap in
-  // livejournal_import.ts: every page the harness offers is faithfully
-  // requested, with a fresh unseen post id each time, until the harness
-  // (not the code) stops advertising a next page.
+Deno.test("pin (livejournal-import-latent-bugs LB5, MEDIUM -- FIXED): collectPostUrls now stops at the maxPages cap, even though the server keeps offering more `skip=N` markers -- and logs a distinct cap-warning", async () => {
+  // The harness offers PAGE_CAP=12 pages (unchanged from the original
+  // characterization), but maxPages=3 is now set explicitly -- the source
+  // itself must stop after 3 pages, not the harness.
   const PAGE_CAP = 12;
-  const { ctx, written } = makeCtx(GLOBAL_ARGS);
+  const args = { ...GLOBAL_ARGS, maxPages: 3 };
+  const { ctx, written, logs } = makeCtx(args);
   let indexFetches = 0;
   await withDenoStubs({}, async () => {
     await withFetchStub(
@@ -826,24 +951,40 @@ Deno.test("pin (livejournal-import-latent-bugs LB5, MEDIUM): collectPostUrls has
       () => run({}, ctx) as Promise<void>,
     );
   });
-  assertEquals(indexFetches, PAGE_CAP);
+  assertEquals(
+    indexFetches,
+    3,
+    "exactly maxPages (3) index pages must be fetched, not all 12 the harness offers",
+  );
   const result = written.find((w) => w.spec === "result")!;
-  assertEquals(result.payload.totalPosts, PAGE_CAP);
+  assertEquals(result.payload.totalPosts, 3);
+  assert(
+    logs.some((l) => /maxpages|page cap/i.test(l)),
+    "a distinct cap-warning must be logged when the maxPages cap is hit",
+  );
 });
 
 // ===========================================================================
 // LB6 fragile comment-JSON extraction -- LOW
 // ===========================================================================
 
-Deno.test("pin (livejournal-import-latent-bugs LB6, LOW): a corrupted `Site.page` blob is swallowed by the empty catch -- comments silently resolve to zero, no throw, no error entry", async () => {
-  const { written } = await runSinglePostImport(
+Deno.test("pin (livejournal-import-latent-bugs LB6, LOW -- FIXED): a corrupted `Site.page` blob still resolves comments to zero (no throw, no error entry) -- but a distinct warning is now logged instead of pure silence", async () => {
+  const { written, logs } = await runSinglePostImport(
     GLOBAL_ARGS,
     "post_bad_comments.html",
   );
   const post = written.find((w) => w.spec === "post")!;
   const result = written.find((w) => w.spec === "result")!;
-  assertEquals(result.payload.errors, []);
+  assertEquals(
+    result.payload.errors,
+    [],
+    "the comment-parse-failure warning is logger-only -- result.errors stays empty",
+  );
   assertEquals((post.payload.text as string).includes("## Comments"), false);
+  assert(
+    logs.some((l) => /comment.*(fail|omit)/i.test(l)),
+    "a distinct warning must now be logged when the comments JSON fails to parse",
+  );
 });
 
 // ===========================================================================
@@ -1137,23 +1278,35 @@ Deno.test("covered-negative: dot-dir/.trash exclusion is N/A -- import never wal
 // LB8 parseLjDate silent fallthrough -- LOW
 // ===========================================================================
 
-Deno.test("pin (livejournal-import-latent-bugs LB8, LOW): a date string not matching the expected shape flows through UNCHANGED into post.date, the frontmatter's unquoted `date:` line, and the note slug", async () => {
-  const { written, commands } = await runSinglePostImport(
+Deno.test("pin (livejournal-import-latent-bugs LB8, LOW -- FIXED): a date string not matching the expected shape now resolves to the safe 'unknown' sentinel (not a raw pass-through) in post.date, the frontmatter's unquoted `date:` line, and the note slug -- with a distinct warning logged", async () => {
+  const { written, commands, logs } = await runSinglePostImport(
     GLOBAL_ARGS,
     "post_bad_date.html",
   );
   const post = written.find((w) => w.spec === "post")!;
-  assertEquals(post.payload.date, "Sometime last fixture-summer");
+  assertEquals(post.payload.date, "unknown");
   const createCall = commands.find((c) => c.args[0] === "create")!;
   const contentArg = createCall.args.find((a) => a.startsWith("content="))!;
   assert(
-    contentArg.includes("date: Sometime last fixture-summer"),
-    "the raw non-ISO date string is emitted UNQUOTED into the frontmatter",
+    contentArg.includes("date: unknown"),
+    "the safe sentinel is emitted UNQUOTED into the frontmatter",
+  );
+  assert(
+    !contentArg.includes("Sometime last fixture-summer"),
+    "the raw unparseable date text must NOT reach the frontmatter",
   );
   const pathArg = createCall.args.find((a) => a.startsWith("path="))!;
   assert(
-    pathArg.includes("Sometime last fixture-summer"),
-    "the raw date string (not sanitized like the title) is prepended to the note slug",
+    pathArg.includes("unknown-"),
+    "the sentinel (not the raw date string) is prepended to the note slug",
+  );
+  assert(
+    !pathArg.includes("fixture-summer"),
+    "the raw date text must NOT leak into the slug either",
+  );
+  assert(
+    logs.some((l) => /could not parse|unparsed|unparseable/i.test(l)),
+    "a distinct warning must be logged when the date fails to parse",
   );
 });
 
@@ -1163,13 +1316,23 @@ Deno.test("pin (livejournal-import-latent-bugs LB8, LOW): a date string not matc
 
 Deno.test("refuted: globalArguments carries no credential-shaped field -- there is nothing for a credential-leak test to catch", () => {
   const shape = model.globalArguments;
-  // GlobalArgsSchema is a zod object; its shape keys are exactly these five
-  // (vaultRoot added by swamp-workspace #57's headless filesystem backend).
+  // GlobalArgsSchema is a zod object; its shape keys are exactly these seven
+  // (vaultRoot added by swamp-workspace #57's headless filesystem backend;
+  // timeoutMs/maxPages added by the LB4/LB5 fixes, both backward-compatible
+  // `.default(...)` global args, not credential-shaped).
   // deno-lint-ignore no-explicit-any
   const keys = Object.keys((shape as any).shape ?? {});
   assertEquals(
     keys.sort(),
-    ["attachmentsFolder", "folder", "journalUrl", "vault", "vaultRoot"],
+    [
+      "attachmentsFolder",
+      "folder",
+      "journalUrl",
+      "maxPages",
+      "timeoutMs",
+      "vault",
+      "vaultRoot",
+    ],
   );
   for (const k of keys) {
     assert(

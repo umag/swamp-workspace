@@ -26,6 +26,13 @@
 # already-copied string-level resolveVaultPath before the post loop, in BOTH
 # the CLI-fallback and vaultRoot branches. LB7 is FIXED -- see CHANGELOG.md.
 #
+# 2026.08.02.2 fixes the six remaining latent bugs (LB2 YAML frontmatter
+# injection, LB3 silent-empty success, LB4 no fetch/subprocess timeout, LB5
+# unbounded pagination, LB6 fragile comment-JSON extraction, LB8 parseLjDate
+# silent fallthrough), adding two backward-compatible global args (timeoutMs
+# default 30000, maxPages default 1000). All eight originally-tracked latent
+# bugs (LB1-LB8) are now FIXED -- see CHANGELOG.md.
+#
 # Role map (each test file assigned to exactly ONE honest role):
 #   contract-fixture        -> livejournal_import_test.ts
 #   methods                 -> livejournal_import_methods_test.ts
@@ -79,17 +86,19 @@ ratchet:
   label: >-
     Grade A — the model upgrade chain is repaired and stays continuous
     (2026.03.29.1 -> 2026.05.25.1 -> 2026.07.16.2 -> 2026.07.31.1 ->
-    2026.08.01.1 -> 2026.08.02.1, final toVersion === model.version) as part
-    of the SSRF fix in livejournal-import-latent-bugs (2026.07.31.1), the
-    swamp-workspace #57 vaultRoot change (2026.08.01.1, identity upgrade
-    entry appended), and the LB7 path-traversal fix (2026.08.02.1, identity
-    upgrade entry appended). `swamp extension quality manifest.yaml --json`
+    2026.08.01.1 -> 2026.08.02.1 -> 2026.08.02.2, final toVersion ===
+    model.version) as part of the SSRF fix in livejournal-import-latent-bugs
+    (2026.07.31.1), the swamp-workspace #57 vaultRoot change (2026.08.01.1,
+    identity upgrade entry appended), the LB7 path-traversal fix
+    (2026.08.02.1, identity upgrade entry appended), and the LB2/LB3/LB4/
+    LB5/LB6/LB8 real-fix batch (2026.08.02.2, identity upgrade entry
+    appended -- two new backward-compatible global args, no resource schema
+    change). All eight originally-tracked latent bugs are now fixed; none
+    remain UNFIXED/deferred. `swamp extension quality manifest.yaml --json`
     emits a real score: 14/14 points (100%), allPassed true, dependencyTrust
     passed (cheerio/domhandler both audited clean; weeklyDownloads 27.2M /
     99.8M respectively). Stamped directly from that tool output (run against
-    this worktree after the LB7 fix), not guessed. Note: a bare re-run
-    against pre-LB7 master also showed 13/14 (92%, symbols-docs missing on
-    the undocumented `VaultPath` interface) -- a pre-existing drift from
-    swamp-workspace #57, not introduced by LB7. Fixed here (JSDoc added to
-    `VaultPath`, doc-only, no behavior change) so this ratchet stays honest
-    at 100%/allPassed rather than re-stamping a stale claim.
+    this worktree after the LB2/3/4/5/6/8 fix batch), not guessed -- the
+    score is unchanged from the prior (2026.08.02.1) stamp since the LB batch
+    added no new runtime dependency (only a TEST-ONLY jsr:@std/yaml dev
+    dependency, which the dependency-trust factor does not score).

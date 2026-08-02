@@ -17,6 +17,12 @@ const GlobalArgsSchema = z.object({
   vaultRoot: z.string().optional().describe(
     "Absolute path to the Obsidian vault directory. When set, the note is written directly to disk (no Obsidian CLI, no desktop app needed) instead of resolving the vault path and creating the note through the Obsidian CLI.",
   ),
+  timeoutMs: z.number().default(30000).describe(
+    "Per-request timeout (ms) applied to every HTTP fetch (index/post/image) and the obsidian CLI subprocess, via AbortController. Backward-compatible default -- existing instances behave exactly as before unless this is set explicitly.",
+  ),
+  maxPages: z.number().default(1000).describe(
+    "Maximum number of journal index pages collectPostUrls will paginate through before stopping (safety cap against unbounded pagination; ~10 posts/page). Backward-compatible default well above any real journal's page count.",
+  ),
 });
 
 // --- Path confinement (vault write destination) ---------------------------
@@ -258,10 +264,18 @@ const PostSchema = z.object({
 });
 
 // Run obsidian CLI
+//
+// LB4 fix: the subprocess carries a timeoutMs-bounded AbortController so a
+// hung `obsidian` process no longer blocks the run (and the model's lock)
+// indefinitely. AbortSignal.timeout() is deliberately NOT used here -- it
+// leaves a pending internal timer the op-sanitizer flags and interacts badly
+// with @std/testing's FakeTime; a manual setTimeout/clearTimeout pair is used
+// instead, always cleared in `finally` so no timer ever leaks past this call.
 async function runObsidian(
   command: string,
   params: Record<string, string | undefined>,
   vault: string,
+  timeoutMs: number,
   bareFlags: string[] | undefined = undefined,
 ) {
   const args = [command];
@@ -277,13 +291,21 @@ async function runObsidian(
     }
   }
 
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
   const proc = new Deno.Command("obsidian", {
     args,
     stdout: "piped",
     stderr: "piped",
+    signal: ac.signal,
   });
 
-  const output = await proc.output();
+  let output: Deno.CommandOutput;
+  try {
+    output = await proc.output();
+  } finally {
+    clearTimeout(timer);
+  }
   const stderr = new TextDecoder().decode(output.stderr).trim();
   const stdout = new TextDecoder().decode(output.stdout).trim();
 
@@ -296,13 +318,25 @@ async function runObsidian(
 }
 
 // Get vault filesystem path
-async function getVaultPath(vault: string): Promise<string> {
+//
+// LB4 fix: same timeoutMs-bounded AbortController pattern as runObsidian --
+// see the comment there for why a manual timer (not AbortSignal.timeout()) is
+// used.
+async function getVaultPath(vault: string, timeoutMs: number): Promise<string> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
   const proc = new Deno.Command("obsidian", {
     args: ["vault", `vault=${vault}`, "info=path"],
     stdout: "piped",
     stderr: "piped",
+    signal: ac.signal,
   });
-  const output = await proc.output();
+  let output: Deno.CommandOutput;
+  try {
+    output = await proc.output();
+  } finally {
+    clearTimeout(timer);
+  }
   const stdout = new TextDecoder().decode(output.stdout).trim();
   if (!output.success || !stdout) {
     throw new Error(`Cannot resolve vault path for "${vault}"`);
@@ -311,19 +345,30 @@ async function getVaultPath(vault: string): Promise<string> {
 }
 
 // Fetch a URL with retries
+//
+// LB4 fix: each attempt carries a timeoutMs-bounded AbortController (see the
+// comment on runObsidian for why a manual timer, not AbortSignal.timeout(),
+// is used) so a hung upstream response no longer blocks the run
+// indefinitely. clearTimeout always runs in `finally`, so a fast response
+// never leaves a dangling timer for the sanitizer/FakeTime to trip over.
 async function fetchWithRetry(
   url: string,
+  timeoutMs: number,
   retries = 3,
 ): Promise<string> {
   for (let i = 0; i < retries; i++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
-      const resp = await fetch(url);
+      const resp = await fetch(url, { signal: ac.signal });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       return await resp.text();
     } catch (e) {
       if (i === retries - 1) throw e;
       // Wait a bit between retries
       await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw new Error("unreachable");
@@ -415,24 +460,40 @@ function htmlToMarkdown(html: string): string {
 }
 
 // Collect all post URLs from index pages
+//
+// LB5 fix: paginates at most `maxPages` pages (default 1000, well above any
+// real journal's page count) instead of following `skip=N` markers forever.
+// The cap is checked BEFORE each fetch (not after), so `maxPages` pages are
+// actually fetched -- not `maxPages` fetches plus one more -- and a distinct
+// warning is logged once the cap is hit.
 async function collectPostUrls(
   baseUrl: string,
   logger: { info: (strings: TemplateStringsArray, ...args: unknown[]) => void },
+  timeoutMs: number,
+  maxPages: number,
 ): Promise<string[]> {
   const urls: string[] = [];
   const seen = new Set<string>();
   let skip = 0;
+  let pageCount = 0;
 
   // Normalize base URL
   const base = baseUrl.replace(/\/$/, "");
 
   while (true) {
+    if (pageCount >= maxPages) {
+      logger
+        .info`Reached the maxPages cap (${maxPages}) -- stopping pagination early`;
+      break;
+    }
+    pageCount++;
+
     const pageUrl = skip === 0
       ? `${base}/?format=light`
       : `${base}/?format=light&skip=${skip}`;
 
     logger.info`Fetching index page: skip=${skip}`;
-    const html = await fetchWithRetry(pageUrl);
+    const html = await fetchWithRetry(pageUrl, timeoutMs);
 
     // Extract post URLs
     const pattern = new RegExp(
@@ -546,11 +607,27 @@ const MAX_IMAGE_REDIRECT_HOPS = 5;
 async function fetchImageSafely(
   imageUrl: string,
   originUrl: string,
+  timeoutMs: number,
 ): Promise<Response | undefined> {
   let currentUrl = imageUrl;
   for (let hop = 0; hop <= MAX_IMAGE_REDIRECT_HOPS; hop++) {
     if (!isAllowedImageHost(currentUrl, originUrl)) return undefined;
-    const resp = await fetch(currentUrl, { redirect: "manual" });
+    // LB4 fix: timeoutMs-bounded AbortController per hop (see the comment on
+    // runObsidian for why a manual timer, not AbortSignal.timeout(), is
+    // used). `redirect: "manual"` is kept alongside `signal` -- both are
+    // required (the former for the SSRF per-hop re-validation above, the
+    // latter for the timeout), neither may drop the other.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    let resp: Response;
+    try {
+      resp = await fetch(currentUrl, {
+        redirect: "manual",
+        signal: ac.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (resp.status >= 300 && resp.status < 400) {
       await resp.body?.cancel();
       const location = resp.headers.get("location");
@@ -561,6 +638,71 @@ async function fetchImageSafely(
     return resp;
   }
   return undefined;
+}
+
+// Locate the `Site.page = {...}` (or minified `Site.page={...}`, semicolon
+// optional) object literal and return its raw JSON text via a string-aware
+// balanced-brace scan, or undefined if no `Site.page = {` is present at all.
+//
+// LB6 fix: the previous implementation located the blob with
+// `/Site\.page\s*=\s*(\{.*?\});\s/s` -- a regex terminator requiring a
+// literal `};` plus whitespace right after the object literal. A minified
+// blob with no trailing semicolon (`Site.page={...}</script>`, common output
+// of a JS minifier) never matched that terminator and silently lost its
+// comments even though the JSON itself was perfectly well-formed. This scan
+// instead walks character-by-character from the first `{` after `Site.page`
+// tracking brace depth, correctly skipping over `{`/`}` that appear inside
+// quoted JSON string values (comment article text is user-authored HTML/
+// text and may itself contain braces) via a small string/escape state
+// machine, and stops at the first `}` that returns depth to zero -- the true
+// end of the top-level object, semicolon or not. If the object is truncated/
+// unterminated (nested inside a string with no closing quote, or missing a
+// closing brace), the scan runs off the end of the input and returns
+// undefined, exactly like a regex match failure -- the caller's `catch`
+// (via a failed JSON.parse) is now never reached for that specific shape,
+// but a still-malformed-yet-*syntactically-braced* blob (e.g. valid nesting
+// but garbage field values) still round-trips to JSON.parse and can still
+// throw there, which is what `commentParseFailed` below is for.
+function extractSitePageJson(html: string): string | undefined {
+  const markerIdx = html.indexOf("Site.page");
+  if (markerIdx === -1) return undefined;
+  const eqIdx = html.indexOf("=", markerIdx);
+  if (eqIdx === -1) return undefined;
+
+  let i = eqIdx + 1;
+  while (i < html.length && /\s/.test(html[i])) i++;
+  if (html[i] !== "{") return undefined;
+
+  const start = i;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (; i < html.length; i++) {
+    const ch = html[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return html.slice(start, i + 1);
+      }
+    }
+  }
+  return undefined; // unterminated -- ran off the end without closing
 }
 
 // Parse a single post page
@@ -576,6 +718,7 @@ function parsePost(
   mood: string;
   music: string;
   comments: { user: string; date: string; text: string; parent: number }[];
+  commentParseFailed: boolean;
 } {
   const $ = cheerio.load(html);
 
@@ -654,17 +797,28 @@ function parsePost(
 
   const body = htmlToMarkdown(bodyHtml);
 
-  // Extract comments from Site.page JSON
+  // Extract comments from Site.page JSON.
+  //
+  // LB6 fix: `commentParseFailed` is set (and returned, not logged here --
+  // this function stays pure/logger-free) whenever a `Site.page` blob WAS
+  // present but comments could not be recovered from it -- either
+  // extractSitePageJson couldn't find a balanced/terminated object literal
+  // at all (a genuinely truncated/corrupt blob, caught here BEFORE
+  // JSON.parse even runs), or the extracted text failed JSON.parse. No
+  // `Site.page` marker present at all (an ordinary page with no comments) is
+  // NOT a failure -- commentParseFailed stays false.
   const comments: {
     user: string;
     date: string;
     text: string;
     parent: number;
   }[] = [];
-  const pageMatch = html.match(/Site\.page\s*=\s*(\{.*?\});\s/s);
-  if (pageMatch) {
+  let commentParseFailed = false;
+  const hasSitePageMarker = html.includes("Site.page");
+  const pageJson = extractSitePageJson(html);
+  if (pageJson) {
     try {
-      const pageData = JSON.parse(pageMatch[1]);
+      const pageData = JSON.parse(pageJson);
       const rawComments = pageData.comments || [];
       for (const c of rawComments) {
         const article = (c.article || "").replace(/<[^>]+>/g, "").trim();
@@ -677,14 +831,39 @@ function parsePost(
         });
       }
     } catch {
-      // ignore JSON parse errors
+      commentParseFailed = true;
     }
+  } else if (hasSitePageMarker) {
+    commentParseFailed = true;
   }
 
-  return { title, date, body, tags, images, mood, music, comments };
+  return {
+    title,
+    date,
+    body,
+    tags,
+    images,
+    mood,
+    music,
+    comments,
+    commentParseFailed,
+  };
 }
 
+// LB8 fix: sentinel returned by parseLjDate when the raw date text doesn't
+// match the expected shape, instead of the raw text passing through
+// unchanged. Deliberately colon-free AND space-free: PostSchema.date is a
+// required z.string() (a string sentinel is mandatory, not an omission), and
+// this exact string is emitted UNQUOTED into the frontmatter `date:` line and
+// prepended (un-sanitized, like the old raw-passthrough) to the note slug --
+// a colon or space in the sentinel would either break the unquoted YAML
+// scalar or read oddly in a filename. "unknown" is safe on both counts.
+const UNPARSED_DATE_SENTINEL = "unknown";
+
 // Parse LJ date to ISO
+//
+// Stays pure/logger-free (like parsePost's commentParseFailed) -- the caller
+// detects the sentinel and logs its own distinct warning (LB8 fix).
 function parseLjDate(dateStr: string): string {
   // Format: "August 22 2010, 21:14" or "January 8 2013, 00:24"
   const months: Record<string, string> = {
@@ -710,7 +889,7 @@ function parseLjDate(dateStr: string): string {
     const day = m[2].padStart(2, "0");
     return `${m[3]}-${month}-${day}T${m[4]}:${m[5]}:00`;
   }
-  return dateStr;
+  return UNPARSED_DATE_SENTINEL;
 }
 
 // Sanitize filename
@@ -723,10 +902,34 @@ function sanitize(name: string): string {
     .substring(0, 100);
 }
 
+// LB2 fix: escape a string for safe embedding INSIDE a double-quoted YAML
+// scalar -- the surrounding `"..."` stays the caller's responsibility, only
+// the inner content is escaped here. The old frontmatter builder escaped
+// ONLY `"` (`.replace(/"/g, '\\"')`); a raw embedded newline broke out of the
+// quoted scalar, letting attacker-controlled title/mood/now_playing/tag text
+// inject sibling YAML keys into the frontmatter. Order matters: backslashes
+// are escaped FIRST so the backslashes this function itself introduces
+// (below) are never re-escaped by a later step. Byte-identical to the old
+// `.replace(/"/g, '\\"')` for any input with no backslash/control character
+// (the common case) -- only newline/CR/other-control/backslash-bearing input
+// produces different (and now SAFE) output.
+function yamlEscape(s: string): string {
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(
+      // deno-lint-ignore no-control-regex
+      /[\x00-\x08\x0b\x0c\x0e-\x1f]/g,
+      (c) => "\\x" + c.charCodeAt(0).toString(16).padStart(2, "0"),
+    );
+}
+
 /** Swamp model that imports LiveJournal entries (images, tags, mood, now playing, comments) into an Obsidian vault. */
 export const model = {
   type: "@magistr/livejournal/import",
-  version: "2026.08.02.1",
+  version: "2026.08.02.2",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",
@@ -775,6 +978,13 @@ export const model = {
         "LB7 fix: reject operator folder/attachmentsFolder path traversal (../absolute) on the attachment disk path via resolveVaultPath; no resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.02.2",
+      description:
+        "add timeoutMs/maxPages global args (backward-compatible defaults) + LB2/3/4/5/6/8 fixes; no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   globalArguments: GlobalArgsSchema,
   resources: {
@@ -803,6 +1013,8 @@ export const model = {
           folder: string;
           attachmentsFolder: string;
           vaultRoot?: string;
+          timeoutMs?: number;
+          maxPages?: number;
         };
         logger: {
           info: (strings: TemplateStringsArray, ...args: unknown[]) => void;
@@ -813,14 +1025,28 @@ export const model = {
           data: Record<string, unknown>,
         ) => Promise<unknown>;
       }) => {
-        const { journalUrl, vault, folder, attachmentsFolder, vaultRoot } =
-          context.globalArgs;
+        const {
+          journalUrl,
+          vault,
+          folder,
+          attachmentsFolder,
+          vaultRoot,
+          // Backward-compatible JS-level defaults (LB4/LB5): GlobalArgsSchema
+          // already applies `.default(...)` when swamp parses a real model
+          // instance's global arguments, but these defaults are ALSO applied
+          // here so an existing instance upgraded in place (or a caller that
+          // hands this method raw globalArgs without going through the
+          // schema, e.g. a test harness) behaves identically to before this
+          // change unless timeoutMs/maxPages are set explicitly.
+          timeoutMs = 30000,
+          maxPages = 1000,
+        } = context.globalArgs;
         const logger = context.logger;
 
         // Resolve vault path for image storage. vaultRoot (headless, no
         // Obsidian app needed) takes precedence over the CLI vault-name
         // lookup, which is kept as the fallback.
-        const vaultPath = vaultRoot || await getVaultPath(vault);
+        const vaultPath = vaultRoot || await getVaultPath(vault, timeoutMs);
         const attachFolder = `${folder}/${attachmentsFolder}`;
         // String-level confinement only (no filesystem access here, and the
         // CLI-fallback branch's vaultPath need not exist on disk) — same
@@ -835,8 +1061,22 @@ export const model = {
 
         // Collect all post URLs
         logger.info`Collecting post URLs from ${journalUrl}`;
-        const postUrls = await collectPostUrls(journalUrl, logger);
+        const postUrls = await collectPostUrls(
+          journalUrl,
+          logger,
+          timeoutMs,
+          maxPages,
+        );
         logger.info`Found ${postUrls.length} posts`;
+        // LB3 fix: a distinct warning (logger-only -- result.errors stays
+        // untouched) when the index yielded zero collectible post URLs,
+        // instead of this silently reading as an ordinary "0 notes, 0
+        // images" success with no signal that something may be wrong
+        // (wrong journalUrl, an unreachable/changed index page shape, etc).
+        if (postUrls.length === 0) {
+          logger
+            .info`No posts found at ${journalUrl} -- the journal index returned zero post URLs`;
+        }
 
         const errors: string[] = [];
         let notesCreated = 0;
@@ -850,9 +1090,27 @@ export const model = {
           logger.info`Processing post ${i + 1}/${postUrls.length}: ${postUrl}`;
 
           try {
-            const html = await fetchWithRetry(`${postUrl}?format=light`);
+            const html = await fetchWithRetry(
+              `${postUrl}?format=light`,
+              timeoutMs,
+            );
             const post = parsePost(html, postUrl);
+            if (post.commentParseFailed) {
+              // LB6 fix: the comment blob was located but failed to
+              // JSON.parse -- comments are dropped for this post (unchanged
+              // behavior) but now with a distinct logged warning instead of
+              // silence.
+              logger
+                .info`Comment JSON parse failed for ${postUrl} -- comments omitted`;
+            }
             const isoDate = parseLjDate(post.date);
+            if (isoDate === UNPARSED_DATE_SENTINEL) {
+              // LB8 fix: the raw date text didn't match the expected shape --
+              // logged distinctly instead of silently letting the raw text
+              // flow through into the frontmatter/slug.
+              logger
+                .info`Could not parse date "${post.date}" for ${postUrl} -- using "${UNPARSED_DATE_SENTINEL}"`;
+            }
             const datePrefix = isoDate.split("T")[0];
             const slug = `${datePrefix}-${sanitize(post.title || postId)}`;
 
@@ -865,7 +1123,11 @@ export const model = {
               const imgName = `lj-${postId}-${j + 1}.${ext}`;
 
               try {
-                const resp = await fetchImageSafely(imgUrl, journalUrl);
+                const resp = await fetchImageSafely(
+                  imgUrl,
+                  journalUrl,
+                  timeoutMs,
+                );
                 if (resp && resp.ok) {
                   const data = new Uint8Array(await resp.arrayBuffer());
                   await Deno.writeFile(`${attachDiskPath}/${imgName}`, data);
@@ -881,26 +1143,30 @@ export const model = {
               }
             }
 
-            // Build frontmatter
+            // Build frontmatter. LB2 fix: yamlEscape (not a bare `"`-only
+            // replace) applied to every free-text field's INNER content --
+            // the surrounding `"…"` quoting is unchanged, so benign input
+            // (no backslash/control chars) produces byte-identical output to
+            // before this fix.
             const fm = [
               "---",
-              `title: "${post.title.replace(/"/g, '\\"')}"`,
+              `title: "${yamlEscape(post.title)}"`,
               `date: ${isoDate}`,
               `source: livejournal`,
               `url: "${postUrl}"`,
               `lj_id: ${postId}`,
             ];
             if (post.mood) {
-              fm.push(`mood: "${post.mood.replace(/"/g, '\\"')}"`);
+              fm.push(`mood: "${yamlEscape(post.mood)}"`);
             }
             if (post.music) {
-              fm.push(`now_playing: "${post.music.replace(/"/g, '\\"')}"`);
+              fm.push(`now_playing: "${yamlEscape(post.music)}"`);
             }
             if (post.tags.length > 0) {
               fm.push("tags:");
               fm.push("  - livejournal");
               for (const tag of post.tags) {
-                fm.push(`  - "${tag}"`);
+                fm.push(`  - "${yamlEscape(tag)}"`);
               }
             } else {
               fm.push("tags:", "  - livejournal");
@@ -967,6 +1233,7 @@ export const model = {
                 "create",
                 { [noteKey]: notePath, content: noteContent },
                 vault,
+                timeoutMs,
                 ["overwrite"],
               );
             }

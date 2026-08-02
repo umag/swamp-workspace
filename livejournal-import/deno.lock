@@ -6,6 +6,7 @@
     "jsr:@std/data-structures@^1.1.0": "1.1.1",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/testing@1": "1.0.19",
+    "jsr:@std/yaml@1": "1.0.10",
     "npm:cheerio@1.0.0": "1.0.0",
     "npm:domhandler@5.0.3": "5.0.3",
     "npm:fast-check@4.8.0": "4.8.0",
@@ -33,6 +34,9 @@
         "jsr:@std/async",
         "jsr:@std/data-structures"
       ]
+    },
+    "@std/yaml@1.0.10": {
+      "integrity": "245706ea3511cc50c8c6d00339c23ea2ffa27bd2c7ea5445338f8feff31fa58e"
     }
   },
   "npm": {
