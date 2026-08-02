@@ -58,7 +58,20 @@ async function fetchJson<T>(url: string, ua: string): Promise<T> {
       )}`,
     );
   }
-  return await resp.json() as T;
+  try {
+    return await resp.json() as T;
+  } catch (e) {
+    throw new Error(
+      `fetch ${url} → invalid JSON response: ${(e as Error).message}`,
+    );
+  }
+}
+
+interface AnilistResponse {
+  data?: {
+    Media?: { id: number; title?: { romaji?: string; english?: string } };
+  };
+  errors?: Array<{ message: string }>;
 }
 
 async function anilistFindIdByTitle(
@@ -83,14 +96,22 @@ async function anilistFindIdByTitle(
       )}`,
     );
   }
-  const data = await resp.json() as {
-    data?: {
-      Media?: { id: number; title: { romaji?: string; english?: string } };
-    };
-  };
+  let data: AnilistResponse;
+  try {
+    data = await resp.json() as AnilistResponse;
+  } catch (e) {
+    throw new Error(
+      `anilist search failed: invalid JSON response: ${(e as Error).message}`,
+    );
+  }
+  if (Array.isArray(data.errors) && data.errors.length > 0) {
+    const msgs = data.errors.map((e) => e.message).join("; ");
+    throw new Error(`anilist graphql errors: ${msgs}`);
+  }
   const m = data.data?.Media;
   if (!m) return null;
-  return { id: m.id, title: m.title.english ?? m.title.romaji ?? "" };
+  const tt = m.title ?? {};
+  return { id: m.id, title: tt.english ?? tt.romaji ?? "" };
 }
 
 interface PbList<T> {
@@ -110,7 +131,7 @@ async function fetchSeadex(
     baseUrl.replace(/\/+$/, "")
   }/api/collections/entries/records?filter=(alID=${alID})&expand=trs`;
   const data = await fetchJson<PbList<SeadexEntry>>(url, ua);
-  return data.items[0] ?? null;
+  return Array.isArray(data.items) ? (data.items[0] ?? null) : null;
 }
 
 // --- normalised output ---
@@ -166,20 +187,23 @@ const SeadexResultSchema = z.object({
 function normaliseTorrent(
   t: SeadexTorrent,
 ): z.infer<typeof TorrentEntrySchema> {
-  const totalBytes = (t.files ?? []).reduce((s, f) => s + (f.length ?? 0), 0);
+  const files = t.files ?? [];
+  const totalBytes = files.reduce((s, f) => s + (Number(f.length) || 0), 0);
   const primary =
-    (t.files ?? []).slice().sort((a, b) => (b.length ?? 0) - (a.length ?? 0))[0]
+    files.slice().sort((a, b) =>
+      (Number(b.length) || 0) - (Number(a.length) || 0)
+    )[0]
       ?.name ?? null;
   return {
     releaseGroup: t.releaseGroup,
     tracker: t.tracker,
     url: t.url,
-    infoHash: t.infoHash,
+    infoHash: (t.infoHash ?? "").trim().toLowerCase(),
     isBest: t.isBest,
     dualAudio: t.dualAudio,
     tags: t.tags ?? [],
     totalSizeBytes: totalBytes,
-    fileCount: (t.files ?? []).length,
+    fileCount: files.length,
     primaryFile: primary,
   };
 }
@@ -218,9 +242,12 @@ function buildResult(
       ...userMeta,
     };
   }
-  const trs = (entry.expand?.trs ?? []).map(normaliseTorrent);
+  const rawTrs = (entry.expand?.trs ?? []) as unknown[];
+  const trs = rawTrs
+    .filter((t): t is SeadexTorrent => t !== null && typeof t === "object")
+    .map(normaliseTorrent);
   return {
-    alID: entry.alID,
+    alID,
     title,
     found: true,
     notes: entry.notes ?? "",
@@ -241,9 +268,18 @@ function buildResult(
 /** SeaDex (releases.moe) model: best-release recommendations for anime, with lookups by AniList ID, by title, and fan-out batch lookups. */
 export const model = {
   type: "@magistr/seadex",
-  version: "2026.07.16.2",
+  version: "2026.08.02.1",
   reports: ["@magistr/seadex-upgrades"],
   globalArguments: GlobalArgsSchema,
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix LB1–LB8; adds summary.errors + upgradeFilter resource; no globalArguments change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   resources: {
     entry: {
       description:
@@ -259,9 +295,25 @@ export const model = {
         found: z.number(),
         withBestReleases: z.number(),
         incomplete: z.number(),
+        errors: z.number().describe(
+          "Count of items whose per-item fetch failed — excluded from notInSeadex",
+        ),
         notInSeadex: z.array(
           z.object({ alID: z.number(), title: z.string().nullable() }),
         ),
+        timestamp: z.string(),
+      }),
+      lifetime: "infinite",
+      garbageCollection: 5,
+    },
+    upgradeFilter: {
+      description:
+        "Filter marker for the companion seadex-upgrades report, set by render-upgrades",
+      schema: z.object({
+        year: z.number().int().nullable(),
+        status: z.string().nullable(),
+        minScore: z.number().int().nullable(),
+        title: z.string().nullable(),
         timestamp: z.string(),
       }),
       lifetime: "infinite",
@@ -322,7 +374,7 @@ export const model = {
         ),
       }),
       execute: async (
-        _args: {
+        args: {
           year?: number;
           status?: string;
           minScore?: number;
@@ -334,14 +386,13 @@ export const model = {
         },
       ) => {
         const handle = await context.writeResource(
-          "summary",
+          "upgradeFilter",
           "render-upgrades",
           {
-            total: 0,
-            found: 0,
-            withBestReleases: 0,
-            incomplete: 0,
-            notInSeadex: [],
+            year: args.year ?? null,
+            status: args.status ?? null,
+            minScore: args.minScore ?? null,
+            title: args.title ?? null,
             timestamp: new Date().toISOString(),
           },
         );
@@ -396,8 +447,22 @@ export const model = {
       ) => {
         const { baseUrl, userAgent } = context.globalArgs;
         const conc = args.concurrency ?? 5;
+
+        // LB5: dedup by anilistId, first-wins, BEFORE fan-out — a duplicate
+        // input id must never clobber the same al-<id> resource key twice or
+        // double-count in the summary.
+        const seenIds = new Set<number>();
+        const dedupedItems = args.items.filter((it) => {
+          if (seenIds.has(it.anilistId)) return false;
+          seenIds.add(it.anilistId);
+          return true;
+        });
+
         const results: z.infer<typeof SeadexResultSchema>[] = [];
-        const queue = [...args.items];
+        // LB4: fetch-level failures are tracked separately from legitimate
+        // not-found results so the summary can tally them distinctly.
+        const erroredIds = new Set<number>();
+        const queue = [...dedupedItems];
         async function worker() {
           while (queue.length > 0) {
             const it = queue.shift();
@@ -423,6 +488,7 @@ export const model = {
                 ),
               );
             } catch (e) {
+              erroredIds.add(it.anilistId);
               results.push({
                 ...buildResult(
                   null,
@@ -438,14 +504,25 @@ export const model = {
         }
         await Promise.all(
           Array.from(
-            { length: Math.min(conc, args.items.length) },
+            { length: Math.min(conc, dedupedItems.length) },
             () => worker(),
           ),
         );
 
+        // LB3: each entry write is isolated — a single write rejecting (e.g.
+        // real-runtime schema validation, datastore lock contention, I/O
+        // errors) must not discard the rest of the batch nor skip the
+        // summary write below.
         const handles: unknown[] = [];
         for (const r of results) {
-          handles.push(await context.writeResource("entry", `al-${r.alID}`, r));
+          try {
+            handles.push(
+              await context.writeResource("entry", `al-${r.alID}`, r),
+            );
+          } catch {
+            // Isolated: this item's write failed, but the loop continues so
+            // every other item still lands.
+          }
         }
         const summary = {
           total: results.length,
@@ -453,15 +530,23 @@ export const model = {
           withBestReleases:
             results.filter((r) => r.bestReleases.length > 0).length,
           incomplete: results.filter((r) => r.found && r.incomplete).length,
-          notInSeadex: results.filter((r) => !r.found).map((r) => ({
-            alID: r.alID,
-            title: r.title,
-          })),
+          errors: erroredIds.size,
+          notInSeadex: results
+            .filter((r) => !r.found && !erroredIds.has(r.alID))
+            .map((r) => ({
+              alID: r.alID,
+              title: r.title,
+            })),
           timestamp: new Date().toISOString(),
         };
-        handles.push(
-          await context.writeResource("summary", "lookup-many", summary),
-        );
+        try {
+          handles.push(
+            await context.writeResource("summary", "lookup-many", summary),
+          );
+        } catch {
+          // Isolated the same way as the entries loop above: a summary write
+          // rejecting must not surface as an uncaught rejection.
+        }
         return { dataHandles: handles };
       },
     },

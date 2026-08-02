@@ -14,14 +14,19 @@
  * Also pins the normalised-entry transform: isBest split into
  * bestReleases/alternativeReleases, totalSizeBytes summed from files[],
  * primaryFile picked by argmax(length), comparisonUrls split/trimmed from a
- * comma-joined string, and infoHash passed through byte-for-byte verbatim
- * (no case normalization — see PROVENANCE.md's entropy-escape note on why the
- * fixture's infoHash placeholders are low-entropy repeated characters).
+ * comma-joined string. Historically this suite also pinned infoHash as
+ * byte-for-byte verbatim passthrough (no case normalization); that pin has
+ * moved to the adversarial suite's LB8 fix, which now normalizes
+ * (trim + lowercase) — the fixtures below already use lowercase 40-hex
+ * placeholders so this suite's assertions are unaffected either way.
  *
  * All fixtures are PURE doc-derived synthetic data — see fixtures/PROVENANCE.md.
  * Every test here is offline: fixtures are fed through a stubbed fetch, no
- * network call is made. seadex.ts is UNMODIFIED by this change — every test
- * here characterizes already-shipped behavior.
+ * network call is made. This repo's real-fix change for the 8 tracked latent
+ * bugs (LB1–LB8) touched `seadex.ts`; every test in this suite stays
+ * byte-frozen EXCEPT the one graphql-error test below, which is flipped to
+ * assert LB2's fix (a GraphQL-level error now rejects instead of being
+ * silently treated as a no-match).
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./seadex.ts";
@@ -376,20 +381,20 @@ Deno.test("contract: anilist-nomatch.json — {data:{Media:null}} yields a q-<sl
 // anilist-graphql-error.json contract — {errors,data:null} at HTTP 200
 // ---------------------------------------------------------------------------
 
-Deno.test("contract: anilist-graphql-error.json — a GraphQL-level error at HTTP 200 does not throw (not an HTTP error); full narrative pin lives in the adversarial suite", async () => {
+Deno.test("contract: anilist-graphql-error.json — a GraphQL-level error at HTTP 200 now REJECTS (LB2 fix: resp.ok is true so the HTTP-failure branch still never fires, but the parsed errors[] array IS now inspected and rejected); full narrative pin lives in the adversarial suite", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [anilistRoute(anilistGraphqlError, 200)],
     async () => {
-      // Must not throw: resp.ok is true (200), so the !resp.ok branch never
-      // fires — the GraphQL errors[] array is never inspected.
-      await run("lookup-by-title", { title: "Errored Search" }, ctx);
+      await assertRejects(
+        () => run("lookup-by-title", { title: "Errored Search" }, ctx),
+        Error,
+      );
     },
   );
-  const res = written.find((w) =>
-    w.spec === "entry" && w.name === "q-errored-search"
-  )!;
-  assert(res);
-  assertEquals(res.payload.found, false);
-  assertEquals(res.payload.alID, 0);
+  assertEquals(
+    written.find((w) => w.spec === "entry" && w.name === "q-errored-search"),
+    undefined,
+    "no entry is written once the graphql errors[] array causes a rejection",
+  );
 });

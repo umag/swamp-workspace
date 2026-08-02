@@ -3,10 +3,12 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-seadex, wave-2b
-# full-build child of the Phase D extension-quality backfill). seadex.ts is
-# unmodified — every suite drives model.methods.<m>.execute() against a
-# stubbed fetch, characterizing already-shipped behavior across BOTH upstream
-# contracts (releases.moe Pocketbase + public AniList GraphQL).
+# full-build child of the Phase D extension-quality backfill), then REAL-FIXED
+# in 2026.08.02.1 (all 8 tracked latent bugs, 3 HIGH — see CHANGELOG.md).
+# seadex.ts is no longer unmodified: every suite still drives
+# model.methods.<m>.execute() against a stubbed fetch, but the tests that used
+# to characterize a latent bug now assert the fixed behavior across BOTH
+# upstream contracts (releases.moe Pocketbase + public AniList GraphQL).
 schemaVersion: 1
 extension: seadex
 tests:

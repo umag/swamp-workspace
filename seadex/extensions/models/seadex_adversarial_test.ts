@@ -1,28 +1,30 @@
 /**
  * Adversarial suite: attacker's-perspective tests over the two upstream
  * contracts (hostile Pocketbase torrent payloads, AniList error-swallowing),
- * fan-out partial failure vs the UN-isolated write phase, infoHash/tracker
- * field passthrough, and a mechanical fixtures-secret-scan.
+ * fan-out partial-write isolation, infoHash/tracker field passthrough, and a
+ * mechanical fixtures-secret-scan.
  *
- * seadex.ts is UNMODIFIED — every test here PINS current behavior (including
- * behavior that is arguably risky). Where a test documents a real gap, it is
- * labeled "PIN" and says so explicitly; none of these are fixed here.
+ * seadex.ts received a REAL (non-byte-frozen) fix for all 8 tracked latent
+ * bugs (LB1–LB8) in this change. Tests below that used to PIN a bug are now
+ * labeled "FIXED (LBn)" and assert the fixed behavior instead; tests that
+ * still document a genuinely out-of-scope risk (hostile-content trust
+ * boundary, non-array `tags` passthrough, files-entirely-absent) stay
+ * labeled "PIN" — those are unaffected by this change and remain byte-frozen.
  *
- * HARNESS-FIDELITY NOTE (read before the BUG-6/BUG-3 tests below): the fake
+ * HARNESS-FIDELITY NOTE (kept for the LB3 tests below): the fake
  * `writeResource` in this file's `makeCtx()` does NOT validate against
- * `SeadexResultSchema` the way the real swamp runtime does. A hostile
- * Pocketbase file whose `length` arrives as a STRING (BUG-6) turns
- * `totalSizeBytes` into a string via `0 + "999"` JS coercion — the fake
- * writeResource happily captures that string, which would make the bug look
- * harmless. In the REAL runtime, the `entry` resource's schema
- * (`TorrentEntrySchema.totalSizeBytes: z.number()`) REJECTS that write — and
- * because `lookup-many`'s entry-writing loop runs OUTSIDE the per-item
- * try/catch, that rejection discards the ENTIRE batch (BUG-3). These are
- * pinned as two SEPARATE tests below: BUG-6 with the benign fake
- * writeResource (showing the raw type-confused value), and BUG-3 with an
- * EXPLICIT poisoned writeResource that manually rejects (since the fake
- * harness cannot reproduce real zod rejection). Do not lean on BUG-6 to
- * demonstrate the write failure — they are different observations.
+ * `SeadexResultSchema` the way the real swamp runtime does. Historically, a
+ * hostile Pocketbase file whose `length` arrived as a STRING (the old BUG-6)
+ * turned `totalSizeBytes` into a string via `0 + "999"` JS coercion, which
+ * would have failed the real runtime's `TorrentEntrySchema.totalSizeBytes:
+ * z.number()` validation — and because `lookup-many`'s entry-writing loop
+ * used to run OUTSIDE the per-item try/catch, that rejection discarded the
+ * ENTIRE batch (the old BUG-3). LB6's numeric coercion
+ * (`Number(f.length) || 0`) now fixes `totalSizeBytes` at the source, so that
+ * particular BUG-6→BUG-3 linkage can no longer occur — but `writeResource`
+ * can still reject for OTHER real-runtime reasons (datastore lock
+ * contention, I/O errors), so `makePoisonedCtx` is KEPT below to prove LB3's
+ * per-item write isolation holds regardless of *why* a write rejects.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { model } from "./seadex.ts";
@@ -72,9 +74,10 @@ function makeCtx() {
 }
 
 /** A context whose writeResource REJECTS for one specific (spec,name) pair —
- * simulating the REAL runtime's schema-validation rejection (which the fake
- * harness above cannot reproduce, since it never validates). Used ONLY to pin
- * BUG-3 (the un-isolated write phase), never to demonstrate BUG-6. */
+ * simulating a REAL runtime write rejection (schema validation, datastore
+ * lock contention, I/O errors — the fake harness above cannot reproduce any
+ * of these, since it never validates). Used to prove LB3's per-item write
+ * isolation in lookup-many, never to demonstrate LB6's numeric coercion. */
 function makePoisonedCtx(poisonSpec: string, poisonName: string) {
   const written: Written[] = [];
   return {
@@ -176,79 +179,152 @@ function clonePocketbaseEntry(): typeof pocketbaseEntry {
 }
 
 // ---------------------------------------------------------------------------
-// AniList HTTP-200-with-errors — swallowed and INDISTINGUISHABLE from no-match
+// AniList HTTP-200-with-errors — FIXED (LB2, HIGH): now rejects, distinct
+// from a legitimate no-match
 // ---------------------------------------------------------------------------
 
-Deno.test("PIN: an AniList HTTP-200-with-{errors,data:null} response is SWALLOWED — a caller sees the EXACT same outcome as a legitimate no-match, with no way to tell 'AniList errored' from 'no such anime'", async () => {
+Deno.test("FIXED (LB2): an AniList HTTP-200-with-{errors,data:null} response now REJECTS with a message including the upstream errors[] text, and writes NO entry — no longer indistinguishable from a legitimate no-match", async () => {
   const { ctx: errCtx, written: errWritten } = makeCtx();
   await withFetchStub([anilistRoute(anilistGraphqlError, 200)], async () => {
-    await run("lookup-by-title", { title: "Errored Search" }, errCtx);
+    const err = await assertRejects(
+      () => run("lookup-by-title", { title: "Errored Search" }, errCtx),
+      Error,
+    );
+    assert(
+      (err as Error).message.includes(
+        "Something went wrong. Please contact support for more information.",
+      ),
+      `expected the graphql errors[] message to be embedded, got: ${
+        (err as Error).message
+      }`,
+    );
   });
+  assertEquals(
+    errWritten.length,
+    0,
+    "no entry resource is written once the graphql errors[] array causes a rejection",
+  );
 
   const { ctx: nomatchCtx, written: nomatchWritten } = makeCtx();
   await withFetchStub([anilistRoute(anilistNomatch, 200)], async () => {
     await run("lookup-by-title", { title: "Errored Search" }, nomatchCtx);
   });
-
-  const errRes = errWritten.find((w) => w.name === "q-errored-search")!;
   const nomatchRes = nomatchWritten.find((w) => w.name === "q-errored-search")!;
-  assert(errRes && nomatchRes);
-  assertEquals(errRes.payload.found, false);
-  assertEquals(errRes.payload.alID, 0);
-  const { timestamp: _errTs, ...errRest } = errRes.payload;
-  const { timestamp: _nomatchTs, ...nomatchRest } = nomatchRes.payload;
-  assertEquals(
-    errRest,
-    nomatchRest,
-    "the two outcomes are identical apart from the timestamp — anilistFindIdByTitle only ever inspects data.data?.Media and never looks at the errors[] array, so a GraphQL-level failure is silently treated as a legitimate no-match",
+  assert(
+    nomatchRes,
+    "a legitimate no-match still writes a found:false entry, unaffected by LB2 — only the graphql-errors case now rejects",
+  );
+  assertEquals(nomatchRes.payload.found, false);
+});
+
+Deno.test("FIXED (LB2): a MULTI-message graphql errors[] array joins ALL messages into the rejection", async () => {
+  const { ctx } = makeCtx();
+  const multiError = {
+    errors: [
+      { message: "first problem" },
+      { message: "second problem" },
+    ],
+    data: null,
+  };
+  await withFetchStub([anilistRoute(multiError, 200)], async () => {
+    const err = await assertRejects(
+      () => run("lookup-by-title", { title: "Multi Error" }, ctx),
+      Error,
+    );
+    assert((err as Error).message.includes("first problem"));
+    assert((err as Error).message.includes("second problem"));
+  });
+});
+
+Deno.test("FIXED (LB2): the graphql-errors rejection message uses a prefix DISTINCT from the HTTP-failure 'anilist search failed:' mapping", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub([anilistRoute(anilistGraphqlError, 200)], async () => {
+    const err = await assertRejects(
+      () => run("lookup-by-title", { title: "Errored Search" }, ctx),
+      Error,
+    );
+    assert(
+      !(err as Error).message.startsWith("anilist search failed:"),
+      `expected a distinct graphql-errors prefix, got: ${
+        (err as Error).message
+      }`,
+    );
+  });
+});
+
+Deno.test("FIXED (LB2): Pocketbase is NEVER called once the AniList graphql errors[] array causes a rejection", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [
+      anilistRoute(anilistGraphqlError, 200),
+      (req) => {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/collections/entries/records") {
+          throw new Error(
+            "Pocketbase must not be called once the graphql errors[] array rejects",
+          );
+        }
+        return undefined;
+      },
+    ],
+    async () => {
+      await assertRejects(
+        () => run("lookup-by-title", { title: "Errored Search" }, ctx),
+        Error,
+      );
+    },
   );
 });
 
-Deno.test("PIN: an AniList Media object with NO `title` key at all (not merely empty) crashes with an uncaught TypeError — `m.title.english` dereferences `m.title` before the `??` fallback chain ever runs", async () => {
-  const { ctx } = makeCtx();
+Deno.test("FIXED (LB6): an AniList Media object with NO `title` key at all (not merely empty) no longer crashes — `m.title ?? {}` guards the dereference before the `??` fallback chain runs, resolving to an empty string title", async () => {
+  const { ctx, written } = makeCtx();
   const mediaNoTitleAtAll = { data: { Media: { id: 123 } } };
-  await withFetchStub([anilistRoute(mediaNoTitleAtAll)], async () => {
-    const err = await assertRejects(
-      () => run("lookup-by-title", { title: "Whatever" }, ctx),
-      TypeError,
-    );
-    assert(
-      (err as Error).message.includes("english"),
-      `expected the \`m.title.english\` dereference to be the TypeError's cause, got: ${
-        (err as Error).message
-      }`,
-    );
-  });
+  await withFetchStub(
+    [anilistRoute(mediaNoTitleAtAll), pocketbaseRoute(pocketbaseEntry)],
+    async () => {
+      await run("lookup-by-title", { title: "Whatever" }, ctx);
+    },
+  );
+  const res = written.find((w) => w.name === "al-123")!;
+  assert(
+    res,
+    "no crash — resolution proceeds to the Pocketbase hop keyed by the AniList id",
+  );
+  assertEquals(res.payload.found, true);
+  assertEquals(res.payload.alID, 123);
+  assertEquals(
+    res.payload.title,
+    "Whatever",
+    "AniList resolved an empty title (m.title??{} -> {} -> '') which falls back to the caller's raw title via the already-pinned `||` semantics (see the methods suite's dedicated `||` pin)",
+  );
 });
 
-Deno.test("PIN: a Pocketbase response with NO `items` key at all (not merely empty []) crashes with an uncaught TypeError — the SYMMETRIC Pocketbase-side parallel of the AniList title-absent crash above — `data.items[0]` dereferences `data.items` before the `?? null` fallback ever runs", async () => {
-  const { ctx } = makeCtx();
+Deno.test("FIXED (LB6): a Pocketbase response with NO `items` key at all (not merely empty []) no longer crashes — fetchSeadex now guards with Array.isArray(data.items), treating a malformed/hostile envelope as not-found — the SYMMETRIC Pocketbase-side parallel of the AniList title-absent fix above", async () => {
+  const { ctx, written } = makeCtx();
   // A hostile/malformed Pocketbase list envelope missing `items` entirely.
   const noItemsKey = { page: 1, perPage: 30, totalItems: 0, totalPages: 0 };
   await withFetchStub([pocketbaseRoute(noItemsKey)], async () => {
-    const err = await assertRejects(
-      () => run("lookup-by-anilist-id", { anilistId: 70 }, ctx),
-      TypeError,
-    );
-    assert(
-      (err as Error).message.includes("items") ||
-        (err as Error).message.includes("0"),
-      `expected the \`data.items[0]\` dereference to be the TypeError's cause, got: ${
-        (err as Error).message
-      }`,
-    );
+    await run("lookup-by-anilist-id", { anilistId: 70 }, ctx);
   });
+  const res = written.find((w) => w.name === "al-70")!;
+  assert(res, "expected a written entry keyed al-70");
+  assertEquals(res.payload.found, false);
 });
 
-Deno.test("PIN: a 200-OK response with a non-JSON body crashes with an uncaught SyntaxError, on BOTH upstream contracts — resp.ok is checked before .json() is ever called, so a WAF/CDN error page served at HTTP 200 is NOT mapped into the 'fetch <url> →' / 'anilist search failed' error messages the contract suite pins for actual HTTP failures", async () => {
+Deno.test("FIXED (LB6): a 200-OK response with a non-JSON body now rejects with a MAPPED Error (not an uncaught SyntaxError), on BOTH upstream contracts — resp.ok is still checked before .json() runs, but the .json() call itself is now try/catch-wrapped so a WAF/CDN error page served at HTTP 200 degrades into a normal rejection instead of an uncaught parse exception", async () => {
   const { ctx: pbCtx } = makeCtx();
   await withFetchStub(
     [pocketbaseTextRoute("<html>not json</html>", 200)],
     async () => {
-      await assertRejects(
+      const err = await assertRejects(
         () => run("lookup-by-anilist-id", { anilistId: 71 }, pbCtx),
-        SyntaxError,
+        Error,
       );
+      assert(
+        !(err instanceof SyntaxError),
+        "the raw SyntaxError must be mapped, not surfaced uncaught",
+      );
+      assert((err as Error).message.startsWith("fetch "));
     },
   );
 
@@ -261,62 +337,121 @@ Deno.test("PIN: a 200-OK response with a non-JSON body crashes with an uncaught 
         : undefined;
     }],
     async () => {
-      await assertRejects(
+      const err = await assertRejects(
         () => run("lookup-by-title", { title: "Whatever" }, alCtx),
-        SyntaxError,
+        Error,
       );
+      assert(
+        !(err instanceof SyntaxError),
+        "the raw SyntaxError must be mapped, not surfaced uncaught",
+      );
+      assert((err as Error).message.startsWith("anilist search failed:"));
     },
   );
 });
 
-Deno.test("PIN: a malformed `expand.trs` array element (e.g. `null`) crashes with an uncaught TypeError — symmetric to the items-absent/title-absent crashes above, normaliseTorrent assumes every trs[] entry is an object", async () => {
-  const { ctx } = makeCtx();
+Deno.test("FIXED (LB6): a malformed `expand.trs` array element (e.g. `null`) no longer crashes — non-object elements are filtered out before normaliseTorrent runs, symmetric to the items-absent/title-absent fixes above", async () => {
+  const { ctx, written } = makeCtx();
   const hostile = clonePocketbaseEntry();
   hostile.items[0].alID = 72;
   // deno-lint-ignore no-explicit-any
   hostile.items[0].expand!.trs = [null as any];
   await withFetchStub([pocketbaseRoute(hostile)], async () => {
-    await assertRejects(
-      () => run("lookup-by-anilist-id", { anilistId: 72 }, ctx),
-      TypeError,
-    );
+    await run("lookup-by-anilist-id", { anilistId: 72 }, ctx);
   });
+  const res = written.find((w) => w.name === "al-72")!;
+  assert(res);
+  assertEquals(res.payload.bestReleases, []);
+  assertEquals(res.payload.alternativeReleases, []);
+});
+
+Deno.test("FIXED (LB6): a mixed array of a VALID torrent + a `null` expand.trs element SURVIVES — the null is dropped, the valid torrent is still normalised", async () => {
+  const hostile = clonePocketbaseEntry();
+  hostile.items[0].alID = 73;
+  const validTorrent = {
+    id: "tr_valid",
+    releaseGroup: "ValidGroup",
+    tracker: "ValidTracker",
+    url: "https://tracker.example/valid",
+    infoHash: "3334567890123456789012345678901234567890",
+    isBest: true,
+    dualAudio: false,
+    tags: ["1080p"],
+    files: [{ name: "valid.mkv", length: 100 }],
+  };
+  // deno-lint-ignore no-explicit-any
+  hostile.items[0].expand!.trs = [validTorrent, null as any];
+  const { ctx, written } = makeCtx();
+  await withFetchStub([pocketbaseRoute(hostile)], async () => {
+    await run("lookup-by-anilist-id", { anilistId: 73 }, ctx);
+  });
+  const res = written.find((w) => w.name === "al-73")!;
+  assert(res);
+  assertEquals((res.payload.bestReleases as unknown[]).length, 1);
+  const best = (res.payload.bestReleases as Array<Record<string, unknown>>)[0];
+  assertEquals(best.releaseGroup, "ValidGroup");
 });
 
 // ---------------------------------------------------------------------------
-// BUG-3 (pinned separately, with an EXPLICIT poisoned writeResource): the
-// entry-writing loop in lookup-many runs OUTSIDE the per-item try/catch
+// FIXED (LB3, HIGH, with an EXPLICIT poisoned writeResource): the
+// entry-writing loop in lookup-many is now per-item try/catch ISOLATED
 // ---------------------------------------------------------------------------
 
-Deno.test("PIN (BUG-3): the entry writeResource loop runs OUTSIDE the per-item try/catch — one write rejecting discards the WHOLE lookup-many call, and NO summary resource is ever written", async () => {
+Deno.test("FIXED (LB3): the entry writeResource loop is now individually try/catch-isolated — one poisoned write no longer discards the batch, and the summary is ALWAYS written", async () => {
   const { ctx, written } = makePoisonedCtx("entry", "al-2");
   await withFetchStub([pocketbaseRoute(pocketbaseEmpty)], async () => {
-    await assertRejects(
-      () =>
-        run("lookup-many", {
-          items: [{ anilistId: 1 }, { anilistId: 2 }, { anilistId: 3 }],
-        }, ctx),
-      Error,
-      "simulated schema rejection",
-    );
+    await run("lookup-many", {
+      items: [{ anilistId: 1 }, { anilistId: 2 }, { anilistId: 3 }],
+    }, ctx);
   });
+  const entryNames = written.filter((w) => w.spec === "entry").map((w) =>
+    w.name
+  );
+  assert(
+    entryNames.includes("al-1"),
+    "al-1 lands despite al-2's poisoned write",
+  );
+  assert(
+    entryNames.includes("al-3"),
+    "al-3 lands despite al-2's poisoned write",
+  );
+  assert(
+    !entryNames.includes("al-2"),
+    "the poisoned al-2 write itself still fails — only its OWN write is lost, not the batch",
+  );
+  const summary = written.find((w) => w.spec === "summary");
+  assert(
+    summary,
+    "the summary resource IS written even though one entry write rejected",
+  );
+  assertEquals(summary!.payload.total, 3);
+});
+
+Deno.test("FIXED (LB3): poisoning the SUMMARY write itself does not affect entry writes — all N entries still land", async () => {
+  const { ctx, written } = makePoisonedCtx("summary", "lookup-many");
+  await withFetchStub([pocketbaseRoute(pocketbaseEmpty)], async () => {
+    await run("lookup-many", {
+      items: [{ anilistId: 1 }, { anilistId: 2 }, { anilistId: 3 }],
+    }, ctx);
+  });
+  const entries = written.filter((w) => w.spec === "entry");
+  assertEquals(
+    entries.length,
+    3,
+    "all 3 entries land even though the summary write rejects",
+  );
   assertEquals(
     written.find((w) => w.spec === "summary"),
     undefined,
-    "the summary write happens AFTER the entries loop — it is never reached once any entry write rejects",
-  );
-  assert(
-    written.filter((w) => w.spec === "entry").length < 3,
-    "at most the entries written before the poisoned key can have landed; the poisoned key and everything after it in loop order are lost",
+    "the poisoned summary write itself still fails to land (only its own write is lost)",
   );
 });
 
 // ---------------------------------------------------------------------------
-// BUG-6 (harness-fidelity pin, see the file header note): hostile file.length
-// as a string -> totalSizeBytes string-concatenation
+// FIXED (LB6): hostile file.length as a string now coerces NUMERICALLY
 // ---------------------------------------------------------------------------
 
-Deno.test("HARNESS-FIDELITY PIN (BUG-6): a hostile file.length arriving as a STRING turns totalSizeBytes into a STRING via '0 + \"999\"' coercion — captured as-is by this fake writeResource (see file header: the REAL runtime's z.number() would reject this, which is BUG-3's failure mode, not reproduced here)", async () => {
+Deno.test("FIXED (LB6, ex BUG-6): a hostile file.length arriving as a STRING now coerces NUMERICALLY via Number(f.length)||0 — totalSizeBytes is 999 (a number), not the old '0999' string-concatenation", async () => {
   const hostile = clonePocketbaseEntry();
   hostile.items[0].alID = 50;
   hostile.items[0].expand!.trs = [{
@@ -339,13 +474,66 @@ Deno.test("HARNESS-FIDELITY PIN (BUG-6): a hostile file.length arriving as a STR
   const best = (res.payload.bestReleases as Array<Record<string, unknown>>)[0];
   assertEquals(
     best.totalSizeBytes,
-    "0999",
-    "reduce()'s initial value 0 (number) + '999' (string) coerces to string concatenation, not addition",
+    999,
+    "Number(f.length)||0 coerces the STRING '999' into the NUMBER 999 before summing",
   );
   assert(
-    typeof best.totalSizeBytes === "string",
-    "confirms the type-confusion: totalSizeBytes is a STRING here, not the z.number() the schema declares",
+    typeof best.totalSizeBytes === "number",
+    "confirms the fix: totalSizeBytes is a NUMBER here, matching the z.number() the schema declares",
   );
+});
+
+Deno.test("FIXED (LB6): MULTIPLE hostile files with STRING lengths now sum NUMERICALLY (not string-concatenated)", async () => {
+  const hostile = clonePocketbaseEntry();
+  hostile.items[0].alID = 53;
+  hostile.items[0].expand!.trs = [{
+    id: "tr_hostile4",
+    releaseGroup: "HostileGroup",
+    tracker: "HostileTracker",
+    url: "https://tracker.example/hostile4",
+    infoHash: "1234567890123456789012345678901234567890",
+    isBest: true,
+    dualAudio: false,
+    tags: ["1080p"],
+    files: [
+      // deno-lint-ignore no-explicit-any
+      { name: "a.mkv", length: "500" as any },
+      // deno-lint-ignore no-explicit-any
+      { name: "b.mkv", length: "250" as any },
+    ],
+  }];
+  const { ctx, written } = makeCtx();
+  await withFetchStub([pocketbaseRoute(hostile)], async () => {
+    await run("lookup-by-anilist-id", { anilistId: 53 }, ctx);
+  });
+  const res = written.find((w) => w.name === "al-53")!;
+  const best = (res.payload.bestReleases as Array<Record<string, unknown>>)[0];
+  assertEquals(best.totalSizeBytes, 750);
+  assert(typeof best.totalSizeBytes === "number");
+});
+
+Deno.test("FIXED (LB6): a junk (non-numeric) file.length coerces to 0, not NaN and not string-concatenation", async () => {
+  const hostile = clonePocketbaseEntry();
+  hostile.items[0].alID = 54;
+  hostile.items[0].expand!.trs = [{
+    id: "tr_hostile5",
+    releaseGroup: "HostileGroup",
+    tracker: "HostileTracker",
+    url: "https://tracker.example/hostile5",
+    infoHash: "2234567890123456789012345678901234567890",
+    isBest: true,
+    dualAudio: false,
+    tags: ["1080p"],
+    // deno-lint-ignore no-explicit-any
+    files: [{ name: "junk.mkv", length: "not-a-number" as any }],
+  }];
+  const { ctx, written } = makeCtx();
+  await withFetchStub([pocketbaseRoute(hostile)], async () => {
+    await run("lookup-by-anilist-id", { anilistId: 54 }, ctx);
+  });
+  const res = written.find((w) => w.name === "al-54")!;
+  const best = (res.payload.bestReleases as Array<Record<string, unknown>>)[0];
+  assertEquals(best.totalSizeBytes, 0);
 });
 
 Deno.test("PIN: a hostile non-array `tags` field passes through verbatim (?? only guards null/undefined, not wrong-type truthy values)", async () => {
@@ -395,10 +583,10 @@ Deno.test("PIN: a torrent with files entirely absent -> totalSizeBytes 0, fileCo
 });
 
 // ---------------------------------------------------------------------------
-// Duplicate input IDs — al-<id> resource key clobber, summary.total oblivious
+// FIXED (LB5): duplicate input IDs are now DEDUPED (first-wins) BEFORE fan-out
 // ---------------------------------------------------------------------------
 
-Deno.test("PIN: duplicate anilistId within one lookup-many call writes the SAME al-<id> key TWICE — a real datastore write would clobber the first with the second — while summary.total counts both", async () => {
+Deno.test("FIXED (LB5): duplicate anilistId within one lookup-many call is now DEDUPED before fan-out — al-77 is written ONCE, summary.total is 1", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub([pocketbaseRoute(pocketbaseEmpty)], async () => {
     await run(
@@ -412,23 +600,60 @@ Deno.test("PIN: duplicate anilistId within one lookup-many call writes the SAME 
   );
   assertEquals(
     entryWrites.length,
-    2,
-    "the fake harness records both calls distinctly — in the real datastore, writing the SAME resource key twice clobbers the first with the second",
+    1,
+    "deduped before fan-out — the SAME anilistId no longer produces two writes",
   );
   const summary = written.find((w) => w.spec === "summary")!;
   assertEquals(
     summary.payload.total,
-    2,
-    "summary.total counts array length, oblivious to the al-77 key collision",
+    1,
+    "summary.total now reflects the DEDUPED count, not the raw array length",
   );
-  assertEquals((summary.payload.notInSeadex as unknown[]).length, 2);
+  assertEquals((summary.payload.notInSeadex as unknown[]).length, 1);
+});
+
+Deno.test("FIXED (LB5): FIRST-WINS dedup semantics — duplicate anilistId with differing metadata keeps the FIRST item's fields", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([pocketbaseRoute(pocketbaseEmpty)], async () => {
+    await run("lookup-many", {
+      items: [
+        { anilistId: 5, userScore: 10 },
+        { anilistId: 5, userScore: 99 },
+      ],
+    }, ctx);
+  });
+  const entries = written.filter((w) =>
+    w.spec === "entry" && w.name === "al-5"
+  );
+  assertEquals(entries.length, 1);
+  assertEquals(
+    entries[0].payload.userScore,
+    10,
+    "first-wins: the SECOND duplicate's userScore:99 is dropped",
+  );
+});
+
+Deno.test("FIXED (LB5): [1,2,1,3] dedups to 3 unique ids -> summary.total is 3, not 4", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([pocketbaseRoute(pocketbaseEmpty)], async () => {
+    await run("lookup-many", {
+      items: [
+        { anilistId: 1 },
+        { anilistId: 2 },
+        { anilistId: 1 },
+        { anilistId: 3 },
+      ],
+    }, ctx);
+  });
+  const summary = written.find((w) => w.spec === "summary")!;
+  assertEquals(summary.payload.total, 3);
 });
 
 // ---------------------------------------------------------------------------
-// Error undercount — an errored item is indistinguishable from not-found
+// FIXED (LB4): an errored item is now tallied SEPARATELY from not-found
 // ---------------------------------------------------------------------------
 
-Deno.test("PIN: an errored lookup-many item is lumped into summary.notInSeadex identically to a legitimate not-found result — the summary schema has NO separate error tally", async () => {
+Deno.test("FIXED (LB4): an errored lookup-many item is now tallied SEPARATELY in summary.errors and EXCLUDED from notInSeadex — errors===1, notInSeadex===[2]", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [(req) => {
@@ -449,19 +674,65 @@ Deno.test("PIN: an errored lookup-many item is lumped into summary.notInSeadex i
   const summary = written.find((w) => w.spec === "summary")!;
   assertEquals(summary.payload.total, 2);
   assertEquals(summary.payload.found, 0);
+  assertEquals(
+    summary.payload.errors,
+    1,
+    "the errored al-1 item is now tallied in summary.errors",
+  );
   const notInSeadex = summary.payload.notInSeadex as Array<{ alID: number }>;
-  assertEquals(notInSeadex.map((n) => n.alID).sort((a, b) => a - b), [1, 2]);
-  assert(
-    !("errors" in summary.payload) && !("errorCount" in summary.payload),
-    "the summary resource has no error-tally field of any kind — an errored item and a legitimately-not-found item are indistinguishable from this resource alone",
+  assertEquals(
+    notInSeadex.map((n) => n.alID),
+    [2],
+    "the errored al-1 item is EXCLUDED from notInSeadex now that it has its own tally",
   );
 });
 
+Deno.test("lookup-many: happy path with no errors -> summary.errors is 0", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([pocketbaseRoute(pocketbaseEmpty)], async () => {
+    await run("lookup-many", { items: [{ anilistId: 200 }] }, ctx);
+  });
+  const summary = written.find((w) => w.spec === "summary")!;
+  assertEquals(summary.payload.errors, 0);
+});
+
+Deno.test("lookup-many: mixed error + miss + found tallies correctly across summary.found/errors/notInSeadex", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [(req) => {
+      const url = new URL(req.url);
+      const filter = url.searchParams.get("filter");
+      if (filter === "(alID=301)") {
+        return new Response("boom", { status: 500 });
+      }
+      if (filter === "(alID=302)") return json(pocketbaseEntry);
+      return json(pocketbaseEmpty);
+    }],
+    async () => {
+      await run("lookup-many", {
+        items: [
+          { anilistId: 301 },
+          { anilistId: 302 },
+          { anilistId: 303 },
+        ],
+      }, ctx);
+    },
+  );
+  const summary = written.find((w) => w.spec === "summary")!;
+  assertEquals(summary.payload.total, 3);
+  assertEquals(summary.payload.found, 1);
+  assertEquals(summary.payload.errors, 1);
+  const notInSeadex = summary.payload.notInSeadex as Array<{ alID: number }>;
+  assertEquals(notInSeadex.map((n) => n.alID), [303]);
+});
+
 // ---------------------------------------------------------------------------
-// infoHash passthrough — no normalization of any kind
+// FIXED (LB8): infoHash is now trimmed + lowercased (length is still NOT
+// validated)
 // ---------------------------------------------------------------------------
 
-Deno.test("PIN: infoHash is passed through byte-for-byte verbatim — no lowercase/trim/length validation, even for whitespace-padded, uppercase, or wrong-length values", async () => {
+Deno.test("FIXED (LB8): infoHash is now TRIMMED and LOWERCASED — whitespace padding and case are normalized (the wrong-length value itself is still NOT validated)", async () => {
+  const raw = "  AABBCCDDEEFF00112233445566778899AABBCC  ";
   const hostile = clonePocketbaseEntry();
   hostile.items[0].alID = 60;
   hostile.items[0].expand!.trs = [{
@@ -469,7 +740,7 @@ Deno.test("PIN: infoHash is passed through byte-for-byte verbatim — no lowerca
     releaseGroup: "G",
     tracker: "T",
     url: "https://tracker.example/x",
-    infoHash: "  AABBCCDDEEFF00112233445566778899AABBCC  ",
+    infoHash: raw,
     isBest: true,
     dualAudio: false,
     tags: [],
@@ -483,16 +754,51 @@ Deno.test("PIN: infoHash is passed through byte-for-byte verbatim — no lowerca
   const best = (res.payload.bestReleases as Array<Record<string, unknown>>)[0];
   assertEquals(
     best.infoHash,
-    "  AABBCCDDEEFF00112233445566778899AABBCC  ",
-    "verbatim passthrough — whitespace and case survive untouched, and the (wrong, 36-char-plus-padding) length is never validated",
+    raw.trim().toLowerCase(),
+    "trimmed + lowercased — the (wrong, 36-char) length itself is still never validated",
+  );
+});
+
+Deno.test("FIXED (LB8): infoHash normalization handles pure-uppercase and whitespace-only values", async () => {
+  async function infoHashFor(raw: string, alID: number): Promise<string> {
+    const hostile = clonePocketbaseEntry();
+    hostile.items[0].alID = alID;
+    hostile.items[0].expand!.trs = [{
+      id: `tr_hash_${alID}`,
+      releaseGroup: "G",
+      tracker: "T",
+      url: `https://tracker.example/${alID}`,
+      infoHash: raw,
+      isBest: true,
+      dualAudio: false,
+      tags: [],
+      files: [],
+    }];
+    const { ctx, written } = makeCtx();
+    await withFetchStub([pocketbaseRoute(hostile)], async () => {
+      await run("lookup-by-anilist-id", { anilistId: alID }, ctx);
+    });
+    const res = written.find((w) => w.name === `al-${alID}`)!;
+    return (res.payload.bestReleases as Array<{ infoHash: string }>)[0]
+      .infoHash;
+  }
+  assertEquals(
+    await infoHashFor("AABBCCDDEEFF00112233445566778899AABBCC", 61),
+    "aabbccddeeff00112233445566778899aabbcc",
+    "pure uppercase, no padding -> lowercased",
+  );
+  assertEquals(
+    await infoHashFor("   ", 62),
+    "",
+    "whitespace-only -> trimmed to an empty string",
   );
 });
 
 // ---------------------------------------------------------------------------
-// Server-alID-vs-key divergence
+// FIXED (LB7): a divergent server-returned alID no longer leaks into content
 // ---------------------------------------------------------------------------
 
-Deno.test("PIN: a hostile Pocketbase response whose alID field DIVERGES from the requested filter — the resource KEY uses the REQUESTED id, content.alID uses the SERVER's divergent value", async () => {
+Deno.test("FIXED (LB7): a hostile Pocketbase response whose alID field DIVERGES from the requested filter no longer leaks into content — both the resource KEY and content.alID now use the REQUESTED id", async () => {
   const divergent = clonePocketbaseEntry();
   divergent.items[0].alID = 999999;
   const { ctx, written } = makeCtx();
@@ -506,13 +812,13 @@ Deno.test("PIN: a hostile Pocketbase response whose alID field DIVERGES from the
   );
   assertEquals(
     res.payload.alID,
-    999999,
-    "content.alID uses buildResult's entry.alID branch (the server's value) once an entry is found — diverging from the al-1 key",
+    1,
+    "content.alID now uses buildResult's REQUESTED alID parameter, aligning with the al-1 key — the server's divergent 999999 value is ignored",
   );
   assertEquals(
     written.find((w) => w.name === "al-999999"),
     undefined,
-    "no resource is ever written under the server's divergent id — the divergence is invisible unless you compare key vs content",
+    "no resource is ever written under the server's divergent id",
   );
 });
 

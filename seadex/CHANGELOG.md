@@ -63,26 +63,97 @@ model `version` stays `2026.07.16.2`.
   `quality-offenders.baseline.txt` is untouched, write-once, seadex stays listed
   there forever as the immutable seed record).
 
-## Follow-up issues (pinned here, not fixed — seadex.ts is byte-frozen)
+## Follow-up issues from the test backfill — ALL FIXED in 2026.08.02.1 below
 
 Tracked in the local `seadex-latent-bugs` issue-lifecycle model (these are
-latent bugs in our own extension, not swamp-product issues, so they are NOT
-filed to the swamp.club Lab): render-upgrades is a permanent no-op (filter args
-accepted but ignored); AniList GraphQL-level errors (`{errors,data:null}` at
-HTTP 200) are silently swallowed as an ordinary no-match; `lookup-many`'s
-per-item try/catch does not cover the entry-writeResource loop, so one bad write
-discards the whole batch; errored fan-out items are undercounted (lumped into
-`notInSeadex` with no separate error tally); duplicate input `anilistId`s
-clobber the same `al-<id>` resource key; neither upstream response is
-runtime-validated, so a type-confused Pocketbase `file.length` (string), an
-entirely-missing `items`/`title` key, a malformed `expand.trs` array element, or
-a non-JSON 200-OK body crashes instead of degrading; a server-returned `alID`
-can diverge from the resource key derived from the request; `infoHash` is never
-normalized (case/whitespace/length are not validated); a hostile non-array
-`tags` value passes through verbatim into stored output; and hostile `notes`
-content and Pocketbase error-body text are stored/thrown verbatim with no
-redaction (seadex is credential-less, so this is a trust-boundary concern, not a
-credential leak).
+latent bugs in our own extension, not swamp-product issues, so they were NOT
+filed to the swamp.club Lab). At the time this section was originally written,
+these 8 issues were pinned-but-not-fixed (seadex.ts was byte-frozen); every one
+of them is now REAL-FIXED in `2026.08.02.1` (see that section for the per-bug
+detail): render-upgrades being a permanent no-op (LB1, HIGH); AniList
+GraphQL-level errors (`{errors,data:null}` at HTTP 200) being silently swallowed
+as an ordinary no-match (LB2, HIGH); `lookup-many`'s per-item try/catch not
+covering the entry-writeResource loop, so one bad write discarded the whole
+batch (LB3, HIGH); errored fan-out items being undercounted (lumped into
+`notInSeadex` with no separate error tally) (LB4, MED); duplicate input
+`anilistId`s clobbering the same `al-<id>` resource key (LB5, MED); neither
+upstream response being runtime-validated, so a type-confused Pocketbase
+`file.length` (string), an entirely-missing `items`/`title` key, a malformed
+`expand.trs` array element, or a non-JSON 200-OK body crashed instead of
+degrading (LB6, MED); a server-returned `alID` diverging from the resource key
+derived from the request (LB7, LOW); and `infoHash` never being normalized
+(case/whitespace) (LB8, LOW). A hostile non-array `tags` value passing through
+verbatim, and hostile `notes`/error-body text being stored/thrown verbatim with
+no redaction, remain OUT OF SCOPE (not tracked latent bugs — seadex is
+credential-less, so the latter is a trust-boundary observation, not a credential
+leak) and stay byte-frozen.
+
+## 2026.08.02.1
+
+Real-fix (not byte-frozen) for all 8 latent bugs tracked in the LOCAL
+`seadex-latent-bugs` issue-lifecycle model (3 HIGH). `model.version` /
+`manifest.yaml` bump `2026.07.16.2` → `2026.08.02.1`, with a single `upgrades[]`
+entry (`upgradeAttributes: (old) => old` — neither resource addition touches
+`globalArguments`).
+
+- **LB1 (HIGH)** `render-upgrades` was a permanent no-op that wrote an all-zero
+  `summary` marker regardless of its filter arguments. It now writes a new
+  `upgradeFilter` resource (`{year, status, minScore, title, timestamp}`) whose
+  fields ECHO the caller's year/status/minScore/title arguments (`null` when
+  omitted) — a real, observable effect.
+- **LB2 (HIGH)** `anilistFindIdByTitle` silently swallowed AniList GraphQL-level
+  errors (`{errors, data:null}` at HTTP 200) as an ordinary no-match. It now
+  inspects the parsed `errors[]` array and rejects with
+  `anilist graphql errors: <joined messages>` — distinct from both the
+  HTTP-failure `anilist search failed:` prefix and a legitimate no-match (which
+  still writes `found:false`). Pocketbase is never called once this rejects.
+- **LB3 (HIGH)** `lookup-many`'s entry-writeResource loop (and the summary
+  write) ran outside any per-item try/catch, so one write rejecting (e.g. a
+  real-runtime schema-validation failure) discarded the whole batch and the
+  summary was never written. Both the per-entry writes and the summary write are
+  now individually try/catch-isolated: one poisoned write is dropped, but every
+  other entry still lands and the summary is always attempted.
+- **LB4 (MED)** An errored fan-out item was lumped into `summary.notInSeadex`
+  identically to a legitimate not-found result, with no error tally. Per-item
+  fetch failures are now tracked in a separate `erroredIds` set; the new
+  `summary.errors` field counts them, and they are excluded from `notInSeadex`.
+- **LB5 (MED)** Duplicate `anilistId`s in one `lookup-many` call wrote the same
+  `al-<id>` resource key twice (a real datastore write would clobber the first)
+  and double-counted in the summary. `args.items` is now deduped by `anilistId`
+  (first-wins) before fan-out.
+- **LB6 (MED)** Neither upstream response was runtime-validated: a type-confused
+  Pocketbase `file.length` (string) silently string-concatenated into
+  `totalSizeBytes`; an entirely-missing `items`/`title` key, a malformed
+  `expand.trs` element, or a non-JSON 200-OK body crashed with an uncaught
+  TypeError/SyntaxError. `normaliseTorrent` now coerces file lengths numerically
+  (`Number(f.length) || 0`); `fetchSeadex` guards `Array.isArray(data.items)`;
+  `anilistFindIdByTitle` defaults an absent `title` object (`m.title ?? {}`);
+  non-object `expand.trs` elements are filtered out before normalising; and both
+  `fetchJson`/`resp.json()` call sites are wrapped so a non-JSON body degrades
+  into a mapped `Error` instead of an uncaught `SyntaxError`. Fixing this
+  numeric coercion also removes the old BUG-6→BUG-3 write-rejection linkage
+  described in the section above (LB3 is independently fixed regardless).
+- **LB7 (LOW)** `buildResult`'s found-branch used the server's own `entry.alID`
+  for content, which could diverge from the resource key (derived from the
+  REQUESTED id). Content now uses the requested `alID` parameter, aligning
+  `al-<id>` key and content on every path.
+- **LB8 (LOW)** `infoHash` passed through byte-for-byte verbatim, including
+  whitespace padding and mixed case. `normaliseTorrent` now normalizes it via
+  `.trim().toLowerCase()` (idempotent on well-formed 40-hex values; length
+  validation is still not performed — that remains out of scope).
+
+**Two resource-schema additions** (neither touches `globalArguments`, so the
+appended `upgrades[]` entry is an identity `upgradeAttributes`): `summary` gains
+`errors: number` (LB4); a new `upgradeFilter` resource (LB1) is added alongside
+`entry`/`summary`.
+
+**Byte-stability**: the contract-fixture, methods, coverage, adversarial, and
+property suites stay byte-frozen except for the specific tests flipped above to
+assert the fixed behavior (non-array-`tags` passthrough, files-absent,
+notes/error-body verbatim, the secret-scan, primaryFile/argmax, comparisonUrls,
+baseUrl-strip, slug-key construction, and the rest of the property suite are all
+unchanged). No `tags` coercion was added — the non-array-`tags` pin stays frozen
+by design (out of scope for this fix).
 
 ## 2026.07.16.2
 
