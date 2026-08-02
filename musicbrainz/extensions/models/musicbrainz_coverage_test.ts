@@ -5,16 +5,22 @@
  * exact-match vs no-match vs artist-MBID-UNRESOLVED branches (the round-2
  * review fold-in — pinned for BOTH methods, not just one), the normalizeTitle
  * collision (observed only through execute(), since it is module-private),
- * buildSeedUrl's conditional param guards, and the album-fetch try/catch
- * minimal-seed fallback — so deleting any one of these guards turns a test
- * red (STANDARD.md's coverage role: a behavioral regression guard, not a
- * numeric percentage).
+ * buildSeedUrl's conditional param guards, the album-fetch try/catch
+ * minimal-seed fallback, and (as of the musicbrainz-ssrf-and-latent-bugs LB5/
+ * LB6 real fixes) normalizeTitle's NFKD-fold-then-strip collision rule plus
+ * direct unit tests of the newly-exported `formatDuration()` helper — so
+ * deleting any one of these guards turns a test red (STANDARD.md's coverage
+ * role: a behavioral regression guard, not a numeric percentage).
  *
- * musicbrainz.ts is UNMODIFIED; every test PINS existing behavior.
+ * Most of this file still PINS unmodified behavior. The normalizeTitle
+ * collision tests below were updated for the LB5 fix (NFKD decomposition +
+ * combining-mark stripping + `\p{L}`/`\p{N}`-aware collapsing, replacing the
+ * old ASCII-only `[^a-z0-9]` strip) — see each test's own comment for what
+ * changed and why.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
-import { model } from "./musicbrainz.ts";
+import { formatDuration, model } from "./musicbrainz.ts";
 import { ARTIST_MUSICGRID_HTML } from "../../fixtures/bandcamp/artist_musicgrid.ts";
 
 const GLOBAL_ARGS = {
@@ -492,14 +498,15 @@ Deno.test("normalizeTitle COLLISION: 'Fixture-Drift Sessions' (bandcamp) and 'Fi
   assertEquals(matched[0].mbTitle, "Fixture Drift Sessions");
 });
 
-Deno.test("normalizeTitle COLLISION (unicode-stripping variant): 'Café Nuit' (bandcamp) and 'Caf Nuit' (MusicBrainz) normalize identically — the accented letter is STRIPPED ENTIRELY (ASCII-only [^a-z0-9] class, no unicode folding), not merely case-folded", async () => {
-  // Distinct from the ASCII punctuation-collision test above: this pins the
+Deno.test("LB5 FIX: 'Café Nuit' (bandcamp) and 'Caf Nuit' (MusicBrainz) NO LONGER collide — NFKD decomposition + combining-mark stripping folds 'é' to 'e', so 'Café' normalizes to 'cafe', distinct from 'caf'", async () => {
+  // Distinct from the ASCII punctuation-collision test above: this covers the
   // OVER-COLLAPSE mode most likely to surprise a real user, since non-ASCII
   // artist/track names are common on both MusicBrainz and Bandcamp.
-  // normalizeTitle's source (`s.toLowerCase().replace(/[^a-z0-9]/g, "")`)
-  // treats ANY non-ASCII letter exactly like punctuation — deleted, not
-  // transliterated — so "Café Nuit" and "Caf Nuit" are indistinguishable to
-  // the matcher even though a human would consider them different titles.
+  // normalizeTitle now runs `s.normalize("NFKD")` (decomposing "é" into "e" +
+  // a combining acute accent), strips the combining mark, lowercases, then
+  // collapses non-letter/non-number runs to a single space — "Café Nuit" ->
+  // "cafe nuit", "Caf Nuit" -> "caf nuit". These are different strings, so
+  // the false match this used to produce is gone.
   using time = new FakeTime();
   const { ctx, written } = makeCtx();
   const unicodeBcHtml = `<!doctype html>
@@ -543,18 +550,17 @@ Deno.test("normalizeTitle COLLISION (unicode-stripping variant): 'Café Nuit' (b
   );
   const res = written.find((w) => w.spec === "missingReleases")!;
   const matched = res.payload.matched as Array<Record<string, unknown>>;
-  const missing = res.payload.missing as unknown[];
+  const missing = res.payload.missing as Array<Record<string, unknown>>;
   assertEquals(
     matched.length,
-    1,
-    "'Café Nuit' and 'Caf Nuit' both normalize to \"cafnuit\" — the accented 'é' is deleted, not folded to 'e', so they collide despite being visibly different titles",
+    0,
+    "'Café Nuit' now normalizes to \"cafe nuit\" (the accent folds via NFKD, it no longer vanishes) while 'Caf Nuit' normalizes to \"caf nuit\" — distinct strings, no more false match",
   );
-  assertEquals(missing.length, 0);
-  assertEquals(matched[0].bcTitle, "Café Nuit");
-  assertEquals(matched[0].mbTitle, "Caf Nuit");
+  assertEquals(missing.length, 1);
+  assertEquals(missing[0].title, "Café Nuit");
 });
 
-Deno.test("normalizeTitle: a CJK title with no ASCII letters at all normalizes to the EMPTY STRING — collides with every other punctuation-only or non-ASCII title, not just accented-Latin ones", async () => {
+Deno.test("LB5 FIX: a CJK title and a punctuation-only title NO LONGER collide — CJK characters are \\p{L} (Letter) and survive, '---' collapses to an empty/whitespace string that no longer equals a real title", async () => {
   using time = new FakeTime();
   const { ctx, written } = makeCtx();
   const cjkBcHtml = `<!doctype html>
@@ -578,9 +584,10 @@ Deno.test("normalizeTitle: a CJK title with no ASCII letters at all normalizes t
             }],
           });
         }
-        // "---" also normalizes to "" (every char stripped as punctuation),
-        // colliding with the CJK bandcamp title purely because BOTH sides
-        // reduce to the empty string — an unrelated-titles false match.
+        // "---" normalizes to "" (every char is punctuation, collapsed and
+        // trimmed to nothing) while "北京" normalizes to itself (CJK
+        // characters are \p{L} under the new \p{L}/\p{N} rule, never
+        // stripped) — the two are no longer equal.
         return json({
           "release-groups": [{
             id: "00000000-0000-0000-0000-000000000702",
@@ -601,13 +608,77 @@ Deno.test("normalizeTitle: a CJK title with no ASCII letters at all normalizes t
   );
   const res = written.find((w) => w.spec === "missingReleases")!;
   const matched = res.payload.matched as Array<Record<string, unknown>>;
+  const missing = res.payload.missing as Array<Record<string, unknown>>;
+  assertEquals(
+    matched.length,
+    0,
+    "a CJK title (letters, preserved) and a punctuation-only title (collapses to empty) no longer normalize to the same string",
+  );
+  assertEquals(missing.length, 1);
+  assertEquals(missing[0].title, "北京");
+});
+
+// ---------------------------------------------------------------------------
+// LB5 FIX coverage: 'Motörhead' now matches 'Motorhead' — the whole point of
+// switching from ASCII-deletion to NFKD-fold-then-strip is that a diacritic
+// FOLDS to its base letter instead of vanishing, so titles that a human would
+// consider the SAME now collide, while titles that only coincidentally shared
+// letters after ASCII-stripping (Café/Caf, CJK/---, see above) no longer do.
+// ---------------------------------------------------------------------------
+
+Deno.test("LB5 FIX: 'Motörhead' (bandcamp) and 'Motorhead' (MusicBrainz) now MATCH — NFKD folds 'ö' to 'o' instead of deleting it", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const motorheadBcHtml = `<!doctype html>
+<html><head></head><body>
+<p id="band-name-location"><span class="title">Fixture Motörhead Artist</span></p>
+<div id="music-grid"><ol>
+  <li class="music-grid-item"><a href="/album/x"><p class="title">Motörhead</p></a></li>
+</ol></div>
+</body></html>`;
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(motorheadBcHtml) : undefined),
+      (req) => {
+        if (!isMbHost(req)) return undefined;
+        const url = new URL(req.url);
+        if (url.pathname === "/ws/2/artist/") {
+          return json({
+            artists: [{
+              id: "00000000-0000-0000-0000-000000000001",
+              name: "Fixture Motörhead Artist",
+            }],
+          });
+        }
+        return json({
+          "release-groups": [{
+            id: "00000000-0000-0000-0000-000000000703",
+            title: "Motorhead",
+          }],
+          "release-group-count": 1,
+          "release-group-offset": 0,
+        });
+      },
+    ],
+    () =>
+      drainAndAwait(
+        time,
+        run("find-missing", {
+          bandcampUrl: "https://fixturemotorheadartist.bandcamp.com",
+        }, ctx),
+      ),
+  );
+  const res = written.find((w) => w.spec === "missingReleases")!;
+  const matched = res.payload.matched as Array<Record<string, unknown>>;
+  const missing = res.payload.missing as unknown[];
   assertEquals(
     matched.length,
     1,
-    "a CJK title (no ASCII letters) and a punctuation-only title BOTH normalize to '' and are treated as a match, despite having nothing in common",
+    "'Motörhead' normalizes to \"motorhead\" (NFKD decomposes 'ö' to 'o' + a combining diaeresis, which is stripped) — identical to 'Motorhead' normalized",
   );
-  assertEquals(matched[0].bcTitle, "北京");
-  assertEquals(matched[0].mbTitle, "---");
+  assertEquals(missing.length, 0);
+  assertEquals(matched[0].bcTitle, "Motörhead");
+  assertEquals(matched[0].mbTitle, "Motorhead");
 });
 
 // ---------------------------------------------------------------------------
@@ -702,4 +773,26 @@ Deno.test("buildSeedUrl: artistMbid UNSET omits the mbid param but still sets th
     seedUrl.searchParams.get("artist_credit.names.0.artist.name"),
     "Fixture Artist",
   );
+});
+
+// ---------------------------------------------------------------------------
+// LB6 FIX: formatDuration() — H:MM:SS past one hour, else M:SS. Now exported,
+// so tested directly rather than only through execute() (unlike
+// normalizeTitle, which stays module-private).
+// ---------------------------------------------------------------------------
+
+Deno.test("formatDuration: 65 seconds -> '1:05' (under an hour, M:SS, no leading hour)", () => {
+  assertEquals(formatDuration(65), "1:05");
+});
+
+Deno.test("formatDuration: 3750 seconds -> '1:02:30' (past an hour, H:MM:SS, hours no longer silently dropped)", () => {
+  assertEquals(formatDuration(3750), "1:02:30");
+});
+
+Deno.test("formatDuration: 3600 seconds -> '1:00:00' (exactly one hour)", () => {
+  assertEquals(formatDuration(3600), "1:00:00");
+});
+
+Deno.test("formatDuration: 0 seconds -> '0:00'", () => {
+  assertEquals(formatDuration(0), "0:00");
 });

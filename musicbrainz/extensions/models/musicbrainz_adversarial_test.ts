@@ -1,25 +1,29 @@
 /**
  * Adversarial suite: hostile-HTML pins (malformed JSON-LD fallback,
- * script-injection text, huge/nested input, TralbumData //-strip URL
- * corruption), raw MBID path-interpolation injection (concrete captured-URL
- * assertions — a `new URL()` normalization spike showed an UNENCODED `../`
- * actually COLLAPSES the path, escaping even the `/ws/2/` prefix),
- * no-AbortSignal on either fetch site, 503-throws-without-honoring-Retry-After,
- * unvalidated-response type-confusion (no safeParse — a truthy non-array
- * `data.<key>` sails through unchanged, mirroring porkbun's `records || []`
- * pin), and a fixtures-secret-scan backstop over both the JSON and Bandcamp
- * HTML corpus.
+ * script-injection text, huge/nested input), raw MBID path-interpolation
+ * FIXES (concrete captured-URL assertions — a `new URL()` normalization
+ * spike originally showed an UNENCODED `../` COLLAPSING the path, escaping
+ * even the `/ws/2/` prefix; `encodeURIComponent(args.id)` now closes that),
+ * per-fetch AbortSignal timeouts on both fetch sites, 503-Retry-After now
+ * surfaced in the thrown message (still no retry), and Array.isArray
+ * response-shape guards (a truthy non-array `data.<key>` now normalizes to
+ * `[]` instead of sailing through unchanged) — plus a fixtures-secret-scan
+ * backstop over both the JSON and Bandcamp HTML corpus.
  *
- * musicbrainz.ts is UNMODIFIED except for the bandcampUrl SSRF fix
- * (musicbrainz-ssrf-and-latent-bugs): fetchPage now requires an https
- * bandcamp.com/*.bandcamp.com URL via assertBandcampUrl, applied before any
- * network call and re-applied on every manual redirect hop. The two SSRF
- * tests below assert the FIX (rejection + zero egress), not the vulnerable
- * behavior; the positive allowlist/redirect/scheme tests that follow them
- * are new. Every other test in this file still PINS current behavior
- * (including behavior that is a real, documented gap) rather than proposing
- * a fix — those remaining pinned gaps are reported for separate filing under
- * musicbrainz-ssrf-and-latent-bugs, never fixed here.
+ * This file, alongside the SSRF fix from musicbrainz-ssrf-and-latent-bugs
+ * (2026.07.31.1: fetchPage requires an https bandcamp.com/*.bandcamp.com URL
+ * via assertBandcampUrl, applied before any network call and re-applied on
+ * every manual redirect hop), now also covers the musicbrainz-ssrf-and-
+ * latent-bugs LB2/LB3/LB6/LB7 real fixes (2026.08.02.1): MBID path-injection
+ * (LB2), the TralbumData //-strip URL corruption (LB3, now direct-parse-first
+ * with a `://`-protected fallback strip — see the FIX test near the top),
+ * per-fetch timeouts + Retry-After + Array.isArray guards (LB7). LB4
+ * (unbounded pagination) and LB5 (normalizeTitle over-collapse) are covered
+ * in musicbrainz_property_test.ts and musicbrainz_coverage_test.ts
+ * respectively. Tests not called out above (hostile-HTML fallback
+ * characterization, huge/nested input, array-wrapped JSON-LD, the raw-entity
+ * `data` passthrough, and the SSRF allowlist tests) are UNCHANGED pins —
+ * still current, correct behavior.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
@@ -237,7 +241,7 @@ Deno.test("pin: a raw <script> tag embedded in the title element is included VER
   );
 });
 
-Deno.test("pin: TralbumData's //-comment-strip cleanup corrupts an embedded https:// URL, causing a JSON.parse failure that is silently swallowed — tracks end up EMPTY", async () => {
+Deno.test("FIX: TralbumData is tried as a direct JSON.parse FIRST — an embedded https:// URL survives, tracks parse correctly instead of vanishing", async () => {
   const { ctx, written } = makeCtx();
   await withFetchStub(
     [(req) => (isBcHost(req) ? html(HOSTILE_ALBUM_HTML) : undefined)],
@@ -252,8 +256,14 @@ Deno.test("pin: TralbumData's //-comment-strip cleanup corrupts an embedded http
   const release = (res.payload.releases as Array<Record<string, unknown>>)[0];
   assertEquals(
     release.trackCount,
-    0,
-    "the TralbumData blob DID contain real track data, but the //-strip corrupted it into invalid JSON before parsing — tracks silently vanish rather than surfacing an error",
+    1,
+    "TralbumData is valid JSON on its own (embedded https:// URL included) — a direct JSON.parse succeeds before any //-strip cleanup is even attempted, so the real track survives",
+  );
+  const seedUrl = new URL(release.seedUrl as string);
+  assertEquals(
+    seedUrl.searchParams.get("mediums.0.track.0.name"),
+    "Fixture Corrupt Track",
+    "the track title from the (now correctly parsed) trackinfo entry reaches the seed URL",
   );
 });
 
@@ -408,7 +418,7 @@ Deno.test("pin: an ARRAY-wrapped JSON-LD block on an ARTIST page makes ld.album 
 // MBID raw path-interpolation injection — concrete captured-URL assertions
 // ---------------------------------------------------------------------------
 
-Deno.test("INJECTION: an UNENCODED '../../' MBID actually COLLAPSES the request path via standard URL dot-segment normalization, escaping even the /ws/2/ prefix", async () => {
+Deno.test("LB2 FIX: an UNENCODED-looking '../../' MBID is percent-encoded before path interpolation — the request can no longer escape /ws/2/artist/", async () => {
   using time = new FakeTime();
   const { ctx } = makeCtx();
   await withMbFixture({ id: "whatever" }, (calls) =>
@@ -417,14 +427,14 @@ Deno.test("INJECTION: an UNENCODED '../../' MBID actually COLLAPSES the request 
       run("lookup-artist", { id: "../../secret" }, ctx).then(() => {
         assertEquals(
           new URL(calls[0].url).pathname,
-          "/ws/secret",
-          "the naive `/artist/${id}` interpolation, once run through new URL(), normalizes away BOTH '..' segments — the request lands on /ws/secret, not /ws/2/artist/../../secret",
+          "/ws/2/artist/..%2F..%2Fsecret",
+          "encodeURIComponent turns each '/' into %2F (dots are left alone, they are unreserved) — the request now stays anchored under /ws/2/artist/, it can never collapse out via dot-segment normalization",
         );
       }),
     ));
 });
 
-Deno.test("INJECTION: an MBID containing '/' adds an EXTRA path segment verbatim (no encodeURIComponent)", async () => {
+Deno.test("LB2 FIX: an MBID containing '/' is percent-encoded to %2F — no extra path segment is added", async () => {
   using time = new FakeTime();
   const { ctx } = makeCtx();
   await withMbFixture({ id: "whatever" }, (calls) =>
@@ -433,13 +443,13 @@ Deno.test("INJECTION: an MBID containing '/' adds an EXTRA path segment verbatim
       run("lookup-release", { id: "abc/def" }, ctx).then(() => {
         assertEquals(
           new URL(calls[0].url).pathname,
-          "/ws/2/release/abc/def",
+          "/ws/2/release/abc%2Fdef",
         );
       }),
     ));
 });
 
-Deno.test("INJECTION: an MBID containing '?' truncates the id there and INJECTS an arbitrary query parameter alongside fmt=json", async () => {
+Deno.test("LB2 FIX: an MBID containing '?' is percent-encoded to %3F — no query parameter can be injected via the id", async () => {
   using time = new FakeTime();
   const { ctx } = makeCtx();
   await withMbFixture({ id: "whatever" }, (calls) =>
@@ -448,15 +458,22 @@ Deno.test("INJECTION: an MBID containing '?' truncates the id there and INJECTS 
       run("lookup-recording", { id: "abc?inc=injected-param" }, ctx).then(
         () => {
           const url = new URL(calls[0].url);
-          assertEquals(url.pathname, "/ws/2/recording/abc");
-          assertEquals(url.searchParams.get("inc"), "injected-param");
+          assertEquals(
+            url.pathname,
+            "/ws/2/recording/abc%3Finc%3Dinjected-param",
+          );
+          assertEquals(
+            url.searchParams.get("inc"),
+            null,
+            "the '?' is now part of the encoded path segment, not a real query delimiter — no 'inc' param is ever injected",
+          );
           assertEquals(url.searchParams.get("fmt"), "json");
         },
       ),
     ));
 });
 
-Deno.test("INJECTION: an MBID containing '#' is embedded verbatim as a URL fragment — the query params (fmt=json) are unaffected", async () => {
+Deno.test("LB2 FIX: an MBID containing '#' is percent-encoded to %23 — no URL fragment can be smuggled via the id", async () => {
   using time = new FakeTime();
   const { ctx } = makeCtx();
   await withMbFixture({ id: "whatever" }, (calls) =>
@@ -464,13 +481,47 @@ Deno.test("INJECTION: an MBID containing '#' is embedded verbatim as a URL fragm
       time,
       run("lookup-label", { id: "abc#injected-fragment" }, ctx).then(() => {
         const url = new URL(calls[0].url);
-        assertEquals(url.pathname, "/ws/2/label/abc");
+        assertEquals(url.pathname, "/ws/2/label/abc%23injected-fragment");
         assertEquals(url.searchParams.get("fmt"), "json");
-        // Whether a fragment is actually transmitted to a real server is
-        // governed by HTTP/URL semantics outside musicbrainz.ts's control
-        // (a live client strips fragments before opening the connection) —
-        // this pin only characterizes THIS model's own string handling: the
-        // raw id (fragment included) reaches the constructed URL unmodified.
+      }),
+    ));
+});
+
+Deno.test("LB2 FIX: a canonical hyphenated-hex MBID encodes to ITSELF (identity) — happy-path request URLs stay byte-identical", async () => {
+  using time = new FakeTime();
+  const { ctx } = makeCtx();
+  const uuid = "00000000-0000-0000-0000-000000000001";
+  await withMbFixture({ id: "whatever" }, (calls) =>
+    drainAndAwait(
+      time,
+      run("lookup-artist", { id: uuid }, ctx).then(() => {
+        assertEquals(
+          new URL(calls[0].url).pathname,
+          `/ws/2/artist/${uuid}`,
+          "encodeURIComponent leaves hex digits and hyphens unescaped — a real MBID round-trips unchanged",
+        );
+      }),
+    ));
+});
+
+Deno.test("LB2 FIX: an id combining every special character at once is FULLY percent-encoded, none left raw in the path", async () => {
+  using time = new FakeTime();
+  const { ctx } = makeCtx();
+  await withMbFixture({ id: "whatever" }, (calls) =>
+    drainAndAwait(
+      time,
+      run("lookup-release-group", { id: "../a/b?c=d#e f" }, ctx).then(() => {
+        const url = new URL(calls[0].url);
+        assertEquals(
+          url.pathname,
+          "/ws/2/release-group/..%2Fa%2Fb%3Fc%3Dd%23e%20f",
+        );
+        assertEquals(
+          url.searchParams.get("c"),
+          null,
+          "nothing from the id leaks out as a real query parameter",
+        );
+        assertEquals(url.searchParams.get("fmt"), "json");
       }),
     ));
 });
@@ -746,10 +797,10 @@ Deno.test("SSRF FIX: hostname allowlist is anchored on the dot — evil.bandcamp
 });
 
 // ---------------------------------------------------------------------------
-// No AbortSignal / timeout on either fetch site
+// LB7 FIX: AbortSignal timeout on both fetch sites
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: mbFetch never passes an AbortSignal — a hung MusicBrainz endpoint would hang this call forever", async () => {
+Deno.test("LB7 FIX: mbFetch always passes a real AbortSignal in the fetch init", async () => {
   using time = new FakeTime();
   const { ctx } = makeCtx();
   await withMbFixture(
@@ -758,17 +809,16 @@ Deno.test("pin: mbFetch never passes an AbortSignal — a hung MusicBrainz endpo
       drainAndAwait(time, run("search-artist", { query: "x" }, ctx)).then(
         () => {
           assertEquals(rawCalls.length, 1);
-          assertEquals(
-            rawCalls[0].init?.signal,
-            undefined,
-            "no signal was ever passed in the fetch init — no client-side timeout exists",
+          assert(
+            rawCalls[0].init?.signal instanceof AbortSignal,
+            "mbFetch now threads an AbortController's signal through every fetch init",
           );
         },
       ),
   );
 });
 
-Deno.test("pin: fetchPage (Bandcamp) never passes an AbortSignal either", async () => {
+Deno.test("LB7 FIX: fetchPage (Bandcamp) always passes a real AbortSignal too", async () => {
   const { ctx } = makeCtx();
   await withFetchStub(
     [() => html(ALBUM_JSONLD_HTML)],
@@ -776,16 +826,48 @@ Deno.test("pin: fetchPage (Bandcamp) never passes an AbortSignal either", async 
       await run("seed-from-bandcamp", {
         bandcampUrl: "https://fixture.bandcamp.com/album/x",
       }, ctx);
-      assertEquals(rawCalls[0].init?.signal, undefined);
+      assert(rawCalls[0].init?.signal instanceof AbortSignal);
     },
   );
 });
 
+Deno.test("LB7 FIX: mbFetch aborts a never-resolving fetch once the client-side timeout elapses (AbortError)", async () => {
+  using time = new FakeTime();
+  const { ctx } = makeCtx();
+  const original = globalThis.fetch;
+  let sawSignal: AbortSignal | undefined;
+  globalThis.fetch = ((
+    _input: Request | URL | string,
+    init?: RequestInit,
+  ) => {
+    sawSignal = init?.signal ?? undefined;
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        reject(new DOMException("The signal has been aborted", "AbortError"));
+      });
+    });
+  }) as unknown as typeof globalThis.fetch;
+  try {
+    await drainAndAwait(
+      time,
+      assertRejects(() => run("search-artist", { query: "x" }, ctx)),
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert(sawSignal instanceof AbortSignal, "a signal must have been passed");
+  assert(
+    sawSignal?.aborted,
+    "the signal must be aborted once the 30s client-side timeout elapses, even though the stub never resolves on its own",
+  );
+});
+
 // ---------------------------------------------------------------------------
-// 503 throws immediately — no Retry-After honored, no retry attempted
+// LB7 FIX: 503 Retry-After is now surfaced in the thrown message (still no
+// client-side retry — that remains out of scope)
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a 503 WITH a Retry-After header still throws immediately — the header is never read, and no retry is attempted", async () => {
+Deno.test("LB7 FIX: a 503 WITH a Retry-After header surfaces the header value in the thrown message — still no retry is attempted", async () => {
   using time = new FakeTime();
   const { ctx } = makeCtx();
   await withFetchStub(
@@ -796,27 +878,32 @@ Deno.test("pin: a 503 WITH a Retry-After header still throws immediately — the
     (calls) =>
       drainAndAwait(
         time,
-        assertRejects(
-          () => run("search-artist", { query: "x" }, ctx),
-          Error,
-          "503",
-        ).then(() => {
+        (async () => {
+          const err = await assertRejects(
+            () => run("search-artist", { query: "x" }, ctx),
+            Error,
+            "503",
+          );
+          assert(
+            err.message.includes("120"),
+            "the Retry-After value must now be surfaced in the thrown message",
+          );
           assertEquals(
             calls.length,
             1,
-            "no retry was attempted despite the Retry-After hint",
+            "no retry is attempted — the header is surfaced, not acted on",
           );
-        }),
+        })(),
       ),
   );
 });
 
 // ---------------------------------------------------------------------------
-// Unvalidated response — no safeParse, a truthy non-array field type-confuses
-// the derived count (mirrors porkbun's `records || []` pin)
+// LB7 FIX: Array.isArray response-shape guard — a truthy non-array field now
+// normalizes to [] instead of type-confusing the derived count
 // ---------------------------------------------------------------------------
 
-Deno.test("pin: a truthy non-array `artists` field (hostile/malformed response) type-confuses search-artist's derived count via `.length` on a STRING", async () => {
+Deno.test("LB7 FIX: a truthy non-array `artists` field (hostile/malformed response) is normalized to [] — count is unaffected when present", async () => {
   using time = new FakeTime();
   const { ctx, written } = makeCtx();
   await withMbFixture(
@@ -826,17 +913,17 @@ Deno.test("pin: a truthy non-array `artists` field (hostile/malformed response) 
   const res = written.find((w) => w.spec === "artists")!;
   assertEquals(
     res.payload.artists,
-    "not-an-array",
-    "the string sails through unfiltered — no shape validation at all",
+    [],
+    "Array.isArray(data.artists) now guards the fallback — a non-array value is discarded, never written through",
   );
   assertEquals(
     res.payload.count,
     999,
-    "count DOES come from data.count when present — the type-confusion only bites when count is absent (see the next test)",
+    "count still comes from data.count when present — unrelated to the array guard",
   );
 });
 
-Deno.test("pin: when `count` is ALSO absent, a truthy non-array `artists` produces a STRING-LENGTH count, not an actual result count", async () => {
+Deno.test("LB7 FIX: when `count` is ALSO absent, a truthy non-array `artists` normalizes to [] and count derives from the EMPTY array's length (0), not the string's character count", async () => {
   using time = new FakeTime();
   const { ctx, written } = makeCtx();
   await withMbFixture(
@@ -844,11 +931,11 @@ Deno.test("pin: when `count` is ALSO absent, a truthy non-array `artists` produc
     () => drainAndAwait(time, run("search-artist", { query: "x" }, ctx)),
   );
   const res = written.find((w) => w.spec === "artists")!;
-  assertEquals(res.payload.artists, "abcdefghij");
+  assertEquals(res.payload.artists, []);
   assertEquals(
     res.payload.count,
-    10,
-    "count falls back to artists.length, which reads the STRING's character count",
+    0,
+    "count now falls back to [].length (0) — the STRING-LENGTH type-confusion (10) is fixed",
   );
 });
 

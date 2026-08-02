@@ -3,10 +3,12 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-musicbrainz,
-# wave-2b full-build child of ext-quality-test-backfill). musicbrainz.ts is
-# unmodified — every suite characterizes already-shipped behavior against a
-# host-routed stubbed fetch (musicbrainz.org JSON + *.bandcamp.com HTML) and
-# a fake context.
+# wave-2b full-build child of ext-quality-test-backfill). musicbrainz.ts was
+# unmodified at that backfill; it has SINCE been modified (2026.08.02.1,
+# musicbrainz-ssrf-and-latent-bugs) to real-fix LB2-LB7 — every suite now
+# covers a mix of unmodified-behavior pins and fix-asserting tests, still
+# against a host-routed stubbed fetch (musicbrainz.org JSON + *.bandcamp.com
+# HTML) and a fake context.
 schemaVersion: 1
 extension: musicbrainz
 tests:

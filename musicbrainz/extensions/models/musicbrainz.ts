@@ -7,9 +7,18 @@ const GlobalArgsSchema = z.object({
     .describe(
       "User-Agent string (e.g., MyApp/1.0.0 (contact@example.com)) — required by MusicBrainz",
     ),
+  maxPages: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Max release-group pages (100 per page) to walk in find-missing/seed-all-missing's pagination before stopping, even if every page was full. Defaults to 50.",
+    ),
 });
 
 const BASE = "https://musicbrainz.org/ws/2";
+const FETCH_TIMEOUT_MS = 30000;
 
 // rate limit: 1 req/sec
 let lastRequest = 0;
@@ -29,13 +38,24 @@ async function mbFetch(
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v);
   }
-  const response = await fetch(url.toString(), {
-    headers: { "User-Agent": userAgent, Accept: "application/json" },
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      headers: { "User-Agent": userAgent, Accept: "application/json" },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) {
     const body = await response.text();
+    const retryAfter = response.headers.get("Retry-After");
     throw new Error(
-      `MusicBrainz ${path} failed: ${response.status} - ${body.slice(0, 300)}`,
+      `MusicBrainz ${path} failed: ${response.status} - ${body.slice(0, 300)}${
+        retryAfter ? ` (Retry-After: ${retryAfter})` : ""
+      }`,
     );
   }
   return response.json();
@@ -76,13 +96,21 @@ async function fetchPage(url: string) {
   let current = assertBandcampUrl(url);
   let redirects = 0;
   while (true) {
-    const response = await fetch(current.toString(), {
-      redirect: "manual",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; SwampBot/1.0)",
-        Accept: "text/html",
-      },
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(current.toString(), {
+        redirect: "manual",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; SwampBot/1.0)",
+          Accept: "text/html",
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (response.status >= 300 && response.status < 400) {
       redirects++;
       if (redirects > MAX_BANDCAMP_REDIRECTS) {
@@ -154,25 +182,38 @@ function parseBandcampAlbumPage(html: string) {
       const text = s.textContent || "";
       const match = text.match(/var\s+TralbumData\s*=\s*(\{[\s\S]*?\});?\s*$/m);
       if (match) {
+        // Try a direct parse first — real (valid) TralbumData is valid JSON
+        // as-is, embedded https:// URLs included. Only on failure do we fall
+        // back to a `://`-protected comment-strip (a negative lookbehind so
+        // we never cut through the "//" inside "http(s)://") plus a
+        // trailing-comma cleanup, matching the ORIGINAL cleanup's intent for
+        // genuine trailing "// comment" text without corrupting embedded
+        // URLs.
+        // deno-lint-ignore no-explicit-any -- dynamic TralbumData JSON blob
+        let tralbum: any;
         try {
-          const cleaned = match[1].replace(/\/\/.*/g, "").replace(/,\s*}/g, "}")
-            .replace(/,\s*]/g, "]");
-          const tralbum = JSON.parse(cleaned);
+          tralbum = JSON.parse(match[1]);
+        } catch {
+          try {
+            const cleaned = match[1]
+              .replace(/(?<!:)\/\/.*/g, "")
+              .replace(/,\s*}/g, "}")
+              .replace(/,\s*]/g, "]");
+            tralbum = JSON.parse(cleaned);
+          } catch { /* ignore */ }
+        }
+        if (tralbum) {
           for (const t of tralbum.trackinfo || []) {
             tracks.push({
               position: t.track_num || 0,
               title: t.title || "",
-              duration: t.duration
-                ? `${Math.floor(t.duration / 60)}:${
-                  String(Math.floor(t.duration % 60)).padStart(2, "0")
-                }`
-                : "",
+              duration: t.duration ? formatDuration(t.duration) : "",
               durationMs: t.duration
                 ? Math.round(t.duration * 1000)
                 : undefined,
             });
           }
-        } catch { /* ignore */ }
+        }
       }
     }
   } else {
@@ -183,12 +224,10 @@ function parseBandcampAlbumPage(html: string) {
           /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?/,
         );
         if (m) {
-          t.durationMs =
-            ((parseInt(m[1] || "0") * 3600) + (parseInt(m[2] || "0") * 60) +
-              parseFloat(m[3] || "0")) * 1000;
-          t.duration = `${parseInt(m[2] || "0")}:${
-            String(Math.floor(parseFloat(m[3] || "0"))).padStart(2, "0")
-          }`;
+          const totalSeconds = (parseInt(m[1] || "0") * 3600) +
+            (parseInt(m[2] || "0") * 60) + parseFloat(m[3] || "0");
+          t.durationMs = totalSeconds * 1000;
+          t.duration = formatDuration(totalSeconds);
         }
       }
     }
@@ -290,7 +329,34 @@ function buildSeedUrl(
 }
 
 function normalizeTitle(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return s
+    .normalize("NFKD")
+    // strip combining diacritical marks (U+0300-U+036F) left behind by NFKD
+    // decomposition, e.g. "é" -> "e" + U+0301 -> "e" — written as an escaped
+    // range (never a literal combining character in source) so the file
+    // stays greppable and editors don't misrender it.
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/** Format a track duration (in seconds) as `H:MM:SS` when it runs an hour or
+ * longer, else `M:SS` — used by both the Bandcamp JSON-LD (ISO-8601) and
+ * TralbumData duration parsers so a track past the one-hour mark doesn't
+ * silently lose its hours component in the display string (the underlying
+ * `durationMs` value was always correct; only this display string dropped
+ * hours). */
+export function formatDuration(totalSeconds: number): string {
+  const total = Math.floor(totalSeconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const secondsStr = String(seconds).padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${secondsStr}`;
+  }
+  return `${minutes}:${secondsStr}`;
 }
 
 // --- resource schemas ---
@@ -377,7 +443,16 @@ const BrowseResultsSchema = z.object({
  */
 export const model = {
   type: "@magistr/musicbrainz",
-  version: "2026.07.31.1",
+  version: "2026.08.02.1",
+  upgrades: [
+    {
+      fromVersion: "2026.07.16.2",
+      toVersion: "2026.08.02.1",
+      description:
+        "Real-fix LB2-LB7 (musicbrainz-ssrf-and-latent-bugs): encodeURIComponent on all lookup MBIDs, TralbumData JSON.parse-first with a ://-protected fallback strip, bounded release-group pagination via a new optional maxPages global arg (default 50), NFKD+combining-mark-stripping normalizeTitle, an exported formatDuration() helper (H:MM:SS past one hour), and per-fetch AbortController timeouts + Retry-After surfacing + Array.isArray response guards on both mbFetch and fetchPage. No resource schema change; covers instances still at 2026.07.16.2 or 2026.07.31.1 (LB1 SSRF fix). globalArguments gains only the optional, defaulted maxPages field.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     search: {
@@ -519,7 +594,7 @@ export const model = {
         if (args.limit) params.limit = String(args.limit);
         if (args.offset) params.offset = String(args.offset);
         const data = await mbFetch(userAgent, "/artist/", params);
-        const artists = data.artists || [];
+        const artists = Array.isArray(data.artists) ? data.artists : [];
         const handle = await context.writeResource("artists", "search", {
           artists,
           count: data.count || artists.length,
@@ -546,7 +621,9 @@ export const model = {
         if (args.limit) params.limit = String(args.limit);
         if (args.offset) params.offset = String(args.offset);
         const data = await mbFetch(userAgent, "/release-group/", params);
-        const rgs = data["release-groups"] || [];
+        const rgs = Array.isArray(data["release-groups"])
+          ? data["release-groups"]
+          : [];
         const handle = await context.writeResource("releaseGroups", "search", {
           releaseGroups: rgs,
           count: data.count || rgs.length,
@@ -569,7 +646,7 @@ export const model = {
         if (args.limit) params.limit = String(args.limit);
         if (args.offset) params.offset = String(args.offset);
         const data = await mbFetch(userAgent, "/release/", params);
-        const releases = data.releases || [];
+        const releases = Array.isArray(data.releases) ? data.releases : [];
         const handle = await context.writeResource("releases", "search", {
           releases,
           count: data.count || releases.length,
@@ -592,7 +669,9 @@ export const model = {
         if (args.limit) params.limit = String(args.limit);
         if (args.offset) params.offset = String(args.offset);
         const data = await mbFetch(userAgent, "/recording/", params);
-        const recordings = data.recordings || [];
+        const recordings = Array.isArray(data.recordings)
+          ? data.recordings
+          : [];
         const handle = await context.writeResource("recordings", "search", {
           recordings,
           count: data.count || recordings.length,
@@ -615,7 +694,7 @@ export const model = {
         if (args.limit) params.limit = String(args.limit);
         if (args.offset) params.offset = String(args.offset);
         const data = await mbFetch(userAgent, "/label/", params);
-        const labels = data.labels || [];
+        const labels = Array.isArray(data.labels) ? data.labels : [];
         const handle = await context.writeResource("labels", "search", {
           labels,
           count: data.count || labels.length,
@@ -642,7 +721,11 @@ export const model = {
         const { userAgent } = context.globalArgs;
         const params: Record<string, string> = {};
         if (args.inc) params.inc = args.inc;
-        const data = await mbFetch(userAgent, `/artist/${args.id}`, params);
+        const data = await mbFetch(
+          userAgent,
+          `/artist/${encodeURIComponent(args.id)}`,
+          params,
+        );
         const handle = await context.writeResource(
           "entity",
           `artist-${args.id}`,
@@ -673,7 +756,7 @@ export const model = {
         if (args.inc) params.inc = args.inc;
         const data = await mbFetch(
           userAgent,
-          `/release-group/${args.id}`,
+          `/release-group/${encodeURIComponent(args.id)}`,
           params,
         );
         const handle = await context.writeResource("entity", `rg-${args.id}`, {
@@ -700,7 +783,11 @@ export const model = {
         const { userAgent } = context.globalArgs;
         const params: Record<string, string> = {};
         if (args.inc) params.inc = args.inc;
-        const data = await mbFetch(userAgent, `/release/${args.id}`, params);
+        const data = await mbFetch(
+          userAgent,
+          `/release/${encodeURIComponent(args.id)}`,
+          params,
+        );
         const handle = await context.writeResource(
           "entity",
           `release-${args.id}`,
@@ -729,7 +816,11 @@ export const model = {
         const { userAgent } = context.globalArgs;
         const params: Record<string, string> = {};
         if (args.inc) params.inc = args.inc;
-        const data = await mbFetch(userAgent, `/recording/${args.id}`, params);
+        const data = await mbFetch(
+          userAgent,
+          `/recording/${encodeURIComponent(args.id)}`,
+          params,
+        );
         const handle = await context.writeResource(
           "entity",
           `recording-${args.id}`,
@@ -755,7 +846,11 @@ export const model = {
         const { userAgent } = context.globalArgs;
         const params: Record<string, string> = {};
         if (args.inc) params.inc = args.inc;
-        const data = await mbFetch(userAgent, `/label/${args.id}`, params);
+        const data = await mbFetch(
+          userAgent,
+          `/label/${encodeURIComponent(args.id)}`,
+          params,
+        );
         const handle = await context.writeResource(
           "entity",
           `label-${args.id}`,
@@ -795,7 +890,9 @@ export const model = {
         if (args.offset) params.offset = String(args.offset);
         if (args.inc) params.inc = args.inc;
         const data = await mbFetch(userAgent, "/release-group/", params);
-        const rgs = data["release-groups"] || [];
+        const rgs = Array.isArray(data["release-groups"])
+          ? data["release-groups"]
+          : [];
         const handle = await context.writeResource(
           "browse",
           `rg-by-artist-${args.artist}`,
@@ -853,7 +950,7 @@ export const model = {
         if (args.offset) params.offset = String(args.offset);
         if (args.inc) params.inc = args.inc;
         const data = await mbFetch(userAgent, "/release/", params);
-        const releases = data.releases || [];
+        const releases = Array.isArray(data.releases) ? data.releases : [];
         const handle = await context.writeResource(
           "browse",
           `releases-by-${linkedEntity}-${linkedId}`,
@@ -899,7 +996,9 @@ export const model = {
         if (args.offset) params.offset = String(args.offset);
         if (args.inc) params.inc = args.inc;
         const data = await mbFetch(userAgent, "/recording/", params);
-        const recordings = data.recordings || [];
+        const recordings = Array.isArray(data.recordings)
+          ? data.recordings
+          : [];
         const handle = await context.writeResource(
           "browse",
           `recordings-by-${linkedEntity}-${linkedId}`,
@@ -963,7 +1062,8 @@ export const model = {
         ),
       }),
       execute: async (args, context) => {
-        const { userAgent } = context.globalArgs;
+        const { userAgent, maxPages: maxPagesArg } = context.globalArgs;
+        const maxPages = maxPagesArg ?? 50;
 
         // 1. Get Bandcamp discography
         let bcUrl = args.bandcampUrl.replace(/\/$/, "");
@@ -991,18 +1091,22 @@ export const model = {
           }
         }
 
-        // 3. Get MusicBrainz release groups
+        // 3. Get MusicBrainz release groups (bounded by maxPages so a
+        // hostile/misbehaving MusicBrainz endpoint that always returns a
+        // full page can never loop forever)
         // deno-lint-ignore no-explicit-any -- dynamic MusicBrainz release groups
         const mbReleases: any[] = [];
         if (artistMbid) {
           let offset = 0;
-          while (true) {
+          for (let page = 0; page < maxPages; page++) {
             const data = await mbFetch(userAgent, "/release-group/", {
               artist: artistMbid,
               limit: "100",
               offset: String(offset),
             });
-            const rgs = data["release-groups"] || [];
+            const rgs = Array.isArray(data["release-groups"])
+              ? data["release-groups"]
+              : [];
             mbReleases.push(...rgs);
             if (rgs.length < 100) break;
             offset += 100;
@@ -1100,7 +1204,8 @@ export const model = {
         artistMbid: z.string().optional().describe("MusicBrainz artist MBID"),
       }),
       execute: async (args, context) => {
-        const { userAgent } = context.globalArgs;
+        const { userAgent, maxPages: maxPagesArg } = context.globalArgs;
+        const maxPages = maxPagesArg ?? 50;
 
         // Fetch bandcamp discography
         let bcUrl = args.bandcampUrl.replace(/\/$/, "");
@@ -1125,18 +1230,20 @@ export const model = {
           }
         }
 
-        // Get MB releases
+        // Get MB releases (bounded by maxPages — see find-missing's comment)
         // deno-lint-ignore no-explicit-any -- dynamic MusicBrainz release groups
         const mbReleases: any[] = [];
         if (artistMbid) {
           let offset = 0;
-          while (true) {
+          for (let page = 0; page < maxPages; page++) {
             const data = await mbFetch(userAgent, "/release-group/", {
               artist: artistMbid,
               limit: "100",
               offset: String(offset),
             });
-            const rgs = data["release-groups"] || [];
+            const rgs = Array.isArray(data["release-groups"])
+              ? data["release-groups"]
+              : [];
             mbReleases.push(...rgs);
             if (rgs.length < 100) break;
             offset += 100;
