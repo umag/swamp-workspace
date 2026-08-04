@@ -7,22 +7,32 @@
  * HTML) and a fake ExecCtx — the porkbun PR #65 harness pattern, adapted to
  * musicbrainz's dual-endpoint, rate-limited surface.
  *
- * musicbrainz.ts is UNMODIFIED by this change — every test here is a
- * characterization test that PINS the model's current, already-shipped
- * behavior. It is not red-green TDD: there is no new behavior to drive out.
+ * musicbrainz.ts was UNMODIFIED by the original backfill this file traces
+ * back to — every test up through the RATE LIMITER section and the
+ * pre-existing method pins below is a characterization test that PINS the
+ * model's already-shipped behavior, not red-green TDD. The
+ * sync-artist-discographies section at the bottom is the one exception:
+ * musicbrainz-discography-sync (2026.08.04.1, ported from an older untested
+ * copy of this model) DID add real behavior — those tests exercise it, they
+ * don't just pin pre-existing output.
  *
- * RATE LIMITER: `mbFetch`'s module-level `lastRequest` + `setTimeout(1100 -
- * elapsed)` spacer is neutralized AND explicitly pinned (not just worked
- * around) using `@std/testing` FakeTime — see the three dedicated tests at
- * the bottom. Because `lastRequest` is module state that persists across
- * every `Deno.test()` in this file (the module is imported once per file),
- * every test after the FIRST uses `drainAndAwait`, a generic helper that
- * ticks the fake clock in small steps until the pending call settles —
- * robust regardless of how much virtual-time debt earlier tests left behind
- * (empirically confirmed: a burst of 5 prior calls can leave over 6s of
- * carried-over debt on the very next test's first call). The dedicated
- * "first call, no wait" pin therefore MUST be (and is) the first Deno.test()
- * in this file — nothing before it may touch `mbFetch`.
+ * RATE LIMITER: `mbFetch`'s module-level `lastRequest` spacer is neutralized
+ * AND explicitly pinned (not just worked around) using `@std/testing`
+ * FakeTime — see the three dedicated tests at the bottom of this section.
+ * `lastRequest` is still spaced at ~1100ms by default (unchanged by the
+ * musicbrainz-discography-sync port, which only replaced HOW the wait is
+ * computed and applied — a concurrency-safe promise-chain queue in place of
+ * a plain read-then-write timestamp check, see musicbrainz.ts's own
+ * comments above `mbFetch` — not the ~1100ms spacing itself). Because
+ * `lastRequest` is module state that persists across every `Deno.test()` in
+ * this file (the module is imported once per file), every test after the
+ * FIRST uses `drainAndAwait`, a generic helper that ticks the fake clock in
+ * small steps until the pending call settles — robust regardless of how
+ * much virtual-time debt earlier tests left behind (empirically confirmed:
+ * a burst of 5 prior calls can leave over 6s of carried-over debt on the
+ * very next test's first call). The dedicated "first call, no wait" pin
+ * therefore MUST be (and is) the first Deno.test() in this file — nothing
+ * before it may touch `mbFetch`.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
@@ -165,7 +175,8 @@ async function drainAndAwait<T>(time: FakeTime, p: Promise<T>): Promise<T> {
 // RATE LIMITER — explicit characterization. The "no wait" pin MUST be the
 // first Deno.test() in this file (declaration order = execution order) —
 // nothing above this point may call a method that touches mbFetch, or
-// `lastRequest`'s module-level default (0) will already have been advanced.
+// `lastRequest`'s module-level starting value (null, never fetched) will
+// already have been advanced.
 // ---------------------------------------------------------------------------
 
 Deno.test("RATE LIMITER: the very first mbFetch call in this module incurs NO wait", async () => {
@@ -179,7 +190,7 @@ Deno.test("RATE LIMITER: the very first mbFetch call in this module incurs NO wa
   assertEquals(
     time.now - t0,
     0,
-    "lastRequest starts at its module default (0); any real/fake 'now' is far past it, so wait computes negative",
+    "lastRequest starts at null (never fetched); rateLimitDelayMs returns 0 for a null lastRequestAt, so the first call incurs no wait",
   );
 });
 
@@ -1004,4 +1015,201 @@ Deno.test("seed-all-missing: no artistMbid AND unresolvable artist name — MB c
   const res = written.find((w) => w.spec === "seedUrls")!;
   assertEquals(res.payload.artistMbid, undefined);
   assertEquals(res.payload.total, 2, "both discography entries are 'missing'");
+});
+
+// ---------------------------------------------------------------------------
+// sync-artist-discographies — execute() paths (musicbrainz-discography-sync,
+// ported from an older untested copy of this model). The maxPages/truncated
+// pagination guard lives in musicbrainz_coverage_test.ts (new-surface
+// enumeration); the stale-cache/count:0 skip-vs-refetch failure modes live
+// in musicbrainz_adversarial_test.ts; the pure classifyDiscographyCache/
+// isCacheStale/advanceSyncCursor/rateLimitDelayMs/retryAfterBackoffMs
+// invariants everything here is built on live in
+// musicbrainz_property_test.ts.
+// ---------------------------------------------------------------------------
+
+type SyncStore = Map<string, Record<string, unknown>>;
+
+/** Stub context for sync-artist-discographies: `readResource` is a real
+ * in-memory map (keyed on instance name only, matching the runtime
+ * contract) so a method run can read back an earlier run's writes — needed
+ * for cursor-resume and search-artist-fallback tests below, unlike every
+ * other harness in this file. */
+function makeSyncCtx(
+  store: SyncStore = new Map(),
+  instanceName = "test-instance",
+) {
+  const written: Written[] = [];
+  return {
+    written,
+    store,
+    ctx: {
+      globalArgs: GLOBAL_ARGS,
+      definition: { name: instanceName },
+      readResource: (name: string) => Promise.resolve(store.get(name) ?? null),
+      writeResource: (spec: string, name: string, payload: unknown) => {
+        store.set(name, payload as Record<string, unknown>);
+        written.push({
+          spec,
+          name,
+          payload: payload as Record<string, unknown>,
+        });
+        return Promise.resolve({ spec, name });
+      },
+      logger: { info: () => {}, warning: () => {} },
+    },
+  };
+}
+
+const SYNC_TEST_MBIDS = [
+  "aaaaaaaa-0000-4000-8000-000000000001",
+  "aaaaaaaa-0000-4000-8000-000000000002",
+  "aaaaaaaa-0000-4000-8000-000000000003",
+];
+
+Deno.test("sync-artist-discographies: happy path — explicit artistMbids caches each artist's discography via the browse/rg-by-artist-<mbid> path and records them processed", async () => {
+  using time = new FakeTime();
+  const { written, ctx } = makeSyncCtx();
+  await withMbFixture(
+    { "release-groups": [{ id: "rg-1", title: "Fixture Album" }] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: SYNC_TEST_MBIDS,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  for (const mbid of SYNC_TEST_MBIDS) {
+    const cached = written.find((w) => w.name === `rg-by-artist-${mbid}`);
+    assert(cached, `rg-by-artist-${mbid} must have been cached`);
+    assertEquals(cached.spec, "browse");
+    assertEquals(cached.payload.truncated, false);
+    assertEquals(
+      (cached.payload.results as unknown[])[0],
+      { id: "rg-1", title: "Fixture Album" },
+    );
+  }
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(state.payload.processed, SYNC_TEST_MBIDS);
+  assertEquals(state.payload.skipped, []);
+  assertEquals(
+    (state.payload.cursor as { offset: number }).offset,
+    SYNC_TEST_MBIDS.length,
+  );
+});
+
+Deno.test("sync-artist-discographies: with no artistMbids arg, falls back to the artists cached by this instance's last search-artist run", async () => {
+  using time = new FakeTime();
+  const store: SyncStore = new Map();
+  store.set("search", {
+    artists: [
+      { id: SYNC_TEST_MBIDS[0], name: "Fixture Artist One" },
+      { id: SYNC_TEST_MBIDS[1], name: "Fixture Artist Two" },
+    ],
+    count: 2,
+    timestamp: new Date().toISOString(),
+  });
+  const { written, ctx } = makeSyncCtx(store);
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", { minIntervalMs: 5 }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(
+    state.payload.processed,
+    [SYNC_TEST_MBIDS[0], SYNC_TEST_MBIDS[1]],
+    "fell back to the two artists cached by search-artist's own bare 'search' instance write",
+  );
+});
+
+Deno.test("sync-artist-discographies: no explicit artistMbids AND no cached search-artist results — throws an actionable error naming the full command via context.definition.name", async () => {
+  const { ctx } = makeSyncCtx(new Map(), "my-musicbrainz-instance");
+  const err = await assertRejects(
+    () => run("sync-artist-discographies", {}, ctx),
+    Error,
+  );
+  assert(
+    err.message.includes("my-musicbrainz-instance"),
+    "the error must name the actual instance, not a placeholder",
+  );
+  assert(
+    err.message.includes(
+      "swamp model method run my-musicbrainz-instance search-artist",
+    ),
+    "the error must give the exact runnable command to unblock the user",
+  );
+});
+
+Deno.test("sync-artist-discographies: resuming from a persisted cursor across two runs covers a 5-artist list exactly once — no gap, no overlap", async () => {
+  using time = new FakeTime();
+  const fiveMbids = [
+    ...SYNC_TEST_MBIDS,
+    "aaaaaaaa-0000-4000-8000-000000000004",
+    "aaaaaaaa-0000-4000-8000-000000000005",
+  ];
+  const store: SyncStore = new Map();
+  const { written, ctx } = makeSyncCtx(store);
+
+  // First run: batchSize 3 processes the first 3 artists and persists a
+  // cursor at offset 3.
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: fiveMbids,
+          batchSize: 3,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const stateAfterFirst = written.find((w) =>
+    w.spec === "discographySyncState"
+  )!;
+  assertEquals(stateAfterFirst.payload.processed, fiveMbids.slice(0, 3));
+  assertEquals(
+    (stateAfterFirst.payload.cursor as { offset: number }).offset,
+    3,
+  );
+
+  // Second run: resumes from the persisted cursor (offset 3) rather than
+  // restarting at 0, covering exactly the remaining 2 artists.
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: fiveMbids,
+          batchSize: 3,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const stateAfterSecond = written.filter((w) =>
+    w.spec === "discographySyncState"
+  ).at(-1)!;
+  assertEquals(stateAfterSecond.payload.processed, fiveMbids.slice(3, 5));
+  assertEquals(
+    (stateAfterSecond.payload.cursor as { offset: number }).offset,
+    5,
+    "the cursor lands exactly at the end of the 5-artist input",
+  );
+
+  const allProcessed = [
+    ...(stateAfterFirst.payload.processed as string[]),
+    ...(stateAfterSecond.payload.processed as string[]),
+  ];
+  assertEquals(
+    allProcessed,
+    fiveMbids,
+    "the two runs together cover the input exactly once, no gap, no overlap",
+  );
 });

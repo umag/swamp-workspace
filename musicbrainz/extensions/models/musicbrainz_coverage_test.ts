@@ -796,3 +796,132 @@ Deno.test("formatDuration: 3600 seconds -> '1:00:00' (exactly one hour)", () => 
 Deno.test("formatDuration: 0 seconds -> '0:00'", () => {
   assertEquals(formatDuration(0), "0:00");
 });
+
+// ---------------------------------------------------------------------------
+// musicbrainz-discography-sync: NEW METHOD/RESOURCE SURFACE — the model
+// registers sync-artist-discographies and its discographySyncState resource
+// — plus its maxPages/truncated-flag guard (a code-reviewer-found gap:
+// silently caching a partial discography as complete, with no test
+// protecting it, would ship again without this). General execute() paths
+// (explicit artistMbids, the search-artist fallback, cursor resume across
+// runs, the no-artist-list error) live in musicbrainz_methods_test.ts; the
+// stale-cache/count:0 failure-mode branches live in
+// musicbrainz_adversarial_test.ts; the pure classifyDiscographyCache/
+// isCacheStale/rateLimitDelayMs/retryAfterBackoffMs invariants everything
+// here is built on live in musicbrainz_property_test.ts.
+// ---------------------------------------------------------------------------
+
+Deno.test("NEW SURFACE: sync-artist-discographies is a registered method with its own discographySyncState resource, and every arg is optional", () => {
+  const method = (model.methods as MethodMap)["sync-artist-discographies"];
+  assert(method, "sync-artist-discographies must be a registered method");
+  assertEquals(
+    method.arguments.parse({}),
+    {},
+    "every argument is optional — a bare {} must parse cleanly",
+  );
+  assert(
+    "discographySyncState" in model.resources,
+    "the discographySyncState resource must be registered",
+  );
+});
+
+type SyncStore = Map<string, Record<string, unknown>>;
+
+/** Stub context for sync-artist-discographies: `readResource` is a real
+ * in-memory map (keyed on instance name only, matching the runtime
+ * contract) so the method can read back its own prior writes within a
+ * single test. */
+function makeSyncCtx(store: SyncStore = new Map()) {
+  const written: Written[] = [];
+  return {
+    written,
+    store,
+    ctx: {
+      globalArgs: GLOBAL_ARGS,
+      definition: { name: "test-instance" },
+      readResource: (name: string) => Promise.resolve(store.get(name) ?? null),
+      writeResource: (spec: string, name: string, payload: unknown) => {
+        store.set(name, payload as Record<string, unknown>);
+        written.push({
+          spec,
+          name,
+          payload: payload as Record<string, unknown>,
+        });
+        return Promise.resolve({ spec, name });
+      },
+      logger: { info: () => {}, warning: () => {} },
+    },
+  };
+}
+
+Deno.test("sync-artist-discographies: pagination stops at maxPages and marks the discography truncated, not silently complete", async () => {
+  using time = new FakeTime();
+  const artistMbid = "aaaaaaaa-0000-4000-8000-000000000099";
+  let pageCallCount = 0;
+  const { written, ctx } = makeSyncCtx();
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      pageCallCount++;
+      // Every page comes back full (100 release groups), so without the
+      // maxPages ceiling this would page forever.
+      const releaseGroups = Array.from({ length: 100 }, (_, i) => ({
+        id: `rg-${pageCallCount}-${i}`,
+        title: `Release ${pageCallCount}-${i}`,
+      }));
+      return json({
+        "release-groups": releaseGroups,
+        "release-group-count": 10_000, // MusicBrainz reports far more exist
+      });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: [artistMbid],
+          maxPages: 3,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  assertEquals(pageCallCount, 3);
+  const cached = written.find((w) => w.name === `rg-by-artist-${artistMbid}`)!;
+  assertEquals(cached.payload.truncated, true);
+  assertEquals((cached.payload.results as unknown[]).length, 300);
+});
+
+Deno.test("sync-artist-discographies: a discography that ends naturally within the page ceiling is NOT marked truncated", async () => {
+  using time = new FakeTime();
+  const artistMbid = "aaaaaaaa-0000-4000-8000-000000000098";
+  let pageCallCount = 0;
+  const { written, ctx } = makeSyncCtx();
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      pageCallCount++;
+      // First page full (100), second page partial (37) — a natural end.
+      const size = pageCallCount === 1 ? 100 : 37;
+      const releaseGroups = Array.from({ length: size }, (_, i) => ({
+        id: `rg-${pageCallCount}-${i}`,
+        title: `Release ${pageCallCount}-${i}`,
+      }));
+      return json({
+        "release-groups": releaseGroups,
+        "release-group-count": 137,
+      });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: [artistMbid],
+          maxPages: 5,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  assertEquals(pageCallCount, 2);
+  const cached = written.find((w) => w.name === `rg-by-artist-${artistMbid}`)!;
+  assertEquals(cached.payload.truncated, false);
+  assertEquals((cached.payload.results as unknown[]).length, 137);
+});

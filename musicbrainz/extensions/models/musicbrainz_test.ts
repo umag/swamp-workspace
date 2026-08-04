@@ -456,7 +456,7 @@ Deno.test("contract: error-404.json — a 404 throws, embedding the response bod
   assert(message.includes(error404.error));
 });
 
-Deno.test("contract: error-503.json — a 503 throws, embedding the response body text and status (no Retry-After honored — see adversarial suite)", async () => {
+Deno.test("contract: error-503.json — a persistent 503 throws (after mbFetch's single retry), embedding the retry response's body text and status — see the adversarial suite for the retry/Retry-After behavior itself", async () => {
   const { ctx } = makeCtx();
   let threw: unknown;
   await withJsonFixture(error503, async () => {

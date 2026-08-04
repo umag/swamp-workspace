@@ -5,10 +5,14 @@
  * spike originally showed an UNENCODED `../` COLLAPSING the path, escaping
  * even the `/ws/2/` prefix; `encodeURIComponent(args.id)` now closes that),
  * per-fetch AbortSignal timeouts on both fetch sites, 503-Retry-After now
- * surfaced in the thrown message (still no retry), and Array.isArray
- * response-shape guards (a truthy non-array `data.<key>` now normalizes to
- * `[]` instead of sailing through unchanged) — plus a fixtures-secret-scan
- * backstop over both the JSON and Bandcamp HTML corpus.
+ * driving a single backoff-and-retry inside mbFetch (musicbrainz-
+ * discography-sync — see below; a persistent 503 still throws, just after
+ * one retry instead of zero), Array.isArray response-shape guards (a truthy
+ * non-array `data.<key>` now normalizes to `[]` instead of sailing through
+ * unchanged), and mbFetch's concurrency-safe rate-limit queue (concurrent
+ * callers never observe the same stale `lastRequest` and fire together) —
+ * plus a fixtures-secret-scan backstop over both the JSON and Bandcamp HTML
+ * corpus.
  *
  * This file, alongside the SSRF fix from musicbrainz-ssrf-and-latent-bugs
  * (2026.07.31.1: fetchPage requires an https bandcamp.com/*.bandcamp.com URL
@@ -20,14 +24,20 @@
  * per-fetch timeouts + Retry-After + Array.isArray guards (LB7). LB4
  * (unbounded pagination) and LB5 (normalizeTitle over-collapse) are covered
  * in musicbrainz_property_test.ts and musicbrainz_coverage_test.ts
- * respectively. Tests not called out above (hostile-HTML fallback
- * characterization, huge/nested input, array-wrapped JSON-LD, the raw-entity
- * `data` passthrough, and the SSRF allowlist tests) are UNCHANGED pins —
- * still current, correct behavior.
+ * respectively. musicbrainz-discography-sync (2026.08.04.1, ported from an
+ * older untested copy — see musicbrainz_property_test.ts's header for the
+ * pure-helper side of that port) turned the LB7-era "surfaced, never acted
+ * on" 503/Retry-After characterization into a real single-retry-with-backoff
+ * behavior and made mbFetch's rate limiter concurrency-safe; the two tests
+ * covering those are below, alongside the updated Retry-After test. Tests
+ * not called out above (hostile-HTML fallback characterization, huge/nested
+ * input, array-wrapped JSON-LD, the raw-entity `data` passthrough, and the
+ * SSRF allowlist tests) are UNCHANGED pins — still current, correct
+ * behavior.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
-import { model } from "./musicbrainz.ts";
+import { mbFetch, model } from "./musicbrainz.ts";
 import artistSearch from "../../fixtures/artist-search.json" with {
   type: "json",
 };
@@ -863,18 +873,20 @@ Deno.test("LB7 FIX: mbFetch aborts a never-resolving fetch once the client-side 
 });
 
 // ---------------------------------------------------------------------------
-// LB7 FIX: 503 Retry-After is now surfaced in the thrown message (still no
-// client-side retry — that remains out of scope)
+// musicbrainz-discography-sync: mbFetch now retries a 503 exactly once
+// (honouring Retry-After as the backoff when present), and its rate-limit
+// queue is concurrency-safe. Ported from an older untested copy of this
+// model — see musicbrainz_property_test.ts's header for the pure-helper
+// side (rateLimitDelayMs/retryAfterBackoffMs) these two behaviors are built
+// on.
 // ---------------------------------------------------------------------------
 
-Deno.test("LB7 FIX: a 503 WITH a Retry-After header surfaces the header value in the thrown message — still no retry is attempted", async () => {
+Deno.test("musicbrainz-discography-sync: a 503 WITH a Retry-After header is retried exactly once, honouring the header as the backoff — the header still surfaces in the thrown message if the retry also 503s", async () => {
   using time = new FakeTime();
   const { ctx } = makeCtx();
   await withFetchStub(
     [(req) =>
-      isMbHost(req)
-        ? json(error503, 503, { "Retry-After": "120" })
-        : undefined],
+      isMbHost(req) ? json(error503, 503, { "Retry-After": "45" }) : undefined],
     (calls) =>
       drainAndAwait(
         time,
@@ -885,17 +897,236 @@ Deno.test("LB7 FIX: a 503 WITH a Retry-After header surfaces the header value in
             "503",
           );
           assert(
-            err.message.includes("120"),
-            "the Retry-After value must now be surfaced in the thrown message",
+            err.message.includes("45"),
+            "the Retry-After value from the (also-503) retry response must be surfaced in the thrown message",
           );
           assertEquals(
             calls.length,
-            1,
-            "no retry is attempted — the header is surfaced, not acted on",
+            2,
+            "mbFetch retries exactly once after honouring the Retry-After backoff, then throws when the retry also 503s",
           );
         })(),
       ),
   );
+});
+
+Deno.test("musicbrainz-discography-sync: a 503 with NO Retry-After backs off one mbFetch interval and retries exactly once, succeeding on the retry", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  let callCount = 0;
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      callCount++;
+      return callCount === 1
+        ? json(error503, 503)
+        : json({ artists: [], count: 0 });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artist", { query: "x" }, ctx),
+      ),
+  );
+  assertEquals(callCount, 2, "the retry succeeds on the second attempt");
+  const res = written.find((w) => w.spec === "artists")!;
+  assertEquals(res.payload.count, 0);
+});
+
+Deno.test("musicbrainz-discography-sync: mbFetch's concurrent in-flight callers are serialized — no two consecutive fetches land closer than minIntervalMs apart", async () => {
+  // Fires three requests concurrently (no await between them) via the
+  // exported mbFetch directly, per the regression this guards: a rate
+  // limiter that only checks-then-writes a shared timestamp (rather than
+  // serializing the check-then-update itself, as mbFetch's promise-chain
+  // queue does) would let some of these read the same stale `lastRequest`
+  // and fire together. Uses FakeTime (like every other mbFetch-touching test
+  // in this file) rather than real timers — `lastRequest` is module state
+  // shared across every test in this file, so a real-timer wait here could
+  // be poisoned by virtual-time debt an earlier FakeTime test left behind
+  // (see the Retry-After test above, which ticks its own fake clock forward
+  // by tens of seconds) and hang on a real, non-fake setTimeout.
+  using time = new FakeTime();
+  const calls: number[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (() => {
+    calls.push(Date.now());
+    return Promise.resolve(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+  }) as unknown as typeof globalThis.fetch;
+  try {
+    await drainAndAwait(
+      time,
+      Promise.all([
+        mbFetch("test-agent/1.0", "/artist/", { q: "1" }, 40),
+        mbFetch("test-agent/1.0", "/artist/", { q: "2" }, 40),
+        mbFetch("test-agent/1.0", "/artist/", { q: "3" }, 40),
+      ]),
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+  assertEquals(calls.length, 3);
+  const sorted = [...calls].sort((a, b) => a - b);
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i] - sorted[i - 1];
+    assert(
+      gap >= 40,
+      `gap ${gap}ms below 40ms floor between concurrent callers`,
+    );
+  }
+});
+
+Deno.test("musicbrainz-discography-sync: a 503 with NO Retry-After that persists past the retry throws instead of retrying indefinitely", async () => {
+  using time = new FakeTime();
+  const { ctx } = makeCtx();
+  let callCount = 0;
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      callCount++;
+      return json(error503, 503);
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        assertRejects(
+          () => run("search-artist", { query: "x" }, ctx),
+          Error,
+          "503",
+        ),
+      ),
+  );
+  assertEquals(
+    callCount,
+    2,
+    "exactly the initial attempt plus one retry — never more",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// musicbrainz-discography-sync: cache staleness / count:0 skip-vs-refetch —
+// the failure-mode half of the sync-artist-discographies port. The
+// classifyDiscographyCache/isCacheStale pure invariants these two branches
+// are built on live in musicbrainz_property_test.ts; the method's general
+// execute() paths (explicit artistMbids, the search-artist fallback, cursor
+// resume, the no-artist-list error) live in musicbrainz_methods_test.ts.
+// ---------------------------------------------------------------------------
+
+type SyncStore = Map<string, Record<string, unknown>>;
+
+/** Stub context for sync-artist-discographies: `readResource` is a real
+ * in-memory map (keyed on instance name only, matching the runtime
+ * contract), pre-seedable so a test can install a cached entry before the
+ * method runs. No other harness in this file needs `readResource` since no
+ * other method reads what an earlier run wrote. */
+function makeSyncCtx(store: SyncStore = new Map()) {
+  const written: Written[] = [];
+  return {
+    written,
+    store,
+    ctx: {
+      globalArgs: GLOBAL_ARGS,
+      definition: { name: "test-instance" },
+      readResource: (name: string) => Promise.resolve(store.get(name) ?? null),
+      writeResource: (spec: string, name: string, payload: unknown) => {
+        store.set(name, payload as Record<string, unknown>);
+        written.push({
+          spec,
+          name,
+          payload: payload as Record<string, unknown>,
+        });
+        return Promise.resolve({ spec, name });
+      },
+      logger: { info: () => {}, warning: () => {} },
+    },
+  };
+}
+
+Deno.test("musicbrainz-discography-sync: a STALE cached discography (older than ttlMs) is re-fetched, not skipped", async () => {
+  using time = new FakeTime();
+  const artistMbid = "aaaaaaaa-0000-4000-8000-000000000010";
+  const store: SyncStore = new Map();
+  store.set(`rg-by-artist-${artistMbid}`, {
+    entity: "release-group",
+    linkedEntity: "artist",
+    linkedId: artistMbid,
+    results: [{ id: "old-rg", title: "Old Release" }],
+    count: 1,
+    offset: 0,
+    truncated: false,
+    // 2 minutes old — stale against the 60s ttlMs this test passes below.
+    timestamp: new Date(Date.now() - 120_000).toISOString(),
+  });
+  const { written, ctx } = makeSyncCtx(store);
+  await withMbFixture(
+    {
+      "release-groups": [{ id: "new-rg", title: "New Release" }],
+      "release-group-count": 1,
+    },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: [artistMbid],
+          ttlMs: 60_000,
+          minIntervalMs: 40,
+        }, ctx),
+      ),
+  );
+  const cached = written.filter((w) => w.name === `rg-by-artist-${artistMbid}`);
+  const latest = cached[cached.length - 1];
+  assertEquals(
+    (latest.payload.results as unknown[])[0],
+    { id: "new-rg", title: "New Release" },
+    "the stale cache entry was overwritten by a fresh fetch, not left in place",
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(state.payload.processed, [artistMbid]);
+  assertEquals(state.payload.skipped, []);
+});
+
+Deno.test("musicbrainz-discography-sync: a FRESH cached count:0 discography is skipped, never re-fetched merely for being empty", async () => {
+  using time = new FakeTime();
+  const artistMbid = "aaaaaaaa-0000-4000-8000-000000000011";
+  const store: SyncStore = new Map();
+  store.set(`rg-by-artist-${artistMbid}`, {
+    entity: "release-group",
+    linkedEntity: "artist",
+    linkedId: artistMbid,
+    results: [],
+    count: 0,
+    offset: 0,
+    truncated: false,
+    // 1s old, well under the 60s ttlMs this test passes below.
+    timestamp: new Date(Date.now() - 1_000).toISOString(),
+  });
+  const { written, ctx } = makeSyncCtx(store);
+  let mbCalled = false;
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      mbCalled = true;
+      return json({ "release-groups": [] });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: [artistMbid],
+          ttlMs: 60_000,
+          minIntervalMs: 40,
+        }, ctx),
+      ),
+  );
+  assertEquals(
+    mbCalled,
+    false,
+    "a fresh count:0 cache entry is skipped — never re-fetched merely for being empty",
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(state.payload.processed, []);
+  assertEquals(state.payload.skipped, [artistMbid]);
 });
 
 // ---------------------------------------------------------------------------

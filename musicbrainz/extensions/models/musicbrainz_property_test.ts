@@ -36,7 +36,14 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
 import { FakeTime } from "jsr:@std/testing@1/time";
-import { model } from "./musicbrainz.ts";
+import {
+  advanceSyncCursor,
+  classifyDiscographyCache,
+  isCacheStale,
+  model,
+  rateLimitDelayMs,
+  retryAfterBackoffMs,
+} from "./musicbrainz.ts";
 
 // Property iteration count — overridable for the nightly soak via
 // FC_NUM_RUNS (e.g. FC_NUM_RUNS=10000 deno task test:soak).
@@ -657,4 +664,242 @@ Deno.test("LB4 FIX: globalArgs.maxPages=2 stops find-missing's pagination after 
     200,
     "2 full pages of 100 = 200, capped by maxPages rather than a natural short-page stop",
   );
+});
+
+// ---------------------------------------------------------------------------
+// (e) musicbrainz-discography-sync: pure-helper invariants —
+// classifyDiscographyCache, isCacheStale, advanceSyncCursor,
+// rateLimitDelayMs, retryAfterBackoffMs. Ported from an older, untested copy
+// of this model. Unlike every property/flow test above, these need no
+// stubbed fetch and no FakeTime at all — they are pure functions (no I/O, no
+// internal clock read; `now`/`ttlMs`/`lastRequestAt`/etc. are always
+// parameters, per each function's own doc comment in musicbrainz.ts), so
+// each is called directly and asserted against ordinary values, real time
+// included. The impure behaviors these back — mbFetch's concurrency-safe
+// spacing queue and its single 503/Retry-After retry — are exercised
+// end-to-end (stubbed fetch, real assertions on call count/timing) in
+// musicbrainz_adversarial_test.ts instead; sync-artist-discographies'
+// maxPages/truncated pagination guard is in musicbrainz_coverage_test.ts;
+// its general execute() paths (batch processing, cursor resume across runs,
+// the search-artist fallback, the no-artist-list error) are in
+// musicbrainz_methods_test.ts.
+// ---------------------------------------------------------------------------
+
+// Invented MBIDs — never real MusicBrainz IDs.
+const SYNC_ARTIST_MBIDS = [
+  "aaaaaaaa-0000-4000-8000-000000000001",
+  "aaaaaaaa-0000-4000-8000-000000000002",
+  "aaaaaaaa-0000-4000-8000-000000000003",
+  "aaaaaaaa-0000-4000-8000-000000000004",
+  "aaaaaaaa-0000-4000-8000-000000000005",
+];
+
+Deno.test("isCacheStale: an entry fresher than the TTL is not stale", () => {
+  const now = Date.UTC(2026, 7, 3, 12, 0, 0);
+  const timestamp = new Date(now - 1_000).toISOString(); // 1s old
+  assertEquals(isCacheStale(timestamp, now, 60_000), false); // TTL 60s
+});
+
+Deno.test("isCacheStale: an entry older than the TTL is re-fetched (stale)", () => {
+  const now = Date.UTC(2026, 7, 3, 12, 0, 0);
+  const timestamp = new Date(now - 120_000).toISOString(); // 2min old
+  assertEquals(isCacheStale(timestamp, now, 60_000), true); // TTL 60s
+});
+
+Deno.test("isCacheStale: identical inputs give identical results across real time", async () => {
+  const now = Date.UTC(2026, 7, 3, 12, 0, 0);
+  const timestamp = new Date(now - 5_000).toISOString();
+  const first = isCacheStale(timestamp, now, 60_000);
+  await time.tickAsync(5);
+  const second = isCacheStale(timestamp, now, 60_000);
+  assertEquals(first, second);
+});
+
+Deno.test("advanceSyncCursor: an interrupted run resumes from its cursor rather than restarting", () => {
+  const cursor0 = { offset: 0 };
+  const firstBatch = SYNC_ARTIST_MBIDS.slice(
+    cursor0.offset,
+    cursor0.offset + 3,
+  );
+  // Simulate an interruption partway: only 3 of the intended artists were
+  // actually processed before the run stopped.
+  const cursor1 = advanceSyncCursor(cursor0, {
+    processedCount: firstBatch.length,
+  });
+  assertEquals(cursor1, { offset: 3 });
+
+  // Resuming must start at offset 3, not restart at 0.
+  const resumedBatch = SYNC_ARTIST_MBIDS.slice(
+    cursor1.offset,
+    cursor1.offset + 3,
+  );
+  assertEquals(resumedBatch, SYNC_ARTIST_MBIDS.slice(3));
+});
+
+Deno.test("advanceSyncCursor: two sequential batches cover the input exactly once, no gap, no overlap", () => {
+  const cursor0 = { offset: 0 };
+  const batch1 = SYNC_ARTIST_MBIDS.slice(cursor0.offset, cursor0.offset + 2);
+  const cursor1 = advanceSyncCursor(cursor0, {
+    processedCount: batch1.length,
+  });
+
+  const batch2 = SYNC_ARTIST_MBIDS.slice(cursor1.offset, cursor1.offset + 3);
+  const cursor2 = advanceSyncCursor(cursor1, {
+    processedCount: batch2.length,
+  });
+
+  // No overlap: disjoint index ranges.
+  const overlap = batch1.filter((id) => batch2.includes(id));
+  assertEquals(overlap, []);
+
+  // No gap: concatenation reconstructs the full input in order.
+  assertEquals([...batch1, ...batch2], SYNC_ARTIST_MBIDS);
+
+  // Cursor lands exactly at the end of the input.
+  assertEquals(cursor2, { offset: SYNC_ARTIST_MBIDS.length });
+});
+
+Deno.test("advanceSyncCursor: identical inputs give identical results across real time", async () => {
+  const cursor = { offset: 2 };
+  const outcome = { processedCount: 3 };
+  const first = advanceSyncCursor(cursor, outcome);
+  await time.tickAsync(5);
+  const second = advanceSyncCursor(cursor, outcome);
+  assertEquals(first, second);
+});
+
+Deno.test("classifyDiscographyCache: no entry at all is never-fetched", () => {
+  assertEquals(classifyDiscographyCache(undefined), "never-fetched");
+  assertEquals(classifyDiscographyCache(null), "never-fetched");
+});
+
+Deno.test("classifyDiscographyCache: count 0 with empty results is a legitimate empty discography, not never-fetched", () => {
+  const entry = {
+    count: 0,
+    results: [],
+    timestamp: "2026-08-01T00:00:00.000Z",
+  };
+  assertEquals(classifyDiscographyCache(entry), "empty");
+});
+
+Deno.test("classifyDiscographyCache: a non-empty entry is populated", () => {
+  const entry = {
+    count: 2,
+    results: [{ id: SYNC_ARTIST_MBIDS[0] }, { id: SYNC_ARTIST_MBIDS[1] }],
+    timestamp: "2026-08-01T00:00:00.000Z",
+  };
+  assertEquals(classifyDiscographyCache(entry), "populated");
+});
+
+Deno.test("classifyDiscographyCache + isCacheStale: empty (count 0) is NOT re-fetched, but never-fetched IS — regardless of TTL", () => {
+  const now = Date.UTC(2026, 7, 3, 12, 0, 0);
+  const ttlMs = 60_000;
+
+  // A genuinely empty discography, freshly cached: should be skipped.
+  const emptyEntry = {
+    count: 0,
+    results: [],
+    timestamp: new Date(now - 1_000).toISOString(),
+  };
+  const emptyStatus = classifyDiscographyCache(emptyEntry);
+  assertEquals(emptyStatus, "empty");
+  assertEquals(isCacheStale(emptyEntry.timestamp, now, ttlMs), false);
+
+  // An artist that was never fetched at all: must always be fetched, no
+  // timestamp to even evaluate a TTL against.
+  const neverFetchedStatus = classifyDiscographyCache(undefined);
+  assertEquals(neverFetchedStatus, "never-fetched");
+});
+
+Deno.test("classifyDiscographyCache: identical inputs give identical results across real time", async () => {
+  const entry = {
+    count: 0,
+    results: [],
+    timestamp: "2026-08-01T00:00:00.000Z",
+  };
+  const first = classifyDiscographyCache(entry);
+  await time.tickAsync(5);
+  const second = classifyDiscographyCache(entry);
+  assertEquals(first, second);
+});
+
+Deno.test("rateLimitDelayMs: no prior request means zero delay", () => {
+  const now = Date.UTC(2026, 7, 3, 12, 0, 0);
+  assertEquals(rateLimitDelayMs(null, now, 1_000), 0);
+});
+
+Deno.test("rateLimitDelayMs: a caller that already waited long enough gets zero delay", () => {
+  const now = Date.UTC(2026, 7, 3, 12, 0, 0);
+  const lastRequestAt = now - 1_500; // waited 1.5s, min interval is 1s
+  assertEquals(rateLimitDelayMs(lastRequestAt, now, 1_000), 0);
+});
+
+Deno.test("rateLimitDelayMs: a caller that requested too recently must wait the remainder", () => {
+  const now = Date.UTC(2026, 7, 3, 12, 0, 0);
+  const lastRequestAt = now - 200; // only 200ms ago
+  assertEquals(rateLimitDelayMs(lastRequestAt, now, 1_000), 800);
+});
+
+Deno.test("rateLimitDelayMs: across a simulated batch no two requests land closer than 1s apart", () => {
+  const minIntervalMs = 1_000;
+  let simulatedClock = Date.UTC(2026, 7, 3, 12, 0, 0);
+  let lastRequestAt: number | null = null;
+  const requestTimes: number[] = [];
+
+  for (let i = 0; i < 5; i++) {
+    const delay = rateLimitDelayMs(
+      lastRequestAt,
+      simulatedClock,
+      minIntervalMs,
+    );
+    simulatedClock += delay; // wait out the computed delay
+    requestTimes.push(simulatedClock);
+    lastRequestAt = simulatedClock;
+    simulatedClock += 50; // small amount of "work" before the next iteration
+  }
+
+  for (let i = 1; i < requestTimes.length; i++) {
+    const gap = requestTimes[i] - requestTimes[i - 1];
+    assertEquals(
+      gap >= minIntervalMs,
+      true,
+      `gap ${gap}ms below ${minIntervalMs}ms floor`,
+    );
+  }
+});
+
+Deno.test("rateLimitDelayMs: identical inputs give identical results across real time", async () => {
+  const lastRequestAt = Date.UTC(2026, 7, 3, 12, 0, 0);
+  const now = lastRequestAt + 200;
+  const first = rateLimitDelayMs(lastRequestAt, now, 1_000);
+  await time.tickAsync(5);
+  const second = rateLimitDelayMs(lastRequestAt, now, 1_000);
+  assertEquals(first, second);
+});
+
+Deno.test("retryAfterBackoffMs: a valid positive Retry-After header (seconds) is honoured", () => {
+  assertEquals(retryAfterBackoffMs("2", 1_000), 2_000);
+});
+
+Deno.test("retryAfterBackoffMs: no Retry-After header falls back to minIntervalMs", () => {
+  assertEquals(retryAfterBackoffMs(null, 1_000), 1_000);
+});
+
+Deno.test("retryAfterBackoffMs: a non-numeric Retry-After header (HTTP-date form) falls back to minIntervalMs", () => {
+  assertEquals(
+    retryAfterBackoffMs("Wed, 21 Oct 2026 07:28:00 GMT", 1_000),
+    1_000,
+  );
+});
+
+Deno.test("retryAfterBackoffMs: a zero or negative Retry-After header falls back to minIntervalMs", () => {
+  assertEquals(retryAfterBackoffMs("0", 1_000), 1_000);
+  assertEquals(retryAfterBackoffMs("-5", 1_000), 1_000);
+});
+
+Deno.test("retryAfterBackoffMs: identical inputs give identical results across real time", async () => {
+  const first = retryAfterBackoffMs("3", 1_000);
+  await time.tickAsync(5);
+  const second = retryAfterBackoffMs("3", 1_000);
+  assertEquals(first, second);
 });

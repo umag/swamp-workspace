@@ -20,35 +20,97 @@ const GlobalArgsSchema = z.object({
 const BASE = "https://musicbrainz.org/ws/2";
 const FETCH_TIMEOUT_MS = 30000;
 
-// rate limit: 1 req/sec
-let lastRequest = 0;
+// --- MusicBrainz rate limiting (enforced once, at the mbFetch boundary) ---
+//
+// MusicBrainz permits 1 request/second for the API as a whole, not per
+// caller or per method. `mbFetch` is the ONLY function in this file that
+// talks to musicbrainz.org (Bandcamp scraping goes through the separate
+// `fetchPage` helper below and is not subject to this limit), so it is the
+// single correct place to enforce spacing: every method that goes through
+// `mbFetch` — including sync-artist-discographies' pagination loop below —
+// gets it for free, and no caller can bypass it by forgetting to
+// re-implement it locally (see `rateLimitDelayMs` further down for the pure
+// delay math this reuses).
+let lastRequest: number | null = null;
 
-async function mbFetch(
+// Two `await mbFetch(...)` calls can be in flight concurrently (e.g. two
+// methods invoked close together, or sync-artist-discographies firing its
+// next page request while an earlier one is still settling). If each
+// independently read `lastRequest`, computed its own delay, and updated the
+// timestamp, both could observe the same stale value and fire together.
+// `rateLimitQueue` is a module-level promise chain that serialises the
+// "compute delay, wait it out, claim the slot" step: each call appends its
+// own reservation onto the tail with `.then()` and reassigns the module
+// variable *synchronously* (no `await` before the reassignment), so two
+// concurrent callers can never race on read-then-write of the tail pointer
+// — their reservations always run strictly one after another, each seeing
+// the previous one's committed `lastRequest`. The actual `fetch()` call
+// happens after a reservation resolves, outside the chain, so waiting for a
+// slot never blocks on a prior call's network latency — only on its spacing
+// delay.
+let rateLimitQueue: Promise<void> = Promise.resolve();
+
+function reserveRateLimitSlot(minIntervalMs: number): Promise<void> {
+  const reservation = rateLimitQueue.then(async () => {
+    const delay = rateLimitDelayMs(lastRequest, Date.now(), minIntervalMs);
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+    lastRequest = Date.now();
+  });
+  // Chain the next reservation after this one regardless of outcome, so a
+  // rejected reservation can never wedge the queue for later callers.
+  rateLimitQueue = reservation.catch(() => {});
+  return reservation;
+}
+
+/** Runs one `fetch()` guarded by a per-call `AbortController` timeout —
+ * factored out so mbFetch's initial request and its single 503 retry (see
+ * below) share the exact same timeout behavior instead of duplicating it. */
+async function fetchWithTimeout(
+  url: URL,
+  headers: Record<string, string>,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url.toString(), { headers, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Exported (not just module-private) so the test suite can exercise the
+// real spacing/concurrency/backoff behaviour directly, the same way the
+// pure helpers further down are exported rather than mirrored in tests.
+export async function mbFetch(
   userAgent: string,
   path: string,
   params: Record<string, string> = {},
+  minIntervalMs = 1100,
 ) {
-  const now = Date.now();
-  const wait = 1100 - (now - lastRequest);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastRequest = Date.now();
-
   const url = new URL(`${BASE}${path}`);
   url.searchParams.set("fmt", "json");
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v);
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch(url.toString(), {
-      headers: { "User-Agent": userAgent, Accept: "application/json" },
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
+  const headers = { "User-Agent": userAgent, Accept: "application/json" };
+
+  await reserveRateLimitSlot(minIntervalMs);
+  let response = await fetchWithTimeout(url, headers);
+
+  if (response.status === 503) {
+    // MusicBrainz asking us to back off — drain the body, wait out the
+    // computed backoff, reserve a fresh rate-limit slot, and retry exactly
+    // once rather than hammering the endpoint.
+    const backoffMs = retryAfterBackoffMs(
+      response.headers.get("Retry-After"),
+      minIntervalMs,
+    );
+    await response.text();
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    await reserveRateLimitSlot(minIntervalMs);
+    response = await fetchWithTimeout(url, headers);
   }
+
   if (!response.ok) {
     const body = await response.text();
     const retryAfter = response.headers.get("Retry-After");
@@ -359,6 +421,129 @@ export function formatDuration(totalSeconds: number): string {
   return `${minutes}:${secondsStr}`;
 }
 
+// --- sync-artist-discographies helpers (pure, no I/O) ---
+//
+// Back `sync-artist-discographies` below: a cursored, rate-limited,
+// resumable fan-out that caches release-groups per artist by routing
+// through the same fetch (`mbFetch`) and `browse` resource path
+// (`rg-by-artist-<mbid>`) as `browse-release-groups` above. These are pure
+// functions — no fetch, no clock reads — and are exported so the test suite
+// exercises the real implementation instead of a mirrored copy.
+
+/**
+ * Shape of a cached `browse` resource entry for `rg-by-artist-<mbid>` (see
+ * `browse-release-groups` above).
+ */
+export interface DiscographyCacheEntry {
+  count: number;
+  results: unknown[];
+  timestamp: string;
+}
+
+export type DiscographyCacheStatus = "never-fetched" | "empty" | "populated";
+
+/**
+ * Classifies a cached discography entry as never fetched (no entry written
+ * yet), legitimately empty (fetched, `count: 0`, `results: []`), or
+ * populated. Conflating "empty" with "never fetched" causes infinite
+ * re-fetch of artists that genuinely have no release groups.
+ */
+export function classifyDiscographyCache(
+  entry: DiscographyCacheEntry | null | undefined,
+): DiscographyCacheStatus {
+  if (entry === null || entry === undefined) return "never-fetched";
+  return entry.count === 0 ? "empty" : "populated";
+}
+
+/**
+ * Pure TTL staleness predicate for an existing cache entry's timestamp.
+ * `now` and `ttlMs` are both parameters — this never reads the clock
+ * internally — so it is deterministic and testable without faking
+ * `Date.now()`.
+ */
+export function isCacheStale(
+  timestamp: string,
+  now: number,
+  ttlMs: number,
+): boolean {
+  const cachedAt = Date.parse(timestamp);
+  return now - cachedAt > ttlMs;
+}
+
+/**
+ * Progress marker for a resumable `sync-artist-discographies` run: the
+ * offset of the next artist MBID to process in the input list.
+ */
+export interface SyncCursor {
+  offset: number;
+}
+
+/** Outcome of one processed batch — how many artist MBIDs it covered. */
+export interface SyncBatchOutcome {
+  processedCount: number;
+}
+
+/**
+ * Advances a resumable cursor by a batch's outcome. Resuming from the
+ * returned cursor (instead of restarting at offset 0) must cover the
+ * remaining input exactly once — no gap, no overlap.
+ */
+export function advanceSyncCursor(
+  cursor: SyncCursor,
+  outcome: SyncBatchOutcome,
+): SyncCursor {
+  return { offset: cursor.offset + outcome.processedCount };
+}
+
+/**
+ * Pure rate-limit spacing calculator backing `mbFetch`'s queue above.
+ * Returns the number of milliseconds to wait before the next request; 0 if
+ * the minimum interval has already elapsed. `lastRequestAt` is `null` when
+ * no request has been made yet — always 0 delay in that case.
+ */
+export function rateLimitDelayMs(
+  lastRequestAt: number | null,
+  now: number,
+  minIntervalMs = 1000,
+): number {
+  if (lastRequestAt === null) return 0;
+  const remaining = minIntervalMs - (now - lastRequestAt);
+  return remaining > 0 ? remaining : 0;
+}
+
+/**
+ * Pure backoff calculator for a MusicBrainz `503` response: honour
+ * `Retry-After` (seconds, per HTTP semantics) when it parses to a finite
+ * positive number; otherwise fall back to one more spacing interval so a
+ * 503 without the header still backs off instead of retrying immediately.
+ * No clock reads, no I/O — `mbFetch` (the impure boundary) is the only
+ * caller and supplies the actual header value and interval.
+ */
+export function retryAfterBackoffMs(
+  retryAfterHeader: string | null,
+  minIntervalMs: number,
+): number {
+  const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
+  return Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? retryAfterSeconds * 1000
+    : minIntervalMs;
+}
+
+// --- sync-artist-discographies method support ---
+
+/** Instance name the resumable cursor state is written under. */
+const DISCOGRAPHY_SYNC_CURSOR_INSTANCE = "discography-sync-cursor";
+
+/**
+ * Default page ceiling (100 release groups per page) for one artist's
+ * discography per `sync-artist-discographies` run. At mbFetch's ~1100ms
+ * default spacing this caps a single artist's pagination at ~22s and 2,000
+ * release groups — generous for a real discography (including large
+ * classical catalogues) while still bounding how much of one batched run a
+ * single artist can consume.
+ */
+const DEFAULT_DISCOGRAPHY_MAX_PAGES = 20;
+
 // --- resource schemas ---
 
 const ArtistSchema = z
@@ -433,7 +618,20 @@ const BrowseResultsSchema = z.object({
   results: z.array(z.object({}).passthrough()),
   count: z.number(),
   offset: z.number(),
+  // Only set (true/false) by sync-artist-discographies, which pages through
+  // an artist's full discography and can hit its maxPages ceiling; the
+  // single-page browse-* methods below don't paginate so leave it unset.
+  // Explicit rather than inferred from count/results.length so a truncated
+  // discography is visibly distinguishable from a complete one, never silent.
+  truncated: z.boolean().optional(),
   timestamp: z.string(),
+});
+
+const DiscographySyncStateSchema = z.object({
+  cursor: z.object({ offset: z.number() }),
+  processed: z.array(z.string()),
+  skipped: z.array(z.string()),
+  updatedAt: z.string(),
 });
 
 /**
@@ -443,13 +641,20 @@ const BrowseResultsSchema = z.object({
  */
 export const model = {
   type: "@magistr/musicbrainz",
-  version: "2026.08.02.1",
+  version: "2026.08.04.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
       toVersion: "2026.08.02.1",
       description:
         "Real-fix LB2-LB7 (musicbrainz-ssrf-and-latent-bugs): encodeURIComponent on all lookup MBIDs, TralbumData JSON.parse-first with a ://-protected fallback strip, bounded release-group pagination via a new optional maxPages global arg (default 50), NFKD+combining-mark-stripping normalizeTitle, an exported formatDuration() helper (H:MM:SS past one hour), and per-fetch AbortController timeouts + Retry-After surfacing + Array.isArray response guards on both mbFetch and fetchPage. No resource schema change; covers instances still at 2026.07.16.2 or 2026.07.31.1 (LB1 SSRF fix). globalArguments gains only the optional, defaulted maxPages field.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.04.1",
+      description:
+        "Adds sync-artist-discographies: a cursored, resumable, rate-limited fan-out over a list of artist MBIDs that caches each one's full release-group discography, routed through the existing mbFetch + browse/rg-by-artist-<mbid> write path (same as browse-release-groups), bounded by a new maxPages method arg (default 20) with an explicit truncated flag on the cached entry so a ceiling-truncated discography is never mistaken for a complete one. New optional discographySyncState resource (resumable {cursor,processed,skipped,updatedAt} cursor state) and a new optional, defaulted truncated field on the existing browse resource schema — both additive; no existing resource shape changes, no globalArguments change. mbFetch's internal rate limiter also moves from a plain read-then-write timestamp check to a module-level promise-chain queue that reserves each call's slot synchronously before any await, closing a race where concurrent callers could read the same stale lastRequest and fire together; mbFetch also gains a single 503/Retry-After retry with backoff before throwing (previously the header was only surfaced, never acted on).",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -470,6 +675,12 @@ export const model = {
     browse: {
       description: "Browse results for linked entities",
       schema: BrowseResultsSchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
+    discographySyncState: {
+      description: "Resumable cursor state for sync-artist-discographies",
+      schema: DiscographySyncStateSchema,
       lifetime: "infinite",
       garbageCollection: 10,
     },
@@ -1012,6 +1223,174 @@ export const model = {
             timestamp: new Date().toISOString(),
           },
         );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    // --- Discography sync (cursored, resumable; rate-limited via mbFetch) ---
+
+    "sync-artist-discographies": {
+      description:
+        "Fan out over a list of artist MBIDs and cache each one's full release-group discography, routed through the same mbFetch + `browse`/`rg-by-artist-<mbid>` write path as browse-release-groups, extended with pagination. 1 req/sec spacing is enforced once, at the mbFetch boundary — shared by every method in this model, not reimplemented here. Cursored and resumable: each run processes one batch starting at the persisted cursor, so an interrupted sync resumes rather than restarting, and repeated batches cover the artist list exactly once. A cached `count: 0` is treated as a legitimate empty discography (skipped like any other fresh cache), never re-fetched merely for being empty — only for being stale or never having been fetched at all. Per-artist pagination stops at `maxPages` and marks the cached entry `truncated: true` rather than silently returning a partial discography as if it were complete.",
+      arguments: z.object({
+        artistMbids: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Explicit artist MBIDs to sync. Defaults to the artists cached by this instance's most recent search-artist run.",
+          ),
+        batchSize: z
+          .number()
+          .optional()
+          .describe("Max number of artists to process this run (default 10)"),
+        ttlMs: z
+          .number()
+          .optional()
+          .describe(
+            "Cache TTL in milliseconds before a populated/empty discography is re-fetched (default 7 days)",
+          ),
+        minIntervalMs: z
+          .number()
+          .optional()
+          .describe(
+            "Minimum milliseconds between MusicBrainz requests, enforced by mbFetch (default 1100, matching mbFetch's own default spacing — MusicBrainz allows ~1 req/sec)",
+          ),
+        maxPages: z
+          .number()
+          .optional()
+          .describe(
+            "Max release-group pages (100 per page) to fetch for a single artist before stopping and marking that artist's cached discography truncated (default 20, i.e. 2,000 release groups). Guards against one huge catalogue — e.g. a large classical composer — consuming an entire batched run at ~1 req/sec.",
+          ),
+      }),
+      execute: async (args, context) => {
+        const { userAgent } = context.globalArgs;
+        const instanceName = context.definition.name;
+
+        // Resolve the artist MBID list: explicit arg wins; otherwise fall
+        // back to the artists cached by this instance's last search-artist
+        // run (writeResource("artists", "search", ...) above). The generic
+        // `search` method (below) writes instance name `<entity>-search`,
+        // never bare "search", so it cannot collide with this read. NOTE:
+        // search-release-group / search-release / search-recording /
+        // search-label also write bare instance "search" (with their own,
+        // incompatible shapes) — running one of those after search-artist
+        // WOULD make this read return the wrong shape. That's a pre-existing
+        // sibling-collision risk, not this method's bug to fix.
+        let artistMbids = args.artistMbids;
+        if (!artistMbids || artistMbids.length === 0) {
+          const searchData = await context.readResource("search");
+          artistMbids = (searchData?.artists ?? []).map((a) => a.id);
+          if (artistMbids.length === 0) {
+            throw new Error(
+              `No artist list available on instance "${instanceName}". Run ` +
+                `'swamp model method run ${instanceName} search-artist --query <name>' ` +
+                `first, or pass artistMbids explicitly.`,
+            );
+          }
+        }
+
+        const batchSize = args.batchSize ?? 10;
+        const ttlMs = args.ttlMs ?? 7 * 24 * 60 * 60 * 1000;
+        const minIntervalMs = args.minIntervalMs ?? 1100;
+        const maxPages = args.maxPages ?? DEFAULT_DISCOGRAPHY_MAX_PAGES;
+
+        // Resume from the persisted cursor rather than restarting at 0.
+        const state = await context.readResource(
+          DISCOGRAPHY_SYNC_CURSOR_INSTANCE,
+        );
+        let cursor: SyncCursor = state?.cursor ?? { offset: 0 };
+
+        // A cursor at/past the end of the (possibly changed) input starts a
+        // fresh pass instead of producing an empty batch forever.
+        if (cursor.offset >= artistMbids.length) {
+          cursor = { offset: 0 };
+        }
+
+        const batch = artistMbids.slice(
+          cursor.offset,
+          cursor.offset + batchSize,
+        );
+        const processed: string[] = [];
+        const skipped: string[] = [];
+
+        for (const mbid of batch) {
+          const cached = await context.readResource(`rg-by-artist-${mbid}`);
+          const status = classifyDiscographyCache(cached);
+          if (
+            status !== "never-fetched" &&
+            cached &&
+            !isCacheStale(cached.timestamp, Date.now(), ttlMs)
+          ) {
+            skipped.push(mbid);
+            continue;
+          }
+
+          // Paginate this artist's full discography. Request spacing is
+          // handled inside mbFetch itself (see the module-level rate
+          // limiter above) — this loop just keeps calling it and stops at
+          // maxPages so one huge catalogue can't consume the whole batch.
+          const results: unknown[] = [];
+          let count = 0;
+          let offset = 0;
+          let pagesFetched = 0;
+          let truncated = false;
+          while (true) {
+            const data = await mbFetch(
+              userAgent,
+              "/release-group/",
+              { artist: mbid, limit: "100", offset: String(offset) },
+              minIntervalMs,
+            );
+            pagesFetched++;
+
+            const rgs = Array.isArray(data["release-groups"])
+              ? data["release-groups"]
+              : [];
+            results.push(...rgs);
+            count = data["release-group-count"] ?? results.length;
+            if (rgs.length < 100) break; // reached the real end of this artist's discography
+
+            if (pagesFetched >= maxPages) {
+              // Hit the page ceiling with a still-full page: more release
+              // groups almost certainly remain (e.g. a large classical
+              // catalogue). Stop rather than consuming the rest of the run
+              // on one artist — but record the truncation so it's visible
+              // instead of silently caching a partial discography as
+              // complete.
+              truncated = true;
+              break;
+            }
+            offset += 100;
+          }
+
+          await context.writeResource("browse", `rg-by-artist-${mbid}`, {
+            entity: "release-group",
+            linkedEntity: "artist",
+            linkedId: mbid,
+            results,
+            count,
+            offset: 0,
+            truncated,
+            timestamp: new Date().toISOString(),
+          });
+          processed.push(mbid);
+        }
+
+        const nextCursor = advanceSyncCursor(cursor, {
+          processedCount: batch.length,
+        });
+
+        const handle = await context.writeResource(
+          "discographySyncState",
+          DISCOGRAPHY_SYNC_CURSOR_INSTANCE,
+          {
+            cursor: nextCursor,
+            processed,
+            skipped,
+            updatedAt: new Date().toISOString(),
+          },
+        );
+
         return { dataHandles: [handle] };
       },
     },

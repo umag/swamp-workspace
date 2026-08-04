@@ -1,5 +1,89 @@
 # Changelog
 
+## 2026.08.04.1
+
+Ports three additions (musicbrainz-discography-sync) from an older, untested
+local copy of this model onto this package's Grade-A-hardened lineage — a real
+merge against this file's own `mbFetch`/schema/method conventions, not a paste.
+`model.version` and `manifest.yaml` move `2026.08.02.1` -> `2026.08.04.1`.
+
+### Five new exported pure helpers
+
+`classifyDiscographyCache(entry)` classifies a cached `browse` entry as
+`"never-fetched"` (no entry written yet), `"empty"` (fetched, legitimately
+`count: 0`), or `"populated"` — conflating empty with never-fetched would cause
+infinite re-fetch of artists with no release groups.
+`isCacheStale
+(timestamp, now, ttlMs)`, `advanceSyncCursor(cursor, outcome)`,
+`rateLimitDelayMs
+(lastRequestAt, now, minIntervalMs)`, and
+`retryAfterBackoffMs(retryAfterHeader,
+minIntervalMs)` are all pure — no
+internal clock read, `now`/`ttlMs`/etc. are always parameters — and back the two
+behaviors below plus the new method.
+
+### `mbFetch`'s rate limiter is now concurrency-safe, and retries a `503` once
+
+Previously `mbFetch` computed its wait with a plain read-then-write of a
+module-level timestamp (`wait = 1100 - (now - lastRequest)`); two concurrent
+`await mbFetch(...)` calls could both read the same stale timestamp and fire
+together. It now reserves its slot through a module-level promise chain
+(`reserveRateLimitSlot`) that reassigns the chain's tail _synchronously_, before
+any `await` — so two concurrent callers can never race on read-then-write of the
+tail pointer, and always run their reservations strictly one after another.
+Sequential-call spacing (the default ~1100ms) and the observable throw-on-non-ok
+behavior are unchanged; every existing method's default-3-arg
+`mbFetch(userAgent, path, params)` call keeps the same ~1100ms floor. `mbFetch`
+also now retries a `503` exactly once: it reads `Retry-After` (via
+`retryAfterBackoffMs`, honoring the header in seconds when present, else falling
+back to one more spacing interval), waits out the backoff, reserves a fresh
+slot, and retries; a non-ok response after the retry still throws, with
+`Retry-After` still surfaced in the message when present. `mbFetch` is now
+exported (previously module-private) so the test suite can exercise the real
+spacing/concurrency/retry behavior directly instead of mirroring it.
+
+### New method: `sync-artist-discographies`
+
+A cursored, resumable, rate-limited fan-out over a list of artist MBIDs that
+caches each one's full release-group discography, routed through the existing
+`mbFetch` + `browse`/`rg-by-artist-<mbid>` write path (the same one
+`browse-release-groups` uses) — no second fetch or write path. Defaults to the
+artists cached by the instance's most recent `search-artist` run when
+`artistMbids` is omitted, falling back to an actionable error (naming the full
+`swamp model method run <instance> search-artist ...` command via
+`context.definition.name`) when neither is available. Each run processes one
+batch (`batchSize`, default 10) starting at a persisted cursor
+(`discographySyncState`, a new resource) so an interrupted sync resumes rather
+than restarting, and repeated batches cover the artist list exactly once — no
+gap, no overlap. A cached entry is skipped when fresh (`ttlMs`, default 7 days)
+and re-fetched when stale; a cached `count: 0` is treated as a legitimate empty
+discography, never re-fetched merely for being empty. Per-artist pagination
+stops at `maxPages` (default 20 — 2,000 release groups) and marks the cached
+entry `truncated: true` rather than silently caching a partial discography as
+complete — `truncated` is a new optional, defaulted field on the existing
+`browse` resource schema, unset by the single-page `browse-*` methods.
+
+### Tests
+
+Integrated into the five existing role-assigned suites, not bolted on as a sixth
+file. `musicbrainz_property_test.ts`: the five pure-helper invariants above (21
+tests, no stubbed fetch or FakeTime needed — they're pure).
+`musicbrainz_adversarial_test.ts`: mbFetch's concurrency-safe spacing (three
+concurrent calls via `Promise.all`, asserting every consecutive pair of recorded
+timestamps is spaced ≥ the interval apart), the 503-retry-succeeds and
+503-persists-past-retry paths (with and without `Retry-After`), and
+sync-artist-discographies' stale-cache-triggers-refetch /
+fresh-count:0-is-skipped failure modes (6 tests); the pre-existing "still no
+retry" 503 pin was updated in place to assert the new retry-once behavior
+instead (calls.length flips `1` -> `2`). `musicbrainz_coverage_test.ts`:
+new-method/resource-surface enumeration plus the maxPages/truncated pagination
+guard, both the ceiling-hit and natural-end cases (3 tests).
+`musicbrainz_methods_test.ts`: general execute() paths — explicit artistMbids,
+the search-artist fallback, cursor resume across two sequential runs, and the
+no-artist-list error (4 tests). 128 tests before this change, 161 after; all
+green, no regressions. `quality.yaml`'s five suites and 100% Grade-A ratchet are
+unaffected (all additions land inside the existing five files).
+
 ## 2026.08.02.1
 
 Real-fixes LB2-LB7, the six latent bugs pinned (not fixed) by the 2026.07.31.1
