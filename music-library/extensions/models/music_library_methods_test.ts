@@ -28,7 +28,12 @@
  * `(globalThis as any).Deno.Command = FakeCommand`, never a
  * `as typeof Deno.Command` cast; restored in `finally`.
  */
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "jsr:@std/assert@1";
 import { hash8, model, slugify } from "./music_library.ts";
 import tracksFixture from "../../fixtures/tracks.json" with { type: "json" };
 import genresFixture from "../../fixtures/genres.json" with { type: "json" };
@@ -36,6 +41,15 @@ import verifyFilesFixture from "../../fixtures/verify_files.json" with {
   type: "json",
 };
 import probeFixture from "../../fixtures/probe.json" with { type: "json" };
+import headphonesArtistsFixture from "../../fixtures/headphones_artists.json" with {
+  type: "json",
+};
+import mbReleaseGroupsFixture from "../../fixtures/mb_release_groups.json" with {
+  type: "json",
+};
+import mbReleaseGroupsEmptyFixture from "../../fixtures/mb_release_groups_empty.json" with {
+  type: "json",
+};
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -64,7 +78,16 @@ function makeCtx(
     store,
     ctx: {
       globalArgs: gArgs(globalArgOverrides),
-      modelName: "music",
+      // Mirror the REAL MethodContext surface (swamp src/domain/models/model.ts).
+      // There is no `context.modelName` — the instance name lives on
+      // `definition.name`. A fake that invents `modelName` makes tests pass
+      // against an API that does not exist at runtime.
+      definition: {
+        id: "f5fa0998-051a-4c25-acce-067692769c47",
+        name: "music",
+        version: 1,
+        tags: {},
+      },
       writeResource: (spec: string, name: string, payload: unknown) => {
         written.push({
           spec,
@@ -638,6 +661,29 @@ Deno.test("running: no bpm data at the expected resource name throws a pointer t
   );
 });
 
+// REGRESSION. The pointer above used to interpolate `context.modelName`, which
+// is not a field on swamp's MethodContext (see model.ts — it exposes
+// definition/modelId/modelType/methodName/..., and `modelName` appears in the
+// runtime source only as a PARAMETER of readModelData). Users were therefore
+// told to run `swamp model method run undefined bpm`. The bug survived because
+// the assertion above stops at the static prefix and never inspects the
+// interpolated value — and because the test fake used to invent a `modelName`
+// field, so the double agreed with code the runtime disagreed with. Assert the
+// resolved instance name, and assert "undefined" is absent.
+Deno.test("running: the bpm pointer names the real instance, never 'undefined'", async () => {
+  const { ctx } = makeCtx();
+  const err = await assertRejects(
+    () => run("running", {}, ctx),
+    Error,
+  );
+  assertStringIncludes(err.message, "swamp model method run music bpm");
+  assertEquals(
+    err.message.includes("undefined"),
+    false,
+    `error message must not leak an unresolved interpolation: ${err.message}`,
+  );
+});
+
 Deno.test("running: minSpm > maxSpm rejects before ever reading the bpm resource", async () => {
   const { ctx } = makeCtx({}, { "bpm-library": { tracks: RUN_TRACKS } });
   await assertRejects(
@@ -674,5 +720,344 @@ Deno.test("probe: happy path — merges format+stream tags, recovers the mojibak
   assertEquals(
     (res.payload.audioStream as { codec_name: string }).codec_name,
     "flac",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// resolve-artists / wanted — RED phase: both `execute` bodies are stubs that
+// `throw new Error("not implemented")`, so every test below fails on that
+// thrown error (an uncaught rejection from the plain `await run(...)` calls,
+// or an assertRejects message mismatch for the two "actionable error" tests)
+// rather than on an import or type error — behaviour is missing, the
+// signatures are not.
+//
+// Both methods are the first on this model to read ANOTHER swamp model
+// instance's data via `context.readModelData(instanceName, specName)` — a
+// NEW context capability the six pre-existing methods never needed (they
+// only ever touch this model's own ssh/sqlite/ffmpeg/ffprobe/essentia
+// surface via sshRun, or a single named resource of their OWN model via
+// readResource/writeResource). Verified live: readModelData returns an
+// ARRAY of ROW objects, and parsed content is reached via
+// `row.attributes.<field>` (`row.data` does not exist).
+//
+// resolve-artists ALSO reads this model's own already-scanned `artist`
+// dimension the same way — `context.readModelData(context.definition.name,
+// "artist")` — because the artists that need MusicBrainz IDs are the ones
+// actually OWNED in the library (scan's `artist` resource), not merely the
+// subset headphones happens to track; headphones is a seed/cache, not the
+// source of truth for which artists exist. `wanted` reads its own `album`
+// dimension the same way (`context.readModelData(context.definition.name,
+// "album")`) for the owned cube.
+//
+// NOTE the accessor: it is `context.definition.name`, NOT `context.modelName`.
+// The real MethodContext (swamp src/domain/models/model.ts) exposes
+// { signal, repoDir, modelType, modelId, globalArgs, definition, methodName,
+// logger, ... } — `modelName` appears in that source only as a PARAMETER of
+// readModelData, never as a field on the context.
+// ---------------------------------------------------------------------------
+
+/** Wraps a raw attributes payload the way a readModelData row is shaped. */
+function mdRow(attributes: Record<string, unknown>) {
+  return { attributes };
+}
+
+type ModelData = Record<string, Record<string, unknown[]>>;
+
+/** Extends makeCtx with a context.readModelData(instanceName, specName)
+ * mock and a context.runModel spy, additive to the ssh-stub harness above
+ * (readModelData/runModel are a seam scan/dupes/verify/bpm/running/probe
+ * never exercise). */
+function makeModelDataCtx(
+  modelData: ModelData = {},
+  seed: Store = {},
+  globalArgOverrides: Record<string, unknown> = {},
+) {
+  const base = makeCtx(globalArgOverrides, seed);
+  const runModelCalls: unknown[][] = [];
+  const ctx = {
+    ...base.ctx,
+    readModelData: (instanceName: string, specName: string) =>
+      Promise.resolve(modelData[instanceName]?.[specName] ?? []),
+    runModel: (...callArgs: unknown[]) => {
+      runModelCalls.push(callArgs);
+      return Promise.resolve({ dataHandles: [] });
+    },
+  };
+  return { ...base, ctx, runModelCalls };
+}
+
+/** Same shape as installSshStub, for the MusicBrainz search fallback
+ * resolve-artists reaches over `fetch` (not ssh — MusicBrainz is a public
+ * HTTP API, unlike the gonic host). */
+function installFetchStub(router: (url: string) => unknown) {
+  const calls: string[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : String(input);
+    calls.push(url);
+    return Promise.resolve(
+      new Response(JSON.stringify(router(url)), { status: 200 }),
+    );
+  }) as typeof fetch;
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = original;
+    },
+  };
+}
+
+// A headphones seed that covers every artist the (mirrored) library reports,
+// so resolving it never needs a MusicBrainz search.
+const LIBRARY_ARTISTS_SEED_COVERED = (
+  headphonesArtistsFixture as { artists: Array<{ ArtistName: string }> }
+).artists.map((a) =>
+  mdRow({ kind: "artist", key: a.ArtistName.toLowerCase(), name: a.ArtistName })
+);
+
+Deno.test("resolve-artists: seed rows are read via row.attributes.artists — a library fully covered by the headphones seed resolves without any MusicBrainz search", async () => {
+  const { ctx, written, runModelCalls } = makeModelDataCtx({
+    headphones: { artists: [mdRow(headphonesArtistsFixture)] },
+    music: { artist: LIBRARY_ARTISTS_SEED_COVERED },
+  });
+  await run("resolve-artists", {}, ctx);
+  // The MusicBrainz search fallback is reached via context.runModel (routed
+  // through the @musicbrainz/api instance), not `fetch` — so the "seed
+  // covers everything, no search happens" invariant is now asserted on
+  // runModelCalls, the seam this fallback actually calls.
+  assertEquals(runModelCalls.length, 0);
+  const res = written.find((w) => w.spec === "artistMap")!;
+  assertEquals(
+    res.payload.resolved,
+    (headphonesArtistsFixture as { artists: unknown[] }).artists.length,
+  );
+  assertEquals(res.payload.unresolved, 0);
+  assertEquals(res.payload.ambiguous, 0);
+  const entries = res.payload.entries as Array<
+    { artistName: string; mbid: string; source: string }
+  >;
+  const velvet = entries.find((e) => e.artistName === "Velvet Static")!;
+  assertEquals(velvet.mbid, "cafebabe-fa57-4f00-9dec-afbadcafebab");
+  assertEquals(velvet.source, "seed");
+});
+
+Deno.test("resolve-artists: an artist the seed does not cover falls back to a MusicBrainz search routed through runModel + readModelData, resolving on a single candidate", async () => {
+  const { ctx, written, runModelCalls } = makeModelDataCtx({
+    headphones: { artists: [mdRow(headphonesArtistsFixture)] },
+    music: {
+      artist: [
+        ...LIBRARY_ARTISTS_SEED_COVERED,
+        mdRow({ kind: "artist", key: "aurora-drift", name: "Aurora Drift" }),
+      ],
+    },
+    // search-artist (the @musicbrainz/api method) writes its result to the
+    // "artists" spec — this mocks what readModelData sees back after
+    // resolve-artists calls runModel, without a real MusicBrainz round trip.
+    musicbrainz: {
+      artists: [
+        mdRow({
+          artists: [{
+            id: "01234567-89ab-4cde-8f01-23456789abcd",
+            name: "Aurora Drift",
+            "sort-name": "Aurora Drift",
+          }],
+          count: 1,
+          timestamp: "2026-08-04T00:00:00Z",
+        }),
+      ],
+    },
+  });
+
+  await run("resolve-artists", {}, ctx);
+
+  // Exactly one fallback search, for the one artist the seed doesn't cover
+  // — shaped as the documented handles-only runModel contract, never a
+  // direct fetch.
+  assertEquals(runModelCalls.length, 1);
+  const [callArgs] = runModelCalls[0] as [
+    { definition: string; method: string; arguments: { query: string } },
+  ];
+  assertEquals(callArgs.definition, "musicbrainz");
+  assertEquals(callArgs.method, "search-artist");
+  assertEquals(callArgs.arguments.query, 'artist:"Aurora Drift"');
+
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    {
+      artistName: string;
+      mbid: string | null;
+      status: string;
+      source: string | null;
+    }
+  >;
+  const aurora = entries.find((e) => e.artistName === "Aurora Drift")!;
+  assertEquals(aurora.status, "resolved");
+  assertEquals(aurora.mbid, "01234567-89ab-4cde-8f01-23456789abcd");
+  assertEquals(aurora.source, "search");
+});
+
+Deno.test("resolve-artists: resolved/ambiguous/unresolved are TOP-LEVEL fields on the written artistMap resource, summing to entries.length", async () => {
+  const { ctx, written } = makeModelDataCtx({
+    headphones: { artists: [mdRow(headphonesArtistsFixture)] },
+    music: { artist: LIBRARY_ARTISTS_SEED_COVERED },
+  });
+  await run("resolve-artists", {}, ctx);
+  const res = written.find((w) => w.spec === "artistMap")!;
+  assertEquals(typeof res.payload.resolved, "number");
+  assertEquals(typeof res.payload.ambiguous, "number");
+  assertEquals(typeof res.payload.unresolved, "number");
+  const entries = res.payload.entries as unknown[];
+  assertEquals(
+    (res.payload.resolved as number) + (res.payload.ambiguous as number) +
+      (res.payload.unresolved as number),
+    entries.length,
+  );
+});
+
+Deno.test("resolve-artists: idempotent — two runs over the same input produce the same map", async () => {
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow(headphonesArtistsFixture)] },
+    music: { artist: LIBRARY_ARTISTS_SEED_COVERED },
+  };
+  const first = makeModelDataCtx(structuredClone(modelData));
+  await run("resolve-artists", {}, first.ctx);
+  const firstEntries =
+    first.written.find((w) => w.spec === "artistMap")!.payload.entries;
+
+  const second = makeModelDataCtx(structuredClone(modelData));
+  await run("resolve-artists", {}, second.ctx);
+  const secondEntries =
+    second.written.find((w) => w.spec === "artistMap")!.payload.entries;
+
+  assertEquals(secondEntries, firstEntries);
+});
+
+// Two distinct headphones ArtistIDs sharing the exact same ArtistName: the
+// library owns that artist too, so it must be resolved — but the seed alone
+// cannot say WHICH MBID is correct.
+const AMBIGUOUS_HEADPHONES_SEED = {
+  artists: [
+    {
+      ArtistID: "11111111-1111-1111-1111-111111111111",
+      ArtistName: "Bill Brown",
+      Status: "Active",
+    },
+    {
+      ArtistID: "22222222-2222-2222-2222-222222222222",
+      ArtistName: "Bill Brown",
+      Status: "Active",
+    },
+  ],
+  total: 2,
+  timestamp: "2025-11-03T00:00:00Z",
+};
+
+Deno.test("resolve-artists: an artist name with two distinct MBIDs in the seed is PARKED as ambiguous, never auto-resolved", async () => {
+  const { ctx, written } = makeModelDataCtx({
+    headphones: { artists: [mdRow(AMBIGUOUS_HEADPHONES_SEED)] },
+    music: {
+      artist: [
+        mdRow({ kind: "artist", key: "bill-brown", name: "Bill Brown" }),
+      ],
+    },
+  });
+  await run("resolve-artists", {}, ctx);
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    { artistName: string; status: string; mbid: string | null }
+  >;
+  const entry = entries.find((e) => e.artistName === "Bill Brown")!;
+  assertEquals(entry.status, "ambiguous");
+  assertEquals(entry.mbid, null);
+  assertEquals(res.payload.ambiguous, 1);
+  assertEquals(res.payload.resolved, 0);
+  assertEquals(res.payload.unresolved, 0);
+});
+
+// ---------------------------------------------------------------------------
+// wanted
+// ---------------------------------------------------------------------------
+
+const ARTIST_MAP_FIXTURE = {
+  kind: "artistMap",
+  scannedAt: "2026-08-01T00:00:00Z",
+  params: {
+    headphonesInstance: "headphones",
+    musicbrainzInstance: "musicbrainz",
+  },
+  resolved: 2,
+  ambiguous: 0,
+  unresolved: 0,
+  entries: [
+    {
+      artistKey: "halcyon",
+      artistName: "Halcyon",
+      mbid: "deadbeef-c001-4a57-8bad-f00ddeadbeef",
+      status: "resolved",
+      source: "seed",
+      candidates: [],
+    },
+    {
+      artistKey: "velvet-static",
+      artistName: "Velvet Static",
+      mbid: "cafebabe-fa57-4f00-9dec-afbadcafebab",
+      status: "resolved",
+      source: "seed",
+      candidates: [],
+    },
+  ],
+};
+
+Deno.test("wanted: performs ZERO network calls — no ssh/sqlite, fetch, or runModel execution (pure derivation over already-cached data)", async () => {
+  const { ctx, runModelCalls } = makeModelDataCtx(
+    {
+      musicbrainz: {
+        browse: [
+          mdRow(mbReleaseGroupsFixture),
+          mdRow(mbReleaseGroupsEmptyFixture),
+        ],
+      },
+      music: { album: [] },
+    },
+    { "artist-map": ARTIST_MAP_FIXTURE },
+  );
+  const sshStub = installSshStub(() => {
+    throw new Error("wanted() must never touch ssh/sqlite");
+  });
+  const fetchStub = installFetchStub(() => {
+    throw new Error("wanted() must never touch fetch");
+  });
+  try {
+    await run("wanted", {}, ctx);
+  } finally {
+    sshStub.restore();
+    fetchStub.restore();
+  }
+  assertEquals(sshStub.calls.length, 0);
+  assertEquals(fetchStub.calls.length, 0);
+  assertEquals(runModelCalls.length, 0);
+});
+
+Deno.test("wanted: missing artistMap resource fails with an actionable error naming the FULL prerequisite command, including the modelName", async () => {
+  const { ctx } = makeModelDataCtx({
+    musicbrainz: { browse: [mdRow(mbReleaseGroupsFixture)] },
+    music: { album: [] },
+  });
+  await assertRejects(
+    () => run("wanted", {}, ctx),
+    Error,
+    "swamp model method run music resolve-artists",
+  );
+});
+
+Deno.test("wanted: missing MusicBrainz browse cache fails with an actionable error naming the musicbrainz INSTANCE and its browse prerequisite", async () => {
+  const { ctx } = makeModelDataCtx(
+    { musicbrainz: { browse: [] }, music: { album: [] } },
+    { "artist-map": ARTIST_MAP_FIXTURE },
+  );
+  await assertRejects(
+    () => run("wanted", {}, ctx),
+    Error,
+    "swamp model method run musicbrainz browse",
   );
 });

@@ -48,6 +48,7 @@ import {
   fixEncoding,
   isPlaceholder,
   median,
+  model,
   normalizeSegments,
   parseBpmLine,
 } from "./music_library.ts";
@@ -401,4 +402,49 @@ Deno.test("median: odd-length array returns the exact middle value", () => {
 Deno.test("median: even-length array averages the two middle values (NOT the upper one)", () => {
   assertEquals(median([100, 200]), 150);
   assertEquals(median([1, 2, 3, 4]), 2.5);
+});
+
+// ---------------------------------------------------------------------------
+// Model surface enumeration — closed-set guard over model.methods /
+// model.resources: "if someone adds a method or resource to music_library.ts
+// without adding a matching test suite entry, does a test go red?" The
+// contract-fixture, methods, and adversarial suites each exercise
+// resolve-artists/wanted and the artistMap/wanted resources individually;
+// THIS pair is what catches the NEXT one silently growing the surface with
+// no coverage at all — it must be updated in the SAME change that adds a
+// method or resource, not as an afterthought.
+// ---------------------------------------------------------------------------
+
+const KNOWN_METHODS = [
+  "scan",
+  "dupes",
+  "verify",
+  "bpm",
+  "running",
+  "probe",
+  "resolve-artists",
+  "wanted",
+].sort();
+
+const KNOWN_RESOURCES = [
+  "library",
+  "album",
+  "artist",
+  "dimension",
+  "issues",
+  "dupes",
+  "verify",
+  "bpm",
+  "playlist",
+  "probe",
+  "artistMap",
+  "wanted",
+].sort();
+
+Deno.test("model surface: methods enumerate to EXACTLY the known 8 — a new method must be added here too", () => {
+  assertEquals(Object.keys(model.methods).sort(), KNOWN_METHODS);
+});
+
+Deno.test("model surface: resources enumerate to EXACTLY the known 12 — a new resource must be added here too", () => {
+  assertEquals(Object.keys(model.resources).sort(), KNOWN_RESOURCES);
 });

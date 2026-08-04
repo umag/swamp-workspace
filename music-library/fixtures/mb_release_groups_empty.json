@@ -1,0 +1,9 @@
+{
+  "entity": "release-group",
+  "linkedEntity": "artist",
+  "linkedId": "deadbeef-c001-4a57-8bad-f00ddeadbeef",
+  "results": [],
+  "count": 0,
+  "offset": 0,
+  "timestamp": "2025-11-03T09:10:00Z"
+}

@@ -100,6 +100,74 @@ pointer to run `verify` first.
 swamp report get @magistr/music-verify-triage --model <instance> --markdown
 ```
 
+## What's missing — the wanted derivation
+
+Answers "what music do I want that I do not have", as a **derived set** rather
+than a stored status. The want list is recomputed from scratch on every run, so
+it cannot drift out of sync with the library on disk — which is the failure mode
+of tools that keep a mutable per-album status column.
+
+Run the three steps **in this order**; they span two model instances:
+
+```bash
+# 1. artist name -> MusicBrainz ID map (this model)
+swamp model method run <instance> resolve-artists
+
+# 2. cache each artist's discography (the musicbrainz model, NOT this one)
+swamp model method run <musicbrainz-instance> sync-artist-discographies
+
+# 3. derive the gap (this model, pure — no network)
+swamp model method run <instance> wanted
+```
+
+Each step fails with an error naming the command you skipped, so getting the
+order wrong is loud rather than silently producing an empty gap report.
+
+**`resolve-artists`** seeds the map for free from a headphones instance, whose
+artists are already MusicBrainz-keyed, then falls back to token-set MusicBrainz
+search for whatever the seed does not cover. Artists it cannot resolve
+confidently are **parked, never guessed** — exact-string matching against
+MusicBrainz fails in both directions (`Miles Davis` is rejected against the sort
+form `Davis, Miles`, while `Bill Brown` matches `James Brown` at score 100), so
+a name matching two distinct MBIDs is reported as ambiguous with its competing
+candidates rather than resolved to whichever came first. The
+`resolved`/`ambiguous`/`unresolved` counts are top-level fields, so a run that
+parked 300 artists looks different at the CLI from one that resolved them.
+
+**`wanted`** is pure — no network at all — and emits two kinds of want:
+`missing` (in the discography, absent from disk) and `upgrade` (present but
+below a target quality bucket). Where a title match is uncertain it defaults to
+treating the album as **present**, because a false want costs a junk download
+while a false "have" only costs a missed album; flip it with
+`--input uncertainMatchPresent=false`.
+
+Entries are deliberately flat, so the result is queryable directly:
+
+```bash
+swamp data query 'modelName == "<instance>" && name == "wanted" && isLatest' \
+  --select 'content.wants.filter(w, w.kind == "missing").map(w, w.artist)' --json
+```
+
+```bash
+swamp report get @magistr/music-wanted --model <instance> --markdown
+```
+
+The report renders totals, missing grouped by artist (biggest gaps first),
+upgrade candidates grouped by current quality (worst first), and the artists
+needing human review. That last section is the point of parking rather than
+guessing, so it is first-class output.
+
+### Why not a self-hosted MusicBrainz mirror?
+
+The discography sync is rate-limited to MusicBrainz's public 1 req/sec, making a
+full pass a batched, resumable ~38-minute operation. A local mirror would remove
+that limit, and was evaluated and rejected: Postgres live-data-feed replication
+over the internet, and resuming it cleanly after a restart, costs more to
+operate than the sync costs to run. If it is ever revisited, a periodic full
+dump reload is the simpler path than incremental replication for read-only
+discography data — a full reload is idempotent and restart-safe by construction,
+which is precisely what incremental replication is not.
+
 ## Setup
 
 ```bash

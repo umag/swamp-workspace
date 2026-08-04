@@ -1,0 +1,59 @@
+{
+  "entity": "release-group",
+  "linkedEntity": "artist",
+  "linkedId": "cafebabe-fa57-4f00-9dec-afbadcafebab",
+  "results": [
+    {
+      "id": "f01dab1e-5ca1-4ab1-8c00-1d00df01dab1",
+      "title": "Salt Static",
+      "primary-type": "Album",
+      "first-release-date": "2014-03-10",
+      "secondary-types": []
+    },
+    {
+      "id": "5ca1ab1e-c001-4d00-8da7-aba5ec001d00",
+      "title": "Night Coil",
+      "primary-type": "EP",
+      "first-release-date": "2016-07-01",
+      "secondary-types": []
+    },
+    {
+      "id": "c001d00d-da7a-4ba5-8eab-adcafec001d0",
+      "title": "Glass Horizon",
+      "primary-type": "Single",
+      "first-release-date": "2018-11-20",
+      "secondary-types": []
+    },
+    {
+      "id": "da7aba5e-8bad-4f00-8daa-dc0dedeadbee",
+      "title": "Salt Static (Live at Harbor Hall)",
+      "primary-type": "Album",
+      "first-release-date": "2015-05-05",
+      "secondary-types": ["Live"]
+    },
+    {
+      "id": "abadcafe-baad-4f00-8dab-adcafebaadf0",
+      "title": "Velvet Static: The Collected Works",
+      "primary-type": "Album",
+      "first-release-date": "2020-01-01",
+      "secondary-types": ["Compilation"]
+    },
+    {
+      "id": "8badf00d-baad-4f00-8dfe-edfacefeedfa",
+      "title": "Static Horizon",
+      "primary-type": "Album",
+      "first-release-date": "2099-06-15",
+      "secondary-types": []
+    },
+    {
+      "id": "baadf00d-8bad-4f00-9dfa-cec001d00dfa",
+      "title": "Salt Static (Remastered 2015)",
+      "primary-type": "Album",
+      "first-release-date": "2015-09-09",
+      "secondary-types": []
+    }
+  ],
+  "count": 7,
+  "offset": 0,
+  "timestamp": "2025-11-03T14:25:47Z"
+}

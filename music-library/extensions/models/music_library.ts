@@ -21,6 +21,20 @@
 import { z } from "npm:zod@4";
 import jschardet from "npm:jschardet@3.1.4";
 import { buildRunning, type RunTrack } from "../lib/running.ts";
+import {
+  type Candidate,
+  escapeLuceneQuery,
+  matchArtist,
+} from "../lib/artist_match.ts";
+import {
+  deriveWanted,
+  type DesiredReleaseGroup,
+  type OwnedAlbum,
+  QUALITY_RANK,
+  type QualityBucket,
+  type ResolvedArtist,
+} from "../lib/wanted.ts";
+import { isNoiseGroup, normDupeKey } from "../lib/norm.ts";
 
 // --- Global arguments ---
 
@@ -504,78 +518,10 @@ export function hash8(s: string): string {
 
 const YEAR_RE = /(?:19|20)\d{2}/;
 
-const NOISE_WORD_RE = new RegExp(
-  "^(?:" +
-    [
-      "(?:16|24)[\\s\\-/]?(?:bit)?[\\s\\-/]?(?:44|48|88\\.?2?|96|176|192)(?:khz)?",
-      "flac",
-      "ape",
-      "wv",
-      "wav",
-      "mp3",
-      "aac",
-      "ogg",
-      "opus",
-      "m4a",
-      "alac",
-      "dsd\\d*",
-      "web",
-      "cd",
-      "cdm",
-      "cdrip",
-      "vinyl",
-      "lp",
-      "tape",
-      "promo",
-      "single",
-      "ep",
-      "album",
-      "comp(?:ilation)?",
-      "remaster(?:ed)?",
-      "reissue",
-      "deluxe",
-      "limited",
-      "expanded",
-      "bonus",
-      "japan(?:ese)?",
-      "scans?",
-      "covers?",
-      "cue",
-      "log",
-      "lossless",
-      "hdcd",
-      "sacd",
-      "mfsl",
-      "super",
-      "edition",
-      "digipak",
-      "\\d{2,4}\\s?kbps",
-      "320",
-      "256",
-      "224",
-      "192",
-      "160",
-      "128",
-      "vbr",
-      "cbr",
-      "v0",
-      "v2",
-      "(?:cd|disc|disk)\\s?\\d+",
-      "\\d+cd",
-      "[a-z]{2,6}[- ]?\\d{2,8}", // catalog codes: VICP-61465, LFTFLD21
-      "\\d{2,4}-\\d{2,6}", // catalog numbers: 08-1488
-    ].join("|") +
-    ")$",
-  "i",
-);
-
 const DISC_DIR_RE = /^(?:cd|disc|disk|part|vol(?:ume)?)[\s._-]*(\d{1,2})$/i;
 
-function isNoiseGroup(content: string): boolean {
-  const words = content.split(/[\s,/]+/).filter((w) => w.length > 0);
-  if (words.length === 0) return true;
-  return words.every((w) => NOISE_WORD_RE.test(w));
-}
+// isNoiseGroup lives in ../lib/norm.ts (pure domain logic, shared with
+// normDupeKey and the wanted-derivation pipeline); imported above.
 
 function stripNoise(s: string): string {
   let out = s;
@@ -1315,44 +1261,10 @@ export function buildCube(
 
 // --- Duplicate detection (pure — unit-testable) ---
 
-// Words ignored when normalizing titles for duplicate matching.
-const NORM_NOISE = new Set([
-  "remaster",
-  "remastered",
-  "reissue",
-  "deluxe",
-  "edition",
-  "expanded",
-  "bonus",
-  "limited",
-  "special",
-  "anniversary",
-  "version",
-  "edit",
-  "disc",
-  "disk",
-  "cd",
-  "lp",
-  "vinyl",
-  "mono",
-  "stereo",
-]);
-
-/**
- * Normalize an artist/title for duplicate matching. Bracket groups are
- * dropped only when their content is release noise — "(Remastered)" goes,
- * "(Part One)" stays, so multi-part releases do not conflate.
- */
-export function normDupeKey(s: string): string {
-  let t = s.toLowerCase().normalize("NFKD").replace(/\p{M}/gu, "");
-  t = t.replace(
-    /[([{]([^()[\]{}]*)[)\]}]/g,
-    (_m, content) => isNoiseGroup(content) ? " " : ` ${content} `,
-  );
-  t = t.replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-  t = t.split(" ").filter((w) => w && !NORM_NOISE.has(w)).join(" ");
-  return t;
-}
+// normDupeKey lives in ../lib/norm.ts (pure domain logic, imported above);
+// re-exported here so existing importers of music_library.ts keep working
+// unchanged.
+export { normDupeKey } from "../lib/norm.ts";
 
 type DupeAlbumEntry = {
   key: string;
@@ -2121,6 +2033,56 @@ const ProbeSchema = z.object({
   probedAt: z.string(),
 });
 
+const ArtistMapEntrySchema = z.object({
+  artistKey: z.string(),
+  artistName: z.string(),
+  mbid: z.string().nullable(),
+  status: z.enum(["resolved", "ambiguous", "unresolved"]),
+  source: z.enum(["seed", "search"]).nullable(),
+  candidates: z.array(z.object({ id: z.string(), name: z.string() })),
+});
+
+const ArtistMapSchema = z.object({
+  kind: z.literal("artistMap"),
+  scannedAt: z.string(),
+  params: z.object({
+    headphonesInstance: z.string(),
+    musicbrainzInstance: z.string(),
+  }),
+  resolved: z.number(),
+  ambiguous: z.number(),
+  unresolved: z.number(),
+  entries: z.array(ArtistMapEntrySchema),
+});
+
+const WantEntrySchema = z.object({
+  artist: z.string(),
+  artistName: z.string(),
+  releaseGroupId: z.string(),
+  title: z.string(),
+  kind: z.enum(["missing", "upgrade"]),
+  quality: z.string().nullable(),
+  targetQuality: z.string(),
+  primaryType: z.string().nullable(),
+  secondaryTypes: z.array(z.string()),
+  firstReleaseDate: z.string().nullable(),
+});
+
+const WantedSchema = z.object({
+  kind: z.literal("wanted"),
+  generatedAt: z.string(),
+  params: z.object({
+    artistMapName: z.string(),
+    musicbrainzInstance: z.string(),
+    targetQuality: z.string(),
+    uncertainMatchPresent: z.boolean(),
+  }),
+  total: z.number(),
+  missing: z.number(),
+  upgrade: z.number(),
+  wants: z.array(WantEntrySchema),
+});
+
 // --- SQL ---
 
 const TRACKS_SQL = `
@@ -2143,6 +2105,127 @@ SELECT t.filename, t.length, a.left_path, a.right_path
 FROM tracks t JOIN albums a ON t.album_id = a.id
 ORDER BY a.left_path, a.right_path, t.filename;`;
 
+// --- Artist resolution (resolve-artists) + want derivation (wanted) helpers
+// --- Both methods are the first to read ANOTHER swamp model instance's data
+// (context.readModelData) — see the two functions below for the shared,
+// defensive row-reading shape every downstream test in the RED-phase suites
+// exercises (missing capability, missing spec, and malformed rows must all
+// degrade to "nothing contributed", never an unhandled throw).
+
+/**
+ * Read rows from a model instance's data spec via context.readModelData,
+ * defaulting to [] when the capability itself, or the spec, is unavailable
+ * — this is the "no data yet" case (nobody scanned/synced this spec), which
+ * callers distinguish from a genuinely missing PREREQUISITE by checking the
+ * returned array's length themselves (see resolve-artists/wanted below).
+ */
+async function readRows(
+  context: {
+    readModelData?: (
+      instanceName: string,
+      specName: string,
+    ) => Promise<unknown[]>;
+  },
+  instanceName: string,
+  specName: string,
+): Promise<Record<string, unknown>[]> {
+  if (!context.readModelData) return [];
+  const rows = await context.readModelData(instanceName, specName);
+  return Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
+}
+
+/** A readModelData row's parsed content lives at row.attributes.<field>. */
+function rowAttrs(row: unknown): Record<string, unknown> {
+  const attrs = (row as { attributes?: unknown } | null | undefined)
+    ?.attributes;
+  return attrs && typeof attrs === "object"
+    ? (attrs as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * Search MusicBrainz for artist-name candidates — the resolve-artists
+ * fallback for library artists the headphones seed does not already cover.
+ * `@musicbrainz/api` owns the MusicBrainz HTTP integration (rate limiting
+ * included), so this routes through the swamp model instance the caller
+ * names as `musicbrainzInstance`: `runModel` invokes its `search-artist`
+ * method (handles only, per the swamp cross-model contract), then
+ * `readModelData` reads the written `artists` spec back.
+ */
+async function searchMusicBrainzArtists(
+  context: {
+    runModel?: (options: unknown) => Promise<unknown>;
+    readModelData?: (
+      instanceName: string,
+      specName: string,
+    ) => Promise<unknown[]>;
+  },
+  musicbrainzInstance: string,
+  name: string,
+): Promise<Candidate[]> {
+  if (!context.runModel) return [];
+  const query = `artist:"${escapeLuceneQuery(name)}"`;
+  await context.runModel({
+    definition: musicbrainzInstance,
+    method: "search-artist",
+    arguments: { query },
+  });
+  const rows = await readRows(context, musicbrainzInstance, "artists");
+  // search-artist always writes its result to the same resource name, so a
+  // busy resolve-artists run accumulates versions under that one name —
+  // take the one this call just wrote, not an earlier query's leftovers.
+  let latest: Record<string, unknown> | null = null;
+  for (const row of rows) {
+    if ((row as { isLatest?: unknown }).isLatest === true) latest = row;
+  }
+  if (!latest && rows.length > 0) latest = rows[rows.length - 1];
+  const attrs = rowAttrs(latest);
+  const artists = Array.isArray(attrs.artists) ? attrs.artists : [];
+  const candidates: Candidate[] = [];
+  for (const a of artists as Record<string, unknown>[]) {
+    if (typeof a?.id !== "string" || typeof a?.name !== "string") continue;
+    candidates.push({
+      id: a.id,
+      name: a.name,
+      sortName: typeof a["sort-name"] === "string"
+        ? (a["sort-name"] as string)
+        : undefined,
+    });
+  }
+  return candidates;
+}
+
+type ArtistMapEntry = {
+  artistKey: string;
+  artistName: string;
+  mbid: string | null;
+  status: "resolved" | "ambiguous" | "unresolved";
+  source: "seed" | "search" | null;
+  candidates: { id: string; name: string }[];
+};
+
+/**
+ * Best (highest-ranked) quality bucket across an album's tracks — reuses
+ * qualityBucket()/QUALITY_RANK so the OwnedAlbum `wanted` builds compares
+ * apples to apples against `targetQuality`.
+ */
+function albumQualityBucket(tracksAttr: unknown): QualityBucket {
+  const tracks = Array.isArray(tracksAttr) ? tracksAttr : [];
+  let best: QualityBucket = "unknown";
+  let bestRank = QUALITY_RANK.indexOf(best);
+  for (const t of tracks as Record<string, unknown>[]) {
+    const format = typeof t?.format === "string" ? t.format : "";
+    const bitrate = typeof t?.bitrateKbps === "number" ? t.bitrateKbps : null;
+    const bucket = qualityBucket(format, bitrate) as QualityBucket;
+    const rank = QUALITY_RANK.indexOf(bucket);
+    if (rank > bestRank) {
+      best = bucket;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
 // --- Model ---
 
 /**
@@ -2153,7 +2236,7 @@ ORDER BY a.left_path, a.right_path, t.filename;`;
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.08.02.1",
+  version: "2026.08.04.1",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2162,8 +2245,19 @@ export const model = {
         "Fix all 6 music-library-latent-bugs (verify per-file ffmpeg timeout + transport ceiling, path-traversal confinement, empty-ffprobe/JSON typed errors, RS-safe record framing, correct even-count median, bounded bpm tracks/failures) -- adds defaulted ffmpegDecodeTimeoutSec global arg + bpm maxTracks method arg; additive bpm schema fields only",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.04.1",
+      description:
+        "Add the wanted derivation: resolve-artists (artist name -> MBID map, seeded from a headphones instance, token-set MusicBrainz search fallback, ambiguous/unresolved parked for human review) and wanted (pure derivation of missing albums + quality upgrades over the cached map, MusicBrainz browse cache, and the album cube). Adds artistMap + wanted resources and the @magistr/music-wanted report; extracts normDupeKey/isNoiseGroup to extensions/lib/norm.ts to break a models<->lib import cycle (re-exported, so existing importers are unchanged); fixes running's bpm-pointer error which interpolated the non-existent context.modelName and rendered 'undefined'. Purely additive -- no stored resource is reshaped",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
-  reports: ["@magistr/music-verify-triage", "@magistr/music-bpm-running"],
+  reports: [
+    "@magistr/music-verify-triage",
+    "@magistr/music-bpm-running",
+    "@magistr/music-wanted",
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     library: {
@@ -2227,6 +2321,20 @@ export const model = {
     probe: {
       description: "Deep ffprobe result for a single file",
       schema: ProbeSchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
+    artistMap: {
+      description:
+        "Cached artist-name to MusicBrainz-ID map: seeded from headphones, backfilled by a token-set MusicBrainz search, ambiguous/unresolved artists parked for human review",
+      schema: ArtistMapSchema,
+      lifetime: "infinite",
+      garbageCollection: 5,
+    },
+    wanted: {
+      description:
+        "Want-set derived by diffing the cached MusicBrainz discography against the owned library cube, recomputed from scratch on every run",
+      schema: WantedSchema,
       lifetime: "infinite",
       garbageCollection: 10,
     },
@@ -2982,7 +3090,7 @@ export const model = {
           | null;
         if (!bpm?.tracks?.length) {
           throw new Error(
-            `No bpm analysis found at "${source}" — run: swamp model method run ${context.modelName} bpm` +
+            `No bpm analysis found at "${source}" — run: swamp model method run ${context.definition.name} bpm` +
               (args.pathPrefix
                 ? ` --input pathPrefix="${args.pathPrefix}"`
                 : ""),
@@ -3121,6 +3229,297 @@ export const model = {
             probedAt: new Date().toISOString(),
           },
         );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    "resolve-artists": {
+      description:
+        "Build a cached artist-name to MusicBrainz-ID map: seeds from the headphones instance's artist list, falls back to a token-set MusicBrainz search for library artists the seed doesn't cover, and parks ambiguous or unresolved artists for human review instead of guessing",
+      arguments: z.object({
+        headphonesInstance: z
+          .string()
+          .default("headphones")
+          .describe(
+            "swamp model instance name providing the headphones artist seed (spec: artists)",
+          ),
+        musicbrainzInstance: z
+          .string()
+          .default("musicbrainz")
+          .describe(
+            "swamp model instance name used for the MusicBrainz artist search fallback",
+          ),
+      }),
+      execute: async (args, context) => {
+        // seed: every headphones artist becomes a match candidate, keyed
+        // by ArtistID/ArtistName — the SAME shape matchArtist expects from
+        // a MusicBrainz search result, so both pass through one function.
+        const headphonesRows = await readRows(
+          context,
+          args.headphonesInstance,
+          "artists",
+        );
+        const seedCandidates: Candidate[] = [];
+        for (const row of headphonesRows) {
+          const list = rowAttrs(row).artists;
+          if (!Array.isArray(list)) continue;
+          for (const a of list as Record<string, unknown>[]) {
+            const id = typeof a?.ArtistID === "string" ? a.ArtistID : null;
+            const name = typeof a?.ArtistName === "string"
+              ? a.ArtistName
+              : null;
+            if (id && name) seedCandidates.push({ id, name });
+          }
+        }
+
+        // the artists NEEDING resolution: this model's own artist
+        // dimension (scan's output), not merely the seed's coverage.
+        const libraryRows = await readRows(
+          context,
+          context.definition.name,
+          "artist",
+        );
+
+        const entries: ArtistMapEntry[] = [];
+        let resolved = 0;
+        let ambiguous = 0;
+        let unresolved = 0;
+
+        for (const row of libraryRows) {
+          const attrs = rowAttrs(row);
+          const artistKey = typeof attrs.key === "string" ? attrs.key : null;
+          const artistName = typeof attrs.name === "string" ? attrs.name : null;
+          if (!artistKey || !artistName) continue;
+
+          let mbid: string | null = null;
+          let status: ArtistMapEntry["status"] = "unresolved";
+          let source: ArtistMapEntry["source"] = null;
+          let candidates: { id: string; name: string }[] = [];
+
+          const seedMatch = matchArtist(artistName, seedCandidates);
+          if (seedMatch.kind === "resolved") {
+            status = "resolved";
+            mbid = seedMatch.mbid;
+            source = "seed";
+          } else if (seedMatch.kind === "ambiguous") {
+            // ambiguous in the seed is parked, never disambiguated by a
+            // search — the collision is in the name itself.
+            status = "ambiguous";
+            candidates = seedMatch.candidates.map((c) => ({
+              id: c.id,
+              name: c.name,
+            }));
+          } else {
+            const searchCandidates = await searchMusicBrainzArtists(
+              context,
+              args.musicbrainzInstance,
+              artistName,
+            );
+            const searchMatch = matchArtist(artistName, searchCandidates);
+            if (searchMatch.kind === "resolved") {
+              status = "resolved";
+              mbid = searchMatch.mbid;
+              source = "search";
+            } else if (searchMatch.kind === "ambiguous") {
+              status = "ambiguous";
+              candidates = searchMatch.candidates.map((c) => ({
+                id: c.id,
+                name: c.name,
+              }));
+            }
+          }
+
+          if (status === "resolved") resolved++;
+          else if (status === "ambiguous") ambiguous++;
+          else unresolved++;
+
+          entries.push({
+            artistKey,
+            artistName,
+            mbid,
+            status,
+            source,
+            candidates,
+          });
+        }
+
+        const handle = await context.writeResource("artistMap", "artist-map", {
+          kind: "artistMap",
+          scannedAt: new Date().toISOString(),
+          params: {
+            headphonesInstance: args.headphonesInstance,
+            musicbrainzInstance: args.musicbrainzInstance,
+          },
+          resolved,
+          ambiguous,
+          unresolved,
+          entries,
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    wanted: {
+      description:
+        "Pure derivation of the want-set (no network): diffs the MusicBrainz browse cache against the owned library cube via deriveWanted, using the artistMap resolve-artists wrote to identify each artist",
+      arguments: z.object({
+        artistMapName: z
+          .string()
+          .default("artist-map")
+          .describe("Name of the artistMap resource resolve-artists wrote"),
+        musicbrainzInstance: z
+          .string()
+          .default("musicbrainz")
+          .describe(
+            "swamp model instance name providing the MusicBrainz release-group browse cache (spec: browse)",
+          ),
+        targetQuality: z
+          .enum(["lossless", "lossy-high", "lossy-mid", "lossy-low", "unknown"])
+          .default("lossless")
+          .describe(
+            "Minimum quality bucket before an owned album counts as an upgrade want",
+          ),
+        uncertainMatchPresent: z
+          .boolean()
+          .default(true)
+          .describe(
+            "Whether an uncertain title match against the owned cube counts as present (no want) or missing",
+          ),
+      }),
+      execute: async (args, context) => {
+        if (!context.readResource) {
+          throw new Error(
+            "readResource unavailable — cannot load the artistMap resource",
+          );
+        }
+        const artistMap = await context.readResource(args.artistMapName) as
+          | { entries?: unknown }
+          | null;
+        const mapEntries = Array.isArray(artistMap?.entries)
+          ? (artistMap.entries as Array<Record<string, unknown>>)
+          : null;
+        if (!mapEntries) {
+          throw new Error(
+            `No artistMap found at "${args.artistMapName}" — run: ` +
+              `swamp model method run ${context.definition.name} resolve-artists`,
+          );
+        }
+
+        const browseRows = await readRows(
+          context,
+          args.musicbrainzInstance,
+          "browse",
+        );
+        if (browseRows.length === 0) {
+          throw new Error(
+            `No MusicBrainz browse cache found for instance "${args.musicbrainzInstance}" ` +
+              `— run: swamp model method run ${args.musicbrainzInstance} browse`,
+          );
+        }
+
+        const resolvedArtists: ResolvedArtist[] = [];
+        for (const e of mapEntries) {
+          if (
+            e.status === "resolved" &&
+            typeof e.mbid === "string" &&
+            typeof e.artistKey === "string" &&
+            typeof e.artistName === "string"
+          ) {
+            resolvedArtists.push({
+              artistKey: e.artistKey,
+              artistName: e.artistName,
+              mbid: e.mbid,
+            });
+          }
+        }
+
+        // desired discography per resolved artist, keyed by artistKey (not
+        // mbid) — browse rows carry HYPHENATED MusicBrainz field names.
+        const desired: Record<string, DesiredReleaseGroup[]> = {};
+        for (const a of resolvedArtists) {
+          const groups: DesiredReleaseGroup[] = [];
+          for (const row of browseRows) {
+            const attrs = rowAttrs(row);
+            if (attrs.linkedId !== a.mbid) continue;
+            const results = Array.isArray(attrs.results) ? attrs.results : [];
+            for (const r of results as Record<string, unknown>[]) {
+              if (typeof r?.id !== "string" || typeof r?.title !== "string") {
+                continue;
+              }
+              groups.push({
+                id: r.id,
+                title: r.title,
+                primaryType: typeof r["primary-type"] === "string"
+                  ? (r["primary-type"] as string)
+                  : null,
+                secondaryTypes: Array.isArray(r["secondary-types"])
+                  ? (r["secondary-types"] as string[])
+                  : [],
+                firstReleaseDate: typeof r["first-release-date"] === "string"
+                  ? (r["first-release-date"] as string)
+                  : null,
+              });
+            }
+          }
+          desired[a.artistKey] = groups;
+        }
+
+        // owned cube: this model's own album facts, joined to a resolved
+        // artistKey by normalized artist NAME (albums carry the artist
+        // name, not the artistMap's opaque key).
+        const artistKeyByNormName = new Map<string, string>();
+        for (const a of resolvedArtists) {
+          artistKeyByNormName.set(normArtistKey(a.artistName), a.artistKey);
+        }
+        const albumRows = await readRows(
+          context,
+          context.definition.name,
+          "album",
+        );
+        const owned: OwnedAlbum[] = [];
+        for (const row of albumRows) {
+          const attrs = rowAttrs(row);
+          const artistName = typeof attrs.artist === "string"
+            ? attrs.artist
+            : null;
+          const title = typeof attrs.title === "string" ? attrs.title : null;
+          if (!artistName || !title) continue;
+          const artistKey = artistKeyByNormName.get(
+            normArtistKey(artistName),
+          );
+          if (!artistKey) continue;
+          owned.push({
+            artistKey,
+            title,
+            year: typeof attrs.year === "number" ? attrs.year : null,
+            qualityBucket: albumQualityBucket(attrs.tracks),
+          });
+        }
+
+        const now = new Date().toISOString();
+        const { wants } = deriveWanted(
+          { artists: resolvedArtists, desired, owned },
+          {
+            now,
+            targetQuality: args.targetQuality,
+            uncertainMatchPresent: args.uncertainMatchPresent,
+          },
+        );
+
+        const handle = await context.writeResource("wanted", "wanted", {
+          kind: "wanted",
+          generatedAt: now,
+          params: {
+            artistMapName: args.artistMapName,
+            musicbrainzInstance: args.musicbrainzInstance,
+            targetQuality: args.targetQuality,
+            uncertainMatchPresent: args.uncertainMatchPresent,
+          },
+          total: wants.length,
+          missing: wants.filter((w) => w.kind === "missing").length,
+          upgrade: wants.filter((w) => w.kind === "upgrade").length,
+          wants,
+        });
         return { dataHandles: [handle] };
       },
     },

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/music-library"
-version: "2026.08.02.1"
+version: "2026.08.04.1"
 description: |
   Multidimensional music library catalog built WITHOUT touching the
   filesystem: the inventory and raw tags come from an existing gonic scan
@@ -51,6 +51,7 @@ models:
 reports:
   - extensions/reports/verify_triage.ts
   - extensions/reports/bpm_running.ts
+  - extensions/reports/wanted.ts
 
 additionalFiles:
   - README.md

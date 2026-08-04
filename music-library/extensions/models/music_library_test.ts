@@ -25,6 +25,15 @@ import {
   parseTrackFilename,
   slugify,
 } from "./music_library.ts";
+import headphonesArtistsFixture from "../../fixtures/headphones_artists.json" with {
+  type: "json",
+};
+import mbReleaseGroupsFixture from "../../fixtures/mb_release_groups.json" with {
+  type: "json",
+};
+import mbReleaseGroupsEmptyFixture from "../../fixtures/mb_release_groups_empty.json" with {
+  type: "json",
+};
 
 // --- fixEncoding ---
 
@@ -654,4 +663,81 @@ Deno.test("bpmHistogram: buckets by 10 bpm", () => {
   assertEquals(hist["140-150"], 1);
   assertEquals(hist["90-100"], 1);
   assertEquals(Object.keys(hist).length, 3);
+});
+
+// ---------------------------------------------------------------------------
+// Contract fixtures for resolve-artists / wanted (RED phase — no method
+// reads these yet; these tests pin the WIRE SHAPE the future
+// context.readModelData(...) mock rows are built from in
+// music_library_methods_test.ts / music_library_adversarial_test.ts).
+// Static JSON imports only — there is no --allow-read on the test task, so
+// a runtime Deno.readTextFile would fail; `with { type: "json" }` is
+// resolved by the module loader, not the permission system.
+// ---------------------------------------------------------------------------
+
+Deno.test("contract: fixtures/headphones_artists.json shapes { artists: [{ArtistID, ArtistName, Status}], total, timestamp }", () => {
+  const f = headphonesArtistsFixture as {
+    artists: Array<{ ArtistID: string; ArtistName: string; Status: string }>;
+    total: number;
+    timestamp: string;
+  };
+  assertEquals(Object.keys(f).sort(), ["artists", "timestamp", "total"]);
+  assert(Array.isArray(f.artists));
+  assertEquals(f.total, f.artists.length);
+  assertEquals(typeof f.timestamp, "string");
+  for (const a of f.artists) {
+    assertEquals(Object.keys(a).sort(), ["ArtistID", "ArtistName", "Status"]);
+    assertEquals(typeof a.ArtistID, "string");
+    assertEquals(typeof a.ArtistName, "string");
+    assertEquals(typeof a.Status, "string");
+  }
+});
+
+const BROWSE_KEYS = [
+  "count",
+  "entity",
+  "linkedEntity",
+  "linkedId",
+  "offset",
+  "results",
+  "timestamp",
+].sort();
+
+Deno.test("contract: fixtures/mb_release_groups.json has EXACTLY the 7 browse-cache keys, results carry HYPHENATED MusicBrainz field names", () => {
+  const f = mbReleaseGroupsFixture as {
+    entity: string;
+    linkedEntity: string;
+    linkedId: string;
+    results: Array<Record<string, unknown>>;
+    count: number;
+    offset: number;
+    timestamp: string;
+  };
+  assertEquals(Object.keys(f).sort(), BROWSE_KEYS);
+  assert(f.results.length > 0, "sanity: this fixture must carry real rows");
+  assertEquals(f.count, f.results.length);
+  for (const rg of f.results) {
+    assert(Object.hasOwn(rg, "primary-type"), "must use hyphenated key");
+    assert(Object.hasOwn(rg, "first-release-date"), "must use hyphenated key");
+    assert(Object.hasOwn(rg, "secondary-types"), "must use hyphenated key");
+    assert(!Object.hasOwn(rg, "primaryType"), "must NOT be camelCased");
+    assert(!Object.hasOwn(rg, "firstReleaseDate"), "must NOT be camelCased");
+    assert(!Object.hasOwn(rg, "secondaryTypes"), "must NOT be camelCased");
+  }
+});
+
+Deno.test("contract: fixtures/mb_release_groups_empty.json has the SAME 7 keys as a populated browse cache, with results: [] and count: 0", () => {
+  const f = mbReleaseGroupsEmptyFixture as {
+    entity: string;
+    linkedEntity: string;
+    linkedId: string;
+    results: unknown[];
+    count: number;
+    offset: number;
+    timestamp: string;
+  };
+  assertEquals(Object.keys(f).sort(), BROWSE_KEYS);
+  assertEquals(f.results, []);
+  assertEquals(f.count, 0);
+  assertEquals(typeof f.linkedId, "string");
 });

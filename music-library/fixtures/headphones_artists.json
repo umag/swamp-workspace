@@ -1,0 +1,36 @@
+{
+  "artists": [
+    {
+      "ArtistID": "deadbeef-c001-4a57-8bad-f00ddeadbeef",
+      "ArtistName": "Halcyon",
+      "Status": "Active"
+    },
+    {
+      "ArtistID": "cafebabe-fa57-4f00-9dec-afbadcafebab",
+      "ArtistName": "Velvet Static",
+      "Status": "Active"
+    },
+    {
+      "ArtistID": "feedface-abad-4caf-8e5c-a1ab1efeedfa",
+      "ArtistName": "Marrow, Iris",
+      "Status": "Active"
+    },
+    {
+      "ArtistID": "deadc0de-f01d-4ab1-8ec0-01d00ddeadc0",
+      "ArtistName": "Coastline [Dub]",
+      "Status": "Active"
+    },
+    {
+      "ArtistID": "decafbad-5ca1-4ab1-8e00-1d00ddecafba",
+      "ArtistName": "Drift Collective",
+      "Status": "Paused"
+    },
+    {
+      "ArtistID": "fa57f00d-ab1e-45ca-9c00-1d00dfa57f00",
+      "ArtistName": "Nebula Choir",
+      "Status": "Active"
+    }
+  ],
+  "total": 6,
+  "timestamp": "2025-11-03T14:22:10Z"
+}

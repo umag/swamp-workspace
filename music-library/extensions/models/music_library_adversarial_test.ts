@@ -56,6 +56,15 @@ import verifyFilesFixture from "../../fixtures/verify_files.json" with {
   type: "json",
 };
 import probeFixture from "../../fixtures/probe.json" with { type: "json" };
+import headphonesArtistsFixture from "../../fixtures/headphones_artists.json" with {
+  type: "json",
+};
+import mbReleaseGroupsFixture from "../../fixtures/mb_release_groups.json" with {
+  type: "json",
+};
+import mbReleaseGroupsEmptyFixture from "../../fixtures/mb_release_groups_empty.json" with {
+  type: "json",
+};
 
 // ---------------------------------------------------------------------------
 // Harness (duplicated per this repo's suite convention)
@@ -84,7 +93,14 @@ function makeCtx(
     store,
     ctx: {
       globalArgs: gArgs(globalArgOverrides),
-      modelName: "music",
+      // Mirror the REAL MethodContext surface — no `modelName` field exists;
+      // the instance name is `definition.name`. See methods_test.ts.
+      definition: {
+        id: "f5fa0998-051a-4c25-acce-067692769c47",
+        name: "music",
+        version: 1,
+        tags: {},
+      },
       writeResource: (spec: string, name: string, payload: unknown) => {
         written.push({
           spec,
@@ -739,6 +755,156 @@ Deno.test("safe: a hostile host/sshUser lands as ONE local argv element each —
 });
 
 // ---------------------------------------------------------------------------
+// resolve-artists / wanted — RED phase adversarial cases. Both `execute`
+// bodies are stubs that `throw new Error("not implemented")`, so every test
+// below fails on that thrown error today (an uncaught rejection from the
+// plain `await run(...)` calls) — behaviour is missing, the signatures are
+// not. Harness duplicated per this file's own convention (see the top-of-
+// file comment).
+//
+// Two adversarial claims characterized here:
+//  - a browse-cache row that WAS synced but came back with `count: 0` /
+//    `results: []` is a legitimate empty discography, not an error;
+//  - a readModelData row missing the field the method actually needs
+//    (a malformed upstream row), or an upstream spec that legitimately
+//    returns `[]` (nobody tracked yet / nothing scanned yet), must not
+//    crash with a raw property-access error — both degrade to "nothing
+//    contributed here", never an unhandled throw.
+// ---------------------------------------------------------------------------
+
+function mdRow(attributes: Record<string, unknown>) {
+  return { attributes };
+}
+
+type ModelData = Record<string, Record<string, unknown[]>>;
+
+function makeModelDataCtx(
+  modelData: ModelData = {},
+  seed: Store = {},
+  globalArgOverrides: Record<string, unknown> = {},
+) {
+  const base = makeCtx(globalArgOverrides, seed);
+  const ctx = {
+    ...base.ctx,
+    readModelData: (instanceName: string, specName: string) =>
+      Promise.resolve(modelData[instanceName]?.[specName] ?? []),
+    runModel: (..._callArgs: unknown[]) => Promise.resolve({ dataHandles: [] }),
+  };
+  return { ...base, ctx };
+}
+
+// A single resolved artist (Halcyon — the SAME artist mb_release_groups_
+// empty.json's linkedId belongs to) so the empty-discography test below
+// isolates that one artist's browse row without any other moving part.
+const ARTIST_MAP_HALCYON_ONLY = {
+  kind: "artistMap",
+  scannedAt: "2026-08-01T00:00:00Z",
+  params: {
+    headphonesInstance: "headphones",
+    musicbrainzInstance: "musicbrainz",
+  },
+  resolved: 1,
+  ambiguous: 0,
+  unresolved: 0,
+  entries: [
+    {
+      artistKey: "halcyon",
+      artistName: "Halcyon",
+      mbid: "deadbeef-c001-4a57-8bad-f00ddeadbeef",
+      status: "resolved",
+      source: "seed",
+      candidates: [],
+    },
+  ],
+};
+
+const ARTIST_MAP_VELVET_STATIC_ONLY = {
+  kind: "artistMap",
+  scannedAt: "2026-08-01T00:00:00Z",
+  params: {
+    headphonesInstance: "headphones",
+    musicbrainzInstance: "musicbrainz",
+  },
+  resolved: 1,
+  ambiguous: 0,
+  unresolved: 0,
+  entries: [
+    {
+      artistKey: "velvet-static",
+      artistName: "Velvet Static",
+      mbid: "cafebabe-fa57-4f00-9dec-afbadcafebab",
+      status: "resolved",
+      source: "seed",
+      candidates: [],
+    },
+  ],
+};
+
+Deno.test("wanted: a browse row with count:0/results:[] (Halcyon actually has no releases) is a LEGITIMATE empty discography — no error, zero wants for that artist", async () => {
+  const { ctx, written } = makeModelDataCtx(
+    {
+      musicbrainz: { browse: [mdRow(mbReleaseGroupsEmptyFixture)] },
+      music: { album: [] },
+    },
+    { "artist-map": ARTIST_MAP_HALCYON_ONLY },
+  );
+  await run("wanted", {}, ctx);
+  const res = written.find((w) => w.spec === "wanted")!;
+  assertEquals(res.payload.wants, []);
+  assertEquals(res.payload.total, 0);
+});
+
+Deno.test("resolve-artists: a headphones row missing the 'artists' field entirely does not crash — treated as an empty seed contribution", async () => {
+  const { ctx, written } = makeModelDataCtx({
+    headphones: {
+      artists: [mdRow({ total: 0, timestamp: "2025-11-03T00:00:00Z" })],
+    },
+    music: { artist: [] },
+  });
+  await run("resolve-artists", {}, ctx);
+  const res = written.find((w) => w.spec === "artistMap")!;
+  assertEquals(res.payload.entries, []);
+  assertEquals(res.payload.resolved, 0);
+  assertEquals(res.payload.ambiguous, 0);
+  assertEquals(res.payload.unresolved, 0);
+});
+
+Deno.test("wanted: a browse row missing the 'results' field entirely does not crash — treated as no desired releases for that artist, not a property-access error", async () => {
+  const { ctx, written } = makeModelDataCtx(
+    {
+      musicbrainz: {
+        browse: [
+          mdRow({
+            entity: "release-group",
+            linkedEntity: "artist",
+            linkedId: "deadbeef-c001-4a57-8bad-f00ddeadbeef",
+          }),
+        ],
+      },
+      music: { album: [] },
+    },
+    { "artist-map": ARTIST_MAP_HALCYON_ONLY },
+  );
+  await run("wanted", {}, ctx);
+  const res = written.find((w) => w.spec === "wanted")!;
+  assertEquals(res.payload.wants, []);
+});
+
+Deno.test("wanted: readModelData returning [] for the album cube (nothing scanned/owned yet) is handled gracefully, not an error", async () => {
+  const { ctx, written } = makeModelDataCtx(
+    {
+      musicbrainz: { browse: [mdRow(mbReleaseGroupsFixture)] },
+      music: { album: [] },
+    },
+    { "artist-map": ARTIST_MAP_VELVET_STATIC_ONLY },
+  );
+  await run("wanted", {}, ctx);
+  const res = written.find((w) => w.spec === "wanted")!;
+  assert(Array.isArray(res.payload.wants));
+  assertEquals(res.payload.total, (res.payload.wants as unknown[]).length);
+});
+
+// ---------------------------------------------------------------------------
 // Fixtures-secret-scan — mechanical backstop over the committed corpus
 // ---------------------------------------------------------------------------
 
@@ -770,6 +936,9 @@ const FIXTURES: Record<string, unknown> = {
   "genres.json": genresFixture,
   "verify_files.json": verifyFilesFixture,
   "probe.json": probeFixture,
+  "headphones_artists.json": headphonesArtistsFixture,
+  "mb_release_groups.json": mbReleaseGroupsFixture,
+  "mb_release_groups_empty.json": mbReleaseGroupsEmptyFixture,
 };
 
 Deno.test("fixtures-secret-scan: no string leaf in any committed fixture matches a real RFC1918 address, a real *.aopab.art host, a PEM marker, or a high-entropy token shape", () => {

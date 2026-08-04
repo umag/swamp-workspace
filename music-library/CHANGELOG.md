@@ -1,5 +1,79 @@
 # Changelog
 
+## 2026.08.04.1
+
+Adds the **wanted derivation** — "what music do I want that I do not have" as a
+derived, recomputable set rather than a stored status. Phase 1 of replacing the
+unmaintained Headphones daemon. Additive only: two new methods, two new
+resources, one new report, one new shared lib module; the `upgrades[]` entry is
+identity (`upgradeAttributes: (old) => old`) because no stored resource is
+reshaped.
+
+The load-bearing design decision is that a want is a **value object**, not a row
+with a status. `Wanted` is recomputed from scratch on every run, so it cannot
+drift — in direct contrast to the system it replaces, whose mutable `Status`
+column had drifted to 944 albums marked `Downloaded` against 703 actually
+present on disk. There is deliberately no per-want `queued`/`snatched`/`done`
+field; downstream acquisition state belongs to the acquisition context, keyed by
+want identity, never written back onto the want.
+
+- **New method `resolve-artists`** — builds a cached artist-name →
+  MusicBrainz-ID map. Seeds free from the ~1,375 MB-keyed artists already in a
+  headphones instance, then falls back to token-set MusicBrainz search for
+  library artists the seed does not cover. Ambiguous and unresolved artists are
+  **parked for human review, never guessed** — a name matching two distinct
+  MBIDs is a legitimate ambiguous outcome, not something to resolve by picking
+  the first candidate. `resolved`/`ambiguous`/`unresolved` are top-level
+  counters on the written resource so a run that parked 300 artists is visibly
+  different at the CLI from one that resolved them.
+- **New method `wanted`** — a pure derivation (no network; the test task grants
+  no `--allow-net`, which enforces it structurally) over the cached artist map,
+  the MusicBrainz `browse` cache, and the existing gonic-sourced album cube.
+  Emits `missing` albums and `upgrade` candidates (owned but below a target
+  quality bucket). Entries are deliberately flat so a
+  `swamp data query
+  --select` expression reaches `artist`, `releaseGroupId`,
+  `kind` and quality without traversing nested optionals — this repo queries
+  with `--select`, not `jq`, so the field shape is a consumer contract and is
+  pinned by a fixture test.
+- **New shared lib `extensions/lib/artist_match.ts`** — order-independent
+  token-set artist matching plus Lucene metacharacter escaping. The matcher
+  exists because exact-string matching against MusicBrainz fails in BOTH
+  directions: MB returns person names in sort form, so `Miles Davis` is wrongly
+  rejected against `Davis, Miles`, while same-token artists are wrongly accepted
+  at score 100 (`Bill Brown` → `James Brown`, `Two Worlds II` →
+  `Oscar
+  Hammerstein II`). Escaping matters because real artist names carry
+  Lucene metacharacters — `AC/DC`, `Godspeed You! Black Emperor`,
+  `[dunkelbunt]`, `Therapy?`, `Sunn O)))`, `+/-`; a property test asserts no
+  unescaped metacharacter survives for arbitrary input.
+- **New shared lib `extensions/lib/wanted.ts`** — the derivation itself. Title
+  matching reuses `normDupeKey` rather than introducing a second normaliser.
+  Certain/uncertain/miss is exact key equality / token-subset containment / no
+  relation, and an uncertain match defaults to **present** so a fuzzy title
+  never triggers a junk download; the bias is a documented method argument,
+  tested in both directions.
+- **New shared lib `extensions/lib/norm.ts`** — `normDupeKey` and `isNoiseGroup`
+  extracted from `music_library.ts`. This breaks a genuine import cycle: `lib/`
+  is the dependency-free pure-domain layer that models import FROM, and having
+  `lib/wanted.ts` reach back into a 3,128-line model file inverted that. The
+  model re-exports `normDupeKey`, so existing importers are unchanged. Pure
+  move, no behaviour change.
+- **New report `@magistr/music-wanted`** — renders the gap: totals, missing by
+  artist, upgrade candidates grouped by current quality, and the artists parked
+  as ambiguous/unresolved. That last section is the point of parking rather than
+  guessing, so it is first-class output, not an appendix.
+- **Fixed (pre-existing)** — `running`'s "no bpm analysis" error interpolated
+  `context.modelName`, which is not a field on swamp's `MethodContext`, so users
+  were told to run `swamp model method run undefined bpm`. Now
+  `context.definition.name`. The bug survived a Grade-A five-suite test corpus
+  because the existing assertion stopped at the static prefix and never
+  inspected the interpolated value, and because the test fake invented a
+  `modelName` field — so the double agreed with code the runtime disagreed with.
+  The new regression test asserts the resolved instance name appears AND that
+  the string `undefined` does not, and was verified to fail against the old code
+  before being accepted.
+
 ## 2026.08.02.1
 
 Real-fixes all 6 latent bugs characterized by the test-only backfill below

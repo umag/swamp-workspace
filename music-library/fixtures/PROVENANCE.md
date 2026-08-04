@@ -72,3 +72,64 @@ The adversarial suite's fixtures-secret-scan (mirroring the
 objects for RFC1918/real-host/PEM/high-entropy shapes as a mechanical backstop —
 not the primary control. The primary control is this prohibition plus never
 running a live call in the first place.
+
+## headphones + musicbrainz fixtures (`headphones_artists.json`, `mb_release_groups.json`)
+
+These two files pin the wanted-list feature's two new external wire shapes,
+alongside the same standing prohibition as everything above: **no live capture
+was performed against any real `headphones` or `musicbrainz` instance or API in
+this homelab**, and none is permitted for anyone regenerating this corpus later.
+No `swamp model method run` call was made against a real headphones or
+musicbrainz instance while authoring these fixtures; every artist name,
+release-group title, and identifier below is invented.
+
+| File                      | Shape                                                                                                                                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `headphones_artists.json` | headphones artist-index response — `{ artists: [{ ArtistID, ArtistName, Status }], total, timestamp }`                                                                                                 |
+| `mb_release_groups.json`  | MusicBrainz `browse` response for `entity=release-group&artist=<id>` — `{ entity, linkedEntity, linkedId, results[], count, offset, timestamp }`                                                        |
+| `mb_release_groups_empty.json` | The SAME browse shape for an artist with a legitimately empty discography (`results: []`, `count: 0`) — a separate file so each fixture's top level mirrors the wire response exactly            |
+
+### All MBIDs/UUIDs in this corpus are invented
+
+Every `ArtistID`, release-group `id`, and `linkedId` value in these two files is
+a **hand-invented, syntactically-valid UUID** (correct 8-4-4-4-12 hex form) —
+never a real MusicBrainz identifier copied from `musicbrainz.org` or from any
+real headphones instance. This matters specifically for this corpus: a real MBID
+is a stable, public pointer to one real artist, so pasting one into a fixture —
+even attached to an invented display name — would leak a factual claim about the
+owner's actual collection ("this real artist is tracked/wanted"). Inventing the
+UUID removes that leak entirely. The UUIDs here are built from well-known
+hexspeak placeholder words (`deadbeef`, `cafebabe`, `feedface`, `deadc0de`,
+`decafbad`, `fa57f00d`, `f01dab1e`, `5ca1ab1e`, `c001d00d`, `da7aba5e`,
+`abadcafe`, `8badf00d`, `baadf00d`) so they are visibly synthetic to anyone
+reading the fixture, not just statistically unlikely to collide with a real one.
+`mb_release_groups.json`'s `linkedId` intentionally reuses
+`headphones_artists.json`'s `Velvet Static` `ArtistID` (and
+`emptyBrowse.linkedId` reuses the `Halcyon` `ArtistID`) purely for corpus
+coherence — one invented artist across both fixtures — not because either ID is
+real.
+
+### What each fixture's rows exercise on purpose
+
+`headphones_artists.json`'s 6 entries exercise: a plain single-token name
+(`Halcyon`), a multi-token name (`Velvet Static`), a name already in MusicBrainz
+`"Last, First"` sort-name form (`Marrow, Iris` — so downstream sort-name
+matching logic has a case where display name and sort name coincide), a name
+containing a Lucene metacharacter (`Coastline [Dub]`, brackets), a `Paused`
+status (`Drift Collective`, the only non-`Active` row), and one more plain
+multi-token name (`Nebula Choir`) to round out `total: 6`.
+
+`mb_release_groups.json`'s 7 `results` rows exercise: a plain `Album`
+(`Salt Static`), an `EP` (`Night Coil`), a `Single` (`Glass Horizon`), a
+`secondary-types: ["Live"]` release (`Salt Static (Live at Harbor Hall)`), a
+`secondary-types: ["Compilation"]` release
+(`Velvet Static: The Collected
+Works`), a release with a FUTURE
+`first-release-date` of `2099-06-15` well beyond 2030 (`Static Horizon`, to
+exercise date-sanity handling), and a title that differs from a plausible
+on-disk directory name only by bracketed noise (`Salt Static (Remastered 2015)`
+vs. the plain `Salt Static` row above, to exercise title-normalisation
+matching). The nested `emptyBrowse` object is a second, independent browse
+response with `results: []` and `count: 0` — a legitimately-empty discography
+for a different artist, distinguishing "we asked MusicBrainz and it has nothing"
+(cached empty) from "we never asked" (no cache entry at all).
