@@ -107,7 +107,7 @@ stays green UNCHANGED — the extraction's proof of behaviour preservation — p
 `search-artists-batch`'s happy path (distinct queries never cross-mapped to each
 other's results), generated `batchId`, and duplicate-query dedup.
 `musicbrainz_coverage_test.ts`: a new closed-set
-`KNOWN_METHODS`/`KNOWN_RESOURCES` enumeration (18 methods, 12 resources — this
+`KNOWN_METHODS`/`KNOWN_RESOURCES` enumeration (19 methods, 12 resources — this
 model had none before, only per-feature pins), plus the payload-budget
 regression pin (a full MusicBrainz artist object writes a row whose artists
 carry none of `area`/`begin-area`/`life-span`/`aliases`/`tags`). 197 tests after

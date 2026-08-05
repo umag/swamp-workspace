@@ -1058,6 +1058,26 @@ Deno.test("projectArtistCandidates: drops area/begin-area/life-span/aliases/tags
   assertEquals(Object.keys(projected).sort(), ["id", "name", "sort-name"]);
 });
 
+Deno.test("projectArtistCandidates: a hit missing id or name is DROPPED, not substituted with empty strings", () => {
+  const hits = [
+    { id: "cafebabe-0001-4a57-8bad-f00dfeedca01", name: "Fixture Real Hit" },
+    { name: "Fixture Missing Id" }, // no `id` at all
+    { id: "cafebabe-0002-4a57-8bad-f00dfeedca02" }, // no `name` at all
+    { id: "", name: "Fixture Empty Id" }, // `id` present but empty
+    { id: "cafebabe-0003-4a57-8bad-f00dfeedca03", name: "" }, // `name` present but empty
+    { id: 12345, name: "Fixture Non-String Id" }, // `id` wrong type
+    { id: "cafebabe-0004-4a57-8bad-f00dfeedca04", name: null }, // `name` wrong type
+  ];
+  const projected = projectArtistCandidates(
+    hits as unknown as Record<string, unknown>[],
+  );
+  assertEquals(
+    projected,
+    [{ id: "cafebabe-0001-4a57-8bad-f00dfeedca01", name: "Fixture Real Hit" }],
+    'every malformed hit must be dropped outright — never survive as {id: "", name: ""}, which would later false-match a zero-token library artist name',
+  );
+});
+
 // ---------------------------------------------------------------------------
 // dedupeQueries / planSearchBatch / deriveMaxDurationMs — search-artists-
 // batch's pure planning helpers (step 4). Genuinely pure — no clock read, no

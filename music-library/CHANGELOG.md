@@ -22,6 +22,13 @@ issues EXACTLY ONE call to `@magistr/musicbrainz`'s new `search-artists-batch`
 method — deterministically selecting its own result row by a generated `batchId`
 correlation identity (never `isLatest`/array order, which nothing in this
 codebase ever set). Zero names needing a search means zero `runModel` calls.
+That call passes `limit: 25` explicitly — the candidate window is the SAME 25
+the deleted per-artist `search-artist` path implicitly got from MusicBrainz's
+own `/ws/2` default, not `search-artists-batch`'s own narrower default of 10 (a
+deliberate choice for that method's other callers, left unchanged). Without the
+explicit override, a duplicate MBID ranked 11-25 would fall outside the window
+and `matchArtist` would auto-pick a single `resolved` MBID instead of correctly
+parking the artist as `ambiguous`.
 
 `resolve-artists` also now LOADS its own prior output (`context.readResource`, a
 NEW capability requirement for this method, optional-chained so an absent prior
@@ -80,7 +87,7 @@ sits beside the cache it governs.
 
 ### Tests
 
-213 tests before this change, 227 after — all integrated into the five existing
+213 tests before this change, 231 after — all integrated into the five existing
 role-assigned suites, no sixth file. New fixture
 `fixtures/mb_artist_search_batch.json` (hand-authored synthetic, hexspeak MBIDs,
 registered in both `music_library_test.ts`'s contract-fixture pin and the

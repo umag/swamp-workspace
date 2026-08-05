@@ -935,7 +935,7 @@ Deno.test("sync-artist-discographies: a discography that ends naturally within t
 // pins (one existed, above) — so surface growth failed nothing
 // automatically, which is exactly how search-artists-batch nearly shipped
 // unenumerated. Seeded from model.methods/model.resources AS THEY STAND
-// after step 6 (18 methods, 12 resources) — must be updated in the SAME
+// after step 6 (19 methods, 12 resources) — must be updated in the SAME
 // change that adds a method or resource, not as an afterthought.
 // ---------------------------------------------------------------------------
 
@@ -976,7 +976,7 @@ const KNOWN_RESOURCES = [
   "missingReleases",
 ].sort();
 
-Deno.test("model surface: methods enumerate to EXACTLY the known 18 — a new method must be added here too", () => {
+Deno.test("model surface: methods enumerate to EXACTLY the known 19 — a new method must be added here too", () => {
   assertEquals(Object.keys(model.methods).sort(), KNOWN_METHODS);
 });
 

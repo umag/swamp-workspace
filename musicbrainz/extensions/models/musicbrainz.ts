@@ -761,20 +761,31 @@ export interface CandidateProjection {
  * full-size batch. A pure key-set projection: output keys are always a
  * subset of `{id, name, sort-name}` and always contain `id` + `name`,
  * regardless of what extra keys the input carries.
+ *
+ * A hit missing a non-empty `id` or `name` is DROPPED, not substituted with
+ * `""` — mirroring the deleted `searchMusicBrainzArtists`, which dropped
+ * malformed hits outright. Substituting empty strings would let a
+ * `{id: "", name: ""}` row survive into the written batch and later pass
+ * `matchArtist`'s `typeof === "string"` guard; for a library artist whose
+ * name normalizes to zero tokens (e.g. "The The", "!!!"), an empty-string
+ * candidate's token set is ALSO empty, so `sameTokens` reports a match —
+ * yielding a `resolved` verdict with an empty-string MBID instead of the
+ * malformed hit being ignored.
  */
 export function projectArtistCandidates(
   artists: Record<string, unknown>[],
 ): CandidateProjection[] {
-  return artists.map((a) => {
-    const projected: CandidateProjection = {
-      id: typeof a.id === "string" ? a.id : "",
-      name: typeof a.name === "string" ? a.name : "",
-    };
+  const projected: CandidateProjection[] = [];
+  for (const a of artists) {
+    if (typeof a.id !== "string" || a.id === "") continue;
+    if (typeof a.name !== "string" || a.name === "") continue;
+    const candidate: CandidateProjection = { id: a.id, name: a.name };
     if (typeof a["sort-name"] === "string") {
-      projected["sort-name"] = a["sort-name"];
+      candidate["sort-name"] = a["sort-name"];
     }
-    return projected;
-  });
+    projected.push(candidate);
+  }
+  return projected;
 }
 
 // --- resource schemas ---

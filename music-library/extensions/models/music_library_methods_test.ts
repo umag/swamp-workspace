@@ -993,6 +993,145 @@ Deno.test("resolve-artists: an artist the seed does not cover falls back to a Mu
 });
 
 // ---------------------------------------------------------------------------
+// resolve-artists: THE 25-CANDIDATE WINDOW — the deleted per-artist path
+// called search-artist with no `limit`, so MusicBrainz applied its /ws/2
+// default of 25 candidates. search-artists-batch defaults `limit` to 10
+// (a deliberate plan decision for its OTHER callers), so without an
+// explicit override here the candidate window silently narrowed 25 -> 10:
+// a duplicate MBID ranked 11-25 becomes invisible to matchArtist, which
+// reports `ambiguous` only when two or more DISTINCT MBIDs share the query's
+// token set — an invisible duplicate lets a single top-ranked candidate get
+// auto-picked as `resolved` instead of correctly parking as `ambiguous`.
+// ---------------------------------------------------------------------------
+
+Deno.test("resolve-artists: passes limit: 25 to search-artists-batch — restores the pre-batch candidate window search-artist got from MusicBrainz's own /ws/2 default", async () => {
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-window-artist",
+          name: "Fixture Window Artist",
+        }),
+      ],
+    },
+  };
+  const { ctx, runModelCalls } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    mbBatchHandler(modelData, () => ({ artists: [] })),
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  assertEquals(runModelCalls.length, 1);
+  const [callArgs] = runModelCalls[0] as [
+    { arguments: { limit?: number } },
+  ];
+  assertEquals(
+    callArgs.arguments.limit,
+    25,
+    "resolve-artists must explicitly request the pre-batch 25-candidate window, not search-artists-batch's own default of 10 — that default is a deliberate plan decision for OTHER callers and must not change",
+  );
+});
+
+Deno.test("resolve-artists: a duplicate MBID ranked 11-25 is still visible with the restored limit:25 window — parks as ambiguous instead of auto-picking the top-ranked candidate", async () => {
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-common-name",
+          name: "Fixture Common Name",
+        }),
+      ],
+    },
+  };
+
+  // 25 raw MusicBrainz search hits for the one query, simulating a phrase
+  // query that returns many partial-token-overlap filler hits ranked ahead
+  // of a genuine second matching artist — realistic for a short/common
+  // name. Two DISTINCT ids match the FULL token set of "Fixture Common
+  // Name": rank 0 (always visible) and rank 14 (position 15, inside
+  // 11-25 — visible only when the full 25-candidate window is requested).
+  const DUPLICATE_RANK = 14;
+  const fullHits = Array.from({ length: 25 }, (_, i) => {
+    if (i === 0) {
+      return {
+        id: "cafebabe-a001-4a57-8bad-f00dfeedca01",
+        name: "Fixture Common Name",
+        "sort-name": "Fixture Common Name",
+      };
+    }
+    if (i === DUPLICATE_RANK) {
+      return {
+        id: "cafebabe-a002-4a57-8bad-f00dfeedca02",
+        name: "Fixture Common Name",
+        "sort-name": "Fixture Common Name",
+      };
+    }
+    return {
+      id: `deadbeef-0000-4a57-8bad-f00dfeed${i.toString(16).padStart(4, "0")}`,
+      name: `Fixture Filler Artist ${i}`,
+      "sort-name": `Fixture Filler Artist ${i}`,
+    };
+  });
+
+  const { ctx, written, runModelCalls } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    (call) => {
+      if (call.method !== "search-artists-batch") return;
+      const queries = call.arguments.queries as string[];
+      // Mirrors search-artists-batch's OWN `args.limit ?? 10` default
+      // (musicbrainz.ts:1140) — this is what makes the test fail without
+      // resolve-artists' explicit `limit: 25`: an unset `limit` here
+      // truncates to the top 10 hits, hiding the rank-14 duplicate.
+      const limit = (call.arguments.limit as number | undefined) ?? 10;
+      if (!modelData.musicbrainz) modelData.musicbrainz = {};
+      modelData.musicbrainz.artistSearchBatch = [
+        mdRow({
+          batchId: call.arguments.batchId,
+          queries: queries.map((q) => ({
+            query: q,
+            artists: fullHits.slice(0, limit),
+            count: fullHits.length,
+          })),
+          deferred: [],
+          requested: queries.length,
+          searched: queries.length,
+          failed: 0,
+          truncated: false,
+          stopReason: "complete",
+          timestamp: "x",
+        }),
+      ];
+    },
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  assertEquals(runModelCalls.length, 1);
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    { artistName: string; status: string; mbid: string | null }
+  >;
+  const entry = entries.find((e) => e.artistName === "Fixture Common Name")!;
+  assertEquals(
+    entry.status,
+    "ambiguous",
+    "the rank-14 duplicate MBID must be visible within the 25-candidate window, parking this artist as ambiguous rather than auto-picking the rank-0 candidate as resolved",
+  );
+  assertEquals(entry.mbid, null);
+  assertEquals(res.payload.ambiguous, 1);
+  assertEquals(res.payload.resolved, 0);
+});
+
+// ---------------------------------------------------------------------------
 // resolve-artists: THE PRIOR-MAP READ AND MERGE SEMANTICS (steps 10-11 of
 // musicbrainz-ratelimit-runmodel-fanout). Round 1's CRITICAL: without the
 // prior-map load, "a converged re-run costs zero requests" never happens,

@@ -3615,13 +3615,26 @@ export const model = {
           // `context.runModel` here — even just for the ones this batch
           // left in `deferred[]` — would reintroduce that exact defect.
           // Pinned by "a truncated batch is NOT finished by looping
-          // runModel" in music_library_adversarial_test.ts.
+          // runModel" in music_library_methods_test.ts.
           await context.runModel({
             definition: args.musicbrainzInstance,
             method: "search-artists-batch",
             arguments: {
               queries,
               batchId,
+              // Explicit 25, NOT search-artists-batch's own default of 10.
+              // The deleted per-artist path called search-artist with no
+              // `limit`, so MusicBrainz applied its /ws/2 default of 25
+              // candidates; matchArtist (artist_match.ts) needs the FULL
+              // candidate set to tell a genuine ambiguous duplicate apart
+              // from a single resolved match — a duplicate MBID ranked
+              // 11-25 would otherwise fall outside search-artists-batch's
+              // default window and this method would auto-pick a single
+              // `resolved` MBID instead of correctly parking the artist as
+              // `ambiguous`. search-artists-batch's own default of 10 stays
+              // 10 for its other callers — this override belongs at the
+              // call site that regressed, not upstream.
+              limit: 25,
               maxQueries: args.maxQueries,
               ...(args.maxDurationMs !== undefined
                 ? { maxDurationMs: args.maxDurationMs }
