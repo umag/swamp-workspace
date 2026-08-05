@@ -1228,6 +1228,157 @@ Deno.test("resolve-artists: an already-aborted context.signal stops the per-arti
   assertEquals(entry.status, "unresolved");
 });
 
+Deno.test("resolve-artists: a signal that aborts DURING the search-artists-batch runModel call stops PASS 2's own loop, not just PASS 1's — PASS 1 completes normally (seed match resolved), the batch call still happens, and every seed-unresolved artist is unreached by PASS 2, falling back to its stale prior verbatim", async () => {
+  // The test above uses an already-aborted signal, which breaks PASS 1 at
+  // i=0 — the `if (!pass1Aborted && queries.length > 0)` block that is PASS
+  // 2's ONLY home is then never entered, so PASS 2's own
+  // `context.signal?.aborted` check (~line 3669) is completely unpinned:
+  // deleting it leaves every test (including the one above) green. Here the
+  // runModelHandler hook aborts the controller from INSIDE runModel, firing
+  // synchronously while `await context.runModel(...)` is in flight — after
+  // PASS 1 has already classified every library artist (proven below by the
+  // seed match surviving) and after the batch row has been written (proven
+  // by runModelCalls.length === 1), but before PASS 2 reads any of it.
+  const staleCheckedAtA = new Date(
+    Date.now() - 60 * 24 * 60 * 60 * 1000, // 60 days old
+  ).toISOString();
+  const staleCheckedAtB = new Date(
+    Date.now() - 45 * 24 * 60 * 60 * 1000, // 45 days old
+  ).toISOString();
+  const priorMap = {
+    kind: "artistMap",
+    scannedAt: "x",
+    params: {
+      headphonesInstance: "headphones",
+      musicbrainzInstance: "musicbrainz",
+    },
+    resolved: 1,
+    ambiguous: 0,
+    unresolved: 1,
+    entries: [
+      {
+        artistKey: "fixture-artist-a",
+        artistName: "Fixture Artist A",
+        mbid: null,
+        status: "unresolved",
+        source: "search",
+        candidates: [],
+        checkedAt: staleCheckedAtA,
+      },
+      {
+        artistKey: "fixture-artist-b",
+        artistName: "Fixture Artist B",
+        mbid: "deadbeef-0000-4000-8000-0000000000b1",
+        status: "resolved",
+        source: "search",
+        candidates: [],
+        checkedAt: staleCheckedAtB,
+      },
+    ],
+  };
+  const modelData: ModelData = {
+    headphones: {
+      artists: [
+        mdRow({
+          artists: [{
+            ArtistID: "cafebabe-0000-4000-8000-00000000feed",
+            ArtistName: "Fixture Artist Seed",
+          }],
+          total: 1,
+          timestamp: "x",
+        }),
+      ],
+    },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-artist-seed",
+          name: "Fixture Artist Seed",
+        }),
+        mdRow({
+          kind: "artist",
+          key: "fixture-artist-a",
+          name: "Fixture Artist A",
+        }),
+        mdRow({
+          kind: "artist",
+          key: "fixture-artist-b",
+          name: "Fixture Artist B",
+        }),
+      ],
+    },
+  };
+  const controller = new AbortController();
+  const { ctx, written, runModelCalls } = makeModelDataCtx(
+    modelData,
+    { "artist-map": priorMap },
+    {},
+    (call) => {
+      // Write the batch row first, mirroring a real search-artists-batch
+      // invocation actually completing (empty/no-match, no error) — so
+      // PASS 2, if its own abort check were missing, would find a real
+      // verdict sitting there to wrongly act on. THEN abort — the signal
+      // is live for the loop that runs after this handler returns, never
+      // for PASS 1, which has already finished by the time runModel is
+      // even called.
+      emptyBatchHandler(modelData)(call);
+      controller.abort();
+    },
+  );
+  const ctxWithSignal = { ...ctx, signal: controller.signal };
+
+  await run("resolve-artists", {}, ctxWithSignal);
+
+  assertEquals(
+    runModelCalls.length,
+    1,
+    "PASS 1 must complete and dispatch exactly one search-artists-batch call before the abort (mid-call) lands",
+  );
+  const res = written.find((w) => w.spec === "artistMap")!;
+  assertEquals(res.payload.stopReason, "aborted");
+  assertEquals(res.payload.truncated, true);
+  assertEquals(
+    res.payload.pendingSearch,
+    2,
+    "both seed-unresolved artists (A and B) are unreached by PASS 2's loop, which breaks at i=0 — this fixture's own two pending artists, not a copied figure",
+  );
+
+  const entries = res.payload.entries as Array<Record<string, unknown>>;
+  assertEquals(
+    entries.map((e) => e.artistKey),
+    ["fixture-artist-seed", "fixture-artist-a", "fixture-artist-b"],
+    "every library artist is still present in the written map, in library order",
+  );
+
+  const seedEntry = entries.find((e) => e.artistKey === "fixture-artist-seed")!;
+  assertEquals(
+    seedEntry.status,
+    "resolved",
+    "PASS 1's seed classification still completed normally — proof the abort landed after PASS 1, not during it",
+  );
+  assertEquals(seedEntry.source, "seed");
+  assertEquals(seedEntry.mbid, "cafebabe-0000-4000-8000-00000000feed");
+
+  const entryA = entries.find((e) => e.artistKey === "fixture-artist-a")!;
+  assertEquals(entryA.status, "unresolved");
+  assertEquals(entryA.mbid, null);
+  assertEquals(
+    entryA.checkedAt,
+    staleCheckedAtA,
+    "A's stale prior verdict is preserved verbatim — PASS 2 never reached it to overwrite checkedAt with this run's fresh batch timestamp",
+  );
+
+  const entryB = entries.find((e) => e.artistKey === "fixture-artist-b")!;
+  assertEquals(entryB.status, "resolved");
+  assertEquals(entryB.mbid, "deadbeef-0000-4000-8000-0000000000b1");
+  assertEquals(
+    entryB.checkedAt,
+    staleCheckedAtB,
+    "B's stale prior verdict is preserved verbatim too, including its previously-resolved mbid",
+  );
+});
+
 Deno.test("resolve-artists: Lucene metacharacters in a library artist name are escaped before reaching arguments.queries", async () => {
   const modelData: ModelData = {
     headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
