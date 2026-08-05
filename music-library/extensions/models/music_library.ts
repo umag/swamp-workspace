@@ -3442,7 +3442,29 @@ export const model = {
           { artistName: string; query: string }
         >();
 
-        for (const artistKey of libraryOrder) {
+        // Declared here (rather than beside the runModel call below) so
+        // PASS 1's own abort check can set them too.
+        let pendingSearch = 0;
+        let truncated = false;
+        let stopReason: string | null = null;
+        let pass1Aborted = false;
+
+        for (let i = 0; i < libraryOrder.length; i++) {
+          if (context.signal?.aborted) {
+            // Mirrors search-artists-batch's own abort check
+            // (musicbrainz.ts) — stop spending CPU on matchArtist for the
+            // rest of a large library the moment the caller cancels,
+            // rather than inventing a new stop pattern here. Every
+            // artistKey the WRITE step below still needs an entry for
+            // (`finalEntries.get(artistKey)!` is a non-null assertion) is
+            // filled in by the fallback sweep right after this loop, using
+            // the SAME prior-reuse-or-unresolved rule PASS 2 already
+            // applies to a query that never got a verdict.
+            pass1Aborted = true;
+            stopReason = "aborted";
+            break;
+          }
+          const artistKey = libraryOrder[i];
           const artistName = libraryNameByKey.get(artistKey)!;
           const seedMatch = matchArtist(artistName, seedCandidates);
 
@@ -3497,6 +3519,44 @@ export const model = {
           });
         }
 
+        // PASS 1 was cut short by the abort check above — every artistKey
+        // that still has no finalEntries record (whether PASS 1 never
+        // reached it, or reached it and only got as far as pendingByKey)
+        // falls back to its prior verdict, or unresolved with no prior.
+        // Skipping the batch call below (not just this classification
+        // loop) matters too: an aborted caller must not still pay for a
+        // search-artists-batch invocation it already asked to cancel.
+        if (pass1Aborted) {
+          for (const artistKey of libraryOrder) {
+            if (finalEntries.has(artistKey)) continue;
+            const artistName = libraryNameByKey.get(artistKey)!;
+            const prior = priorMap.get(artistKey);
+            pendingSearch++;
+            finalEntries.set(
+              artistKey,
+              prior
+                ? {
+                  artistKey,
+                  artistName,
+                  mbid: prior.mbid,
+                  status: prior.status,
+                  source: prior.source,
+                  candidates: prior.candidates,
+                  checkedAt: prior.checkedAt,
+                }
+                : {
+                  artistKey,
+                  artistName,
+                  mbid: null,
+                  status: "unresolved",
+                  source: null,
+                  candidates: [],
+                },
+            );
+          }
+          truncated = true;
+        }
+
         // Order pending artists with refreshKeys members FIRST, in the
         // order the caller gave them, then every other artist needing a
         // search in LIBRARY order (rule 8) — so search-artists-batch's own
@@ -3529,20 +3589,33 @@ export const model = {
           }
         }
 
-        let pendingSearch = 0;
-        let truncated = false;
-        let stopReason: string | null = null;
-
         // Zero names needing a search -> zero runModel calls (the fix's
         // headline invariant: N artists never means N invocations, and
-        // when nothing needs asking, it means ZERO).
-        if (queries.length > 0) {
+        // when nothing needs asking, it means ZERO). Also skipped
+        // entirely when PASS 1 above was aborted — see the fallback sweep
+        // just after that loop.
+        if (!pass1Aborted && queries.length > 0) {
           if (!context.runModel) {
             throw new Error(
               "runModel unavailable — cannot search MusicBrainz for unresolved artists",
             );
           }
           const batchId = crypto.randomUUID();
+          // Exactly ONE runModel call per run, on purpose (see the fix
+          // description on this method's registration below): MusicBrainz's
+          // rate limiter (mbFetch's module-level `lastRequest`) has no
+          // memory across separate context.runModel invocations, so its
+          // very first request in each invocation still fires with
+          // `lastRequest === null` — no wait at all. Batching every
+          // seed-unresolved artist into ONE search-artists-batch call is
+          // what keeps that free first request to ONE per run instead of
+          // one per artist (~1483 in the run that surfaced this bug,
+          // pushing real traffic to ~2.5 req/sec against the documented 1
+          // req/sec limit). Re-introducing a per-artist `for` loop around
+          // `context.runModel` here — even just for the ones this batch
+          // left in `deferred[]` — would reintroduce that exact defect.
+          // Pinned by "a truncated batch is NOT finished by looping
+          // runModel" in music_library_adversarial_test.ts.
           await context.runModel({
             definition: args.musicbrainzInstance,
             method: "search-artists-batch",
@@ -3591,7 +3664,21 @@ export const model = {
           // run retries), and with no prior at all: unresolved, checkedAt
           // UNSET. Never set for anything but a genuine search verdict —
           // identical to the seed rule above (rule 3 = rule 4).
-          for (const artistKey of orderedKeys) {
+          let pass2Aborted = false;
+          for (let i = 0; i < orderedKeys.length; i++) {
+            if (context.signal?.aborted) {
+              // Mirrors search-artists-batch's own abort check — stop
+              // scoring the remaining candidates against matchArtist
+              // immediately. The fallback sweep right after this loop
+              // treats every artist this run didn't reach exactly like a
+              // query that came back with an error or landed in
+              // deferred[]: preserve its prior verdict, or unresolved with
+              // no prior.
+              pass2Aborted = true;
+              stopReason = "aborted";
+              break;
+            }
+            const artistKey = orderedKeys[i];
             const pending = pendingByKey.get(artistKey)!;
             const result = resultByQuery.get(pending.query);
             const prior = priorMap.get(artistKey);
@@ -3660,6 +3747,36 @@ export const model = {
                 source: null,
                 candidates: [],
               });
+            }
+          }
+
+          if (pass2Aborted) {
+            for (const artistKey of orderedKeys) {
+              if (finalEntries.has(artistKey)) continue;
+              const pending = pendingByKey.get(artistKey)!;
+              const prior = priorMap.get(artistKey);
+              pendingSearch++;
+              finalEntries.set(
+                artistKey,
+                prior
+                  ? {
+                    artistKey,
+                    artistName: pending.artistName,
+                    mbid: prior.mbid,
+                    status: prior.status,
+                    source: prior.source,
+                    candidates: prior.candidates,
+                    checkedAt: prior.checkedAt,
+                  }
+                  : {
+                    artistKey,
+                    artistName: pending.artistName,
+                    mbid: null,
+                    status: "unresolved",
+                    source: null,
+                    candidates: [],
+                  },
+              );
             }
           }
 

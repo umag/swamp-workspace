@@ -3,11 +3,11 @@
 A swamp model for the [MusicBrainz](https://musicbrainz.org) open music
 encyclopedia. Search, look up, and browse artists, release groups, releases,
 recordings, and labels through the MusicBrainz Web Service v2 (JSON), with a
-built-in 1 request/second rate limiter — concurrency-safe, so multiple in-flight
-calls (e.g. `sync-artist-discographies`' pagination) can never race each other
-into firing too close together — that backs off and retries once on a `503`
-before giving up, so you stay within the MusicBrainz usage policy. **This
-spacing is enforced WITHIN one method invocation only.** It has no memory across
+built-in 1 request/second rate limiter — concurrency-safe WITHIN one method
+invocation, so multiple in-flight calls inside that invocation (e.g.
+`sync-artist-discographies`' pagination) can never race each other into firing
+too close together — that backs off and retries once on a `503` before giving
+up, so you stay within the MusicBrainz usage policy. It has no memory across
 separate `context.runModel` invocations, so a caller that fans out one search
 per item (one `runModel` call per artist, for example) can send real traffic
 well past 1 req/sec even though each individual call is internally well-behaved.

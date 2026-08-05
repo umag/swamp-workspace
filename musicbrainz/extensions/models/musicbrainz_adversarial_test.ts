@@ -1493,25 +1493,71 @@ Deno.test("search-artists-batch (d): an explicit low maxDurationMs stops the bat
   );
 });
 
-Deno.test("search-artists-batch (d, companion): with NO explicit maxDurationMs, a small nominal-speed batch stops on max-queries/completes rather than tripping the DERIVED max-duration backstop", async () => {
+Deno.test("search-artists-batch (d, companion): with NO explicit maxDurationMs, max-queries wins over the DERIVED max-duration backstop at nominal speed — a batch that actually needs truncating stops on max-queries, not max-duration", async () => {
+  // The prior version of this test used the DEFAULT maxQueries (400) with
+  // only 3 queries, so `queries.length < maxQueries` made max-queries
+  // structurally unreachable — stopReason could only ever be "complete",
+  // never distinguishing "the derived backstop is generous enough" from
+  // "the derived backstop is generous enough to matter". A mutant
+  // `deriveMaxDurationMs` returning HALF the nominal `maxQueries *
+  // minIntervalMs` product (dropping the 1.5x margin and 30s floor) still
+  // passed. This version forces genuine max-queries truncation (more
+  // queries than maxQueries) and asserts the derived backstop does NOT
+  // trip before all `maxQueries` are served — which the halved mutant
+  // fails, since nominal-speed processing of `maxQueries` queries takes
+  // roughly `(maxQueries - 1) * minIntervalMs`, comfortably past half the
+  // nominal product but comfortably under the real (1.5x + 30s) one.
+  //
+  // Reads on the shared module-level rate limiter (see the neighboring (b)
+  // test's comment on virtual-time debt from earlier FakeTime tests in
+  // this file) would make the elapsed-time math below unpredictable, so
+  // this test primes it first: ONE throwaway request, driven through
+  // drainAndAwait exactly like the real call below, however long its own
+  // wait needs to be. When that reservation resolves it sets the module's
+  // `lastRequest` to the CURRENT fake `now` at that moment — whatever the
+  // wait was — so the real batch's very first request always sees a clean,
+  // fully-predictable `minIntervalMs` gap, no arbitrary padding required.
+  // (An earlier version of this test instead jumped the fake clock forward
+  // by a large fixed amount to the same end — that jump itself becomes
+  // debt for whatever test runs next, and reproduced locally, it broke
+  // case (f)'s `maxDurationMs: 600_000` assumption. Priming via a real
+  // request avoids manufacturing any debt of its own.)
   using time = new FakeTime();
   const { ctx, written } = makeCtx();
-  const queries = batchQueries(3);
+  const minIntervalMs = 1100;
+  const maxQueries = 8;
+  const queries = batchQueries(maxQueries + 2);
+
+  await withMbFixture(
+    { artists: [], count: 0 },
+    () => drainAndAwait(time, run("search-artist", { query: "priming" }, ctx)),
+  );
+
   await withMbFixture(
     { artists: [], count: 0 },
     () =>
       drainAndAwait(
         time,
-        run("search-artists-batch", { queries, minIntervalMs: 1100 }, ctx),
+        run(
+          "search-artists-batch",
+          { queries, maxQueries, minIntervalMs },
+          ctx,
+        ),
       ),
   );
   const res = written.find((w) => w.spec === "artistSearchBatch")!;
   assertEquals(
     res.payload.stopReason,
-    "complete",
-    "the derived backstop (>= maxQueries*minIntervalMs, scaled generously) must not trip on a small nominal-speed batch",
+    "max-queries",
+    "the derived backstop (>= maxQueries*minIntervalMs*1.5 + 30s) must not trip before all maxQueries queries are served at nominal speed",
   );
-  assertEquals(res.payload.truncated, false);
+  assertEquals(res.payload.truncated, true);
+  assertEquals(res.payload.searched, maxQueries);
+  assertEquals(
+    (res.payload.deferred as string[]).length,
+    2,
+    "the 2 queries past maxQueries are deferred, not dropped",
+  );
 });
 
 Deno.test("search-artists-batch (e): an already-aborted context.signal stops the batch immediately with stopReason aborted, before any fetch", async () => {
