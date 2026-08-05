@@ -1,0 +1,29 @@
+{
+  "batchId": "deadbeef-cafe-4bab-8e00-facefeedface",
+  "queries": [
+    {
+      "query": "artist:\"Fixture Aurora Static\"",
+      "artists": [
+        {
+          "id": "cafebabe-fa57-4f00-9dec-afbadcafebab",
+          "name": "Fixture Aurora Static",
+          "sort-name": "Fixture Aurora Static"
+        }
+      ],
+      "count": 1
+    },
+    {
+      "query": "artist:\"Fixture Nightfall\"",
+      "artists": [],
+      "count": 0,
+      "error": "MusicBrainz /artist/ failed: 500 - simulated fixture failure"
+    }
+  ],
+  "deferred": ["artist:\"Fixture Deferred Artist\""],
+  "requested": 3,
+  "searched": 2,
+  "failed": 1,
+  "truncated": true,
+  "stopReason": "max-queries",
+  "timestamp": "2026-08-05T00:00:00.000Z"
+}

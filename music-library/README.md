@@ -134,6 +134,37 @@ candidates rather than resolved to whichever came first. The
 `resolved`/`ambiguous`/`unresolved` counts are top-level fields, so a run that
 parked 300 artists looks different at the CLI from one that resolved them.
 
+The MusicBrainz fallback is a SINGLE batched call per run
+(`@magistr/musicbrainz`'s `search-artists-batch`), never one call per artist —
+the fix for a measured live bug where the old per-artist fan-out sent traffic at
+~2.5 req/sec against MusicBrainz's documented 1 req/sec limit. A prior run's map
+is reused as a 30-day cache: a seed-unresolved artist whose last search verdict
+(`checkedAt`) is younger than `ttlMs` (default 30 days) is not re-searched.
+`--input
+refresh=true` ignores the cache and re-searches everything;
+`--input
+refreshKeys='["<artistKey>", ...]'` forces specific artists to be
+re-checked regardless of freshness, and those are placed first in the batch so
+they can never be crowded out by the query ceiling. The written map reports
+`pendingSearch` (how many artists still need a verdict), `truncated`, and
+`stopReason` (`complete` / `max-queries` / `max-duration` / `aborted` /
+`backoff`) — **re-run `resolve-artists` until `pendingSearch` is 0** to confirm
+convergence, rather than counting requests by hand; a cold library of ~1459-1483
+seed-unresolved artists takes about 4 runs at the default `maxQueries` of 400.
+`maxQueries` is the designed ceiling for one run; `maxDurationMs` is a derived
+slow-upstream backstop (roughly 1.5x the nominal wall-clock time) that scales
+automatically when `maxQueries` is raised, unless given explicitly. At the
+defaults, one run holds the `musicbrainz` model lock continuously for roughly
+7.3 minutes at nominal speed, up to roughly 11.5 minutes worst case — and
+`swamp model method run` only WAITS up to 60 seconds for a contended model lock
+(`DEFAULT_LOCK_TIMEOUT_MS`) before timing out, so avoid starting a
+`resolve-artists` batch inside the window 02:45-03:15, when `ext-canary-nightly`
+probes the `musicbrainz` instance at 03:00. `SWAMP_LOCK_TIMEOUT_MS` is a lever
+on the WAITER — the process trying to ACQUIRE the lock, i.e. the
+workflow-runner's own environment when it executes `ext-canary-nightly` — not on
+the operator's shell running `resolve-artists`, which HOLDS the lock and never
+waits for it; setting it there changes nothing.
+
 **`wanted`** is pure — no network at all — and emits two kinds of want:
 `missing` (in the discography, absent from disk) and `upgrade` (present but
 below a target quality bucket). Where a title match is uncertain it defaults to

@@ -2040,6 +2040,14 @@ const ArtistMapEntrySchema = z.object({
   status: z.enum(["resolved", "ambiguous", "unresolved"]),
   source: z.enum(["seed", "search"]).nullable(),
   candidates: z.array(z.object({ id: z.string(), name: z.string() })),
+  // OPTIONAL — the timestamp of the last MusicBrainz SEARCH that produced a
+  // verdict for this artist (never a seed match — see needsSearch and
+  // resolve-artists' merge rules below). Optional because the live
+  // 2258-entry map predates this field; resolve-artists reads that exact
+  // document back, so a required field would fail validation on the very
+  // first post-merge run and silently degrade to an empty prior, wiping
+  // every resolved mbid.
+  checkedAt: z.string().optional(),
 });
 
 const ArtistMapSchema = z.object({
@@ -2053,7 +2061,43 @@ const ArtistMapSchema = z.object({
   ambiguous: z.number(),
   unresolved: z.number(),
   entries: z.array(ArtistMapEntrySchema),
+  // THREE optional top-level completeness fields — what makes a TRUNCATED
+  // run (search-artists-batch stopped on max-queries/max-duration/aborted/
+  // backoff) distinguishable from a CONVERGED one. Without them,
+  // `unresolved: 1083` is ambiguous between "MusicBrainz does not know
+  // them" and "we never asked". All three are ALWAYS set on WRITE by
+  // resolve-artists; optional here for the same live-document reason as
+  // `checkedAt` above.
+  pendingSearch: z.number().optional(),
+  truncated: z.boolean().optional(),
+  stopReason: z.string().nullable().optional(),
 });
+
+/**
+ * Freshness policy for resolve-artists' 30-day reuse cache — the
+ * Inventory-side mirror of musicbrainz.ts's `isCacheStale`, placed beside
+ * the cache (`ArtistMapEntrySchema`'s `checkedAt`) it governs. Pure — `now`
+ * is always a parameter, never read from the clock internally.
+ *
+ * Returns true (needs a fresh MusicBrainz search) when: `prior` is
+ * null/undefined (nothing to reuse); `checkedAt` is absent or unparsable;
+ * `now - parsed >= ttlMs` (stale); or — defensively — `parsed > now` (a
+ * FUTURE timestamp, from clock skew, must not park an artist forever by
+ * looking artificially fresh).
+ */
+export function needsSearch(
+  prior: { checkedAt?: string | null } | null | undefined,
+  now: number,
+  ttlMs: number,
+): boolean {
+  if (!prior) return true;
+  const checkedAt = prior.checkedAt;
+  if (!checkedAt) return true;
+  const parsed = Date.parse(checkedAt);
+  if (!Number.isFinite(parsed)) return true;
+  if (parsed > now) return true;
+  return now - parsed >= ttlMs;
+}
 
 const WantEntrySchema = z.object({
   artist: z.string(),
@@ -2143,56 +2187,97 @@ function rowAttrs(row: unknown): Record<string, unknown> {
     : {};
 }
 
+/** Parsed prior artistMap entry, indexed by artistKey — only the fields
+ * resolve-artists' merge semantics (step 10) need. */
+type PriorArtistMapEntry = {
+  mbid: string | null;
+  status: "resolved" | "ambiguous" | "unresolved";
+  source: "seed" | "search" | null;
+  candidates: { id: string; name: string }[];
+  checkedAt?: string;
+};
+
 /**
- * Search MusicBrainz for artist-name candidates — the resolve-artists
- * fallback for library artists the headphones seed does not already cover.
- * `@musicbrainz/api` owns the MusicBrainz HTTP integration (rate limiting
- * included), so this routes through the swamp model instance the caller
- * names as `musicbrainzInstance`: `runModel` invokes its `search-artist`
- * method (handles only, per the swamp cross-model contract), then
- * `readModelData` reads the written `artists` spec back.
+ * Reads the prior `artistMap` resource (if any) and indexes it by
+ * artistKey — the LOAD half of resolve-artists' load-modify-write aggregate
+ * lifecycle (step 10 of musicbrainz-ratelimit-runmodel-fanout). Without
+ * this, "a converged re-run costs zero requests" never happens, and the
+ * obvious improvisation (skip the search and fall through the existing
+ * code path) writes every reused entry back as `unresolved`/`mbid: null`,
+ * silently wiping every previously resolved/ambiguous artist.
+ * `readResource` is a NEW capability requirement for this method (only
+ * `wanted` uses it today), so it is optional-chained rather than throwing —
+ * `readResource` absent, the resource missing, or `entries` not an array
+ * all degrade to an EMPTY prior map, which reproduces today's
+ * (pre-persistence) behaviour exactly and is therefore never destructive.
  */
-async function searchMusicBrainzArtists(
+async function readPriorArtistMap(
   context: {
-    runModel?: (options: unknown) => Promise<unknown>;
-    readModelData?: (
-      instanceName: string,
-      specName: string,
-    ) => Promise<unknown[]>;
+    readResource?: (name: string) => Promise<unknown>;
   },
-  musicbrainzInstance: string,
   name: string,
-): Promise<Candidate[]> {
-  if (!context.runModel) return [];
-  const query = `artist:"${escapeLuceneQuery(name)}"`;
-  await context.runModel({
-    definition: musicbrainzInstance,
-    method: "search-artist",
-    arguments: { query },
-  });
-  const rows = await readRows(context, musicbrainzInstance, "artists");
-  // search-artist always writes its result to the same resource name, so a
-  // busy resolve-artists run accumulates versions under that one name —
-  // take the one this call just wrote, not an earlier query's leftovers.
-  let latest: Record<string, unknown> | null = null;
-  for (const row of rows) {
-    if ((row as { isLatest?: unknown }).isLatest === true) latest = row;
-  }
-  if (!latest && rows.length > 0) latest = rows[rows.length - 1];
-  const attrs = rowAttrs(latest);
-  const artists = Array.isArray(attrs.artists) ? attrs.artists : [];
-  const candidates: Candidate[] = [];
-  for (const a of artists as Record<string, unknown>[]) {
-    if (typeof a?.id !== "string" || typeof a?.name !== "string") continue;
-    candidates.push({
-      id: a.id,
-      name: a.name,
-      sortName: typeof a["sort-name"] === "string"
-        ? (a["sort-name"] as string)
+): Promise<Map<string, PriorArtistMapEntry>> {
+  const prior = new Map<string, PriorArtistMapEntry>();
+  if (!context.readResource) return prior;
+  const raw = await context.readResource(name);
+  const entries = (raw as { entries?: unknown } | null | undefined)?.entries;
+  if (!Array.isArray(entries)) return prior;
+  for (const e of entries) {
+    if (!e || typeof e !== "object") continue;
+    const entry = e as Record<string, unknown>;
+    const artistKey = typeof entry.artistKey === "string"
+      ? entry.artistKey
+      : null;
+    if (!artistKey) continue;
+    const rawCandidates = Array.isArray(entry.candidates)
+      ? entry.candidates
+      : [];
+    const candidates = rawCandidates
+      .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
+      .map((c) => ({
+        id: typeof c.id === "string" ? c.id : "",
+        name: typeof c.name === "string" ? c.name : "",
+      }));
+    prior.set(artistKey, {
+      mbid: typeof entry.mbid === "string" ? entry.mbid : null,
+      status: entry.status === "resolved" || entry.status === "ambiguous" ||
+          entry.status === "unresolved"
+        ? entry.status
+        : "unresolved",
+      source: entry.source === "seed" || entry.source === "search"
+        ? entry.source
+        : null,
+      candidates,
+      checkedAt: typeof entry.checkedAt === "string"
+        ? entry.checkedAt
         : undefined,
     });
   }
-  return candidates;
+  return prior;
+}
+
+/**
+ * Selects the `search-artists-batch` result row matching `batchId` out of
+ * every row `readModelData` returns for the instance's `artistSearchBatch`
+ * spec — deterministic by CORRELATION IDENTITY, not recency or array order.
+ * `isLatest` occurred nowhere in this contract and no test ever set it, so
+ * every prior caller silently depended on a `rows[length-1]` fallback;
+ * `batchId` removes that dependence entirely. Throws (never returns null)
+ * so a missing row surfaces immediately, naming the instance and batchId,
+ * rather than parking every searched artist as if nothing had been asked.
+ */
+function selectBatchRow(
+  rows: Record<string, unknown>[],
+  batchId: string,
+  musicbrainzInstance: string,
+): Record<string, unknown> {
+  for (const row of rows) {
+    const attrs = rowAttrs(row);
+    if (attrs.batchId === batchId) return attrs;
+  }
+  throw new Error(
+    `No artistSearchBatch row with batchId "${batchId}" found on instance "${musicbrainzInstance}" after running search-artists-batch — it may have failed to write its resource.`,
+  );
 }
 
 type ArtistMapEntry = {
@@ -2202,6 +2287,14 @@ type ArtistMapEntry = {
   status: "resolved" | "ambiguous" | "unresolved";
   source: "seed" | "search" | null;
   candidates: { id: string; name: string }[];
+  // THE FIFTH MIRROR of ArtistMapEntrySchema's checkedAt (see step 9 of
+  // musicbrainz-ratelimit-runmodel-fanout) — optional for the same reason
+  // the schema field is. This is the type resolve-artists actually
+  // constructs against (`entries.push({...})` below); omitting this field
+  // here while writing checkedAt into that object literal is a TS2353
+  // excess-property error, and music-library's `check` task enumerates this
+  // file, so it is a hard build break, not a style point.
+  checkedAt?: string;
 };
 
 /**
@@ -2236,7 +2329,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.08.04.1",
+  version: "2026.08.05.1",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2250,6 +2343,13 @@ export const model = {
       toVersion: "2026.08.04.1",
       description:
         "Add the wanted derivation: resolve-artists (artist name -> MBID map, seeded from a headphones instance, token-set MusicBrainz search fallback, ambiguous/unresolved parked for human review) and wanted (pure derivation of missing albums + quality upgrades over the cached map, MusicBrainz browse cache, and the album cube). Adds artistMap + wanted resources and the @magistr/music-wanted report; extracts normDupeKey/isNoiseGroup to extensions/lib/norm.ts to break a models<->lib import cycle (re-exported, so existing importers are unchanged); fixes running's bpm-pointer error which interpolated the non-existent context.modelName and rendered 'undefined'. Purely additive -- no stored resource is reshaped",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.04.1",
+      toVersion: "2026.08.05.1",
+      description:
+        "Fixes musicbrainz-ratelimit-runmodel-fanout, measured live: resolve-artists fanned out ONE context.runModel call per seed-unresolved artist (~1483 calls in one run), and MusicBrainz's rate limiter has no memory across separate runModel invocations, so real traffic ran at ~2.5 req/sec against the documented 1 req/sec limit. resolve-artists now issues AT MOST ONE runModel call per run, to the new @magistr/musicbrainz search-artists-batch method, and persists its own output as a reusable cache: a prior run's artistMap is loaded (context.readResource, a new capability requirement for this method, optional-chained so a missing/absent prior degrades to empty rather than throwing) and a seed-unresolved artist whose verdict is younger than ttlMs (new arg, default 30 days) is reused without a fresh search, so a converged re-run costs zero MusicBrainz requests. Deletes searchMusicBrainzArtists and its isLatest selector outright -- no dual path. New optional entry field checkedAt (the timestamp of the last MusicBrainz SEARCH that produced a verdict; NEVER set on a seed match) and three new optional top-level fields pendingSearch/truncated/stopReason on ArtistMapSchema, distinguishing a converged run from one cut short by search-artists-batch's own maxQueries/maxDurationMs/an aborted signal/a Retry-After backoff -- all four optional since the live map predates them. resolve-artists gains refresh (force-recheck everything), refreshKeys (force-recheck specific artists, ordered first in the batch so they can never be crowded out by maxQueries), maxQueries, and maxDurationMs method arguments. New exported pure needsSearch(prior, now, ttlMs) freshness predicate beside ArtistMapEntrySchema, mirroring musicbrainz.ts's isCacheStale. wanted.ts's ArtistMapEntry/ArtistMapContent report-side mirrors gain the same four fields. All additive to ArtistMapSchema -- no existing field changes shape, so the live 2258-entry map validates and loads unchanged on the first post-merge run.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -3235,7 +3335,7 @@ export const model = {
 
     "resolve-artists": {
       description:
-        "Build a cached artist-name to MusicBrainz-ID map: seeds from the headphones instance's artist list, falls back to a token-set MusicBrainz search for library artists the seed doesn't cover, and parks ambiguous or unresolved artists for human review instead of guessing",
+        "Build a cached artist-name to MusicBrainz-ID map: seeds from the headphones instance's artist list, falls back to ONE batched MusicBrainz search (search-artists-batch) for every library artist the seed doesn't cover, and parks ambiguous or unresolved artists for human review instead of guessing. A prior run's map is reused for up to ttlMs (default 30 days) per seed-unresolved artist, so a converged re-run costs zero MusicBrainz requests; pendingSearch/truncated/stopReason on the written map say whether this run converged or was cut short by maxQueries/maxDurationMs/an abort/a backoff.",
       arguments: z.object({
         headphonesInstance: z
           .string()
@@ -3247,10 +3347,42 @@ export const model = {
           .string()
           .default("musicbrainz")
           .describe(
-            "swamp model instance name used for the MusicBrainz artist search fallback",
+            "swamp model instance name used for the MusicBrainz artist search fallback (search-artists-batch)",
+          ),
+        refresh: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Re-search every seed-unresolved artist this run, ignoring the reuse-cache TTL entirely",
+          ),
+        refreshKeys: z
+          .array(z.string())
+          .default([])
+          .describe(
+            "Force a re-search for these specific artistKeys even if their cached verdict is still fresh — ordered FIRST in the batch so the maxQueries ceiling can never discard an explicitly requested re-check",
+          ),
+        ttlMs: z
+          .number()
+          .default(2_592_000_000)
+          .describe(
+            "Reuse-cache TTL in milliseconds: a seed-unresolved artist whose prior verdict is younger than this is reused without a fresh search (default 30 days)",
+          ),
+        maxQueries: z
+          .number()
+          .default(400)
+          .describe(
+            "Max distinct MusicBrainz queries issued to search-artists-batch this run before the remainder is deferred to a future run — passed straight through to that method's own maxQueries",
+          ),
+        maxDurationMs: z
+          .number()
+          .optional()
+          .describe(
+            "Wall-clock ceiling passed through to search-artists-batch; when omitted, that method derives one from maxQueries so raising the ceiling also raises the backstop",
           ),
       }),
       execute: async (args, context) => {
+        const now = Date.now();
+
         // seed: every headphones artist becomes a match candidate, keyed
         // by ArtistID/ArtistName — the SAME shape matchArtist expects from
         // a MusicBrainz search result, so both pass through one function.
@@ -3274,73 +3406,409 @@ export const model = {
 
         // the artists NEEDING resolution: this model's own artist
         // dimension (scan's output), not merely the seed's coverage.
+        // Deduped into an ORDERED key list — this is the library order
+        // every downstream structure (finalEntries, the written entries[])
+        // is built against, and rule 7 ("only artists present in the
+        // library are written") falls out of iterating THIS list, never
+        // the prior map's.
         const libraryRows = await readRows(
           context,
           context.definition.name,
           "artist",
         );
-
-        const entries: ArtistMapEntry[] = [];
-        let resolved = 0;
-        let ambiguous = 0;
-        let unresolved = 0;
-
+        const libraryOrder: string[] = [];
+        const libraryNameByKey = new Map<string, string>();
         for (const row of libraryRows) {
           const attrs = rowAttrs(row);
           const artistKey = typeof attrs.key === "string" ? attrs.key : null;
           const artistName = typeof attrs.name === "string" ? attrs.name : null;
           if (!artistKey || !artistName) continue;
+          if (!libraryNameByKey.has(artistKey)) libraryOrder.push(artistKey);
+          libraryNameByKey.set(artistKey, artistName);
+        }
 
-          let mbid: string | null = null;
-          let status: ArtistMapEntry["status"] = "unresolved";
-          let source: ArtistMapEntry["source"] = null;
-          let candidates: { id: string; name: string }[] = [];
+        // LOAD: the prior run's map, indexed by artistKey (step 10).
+        const priorMap = await readPriorArtistMap(context, "artist-map");
 
+        // PASS 1 — classify every library artist: a FINAL entry now (seed
+        // match, or a fresh-enough prior reused verbatim), or a query
+        // pending a search this run. `checkedAt` is left UNSET on every
+        // seed match here — rule (4): a seed match is never a search
+        // verdict, so it never carries a search-freshness stamp.
+        const refreshKeysSet = new Set(args.refreshKeys);
+        const finalEntries = new Map<string, ArtistMapEntry>();
+        const pendingByKey = new Map<
+          string,
+          { artistName: string; query: string }
+        >();
+
+        // Declared here (rather than beside the runModel call below) so
+        // PASS 1's own abort check can set them too.
+        let pendingSearch = 0;
+        let truncated = false;
+        let stopReason: string | null = null;
+        let pass1Aborted = false;
+
+        for (let i = 0; i < libraryOrder.length; i++) {
+          if (context.signal?.aborted) {
+            // Mirrors search-artists-batch's own abort check
+            // (musicbrainz.ts) — stop spending CPU on matchArtist for the
+            // rest of a large library the moment the caller cancels,
+            // rather than inventing a new stop pattern here. Every
+            // artistKey the WRITE step below still needs an entry for
+            // (`finalEntries.get(artistKey)!` is a non-null assertion) is
+            // filled in by the fallback sweep right after this loop, using
+            // the SAME prior-reuse-or-unresolved rule PASS 2 already
+            // applies to a query that never got a verdict.
+            pass1Aborted = true;
+            stopReason = "aborted";
+            break;
+          }
+          const artistKey = libraryOrder[i];
+          const artistName = libraryNameByKey.get(artistKey)!;
           const seedMatch = matchArtist(artistName, seedCandidates);
+
           if (seedMatch.kind === "resolved") {
-            status = "resolved";
-            mbid = seedMatch.mbid;
-            source = "seed";
-          } else if (seedMatch.kind === "ambiguous") {
+            finalEntries.set(artistKey, {
+              artistKey,
+              artistName,
+              mbid: seedMatch.mbid,
+              status: "resolved",
+              source: "seed",
+              candidates: [],
+            });
+            continue;
+          }
+          if (seedMatch.kind === "ambiguous") {
             // ambiguous in the seed is parked, never disambiguated by a
             // search — the collision is in the name itself.
-            status = "ambiguous";
-            candidates = seedMatch.candidates.map((c) => ({
-              id: c.id,
-              name: c.name,
-            }));
-          } else {
-            const searchCandidates = await searchMusicBrainzArtists(
-              context,
-              args.musicbrainzInstance,
+            finalEntries.set(artistKey, {
+              artistKey,
               artistName,
-            );
-            const searchMatch = matchArtist(artistName, searchCandidates);
-            if (searchMatch.kind === "resolved") {
-              status = "resolved";
-              mbid = searchMatch.mbid;
-              source = "search";
-            } else if (searchMatch.kind === "ambiguous") {
-              status = "ambiguous";
-              candidates = searchMatch.candidates.map((c) => ({
+              mbid: null,
+              status: "ambiguous",
+              source: null,
+              candidates: seedMatch.candidates.map((c) => ({
                 id: c.id,
                 name: c.name,
-              }));
+              })),
+            });
+            continue;
+          }
+
+          // seed-unresolved: reuse the prior verdict if it is still fresh
+          // and neither refresh nor refreshKeys forces a re-check.
+          const prior = priorMap.get(artistKey);
+          const forced = args.refresh || refreshKeysSet.has(artistKey);
+          if (!forced && !needsSearch(prior, now, args.ttlMs)) {
+            finalEntries.set(artistKey, {
+              artistKey,
+              artistName,
+              mbid: prior!.mbid,
+              status: prior!.status,
+              source: prior!.source,
+              candidates: prior!.candidates,
+              checkedAt: prior!.checkedAt,
+            });
+            continue;
+          }
+
+          pendingByKey.set(artistKey, {
+            artistName,
+            query: `artist:"${escapeLuceneQuery(artistName)}"`,
+          });
+        }
+
+        // PASS 1 was cut short by the abort check above — every artistKey
+        // that still has no finalEntries record (whether PASS 1 never
+        // reached it, or reached it and only got as far as pendingByKey)
+        // falls back to its prior verdict, or unresolved with no prior.
+        // Skipping the batch call below (not just this classification
+        // loop) matters too: an aborted caller must not still pay for a
+        // search-artists-batch invocation it already asked to cancel.
+        if (pass1Aborted) {
+          for (const artistKey of libraryOrder) {
+            if (finalEntries.has(artistKey)) continue;
+            const artistName = libraryNameByKey.get(artistKey)!;
+            const prior = priorMap.get(artistKey);
+            pendingSearch++;
+            finalEntries.set(
+              artistKey,
+              prior
+                ? {
+                  artistKey,
+                  artistName,
+                  mbid: prior.mbid,
+                  status: prior.status,
+                  source: prior.source,
+                  candidates: prior.candidates,
+                  checkedAt: prior.checkedAt,
+                }
+                : {
+                  artistKey,
+                  artistName,
+                  mbid: null,
+                  status: "unresolved",
+                  source: null,
+                  candidates: [],
+                },
+            );
+          }
+          truncated = true;
+        }
+
+        // Order pending artists with refreshKeys members FIRST, in the
+        // order the caller gave them, then every other artist needing a
+        // search in LIBRARY order (rule 8) — so search-artists-batch's own
+        // maxQueries cut can never discard an explicitly requested
+        // re-check. Distinct QUERY STRINGS (order-preserved) are what
+        // actually go to musicbrainz; duplicate names collapse onto one
+        // query via `pendingByKey`, resolvable on the way back per key.
+        const orderedKeys: string[] = [];
+        const seenKeys = new Set<string>();
+        for (const key of args.refreshKeys) {
+          if (pendingByKey.has(key) && !seenKeys.has(key)) {
+            orderedKeys.push(key);
+            seenKeys.add(key);
+          }
+        }
+        for (const key of libraryOrder) {
+          if (pendingByKey.has(key) && !seenKeys.has(key)) {
+            orderedKeys.push(key);
+            seenKeys.add(key);
+          }
+        }
+
+        const queries: string[] = [];
+        const seenQueries = new Set<string>();
+        for (const key of orderedKeys) {
+          const q = pendingByKey.get(key)!.query;
+          if (!seenQueries.has(q)) {
+            queries.push(q);
+            seenQueries.add(q);
+          }
+        }
+
+        // Zero names needing a search -> zero runModel calls (the fix's
+        // headline invariant: N artists never means N invocations, and
+        // when nothing needs asking, it means ZERO). Also skipped
+        // entirely when PASS 1 above was aborted — see the fallback sweep
+        // just after that loop.
+        if (!pass1Aborted && queries.length > 0) {
+          if (!context.runModel) {
+            throw new Error(
+              "runModel unavailable — cannot search MusicBrainz for unresolved artists",
+            );
+          }
+          const batchId = crypto.randomUUID();
+          // Exactly ONE runModel call per run, on purpose (see the fix
+          // description on this method's registration below): MusicBrainz's
+          // rate limiter (mbFetch's module-level `lastRequest`) has no
+          // memory across separate context.runModel invocations, so its
+          // very first request in each invocation still fires with
+          // `lastRequest === null` — no wait at all. Batching every
+          // seed-unresolved artist into ONE search-artists-batch call is
+          // what keeps that free first request to ONE per run instead of
+          // one per artist (~1483 in the run that surfaced this bug,
+          // pushing real traffic to ~2.5 req/sec against the documented 1
+          // req/sec limit). Re-introducing a per-artist `for` loop around
+          // `context.runModel` here — even just for the ones this batch
+          // left in `deferred[]` — would reintroduce that exact defect.
+          // Pinned by "a truncated batch is NOT finished by looping
+          // runModel" in music_library_methods_test.ts.
+          await context.runModel({
+            definition: args.musicbrainzInstance,
+            method: "search-artists-batch",
+            arguments: {
+              queries,
+              batchId,
+              // Explicit 25, NOT search-artists-batch's own default of 10.
+              // The deleted per-artist path called search-artist with no
+              // `limit`, so MusicBrainz applied its /ws/2 default of 25
+              // candidates; matchArtist (artist_match.ts) needs the FULL
+              // candidate set to tell a genuine ambiguous duplicate apart
+              // from a single resolved match — a duplicate MBID ranked
+              // 11-25 would otherwise fall outside search-artists-batch's
+              // default window and this method would auto-pick a single
+              // `resolved` MBID instead of correctly parking the artist as
+              // `ambiguous`. search-artists-batch's own default of 10 stays
+              // 10 for its other callers — this override belongs at the
+              // call site that regressed, not upstream.
+              limit: 25,
+              maxQueries: args.maxQueries,
+              ...(args.maxDurationMs !== undefined
+                ? { maxDurationMs: args.maxDurationMs }
+                : {}),
+            },
+          });
+
+          const batchRows = await readRows(
+            context,
+            args.musicbrainzInstance,
+            "artistSearchBatch",
+          );
+          const batchAttrs = selectBatchRow(
+            batchRows,
+            batchId,
+            args.musicbrainzInstance,
+          );
+
+          const batchQueryRows = Array.isArray(batchAttrs.queries)
+            ? (batchAttrs.queries as Record<string, unknown>[])
+            : [];
+          stopReason = typeof batchAttrs.stopReason === "string"
+            ? batchAttrs.stopReason
+            : null;
+          const batchTimestamp = typeof batchAttrs.timestamp === "string"
+            ? batchAttrs.timestamp
+            : new Date().toISOString();
+
+          const resultByQuery = new Map<string, Record<string, unknown>>();
+          for (const qr of batchQueryRows) {
+            if (typeof qr.query === "string") resultByQuery.set(qr.query, qr);
+          }
+
+          // PASS 2 — resolve every pending artist against its query's
+          // result. A query present with no `error` -> matched (including
+          // a genuine no-match, which still gets a fresh checkedAt). A
+          // query with an `error`, or ABSENT from queries[] (including
+          // everything deferred), preserves the PRIOR verdict unchanged —
+          // `checkedAt` stays at its prior value (still stale, so the next
+          // run retries), and with no prior at all: unresolved, checkedAt
+          // UNSET. Never set for anything but a genuine search verdict —
+          // identical to the seed rule above (rule 3 = rule 4).
+          let pass2Aborted = false;
+          for (let i = 0; i < orderedKeys.length; i++) {
+            if (context.signal?.aborted) {
+              // Mirrors search-artists-batch's own abort check — stop
+              // scoring the remaining candidates against matchArtist
+              // immediately. The fallback sweep right after this loop
+              // treats every artist this run didn't reach exactly like a
+              // query that came back with an error or landed in
+              // deferred[]: preserve its prior verdict, or unresolved with
+              // no prior.
+              pass2Aborted = true;
+              stopReason = "aborted";
+              break;
+            }
+            const artistKey = orderedKeys[i];
+            const pending = pendingByKey.get(artistKey)!;
+            const result = resultByQuery.get(pending.query);
+            const prior = priorMap.get(artistKey);
+
+            if (result && result.error === undefined) {
+              const rawArtists = Array.isArray(result.artists)
+                ? (result.artists as Record<string, unknown>[])
+                : [];
+              const candidates: Candidate[] = [];
+              for (const a of rawArtists) {
+                if (typeof a.id === "string" && typeof a.name === "string") {
+                  candidates.push({
+                    id: a.id,
+                    name: a.name,
+                    sortName: typeof a["sort-name"] === "string"
+                      ? (a["sort-name"] as string)
+                      : undefined,
+                  });
+                }
+              }
+              const match = matchArtist(pending.artistName, candidates);
+              let status: ArtistMapEntry["status"] = "unresolved";
+              let mbid: string | null = null;
+              let matchCandidates: { id: string; name: string }[] = [];
+              if (match.kind === "resolved") {
+                status = "resolved";
+                mbid = match.mbid;
+              } else if (match.kind === "ambiguous") {
+                status = "ambiguous";
+                matchCandidates = match.candidates.map((c) => ({
+                  id: c.id,
+                  name: c.name,
+                }));
+              }
+              finalEntries.set(artistKey, {
+                artistKey,
+                artistName: pending.artistName,
+                mbid,
+                status,
+                source: "search",
+                candidates: matchCandidates,
+                checkedAt: batchTimestamp,
+              });
+              continue;
+            }
+
+            // error, absent from queries[], or listed in deferred[] — that
+            // query never got a verdict this run.
+            pendingSearch++;
+            if (prior) {
+              finalEntries.set(artistKey, {
+                artistKey,
+                artistName: pending.artistName,
+                mbid: prior.mbid,
+                status: prior.status,
+                source: prior.source,
+                candidates: prior.candidates,
+                checkedAt: prior.checkedAt,
+              });
+            } else {
+              finalEntries.set(artistKey, {
+                artistKey,
+                artistName: pending.artistName,
+                mbid: null,
+                status: "unresolved",
+                source: null,
+                candidates: [],
+              });
             }
           }
 
-          if (status === "resolved") resolved++;
-          else if (status === "ambiguous") ambiguous++;
-          else unresolved++;
+          if (pass2Aborted) {
+            for (const artistKey of orderedKeys) {
+              if (finalEntries.has(artistKey)) continue;
+              const pending = pendingByKey.get(artistKey)!;
+              const prior = priorMap.get(artistKey);
+              pendingSearch++;
+              finalEntries.set(
+                artistKey,
+                prior
+                  ? {
+                    artistKey,
+                    artistName: pending.artistName,
+                    mbid: prior.mbid,
+                    status: prior.status,
+                    source: prior.source,
+                    candidates: prior.candidates,
+                    checkedAt: prior.checkedAt,
+                  }
+                  : {
+                    artistKey,
+                    artistName: pending.artistName,
+                    mbid: null,
+                    status: "unresolved",
+                    source: null,
+                    candidates: [],
+                  },
+              );
+            }
+          }
 
-          entries.push({
-            artistKey,
-            artistName,
-            mbid,
-            status,
-            source,
-            candidates,
-          });
+          truncated = pendingSearch > 0;
+        }
+
+        // WRITE: only artists present in the LIBRARY are written, in
+        // library order — an entry in the prior map whose artist is no
+        // longer in the library is dropped here by construction (rule 7).
+        const entries: ArtistMapEntry[] = [];
+        let resolved = 0;
+        let ambiguous = 0;
+        let unresolved = 0;
+        for (const artistKey of libraryOrder) {
+          const entry = finalEntries.get(artistKey)!;
+          entries.push(entry);
+          if (entry.status === "resolved") resolved++;
+          else if (entry.status === "ambiguous") ambiguous++;
+          else unresolved++;
         }
 
         const handle = await context.writeResource("artistMap", "artist-map", {
@@ -3354,6 +3822,9 @@ export const model = {
           ambiguous,
           unresolved,
           entries,
+          pendingSearch,
+          truncated,
+          stopReason,
         });
         return { dataHandles: [handle] };
       },

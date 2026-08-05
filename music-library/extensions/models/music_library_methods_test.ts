@@ -763,14 +763,28 @@ function mdRow(attributes: Record<string, unknown>) {
 
 type ModelData = Record<string, Record<string, unknown[]>>;
 
+/** A single context.runModel call, decoded to its named fields (the shape
+ * resolve-artists actually passes: {definition, method, arguments}). */
+type RunModelCall = {
+  definition: string;
+  method: string;
+  arguments: Record<string, unknown>;
+};
+
 /** Extends makeCtx with a context.readModelData(instanceName, specName)
  * mock and a context.runModel spy, additive to the ssh-stub harness above
  * (readModelData/runModel are a seam scan/dupes/verify/bpm/running/probe
- * never exercise). */
+ * never exercise). The OPTIONAL `runModelHandler` may mutate `modelData` in
+ * response to a call — e.g. synthesizing an artistSearchBatch row from the
+ * RECORDED queries and echoing the caller's generated `batchId` — since the
+ * batchId is generated at runtime and can never be pre-seeded into a static
+ * fixture. Purely additive: the default (no handler) is unchanged from
+ * before, so every existing call site is untouched. */
 function makeModelDataCtx(
   modelData: ModelData = {},
   seed: Store = {},
   globalArgOverrides: Record<string, unknown> = {},
+  runModelHandler?: (call: RunModelCall) => void,
 ) {
   const base = makeCtx(globalArgOverrides, seed);
   const runModelCalls: unknown[][] = [];
@@ -780,6 +794,8 @@ function makeModelDataCtx(
       Promise.resolve(modelData[instanceName]?.[specName] ?? []),
     runModel: (...callArgs: unknown[]) => {
       runModelCalls.push(callArgs);
+      const [call] = callArgs as [RunModelCall];
+      runModelHandler?.(call);
       return Promise.resolve({ dataHandles: [] });
     },
   };
@@ -804,6 +820,78 @@ function installFetchStub(router: (url: string) => unknown) {
     restore: () => {
       globalThis.fetch = original;
     },
+  };
+}
+
+/** Outcome `resolve` may return for one query, fed to `mbBatchHandler`
+ * below. `undefined` means the query is DEFERRED — absent from the
+ * synthesized `queries[]` and present in `deferred[]`, exactly like a real
+ * search-artists-batch run that hit a ceiling before reaching it. */
+type BatchQueryOutcome =
+  | { artists: Array<{ id: string; name: string; "sort-name"?: string }> }
+  | { error: string }
+  | undefined;
+
+/**
+ * Builds a context.runModel handler for `search-artists-batch` that
+ * synthesizes an `artistSearchBatch` row from the RECORDED queries and
+ * writes it into `modelData`, echoing the caller's GENERATED `batchId` —
+ * this is required, not cosmetic: the caller generates `batchId` at
+ * runtime, so a pre-seeded static row can never match it. `resolve(query)`
+ * decides each query's outcome (see `BatchQueryOutcome`). The static
+ * `mb_artist_search_batch.json` fixture is the SHAPE TEMPLATE for the
+ * contract pin only — never this seam's data source.
+ */
+function mbBatchHandler(
+  modelData: ModelData,
+  resolve: (query: string) => BatchQueryOutcome,
+  instanceName = "musicbrainz",
+) {
+  return (call: RunModelCall) => {
+    if (call.method !== "search-artists-batch") return;
+    const queries = call.arguments.queries as string[];
+    const batchId = call.arguments.batchId as string;
+    const queryRows: Array<Record<string, unknown>> = [];
+    const deferred: string[] = [];
+    let failed = 0;
+    for (const q of queries) {
+      const outcome = resolve(q);
+      if (outcome === undefined) {
+        deferred.push(q);
+        continue;
+      }
+      if ("error" in outcome) {
+        failed++;
+        queryRows.push({
+          query: q,
+          artists: [],
+          count: 0,
+          error: outcome.error,
+        });
+      } else {
+        queryRows.push({
+          query: q,
+          artists: outcome.artists,
+          count: outcome.artists.length,
+        });
+      }
+    }
+    if (!modelData[instanceName]) modelData[instanceName] = {};
+    const existing = modelData[instanceName]["artistSearchBatch"] ?? [];
+    modelData[instanceName]["artistSearchBatch"] = [
+      ...existing,
+      mdRow({
+        batchId,
+        queries: queryRows,
+        deferred,
+        requested: queries.length,
+        searched: queryRows.length,
+        failed,
+        truncated: deferred.length > 0,
+        stopReason: deferred.length > 0 ? "max-queries" : "complete",
+        timestamp: new Date().toISOString(),
+      }),
+    ];
   };
 }
 
@@ -841,8 +929,8 @@ Deno.test("resolve-artists: seed rows are read via row.attributes.artists — a 
   assertEquals(velvet.source, "seed");
 });
 
-Deno.test("resolve-artists: an artist the seed does not cover falls back to a MusicBrainz search routed through runModel + readModelData, resolving on a single candidate", async () => {
-  const { ctx, written, runModelCalls } = makeModelDataCtx({
+Deno.test("resolve-artists: an artist the seed does not cover falls back to a MusicBrainz search routed through search-artists-batch + readModelData, resolving on a single candidate", async () => {
+  const modelData: ModelData = {
     headphones: { artists: [mdRow(headphonesArtistsFixture)] },
     music: {
       artist: [
@@ -850,36 +938,38 @@ Deno.test("resolve-artists: an artist the seed does not cover falls back to a Mu
         mdRow({ kind: "artist", key: "aurora-drift", name: "Aurora Drift" }),
       ],
     },
-    // search-artist (the @musicbrainz/api method) writes its result to the
-    // "artists" spec — this mocks what readModelData sees back after
-    // resolve-artists calls runModel, without a real MusicBrainz round trip.
-    musicbrainz: {
-      artists: [
-        mdRow({
+  };
+  const { ctx, written, runModelCalls } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    mbBatchHandler(modelData, (query) => {
+      if (query === 'artist:"Aurora Drift"') {
+        return {
           artists: [{
             id: "01234567-89ab-4cde-8f01-23456789abcd",
             name: "Aurora Drift",
             "sort-name": "Aurora Drift",
           }],
-          count: 1,
-          timestamp: "2026-08-04T00:00:00Z",
-        }),
-      ],
-    },
-  });
+        };
+      }
+      return { artists: [] };
+    }),
+  );
 
   await run("resolve-artists", {}, ctx);
 
-  // Exactly one fallback search, for the one artist the seed doesn't cover
-  // — shaped as the documented handles-only runModel contract, never a
-  // direct fetch.
+  // Exactly ONE batched call for every artist the seed doesn't cover — the
+  // fix for musicbrainz-ratelimit-runmodel-fanout: N runModel calls (one per
+  // artist, each losing rate-limit spacing across the fan-out) collapse into
+  // one call to search-artists-batch, which loops internally.
   assertEquals(runModelCalls.length, 1);
   const [callArgs] = runModelCalls[0] as [
-    { definition: string; method: string; arguments: { query: string } },
+    { definition: string; method: string; arguments: { queries: string[] } },
   ];
   assertEquals(callArgs.definition, "musicbrainz");
-  assertEquals(callArgs.method, "search-artist");
-  assertEquals(callArgs.arguments.query, 'artist:"Aurora Drift"');
+  assertEquals(callArgs.method, "search-artists-batch");
+  assertEquals(callArgs.arguments.queries, ['artist:"Aurora Drift"']);
 
   const res = written.find((w) => w.spec === "artistMap")!;
   const entries = res.payload.entries as Array<
@@ -888,12 +978,822 @@ Deno.test("resolve-artists: an artist the seed does not cover falls back to a Mu
       mbid: string | null;
       status: string;
       source: string | null;
+      checkedAt?: string;
     }
   >;
   const aurora = entries.find((e) => e.artistName === "Aurora Drift")!;
   assertEquals(aurora.status, "resolved");
   assertEquals(aurora.mbid, "01234567-89ab-4cde-8f01-23456789abcd");
   assertEquals(aurora.source, "search");
+  assertEquals(
+    typeof aurora.checkedAt,
+    "string",
+    "a search verdict must stamp checkedAt so a future run's freshness check has something to compare against",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// resolve-artists: THE 25-CANDIDATE WINDOW — the deleted per-artist path
+// called search-artist with no `limit`, so MusicBrainz applied its /ws/2
+// default of 25 candidates. search-artists-batch defaults `limit` to 10
+// (a deliberate plan decision for its OTHER callers), so without an
+// explicit override here the candidate window silently narrowed 25 -> 10:
+// a duplicate MBID ranked 11-25 becomes invisible to matchArtist, which
+// reports `ambiguous` only when two or more DISTINCT MBIDs share the query's
+// token set — an invisible duplicate lets a single top-ranked candidate get
+// auto-picked as `resolved` instead of correctly parking as `ambiguous`.
+// ---------------------------------------------------------------------------
+
+Deno.test("resolve-artists: passes limit: 25 to search-artists-batch — restores the pre-batch candidate window search-artist got from MusicBrainz's own /ws/2 default", async () => {
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-window-artist",
+          name: "Fixture Window Artist",
+        }),
+      ],
+    },
+  };
+  const { ctx, runModelCalls } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    mbBatchHandler(modelData, () => ({ artists: [] })),
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  assertEquals(runModelCalls.length, 1);
+  const [callArgs] = runModelCalls[0] as [
+    { arguments: { limit?: number } },
+  ];
+  assertEquals(
+    callArgs.arguments.limit,
+    25,
+    "resolve-artists must explicitly request the pre-batch 25-candidate window, not search-artists-batch's own default of 10 — that default is a deliberate plan decision for OTHER callers and must not change",
+  );
+});
+
+Deno.test("resolve-artists: a duplicate MBID ranked 11-25 is still visible with the restored limit:25 window — parks as ambiguous instead of auto-picking the top-ranked candidate", async () => {
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-common-name",
+          name: "Fixture Common Name",
+        }),
+      ],
+    },
+  };
+
+  // 25 raw MusicBrainz search hits for the one query, simulating a phrase
+  // query that returns many partial-token-overlap filler hits ranked ahead
+  // of a genuine second matching artist — realistic for a short/common
+  // name. Two DISTINCT ids match the FULL token set of "Fixture Common
+  // Name": rank 0 (always visible) and rank 14 (position 15, inside
+  // 11-25 — visible only when the full 25-candidate window is requested).
+  const DUPLICATE_RANK = 14;
+  const fullHits = Array.from({ length: 25 }, (_, i) => {
+    if (i === 0) {
+      return {
+        id: "cafebabe-a001-4a57-8bad-f00dfeedca01",
+        name: "Fixture Common Name",
+        "sort-name": "Fixture Common Name",
+      };
+    }
+    if (i === DUPLICATE_RANK) {
+      return {
+        id: "cafebabe-a002-4a57-8bad-f00dfeedca02",
+        name: "Fixture Common Name",
+        "sort-name": "Fixture Common Name",
+      };
+    }
+    return {
+      id: `deadbeef-0000-4a57-8bad-f00dfeed${i.toString(16).padStart(4, "0")}`,
+      name: `Fixture Filler Artist ${i}`,
+      "sort-name": `Fixture Filler Artist ${i}`,
+    };
+  });
+
+  const { ctx, written, runModelCalls } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    (call) => {
+      if (call.method !== "search-artists-batch") return;
+      const queries = call.arguments.queries as string[];
+      // Mirrors search-artists-batch's OWN `args.limit ?? 10` default
+      // (musicbrainz.ts:1140) — this is what makes the test fail without
+      // resolve-artists' explicit `limit: 25`: an unset `limit` here
+      // truncates to the top 10 hits, hiding the rank-14 duplicate.
+      const limit = (call.arguments.limit as number | undefined) ?? 10;
+      if (!modelData.musicbrainz) modelData.musicbrainz = {};
+      modelData.musicbrainz.artistSearchBatch = [
+        mdRow({
+          batchId: call.arguments.batchId,
+          queries: queries.map((q) => ({
+            query: q,
+            artists: fullHits.slice(0, limit),
+            count: fullHits.length,
+          })),
+          deferred: [],
+          requested: queries.length,
+          searched: queries.length,
+          failed: 0,
+          truncated: false,
+          stopReason: "complete",
+          timestamp: "x",
+        }),
+      ];
+    },
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  assertEquals(runModelCalls.length, 1);
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    { artistName: string; status: string; mbid: string | null }
+  >;
+  const entry = entries.find((e) => e.artistName === "Fixture Common Name")!;
+  assertEquals(
+    entry.status,
+    "ambiguous",
+    "the rank-14 duplicate MBID must be visible within the 25-candidate window, parking this artist as ambiguous rather than auto-picking the rank-0 candidate as resolved",
+  );
+  assertEquals(entry.mbid, null);
+  assertEquals(res.payload.ambiguous, 1);
+  assertEquals(res.payload.resolved, 0);
+});
+
+// ---------------------------------------------------------------------------
+// resolve-artists: THE PRIOR-MAP READ AND MERGE SEMANTICS (steps 10-11 of
+// musicbrainz-ratelimit-runmodel-fanout). Round 1's CRITICAL: without the
+// prior-map load, "a converged re-run costs zero requests" never happens,
+// and the naive improvisation — skip the search and fall through — wipes
+// every resolved/ambiguous entry the live map holds. Test (a) below is the
+// ONLY gate on that failure mode; its fixture is stated identically here
+// and in the plan's testStrategy invariant (B) and must not drift.
+// ---------------------------------------------------------------------------
+
+const ONE_HOUR_AGO = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+/** artist-map entries A, B, C, E, F — the PRIOR map. */
+const PRIOR_ARTIST_MAP_ABCEF = {
+  kind: "artistMap",
+  scannedAt: "2026-08-04T00:00:00.000Z",
+  params: {
+    headphonesInstance: "headphones",
+    musicbrainzInstance: "musicbrainz",
+  },
+  resolved: 3,
+  ambiguous: 1,
+  unresolved: 0,
+  entries: [
+    {
+      artistKey: "fixture-artist-a",
+      artistName: "Fixture Old Name",
+      mbid: "deadbeef-0000-4000-8000-00000000000a",
+      status: "resolved",
+      source: "search",
+      candidates: [],
+      checkedAt: ONE_HOUR_AGO,
+    },
+    {
+      artistKey: "fixture-artist-b",
+      artistName: "Fixture Artist B",
+      mbid: null,
+      status: "ambiguous",
+      source: null,
+      candidates: [
+        { id: "b1000000-0000-4000-8000-0000000000b1", name: "Fixture B One" },
+        { id: "b2000000-0000-4000-8000-0000000000b2", name: "Fixture B Two" },
+      ],
+      checkedAt: ONE_HOUR_AGO,
+    },
+    {
+      artistKey: "fixture-artist-c",
+      artistName: "Fixture Artist C",
+      mbid: "c0000000-0000-4000-8000-00000000000c",
+      status: "resolved",
+      source: "seed",
+      candidates: [],
+    },
+    {
+      artistKey: "fixture-artist-e",
+      artistName: "Fixture Artist E Gone",
+      mbid: "e0000000-0000-4000-8000-00000000000e",
+      status: "resolved",
+      source: "seed",
+      candidates: [],
+    },
+    {
+      artistKey: "fixture-artist-f",
+      artistName: "Fixture Artist F",
+      mbid: "f0000000-0000-4000-8000-priorstale0f",
+      status: "resolved",
+      source: "search",
+      candidates: [],
+      checkedAt: ONE_HOUR_AGO,
+    },
+  ],
+};
+
+/** LIBRARY holds A, B, C, D, F — E is gone, D is new. */
+const LIBRARY_ROWS_ABCDF = [
+  mdRow({ kind: "artist", key: "fixture-artist-a", name: "Fixture New Name" }),
+  mdRow({ kind: "artist", key: "fixture-artist-b", name: "Fixture Artist B" }),
+  mdRow({ kind: "artist", key: "fixture-artist-c", name: "Fixture Artist C" }),
+  mdRow({ kind: "artist", key: "fixture-artist-d", name: "Fixture Artist D" }),
+  mdRow({ kind: "artist", key: "fixture-artist-f", name: "Fixture Artist F" }),
+];
+
+/** HEADPHONES SEED covers C, D, F — with a NEW mbid for F, distinct from its
+ * prior "f0000000-...-priorstale0f", to prove the seed's mbid wins on
+ * re-derivation rather than the stale prior one. */
+const HEADPHONES_SEED_CDF = {
+  artists: [
+    {
+      ArtistID: "c0000000-0000-4000-8000-00000000000c",
+      ArtistName: "Fixture Artist C",
+      Status: "Active",
+    },
+    {
+      ArtistID: "d0000000-0000-4000-8000-00000000000d",
+      ArtistName: "Fixture Artist D",
+      Status: "Active",
+    },
+    {
+      ArtistID: "f1111111-0000-4000-8000-00000000000f",
+      ArtistName: "Fixture Artist F",
+      Status: "Active",
+    },
+  ],
+  total: 3,
+  timestamp: "2026-08-04T00:00:00.000Z",
+};
+
+Deno.test("resolve-artists (invariant B): PRESERVATION + IDENTITY — nothing needs a MusicBrainz verdict, so the batch never runs; the prior map's resolved/ambiguous verdicts are reused verbatim EXCEPT the library's current name, D is written, E is dropped, and F flips seed with NO checkedAt", async () => {
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow(HEADPHONES_SEED_CDF)] },
+    music: { artist: LIBRARY_ROWS_ABCDF },
+  };
+  const { ctx, written, runModelCalls } = makeModelDataCtx(
+    modelData,
+    { "artist-map": PRIOR_ARTIST_MAP_ABCEF },
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  assertEquals(
+    runModelCalls.length,
+    0,
+    "A/B are reused via a fresh prior, C/D/F resolve via the seed — nothing needs a search this run",
+  );
+
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    {
+      artistKey: string;
+      artistName: string;
+      mbid: string | null;
+      status: string;
+      source: string | null;
+      candidates: Array<{ id: string; name: string }>;
+      checkedAt?: string;
+    }
+  >;
+
+  const a = entries.find((e) => e.artistKey === "fixture-artist-a")!;
+  assertEquals(
+    a.artistName,
+    "Fixture New Name",
+    "the LIBRARY name must win, even though the prior mbid/status/source/checkedAt are reused verbatim — kills {...prior} and Object.assign({}, prior)",
+  );
+  assertEquals(a.mbid, "deadbeef-0000-4000-8000-00000000000a");
+  assertEquals(a.status, "resolved");
+  assertEquals(a.source, "search");
+  assertEquals(a.checkedAt, ONE_HOUR_AGO);
+
+  const b = entries.find((e) => e.artistKey === "fixture-artist-b")!;
+  assertEquals(b.status, "ambiguous");
+  assertEquals(
+    b.candidates.map((c) => c.id).sort(),
+    [
+      "b1000000-0000-4000-8000-0000000000b1",
+      "b2000000-0000-4000-8000-0000000000b2",
+    ],
+  );
+
+  const d = entries.find((e) => e.artistKey === "fixture-artist-d");
+  assert(
+    d,
+    "D exists in the library but not the prior map — it must be written (kills the 'write the prior map back verbatim' short-circuit)",
+  );
+  assertEquals(d!.status, "resolved");
+  assertEquals(d!.source, "seed");
+
+  const e = entries.find((e) => e.artistKey === "fixture-artist-e");
+  assertEquals(
+    e,
+    undefined,
+    "E is in the prior map but not the library — it must be ABSENT (kills 'write the prior map back verbatim')",
+  );
+
+  const f = entries.find((e) => e.artistKey === "fixture-artist-f")!;
+  assertEquals(
+    f.source,
+    "seed",
+    "F is now seed-covered, so its verdict must be RE-DERIVED, not carried forward as a stale search result",
+  );
+  assertEquals(f.mbid, "f1111111-0000-4000-8000-00000000000f");
+  assertEquals(
+    f.checkedAt,
+    undefined,
+    "a seed match must NEVER carry a search checkedAt stamp — the ONLY test of step 10 rule 4 / step 11 rule 3, since F's prior stamp was explicit",
+  );
+
+  assertEquals(res.payload.resolved, 4, "A, C, D, F");
+  assertEquals(res.payload.ambiguous, 1, "B");
+  assertEquals(res.payload.unresolved, 0);
+  assertEquals(res.payload.pendingSearch, 0);
+  assertEquals(res.payload.truncated, false);
+});
+
+Deno.test("resolve-artists (invariant B error path): a per-query ERROR preserves the prior verdict verbatim and leaves checkedAt UNCHANGED (still stale, so the next run retries), counted in pendingSearch", async () => {
+  const staleA = {
+    ...PRIOR_ARTIST_MAP_ABCEF.entries[0],
+    checkedAt: new Date(Date.now() - 61 * 24 * 60 * 60 * 1000).toISOString(), // 61 days ago, past the 30-day TTL
+  };
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-artist-a",
+          name: "Fixture New Name",
+        }),
+      ],
+    },
+  };
+  const { ctx, written, runModelCalls } = makeModelDataCtx(
+    modelData,
+    {
+      "artist-map": {
+        kind: "artistMap",
+        scannedAt: "x",
+        params: {
+          headphonesInstance: "headphones",
+          musicbrainzInstance: "musicbrainz",
+        },
+        resolved: 1,
+        ambiguous: 0,
+        unresolved: 0,
+        entries: [staleA],
+      },
+    },
+    {},
+    mbBatchHandler(
+      modelData,
+      () => ({ error: "simulated MusicBrainz failure" }),
+    ),
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  assertEquals(
+    runModelCalls.length,
+    1,
+    "A is now stale, so it must be searched this run",
+  );
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    {
+      artistKey: string;
+      mbid: string | null;
+      status: string;
+      source: string | null;
+      checkedAt?: string;
+    }
+  >;
+  const a = entries.find((e) => e.artistKey === "fixture-artist-a")!;
+  assertEquals(a.mbid, staleA.mbid);
+  assertEquals(a.status, "resolved");
+  assertEquals(a.source, "search");
+  assertEquals(
+    a.checkedAt,
+    staleA.checkedAt,
+    "checkedAt must stay UNCHANGED — still stale, so the next run retries",
+  );
+  assert((res.payload.pendingSearch as number) >= 1);
+  assertEquals(res.payload.truncated, true);
+});
+
+Deno.test("resolve-artists (invariant B deferred path): a query present in the batch's deferred[] preserves the prior verdict identically to a per-query error", async () => {
+  const staleF = {
+    ...PRIOR_ARTIST_MAP_ABCEF.entries[4],
+    checkedAt: new Date(Date.now() - 61 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-artist-f",
+          name: "Fixture Artist F",
+        }),
+      ],
+    },
+  };
+  const { ctx, written, runModelCalls } = makeModelDataCtx(
+    modelData,
+    {
+      "artist-map": {
+        kind: "artistMap",
+        scannedAt: "x",
+        params: {
+          headphonesInstance: "headphones",
+          musicbrainzInstance: "musicbrainz",
+        },
+        resolved: 1,
+        ambiguous: 0,
+        unresolved: 0,
+        entries: [staleF],
+      },
+    },
+    {},
+    mbBatchHandler(modelData, () => undefined), // every query deferred
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  assertEquals(runModelCalls.length, 1);
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    {
+      artistKey: string;
+      mbid: string | null;
+      status: string;
+      source: string | null;
+      checkedAt?: string;
+    }
+  >;
+  const f = entries.find((e) => e.artistKey === "fixture-artist-f")!;
+  assertEquals(f.mbid, staleF.mbid);
+  assertEquals(f.status, "resolved");
+  assertEquals(f.source, "search");
+  assertEquals(f.checkedAt, staleF.checkedAt);
+  assertEquals(res.payload.pendingSearch, 1);
+  assertEquals(res.payload.truncated, true);
+});
+
+Deno.test("resolve-artists (invariant B, malformed batch row): a query missing from BOTH queries[] and deferred[] (a malformed upstream row) still preserves the prior defensively, never crashing", async () => {
+  const staleF = {
+    ...PRIOR_ARTIST_MAP_ABCEF.entries[4],
+    checkedAt: new Date(Date.now() - 61 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-artist-f",
+          name: "Fixture Artist F",
+        }),
+      ],
+    },
+    musicbrainz: {
+      artistSearchBatch: [], // batch row will be written below with an EMPTY queries/deferred
+    },
+  };
+  const { ctx, written } = makeModelDataCtx(
+    modelData,
+    {
+      "artist-map": {
+        kind: "artistMap",
+        scannedAt: "x",
+        params: {
+          headphonesInstance: "headphones",
+          musicbrainzInstance: "musicbrainz",
+        },
+        resolved: 1,
+        ambiguous: 0,
+        unresolved: 0,
+        entries: [staleF],
+      },
+    },
+    {},
+    (call) => {
+      if (call.method !== "search-artists-batch") return;
+      modelData.musicbrainz.artistSearchBatch = [
+        mdRow({
+          batchId: call.arguments.batchId,
+          queries: [], // the query for F is malformed-absent from both arrays
+          deferred: [],
+          requested: 1,
+          searched: 0,
+          failed: 0,
+          truncated: false,
+          stopReason: "complete",
+          timestamp: "x",
+        }),
+      ];
+    },
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    {
+      artistKey: string;
+      mbid: string | null;
+      status: string;
+      checkedAt?: string;
+    }
+  >;
+  const f = entries.find((e) => e.artistKey === "fixture-artist-f")!;
+  assertEquals(
+    f.mbid,
+    staleF.mbid,
+    "the prior verdict must survive even a malformed batch row",
+  );
+  assertEquals(f.checkedAt, staleF.checkedAt);
+  assertEquals(res.payload.pendingSearch, 1);
+});
+
+Deno.test("resolve-artists (invariant C): a genuine no-match (empty artists, no error) resolves to unresolved with checkedAt SET, and is NOT counted toward pendingSearch", async () => {
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-artist-x",
+          name: "Fixture Unknown Artist",
+        }),
+      ],
+    },
+  };
+  const { ctx, written } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    mbBatchHandler(modelData, () => ({ artists: [] })),
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    {
+      artistKey: string;
+      status: string;
+      mbid: string | null;
+      checkedAt?: string;
+    }
+  >;
+  const x = entries.find((e) => e.artistKey === "fixture-artist-x")!;
+  assertEquals(x.status, "unresolved");
+  assertEquals(x.mbid, null);
+  assertEquals(
+    typeof x.checkedAt,
+    "string",
+    "a genuine no-match still got a real verdict this run, so checkedAt must be SET",
+  );
+  assertEquals(res.payload.pendingSearch, 0);
+  assertEquals(res.payload.truncated, false);
+  assertEquals(res.payload.stopReason, "complete");
+});
+
+Deno.test("resolve-artists (invariant C, completeness): a truncated batch (stopReason max-queries, non-empty deferred[]) produces a matching pendingSearch/truncated/stopReason on the written map", async () => {
+  const libraryRows = [
+    mdRow({
+      kind: "artist",
+      key: "fixture-artist-1",
+      name: "Fixture Artist One",
+    }),
+    mdRow({
+      kind: "artist",
+      key: "fixture-artist-2",
+      name: "Fixture Artist Two",
+    }),
+  ];
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: { artist: libraryRows },
+  };
+  const { ctx, written } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    (call) => {
+      if (call.method !== "search-artists-batch") return;
+      const queries = call.arguments.queries as string[];
+      if (!modelData.musicbrainz) modelData.musicbrainz = {};
+      modelData.musicbrainz.artistSearchBatch = [
+        mdRow({
+          batchId: call.arguments.batchId,
+          queries: [{ query: queries[0], artists: [], count: 0 }],
+          deferred: queries.slice(1),
+          requested: queries.length,
+          searched: 1,
+          failed: 0,
+          truncated: true,
+          stopReason: "max-queries",
+          timestamp: "x",
+        }),
+      ];
+    },
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  const res = written.find((w) => w.spec === "artistMap")!;
+  assertEquals(res.payload.pendingSearch, 1);
+  assertEquals(res.payload.truncated, true);
+  assertEquals(res.payload.stopReason, "max-queries");
+});
+
+Deno.test("resolve-artists (batch selection): the row matching the GENERATED batchId is used even when it is NOT last in the array", async () => {
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-artist-y",
+          name: "Fixture Selected Artist",
+        }),
+      ],
+    },
+  };
+  const { ctx, written } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    (call) => {
+      if (call.method !== "search-artists-batch") return;
+      const query = (call.arguments.queries as string[])[0];
+      const row = (id: string) => ({
+        query,
+        artists: [{ id, name: "Fixture Selected Artist" }],
+        count: 1,
+      });
+      modelData.musicbrainz = {
+        artistSearchBatch: [
+          mdRow({
+            batchId: "not-this-batch-1",
+            queries: [row("11111111-0000-4000-8000-000000000001")],
+            deferred: [],
+            requested: 1,
+            searched: 1,
+            failed: 0,
+            truncated: false,
+            stopReason: "complete",
+            timestamp: "x",
+          }),
+          // The MATCHING row, deliberately placed in the MIDDLE.
+          mdRow({
+            batchId: call.arguments.batchId,
+            queries: [row("22222222-0000-4000-8000-000000000002")],
+            deferred: [],
+            requested: 1,
+            searched: 1,
+            failed: 0,
+            truncated: false,
+            stopReason: "complete",
+            timestamp: "x",
+          }),
+          mdRow({
+            batchId: "not-this-batch-3",
+            queries: [row("33333333-0000-4000-8000-000000000003")],
+            deferred: [],
+            requested: 1,
+            searched: 1,
+            failed: 0,
+            truncated: false,
+            stopReason: "complete",
+            timestamp: "x",
+          }),
+        ],
+      };
+    },
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  const res = written.find((w) => w.spec === "artistMap")!;
+  const entries = res.payload.entries as Array<
+    { artistKey: string; mbid: string | null }
+  >;
+  const y = entries.find((e) => e.artistKey === "fixture-artist-y")!;
+  assertEquals(y.mbid, "22222222-0000-4000-8000-000000000002");
+});
+
+Deno.test("resolve-artists (batch selection): no artistSearchBatch row matches the generated batchId -> THROWS, naming the instance and batchId, rather than silently parking every artist", async () => {
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: {
+      artist: [
+        mdRow({
+          kind: "artist",
+          key: "fixture-artist-z",
+          name: "Fixture Missing Batch Artist",
+        }),
+      ],
+    },
+  };
+  const { ctx } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    (call) => {
+      if (call.method !== "search-artists-batch") return;
+      modelData.musicbrainz = {
+        artistSearchBatch: [
+          mdRow({
+            batchId: "completely-unrelated-batch-id",
+            queries: [],
+            deferred: [],
+            requested: 0,
+            searched: 0,
+            failed: 0,
+            truncated: false,
+            stopReason: "complete",
+            timestamp: "x",
+          }),
+        ],
+      };
+    },
+  );
+
+  const err = await assertRejects(() => run("resolve-artists", {}, ctx), Error);
+  assert(
+    err.message.includes("musicbrainz"),
+    "the error must name the instance it looked on",
+  );
+});
+
+Deno.test("resolve-artists: a truncated batch is NOT finished by looping runModel — exactly ONE call regardless of truncation; the remainder is left for the NEXT run via pendingSearch", async () => {
+  const libraryRows = [
+    mdRow({
+      kind: "artist",
+      key: "fixture-artist-1",
+      name: "Fixture Artist One",
+    }),
+    mdRow({
+      kind: "artist",
+      key: "fixture-artist-2",
+      name: "Fixture Artist Two",
+    }),
+  ];
+  const modelData: ModelData = {
+    headphones: { artists: [mdRow({ artists: [], total: 0, timestamp: "x" })] },
+    music: { artist: libraryRows },
+  };
+  const { ctx, runModelCalls, written } = makeModelDataCtx(
+    modelData,
+    {},
+    {},
+    (call) => {
+      if (call.method !== "search-artists-batch") return;
+      const queries = call.arguments.queries as string[];
+      if (!modelData.musicbrainz) modelData.musicbrainz = {};
+      modelData.musicbrainz.artistSearchBatch = [
+        mdRow({
+          batchId: call.arguments.batchId,
+          queries: [{ query: queries[0], artists: [], count: 0 }],
+          deferred: queries.slice(1),
+          requested: queries.length,
+          searched: 1,
+          failed: 0,
+          truncated: true,
+          stopReason: "max-queries",
+          timestamp: "x",
+        }),
+      ];
+    },
+  );
+
+  await run("resolve-artists", {}, ctx);
+
+  assertEquals(
+    runModelCalls.length,
+    1,
+    "must NOT loop runModel to finish a truncated batch",
+  );
+  const res = written.find((w) => w.spec === "artistMap")!;
+  assertEquals(res.payload.truncated, true);
+  assert((res.payload.pendingSearch as number) >= 1);
 });
 
 Deno.test("resolve-artists: resolved/ambiguous/unresolved are TOP-LEVEL fields on the written artistMap resource, summing to entries.length", async () => {

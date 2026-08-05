@@ -39,8 +39,12 @@ import { FakeTime } from "jsr:@std/testing@1/time";
 import {
   advanceSyncCursor,
   classifyDiscographyCache,
+  dedupeQueries,
+  deriveMaxDurationMs,
   isCacheStale,
   model,
+  planSearchBatch,
+  projectArtistCandidates,
   rateLimitDelayMs,
   retryAfterBackoffMs,
 } from "./musicbrainz.ts";
@@ -877,24 +881,57 @@ Deno.test("rateLimitDelayMs: identical inputs give identical results across real
   assertEquals(first, second);
 });
 
-Deno.test("retryAfterBackoffMs: a valid positive Retry-After header (seconds) is honoured", () => {
-  assertEquals(retryAfterBackoffMs("2", 1_000), 2_000);
+// retryAfterBackoffMs returns a DISCRIMINATED result rather than a bare
+// number (round-2 fix — see musicbrainz.ts's own comment above the
+// function): {kind:"sleep", ms} when the parsed header is absent,
+// unparsable, non-finite, non-positive, or <= maxBackoffMs (clamped up to
+// the minIntervalMs floor); {kind:"stop", retryAfterMs} when a finite
+// positive parsed header EXCEEDS maxBackoffMs. mbFetch acts on the
+// classification alone and never re-parses the header itself.
+
+Deno.test("retryAfterBackoffMs: a valid positive Retry-After header (seconds) within the cap sleeps for that many ms", () => {
+  assertEquals(retryAfterBackoffMs("2", 1_000), { kind: "sleep", ms: 2_000 });
 });
 
-Deno.test("retryAfterBackoffMs: no Retry-After header falls back to minIntervalMs", () => {
-  assertEquals(retryAfterBackoffMs(null, 1_000), 1_000);
+Deno.test("retryAfterBackoffMs: no Retry-After header sleeps at the minIntervalMs floor", () => {
+  assertEquals(retryAfterBackoffMs(null, 1_000), { kind: "sleep", ms: 1_000 });
 });
 
-Deno.test("retryAfterBackoffMs: a non-numeric Retry-After header (HTTP-date form) falls back to minIntervalMs", () => {
+Deno.test("retryAfterBackoffMs: a non-numeric Retry-After header (HTTP-date form) sleeps at the minIntervalMs floor", () => {
   assertEquals(
     retryAfterBackoffMs("Wed, 21 Oct 2026 07:28:00 GMT", 1_000),
-    1_000,
+    { kind: "sleep", ms: 1_000 },
   );
 });
 
-Deno.test("retryAfterBackoffMs: a zero or negative Retry-After header falls back to minIntervalMs", () => {
-  assertEquals(retryAfterBackoffMs("0", 1_000), 1_000);
-  assertEquals(retryAfterBackoffMs("-5", 1_000), 1_000);
+Deno.test("retryAfterBackoffMs: a zero or negative Retry-After header sleeps at the minIntervalMs floor", () => {
+  assertEquals(retryAfterBackoffMs("0", 1_000), { kind: "sleep", ms: 1_000 });
+  assertEquals(retryAfterBackoffMs("-5", 1_000), { kind: "sleep", ms: 1_000 });
+});
+
+Deno.test("retryAfterBackoffMs: a header parsing below minIntervalMs is clamped UP to the floor, not honoured verbatim", () => {
+  assertEquals(retryAfterBackoffMs("0.2", 1_000), { kind: "sleep", ms: 1_000 });
+});
+
+Deno.test("retryAfterBackoffMs: a header exceeding maxBackoffMs classifies as 'stop', carrying the full uncapped ms — never a Math.min-clamped value mbFetch would have to re-derive", () => {
+  assertEquals(
+    retryAfterBackoffMs("3600", 1_000),
+    { kind: "stop", retryAfterMs: 3_600_000 },
+  );
+});
+
+Deno.test("retryAfterBackoffMs: a header exactly AT maxBackoffMs still sleeps — the cap is exclusive", () => {
+  assertEquals(
+    retryAfterBackoffMs("60", 1_000, 60_000),
+    { kind: "sleep", ms: 60_000 },
+  );
+});
+
+Deno.test("retryAfterBackoffMs: maxBackoffMs is optional and defaults to 60_000 — no call site needs a third argument", () => {
+  assertEquals(retryAfterBackoffMs("61", 1_000), {
+    kind: "stop",
+    retryAfterMs: 61_000,
+  });
 });
 
 Deno.test("retryAfterBackoffMs: identical inputs give identical results across real time", async () => {
@@ -902,4 +939,277 @@ Deno.test("retryAfterBackoffMs: identical inputs give identical results across r
   await time.tickAsync(5);
   const second = retryAfterBackoffMs("3", 1_000);
   assertEquals(first, second);
+});
+
+Deno.test("property: retryAfterBackoffMs classification — always {kind:'sleep', minIntervalMs<=ms<=maxBackoffMs} or {kind:'stop', retryAfterMs>maxBackoffMs}, never anything else", () => {
+  const maxBackoffMs = 60_000;
+  fc.assert(
+    fc.property(
+      fc.option(
+        fc.oneof(
+          fc.integer({ min: -1000, max: 500_000 }).map(String),
+          fc.constant("not-a-number"),
+        ),
+        { nil: null },
+      ),
+      fc.integer({ min: 100, max: 5_000 }),
+      (header, minIntervalMs) => {
+        const result = retryAfterBackoffMs(header, minIntervalMs, maxBackoffMs);
+        if (result.kind === "sleep") {
+          return result.ms >= minIntervalMs && result.ms <= maxBackoffMs;
+        }
+        if (result.kind === "stop") {
+          return result.retryAfterMs > maxBackoffMs;
+        }
+        return false;
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: retryAfterBackoffMs — absent, non-numeric, negative and zero headers ALL classify as sleep at the minIntervalMs floor", () => {
+  fc.assert(
+    fc.property(
+      fc.oneof(
+        fc.constant(null),
+        fc.constant("garbage"),
+        fc.integer({ min: -1000, max: 0 }).map(String),
+      ),
+      fc.integer({ min: 100, max: 5_000 }),
+      (header, minIntervalMs) => {
+        const result = retryAfterBackoffMs(header, minIntervalMs);
+        return result.kind === "sleep" && result.ms === minIntervalMs;
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// projectArtistCandidates — the search-artists-batch payload-budget
+// projection (step 5's MongoDB 16MB guard). A KEY-SET invariant, not a value
+// round-trip: for ANY generated artist object carrying arbitrary extra keys
+// (area/begin-area/life-span/aliases/tags/...), the projected output's keys
+// are always a SUBSET of {id, name, sort-name} and ALWAYS contain id + name.
+// ---------------------------------------------------------------------------
+
+const arbExtraArtistFields = fc.dictionary(
+  fc.constantFrom(
+    "area",
+    "begin-area",
+    "life-span",
+    "aliases",
+    "tags",
+    "disambiguation",
+    "country",
+    "score",
+    "type",
+  ),
+  fc.oneof(fc.string(), fc.integer(), fc.array(fc.string())),
+);
+
+const arbArtistWithExtras = fc.record({
+  id: fc.uuid(),
+  name: fc.string({ minLength: 1, maxLength: 40 }),
+  "sort-name": fc.option(fc.string({ maxLength: 40 }), { nil: undefined }),
+  extras: arbExtraArtistFields,
+}).map(({ id, name, "sort-name": sortName, extras }) => ({
+  id,
+  name,
+  ...(sortName !== undefined ? { "sort-name": sortName } : {}),
+  ...extras,
+}));
+
+Deno.test("property: projectArtistCandidates — output keys are always a subset of {id, name, sort-name} and always contain id + name, for artist objects carrying arbitrary extra keys", () => {
+  fc.assert(
+    fc.property(
+      fc.array(arbArtistWithExtras, { maxLength: 20 }),
+      (artists) => {
+        const projected = projectArtistCandidates(artists);
+        return projected.length === artists.length &&
+          projected.every((p, i) => {
+            const keys = Object.keys(p);
+            const subset = keys.every((k) =>
+              k === "id" || k === "name" || k === "sort-name"
+            );
+            return subset && p.id === artists[i].id &&
+              p.name === artists[i].name;
+          });
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("projectArtistCandidates: drops area/begin-area/life-span/aliases/tags from a full MusicBrainz artist object", () => {
+  const full = {
+    id: "00000000-0000-0000-0000-000000000001",
+    name: "Fixture Artist",
+    "sort-name": "Fixture Artist",
+    area: { id: "x", name: "Fixture Land" },
+    "begin-area": { id: "y", name: "Fixture City" },
+    "life-span": { begin: "2000", ended: false },
+    aliases: [{ name: "Alias" }],
+    tags: [{ count: 1, name: "fixture-tag" }],
+    disambiguation: "the fixture one",
+  };
+  const [projected] = projectArtistCandidates([full]);
+  assertEquals(Object.keys(projected).sort(), ["id", "name", "sort-name"]);
+});
+
+Deno.test("projectArtistCandidates: a hit missing id or name is DROPPED, not substituted with empty strings", () => {
+  const hits = [
+    { id: "cafebabe-0001-4a57-8bad-f00dfeedca01", name: "Fixture Real Hit" },
+    { name: "Fixture Missing Id" }, // no `id` at all
+    { id: "cafebabe-0002-4a57-8bad-f00dfeedca02" }, // no `name` at all
+    { id: "", name: "Fixture Empty Id" }, // `id` present but empty
+    { id: "cafebabe-0003-4a57-8bad-f00dfeedca03", name: "" }, // `name` present but empty
+    { id: 12345, name: "Fixture Non-String Id" }, // `id` wrong type
+    { id: "cafebabe-0004-4a57-8bad-f00dfeedca04", name: null }, // `name` wrong type
+  ];
+  const projected = projectArtistCandidates(
+    hits as unknown as Record<string, unknown>[],
+  );
+  assertEquals(
+    projected,
+    [{ id: "cafebabe-0001-4a57-8bad-f00dfeedca01", name: "Fixture Real Hit" }],
+    'every malformed hit must be dropped outright — never survive as {id: "", name: ""}, which would later false-match a zero-token library artist name',
+  );
+});
+
+// ---------------------------------------------------------------------------
+// dedupeQueries / planSearchBatch / deriveMaxDurationMs — search-artists-
+// batch's pure planning helpers (step 4). Genuinely pure — no clock read, no
+// I/O — so every property below drives the REAL implementation, not a
+// mirror.
+// ---------------------------------------------------------------------------
+
+const arbQuery = fc.string({ minLength: 1, maxLength: 20 });
+
+Deno.test("property: dedupeQueries is order-preserving — the FIRST occurrence of each distinct query survives, in original relative order", () => {
+  fc.assert(
+    fc.property(fc.array(arbQuery, { maxLength: 30 }), (queries) => {
+      const deduped = dedupeQueries(queries);
+      const seen = new Set<string>();
+      const expected: string[] = [];
+      for (const q of queries) {
+        if (!seen.has(q)) {
+          seen.add(q);
+          expected.push(q);
+        }
+      }
+      return JSON.stringify(deduped) === JSON.stringify(expected);
+    }),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: dedupeQueries is idempotent — deduping an already-deduped list changes nothing", () => {
+  fc.assert(
+    fc.property(fc.array(arbQuery, { maxLength: 30 }), (queries) => {
+      const once = dedupeQueries(queries);
+      const twice = dedupeQueries(once);
+      return JSON.stringify(once) === JSON.stringify(twice);
+    }),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+const arbDistinctQueries = fc.uniqueArray(arbQuery, { maxLength: 30 });
+
+Deno.test("property: planSearchBatch never returns more than maxQueries in `batch`", () => {
+  fc.assert(
+    fc.property(
+      arbDistinctQueries,
+      fc.integer({ min: 0, max: 40 }),
+      (queries, maxQueries) => {
+        const { batch } = planSearchBatch(queries, maxQueries);
+        return batch.length <= maxQueries;
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: planSearchBatch — batch is exactly the input's first maxQueries entries, deferred is exactly the remainder, and batch++deferred reconstructs the input exactly once (no gap, no overlap)", () => {
+  fc.assert(
+    fc.property(
+      arbDistinctQueries,
+      fc.integer({ min: 0, max: 40 }),
+      (queries, maxQueries) => {
+        const { batch, deferred } = planSearchBatch(queries, maxQueries);
+        const expectedBatch = queries.slice(0, maxQueries);
+        const expectedDeferred = queries.slice(maxQueries);
+        return JSON.stringify(batch) === JSON.stringify(expectedBatch) &&
+          JSON.stringify(deferred) === JSON.stringify(expectedDeferred) &&
+          JSON.stringify([...batch, ...deferred]) === JSON.stringify(queries);
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: planSearchBatch — truncated is true IFF deferred is non-empty", () => {
+  fc.assert(
+    fc.property(
+      arbDistinctQueries,
+      fc.integer({ min: 0, max: 40 }),
+      (queries, maxQueries) => {
+        const { deferred, truncated } = planSearchBatch(queries, maxQueries);
+        return truncated === (deferred.length > 0);
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// deriveMaxDurationMs — TWO properties over DISJOINT domains (round-3 fix:
+// never one property "for all inputs" with an unstated exception, since the
+// explicit branch deliberately applies NO floor).
+// ---------------------------------------------------------------------------
+
+Deno.test("property: deriveMaxDurationMs — DERIVED branch (explicit absent): result >= maxQueries*minIntervalMs, and non-decreasing in maxQueries", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 0, max: 2000 }),
+      fc.integer({ min: 1, max: 5000 }),
+      fc.integer({ min: 0, max: 500 }),
+      (maxQueries, minIntervalMs, delta) => {
+        const smaller = deriveMaxDurationMs(maxQueries, minIntervalMs);
+        const larger = deriveMaxDurationMs(
+          maxQueries + delta,
+          minIntervalMs,
+        );
+        return smaller >= maxQueries * minIntervalMs && larger >= smaller;
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: deriveMaxDurationMs — EXPLICIT branch: result === explicit VERBATIM, no floor applied even when explicit is far below maxQueries*minIntervalMs", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 0, max: 2000 }),
+      fc.integer({ min: 1, max: 5000 }),
+      fc.integer({ min: 0, max: 2_000_000 }),
+      (maxQueries, minIntervalMs, explicit) => {
+        return deriveMaxDurationMs(maxQueries, minIntervalMs, explicit) ===
+          explicit;
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("deriveMaxDurationMs: at the search-artists-batch defaults (maxQueries 400, minIntervalMs 1100), the derived bound is 690_000ms (~11.5min), above the 440_000ms (~7.3min) nominal", () => {
+  const derived = deriveMaxDurationMs(400, 1100);
+  assertEquals(derived, 690_000);
+  assertEquals(derived > 400 * 1100, true);
+});
+
+Deno.test("deriveMaxDurationMs: an explicit bound below the nominal maxQueries*minIntervalMs product is respected VERBATIM, not clamped up — the escape hatch actually works", () => {
+  assertEquals(deriveMaxDurationMs(400, 1100, 5_000), 5_000);
 });

@@ -38,6 +38,7 @@ import {
   findDupes,
   fixEncoding,
   hash8,
+  needsSearch,
   parseBpmLine,
   slugify,
 } from "./music_library.ts";
@@ -250,4 +251,61 @@ Deno.test("property-flow sanity: the shared-artist/title fixture actually produc
   const cube = buildCube(rows, new Map());
   const { albumClusters } = findDupes(cube.albums);
   assert(albumClusters.length > 0, "sanity: a real cluster must form");
+});
+
+// ---------------------------------------------------------------------------
+// (h) needsSearch — the resolve-artists 30-day reuse-cache freshness policy,
+// mirroring how isCacheStale (musicbrainz.ts) sits beside the cache it
+// governs. Pure, no clock read inside — now/ttlMs are always parameters.
+// ---------------------------------------------------------------------------
+
+const NOW = Date.UTC(2026, 7, 5, 12, 0, 0);
+const TTL_30_DAYS = 30 * 24 * 60 * 60 * 1000;
+
+Deno.test("needsSearch: undefined/null prior -> true (nothing to reuse)", () => {
+  assert(needsSearch(undefined, NOW, TTL_30_DAYS));
+  assert(needsSearch(null, NOW, TTL_30_DAYS));
+});
+
+Deno.test("needsSearch: prior with a MISSING checkedAt -> true", () => {
+  assert(needsSearch({}, NOW, TTL_30_DAYS));
+});
+
+Deno.test("needsSearch: prior with an UNPARSABLE checkedAt -> true", () => {
+  assert(needsSearch({ checkedAt: "not-a-date" }, NOW, TTL_30_DAYS));
+});
+
+Deno.test("needsSearch: a FRESH checkedAt (well within the TTL) -> false, regardless of status", () => {
+  const fresh = new Date(NOW - 1000).toISOString(); // 1s ago
+  assert(!needsSearch({ checkedAt: fresh }, NOW, TTL_30_DAYS));
+});
+
+Deno.test("needsSearch: a STALE checkedAt (past the TTL) -> true, regardless of status", () => {
+  const stale = new Date(NOW - TTL_30_DAYS - 1000).toISOString();
+  assert(needsSearch({ checkedAt: stale }, NOW, TTL_30_DAYS));
+});
+
+Deno.test("needsSearch: checkedAt exactly AT the TTL boundary -> true (>=, not >)", () => {
+  const atBoundary = new Date(NOW - TTL_30_DAYS).toISOString();
+  assert(needsSearch({ checkedAt: atBoundary }, NOW, TTL_30_DAYS));
+});
+
+Deno.test("needsSearch: a FUTURE checkedAt (clock skew) -> true — must not park an artist forever", () => {
+  const future = new Date(NOW + 60_000).toISOString();
+  assert(needsSearch({ checkedAt: future }, NOW, TTL_30_DAYS));
+});
+
+Deno.test("property: needsSearch — an age (now - parsed checkedAt) in [0, ttlMs) is always fresh (false); an age >= ttlMs, or a checkedAt in the future (negative age), is always true", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: -TTL_30_DAYS, max: TTL_30_DAYS * 2 }), // age in ms; negative = future checkedAt
+      (ageMs) => {
+        const checkedAt = new Date(NOW - ageMs).toISOString();
+        const result = needsSearch({ checkedAt }, NOW, TTL_30_DAYS);
+        const isFresh = ageMs >= 0 && ageMs < TTL_30_DAYS;
+        return result === !isFresh;
+      },
+    ),
+    FC_RUNS,
+  );
 });

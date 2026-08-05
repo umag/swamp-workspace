@@ -83,11 +83,12 @@ No `swamp model method run` call was made against a real headphones or
 musicbrainz instance while authoring these fixtures; every artist name,
 release-group title, and identifier below is invented.
 
-| File                      | Shape                                                                                                                                                                                                  |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `headphones_artists.json` | headphones artist-index response — `{ artists: [{ ArtistID, ArtistName, Status }], total, timestamp }`                                                                                                 |
-| `mb_release_groups.json`  | MusicBrainz `browse` response for `entity=release-group&artist=<id>` — `{ entity, linkedEntity, linkedId, results[], count, offset, timestamp }`                                                        |
-| `mb_release_groups_empty.json` | The SAME browse shape for an artist with a legitimately empty discography (`results: []`, `count: 0`) — a separate file so each fixture's top level mirrors the wire response exactly            |
+| File                           | Shape                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `headphones_artists.json`      | headphones artist-index response — `{ artists: [{ ArtistID, ArtistName, Status }], total, timestamp }`                                                                                                                                                                                                                           |
+| `mb_release_groups.json`       | MusicBrainz `browse` response for `entity=release-group&artist=<id>` — `{ entity, linkedEntity, linkedId, results[], count, offset, timestamp }`                                                                                                                                                                                 |
+| `mb_release_groups_empty.json` | The SAME browse shape for an artist with a legitimately empty discography (`results: []`, `count: 0`) — a separate file so each fixture's top level mirrors the wire response exactly                                                                                                                                            |
+| `mb_artist_search_batch.json`  | MusicBrainz `search-artists-batch` response — `{ batchId, queries: [{ query, artists[], count, error? }], deferred[], requested, searched, failed, truncated, stopReason, timestamp }`, the shape template `resolve-artists`' batch-search result mapping (musicbrainz-ratelimit-runmodel-fanout) reads back via `readModelData` |
 
 ### All MBIDs/UUIDs in this corpus are invented
 
@@ -133,3 +134,17 @@ matching). The nested `emptyBrowse` object is a second, independent browse
 response with `results: []` and `count: 0` — a legitimately-empty discography
 for a different artist, distinguishing "we asked MusicBrainz and it has nothing"
 (cached empty) from "we never asked" (no cache entry at all).
+
+`mb_artist_search_batch.json` is the SHAPE TEMPLATE for `search-artists-batch`'s
+happy path and the contract-fixture key-set pin only — it is never the property
+test's data source, since the caller generates `batchId` at runtime and
+fast-check generates fresh names per run, neither of which a static fixture can
+supply (see `runModelHandler` in the methods/adversarial suites). Its 2
+`queries` rows exercise a resolved hit (`Fixture Aurora Static`, `sort-name`
+present) and a per-query `error` (`Fixture Nightfall`) — distinguishable from a
+legitimately empty result, which carries no `error` key at all. `deferred`
+carries one query never reached this run (`Fixture Deferred Artist`), with
+`truncated: true` and `stopReason: "max-queries"` recording why. `batchId` and
+every artist `id` use the same hexspeak-UUID family as the other MusicBrainz
+fixtures in this file (`deadbeef`, `cafebabe`, `facefeedface`) — invented, never
+a real MusicBrainz identifier.

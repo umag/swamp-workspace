@@ -34,6 +34,9 @@ import mbReleaseGroupsFixture from "../../fixtures/mb_release_groups.json" with 
 import mbReleaseGroupsEmptyFixture from "../../fixtures/mb_release_groups_empty.json" with {
   type: "json",
 };
+import mbArtistSearchBatchFixture from "../../fixtures/mb_artist_search_batch.json" with {
+  type: "json",
+};
 
 // --- fixEncoding ---
 
@@ -740,4 +743,76 @@ Deno.test("contract: fixtures/mb_release_groups_empty.json has the SAME 7 keys a
   assertEquals(f.results, []);
   assertEquals(f.count, 0);
   assertEquals(typeof f.linkedId, "string");
+});
+
+const ARTIST_SEARCH_BATCH_KEYS = [
+  "batchId",
+  "queries",
+  "deferred",
+  "requested",
+  "searched",
+  "failed",
+  "truncated",
+  "stopReason",
+  "timestamp",
+].sort();
+
+const ARTIST_SEARCH_BATCH_QUERY_KEYS_MAX = [
+  "query",
+  "artists",
+  "count",
+  "error",
+].sort();
+
+const ARTIST_SEARCH_BATCH_ARTIST_KEYS = ["id", "name", "sort-name"].sort();
+
+Deno.test("contract: fixtures/mb_artist_search_batch.json has EXACTLY the 9 search-artists-batch keys; each query row's keys are a subset of {query,artists,count,error}; each artist hit is the PROJECTED {id,name,sort-name} shape, never a full MusicBrainz artist document", () => {
+  const f = mbArtistSearchBatchFixture as {
+    batchId: string;
+    queries: Array<
+      {
+        query: string;
+        artists: Array<{ id: string; name: string; "sort-name"?: string }>;
+        count: number;
+        error?: string;
+      }
+    >;
+    deferred: string[];
+    requested: number;
+    searched: number;
+    failed: number;
+    truncated: boolean;
+    stopReason: string;
+    timestamp: string;
+  };
+  assertEquals(Object.keys(f).sort(), ARTIST_SEARCH_BATCH_KEYS);
+  assert(f.queries.length > 0, "sanity: this fixture must carry real rows");
+  for (const q of f.queries) {
+    const keys = Object.keys(q).sort();
+    assert(
+      keys.every((k) => ARTIST_SEARCH_BATCH_QUERY_KEYS_MAX.includes(k)),
+      `query row keys ${JSON.stringify(keys)} must be a subset of ${
+        JSON.stringify(ARTIST_SEARCH_BATCH_QUERY_KEYS_MAX)
+      }`,
+    );
+    for (const a of q.artists) {
+      assertEquals(
+        Object.keys(a).sort().every((k) =>
+          ARTIST_SEARCH_BATCH_ARTIST_KEYS.includes(k)
+        ),
+        true,
+        "each artist hit must be the PROJECTED shape, never a full MusicBrainz artist document",
+      );
+      assert(typeof a.id === "string" && a.id.length > 0);
+      assert(typeof a.name === "string" && a.name.length > 0);
+    }
+  }
+  assert(
+    f.queries.some((q) => q.error !== undefined),
+    "sanity: this fixture must exercise the per-query error shape",
+  );
+  assert(f.deferred.length > 0, "sanity: this fixture must exercise deferred");
+  assertEquals(typeof f.batchId, "string");
+  assertEquals(typeof f.truncated, "boolean");
+  assertEquals(typeof f.stopReason, "string");
 });
