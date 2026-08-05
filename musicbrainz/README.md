@@ -6,9 +6,17 @@ recordings, and labels through the MusicBrainz Web Service v2 (JSON), with a
 built-in 1 request/second rate limiter — concurrency-safe, so multiple in-flight
 calls (e.g. `sync-artist-discographies`' pagination) can never race each other
 into firing too close together — that backs off and retries once on a `503`
-before giving up, so you stay within the MusicBrainz usage policy. Also includes
-Bandcamp-to-MusicBrainz helpers that scrape a Bandcamp discography and generate
-release-editor seed URLs for releases that are missing from MusicBrainz.
+before giving up, so you stay within the MusicBrainz usage policy. **This
+spacing is enforced WITHIN one method invocation only.** It has no memory across
+separate `context.runModel` invocations, so a caller that fans out one search
+per item (one `runModel` call per artist, for example) can send real traffic
+well past 1 req/sec even though each individual call is internally well-behaved.
+Callers that would otherwise fan out across invocations should use
+`search-artists-batch` instead, which takes MANY queries and loops internally
+through the same rate-limited fetch, so the limiter stays correct for the whole
+workload. Also includes Bandcamp-to-MusicBrainz helpers that scrape a Bandcamp
+discography and generate release-editor seed URLs for releases that are missing
+from MusicBrainz.
 
 ## Configuration
 
@@ -33,26 +41,27 @@ methods: {}
 
 ## Methods
 
-| Method                      | Purpose                                                                              |
-| --------------------------- | ------------------------------------------------------------------------------------ |
-| `search-artist`             | Search artists by name or Lucene query                                               |
-| `search-release-group`      | Search release groups (albums/EPs/singles)                                           |
-| `search-release`            | Search releases                                                                      |
-| `search-recording`          | Search recordings (tracks)                                                           |
-| `search-label`              | Search record labels                                                                 |
-| `search`                    | Generic search over any entity type                                                  |
-| `lookup-artist`             | Look up an artist by MBID (with optional `inc` includes)                             |
-| `lookup-release-group`      | Look up a release group by MBID                                                      |
-| `lookup-release`            | Look up a release by MBID                                                            |
-| `lookup-recording`          | Look up a recording by MBID                                                          |
-| `lookup-label`              | Look up a label by MBID                                                              |
-| `browse-release-groups`     | Browse release groups by artist MBID                                                 |
-| `browse-releases`           | Browse releases by artist, label, or release-group MBID                              |
-| `browse-recordings`         | Browse recordings by artist or release MBID                                          |
-| `seed-from-bandcamp`        | Generate a MusicBrainz seed URL from one Bandcamp album                              |
-| `find-missing`              | Compare a Bandcamp discography to MusicBrainz, list missing                          |
-| `seed-all-missing`          | Generate seed URLs for all missing releases of an artist                             |
-| `sync-artist-discographies` | Cursored, resumable fan-out that caches each artist's full release-group discography |
+| Method                      | Purpose                                                                                                                |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `search-artist`             | Search artists by name or Lucene query                                                                                 |
+| `search-artists-batch`      | Search MANY artist queries in ONE invocation — the fan-out-safe alternative to calling `search-artist` once per artist |
+| `search-release-group`      | Search release groups (albums/EPs/singles)                                                                             |
+| `search-release`            | Search releases                                                                                                        |
+| `search-recording`          | Search recordings (tracks)                                                                                             |
+| `search-label`              | Search record labels                                                                                                   |
+| `search`                    | Generic search over any entity type                                                                                    |
+| `lookup-artist`             | Look up an artist by MBID (with optional `inc` includes)                                                               |
+| `lookup-release-group`      | Look up a release group by MBID                                                                                        |
+| `lookup-release`            | Look up a release by MBID                                                                                              |
+| `lookup-recording`          | Look up a recording by MBID                                                                                            |
+| `lookup-label`              | Look up a label by MBID                                                                                                |
+| `browse-release-groups`     | Browse release groups by artist MBID                                                                                   |
+| `browse-releases`           | Browse releases by artist, label, or release-group MBID                                                                |
+| `browse-recordings`         | Browse recordings by artist or release MBID                                                                            |
+| `seed-from-bandcamp`        | Generate a MusicBrainz seed URL from one Bandcamp album                                                                |
+| `find-missing`              | Compare a Bandcamp discography to MusicBrainz, list missing                                                            |
+| `seed-all-missing`          | Generate seed URLs for all missing releases of an artist                                                               |
+| `sync-artist-discographies` | Cursored, resumable fan-out that caches each artist's full release-group discography                                   |
 
 ## Usage
 
@@ -75,7 +84,37 @@ swamp model method run musicbrainz find-missing \
 # run, 10 at a time. Re-run the same command to process the next batch — it
 # resumes from a persisted cursor rather than restarting.
 swamp model method run musicbrainz sync-artist-discographies
+
+# Search MANY artists in ONE invocation instead of one runModel call per
+# artist — the fix for fanning out across invocations losing rate-limit
+# spacing (see the note at the top of this README).
+swamp model method run musicbrainz search-artists-batch \
+  --input queries='["artist:\"Boards of Canada\"", "artist:\"Autechre\""]'
 ```
+
+`search-artists-batch` loops internally over the same rate-limited fetch every
+other method uses, so the ~1 req/sec spacing that is already correct within one
+invocation stays correct for the whole list of queries. `limit` (default 10)
+caps candidates requested per query — `matchArtist`-style disambiguation needs a
+candidate SET, not a single top hit — and each hit is written in a REDUCED
+`{id, name, sort-name}` shape (never the full MusicBrainz artist document) to
+stay well inside the datastore's per-document size limit on a large batch.
+`maxQueries` (default 400) is the designed stop for one run; the untried
+remainder is written to `deferred` for a future run to pick up, and the batch's
+`stopReason` (`complete` / `max-queries` / `max-duration` / `aborted` /
+`backoff`) says which ceiling (if any) produced a partial result.
+`maxDurationMs` is a slow-upstream backstop DERIVED from `maxQueries` and
+`minIntervalMs` (roughly 1.5x the nominal wall-clock time, plus a 30s floor)
+unless given explicitly — so raising `maxQueries` also raises the backstop, and
+a deliberately tight explicit value is honoured verbatim. At the defaults (400
+queries, 1100ms spacing) one run holds this instance's model lock for roughly
+7.3 minutes at nominal speed, up to roughly 11.5 minutes worst case. A
+`Retry-After` header on a `503` that exceeds 60 seconds now STOPS the whole
+batch (`stopReason: "backoff"`, throwing `MusicBrainzBackoffError` on the
+single-query methods) instead of sleeping it out — a hostile or misconfigured
+multi-hour `Retry-After` can no longer stall an invocation for that long while
+holding a model lock; a `Retry-After` within the cap still sleeps and retries
+exactly once, as before.
 
 `sync-artist-discographies` defaults to the artists cached by this instance's
 most recent `search-artist` run, or accepts an explicit `artistMbids` array.

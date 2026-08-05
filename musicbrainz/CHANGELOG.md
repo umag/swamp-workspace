@@ -1,5 +1,119 @@
 # Changelog
 
+## 2026.08.05.1
+
+Fixes `musicbrainz-ratelimit-runmodel-fanout`, measured live:
+`swamp model
+method run music resolve-artists` completed in 581s having fired
+~1483 MusicBrainz searches — ~2.5 req/sec against the documented 1 req/sec
+limit. `mbFetch`'s rate limiter is correct WITHIN one method invocation (each
+`await mbFetch(...)` call shares module-level spacing state with every other
+call in the SAME invocation) but has no memory ACROSS separate
+`context.runModel` invocations — each one starts with `lastRequest = null`, so a
+caller fanning out one `runModel` call per item loses spacing entirely, even
+though the limiter itself was never broken. `model.version` and `manifest.yaml`
+move `2026.08.04.1` -> `2026.08.05.1`.
+
+### New method: `search-artists-batch`
+
+Collapses the fan-out instead of persisting the limiter: takes MANY Lucene
+artist queries and loops internally over the existing `mbFetch`, so the
+already-correct in-process limiter becomes correct for the WHOLE workload by
+construction — no persisted cursor, no read/write per request, no change to how
+spacing is computed. Bounded by `maxQueries` (default 400 — the designed stop)
+and a `maxDurationMs` slow-upstream backstop DERIVED from it (a new pure
+exported `deriveMaxDurationMs(maxQueries, minIntervalMs, explicit?)`:
+`explicit ?? Math.ceil(maxQueries * minIntervalMs * 1.5) + 30_000`, so raising
+`maxQueries` also raises the backstop, while an explicit value is honoured
+verbatim with no floor), an already-aborted `context.signal`, and a new
+`MusicBrainzBackoffError` (see below) — each stop recorded in a `stopReason`
+(`complete` / `max-queries` / `max-duration` / `aborted` / `backoff`) with the
+untried remainder pushed to a new `deferred[]` array. A per-query fetch failure
+is isolated (recorded with an `error`, batch continues); a
+`MusicBrainzBackoffError` stops the WHOLE batch instead, because that query
+never got a verdict. The written `artistSearchBatch` resource (new,
+`garbageCollection: 3` — deliberately below every other spec's 10, since it is
+one potentially-large document per run) is ALWAYS produced, including on every
+early stop, so completed work survives. Two new pure helpers back the planning:
+`dedupeQueries` (order-preserving, idempotent) and
+`planSearchBatch(queries, maxQueries) -> {batch, deferred, truncated}` (first
+`maxQueries` entries in input order — this is what makes an explicitly requested
+re-check placed first in the caller's query list immune to being silently
+dropped by the ceiling).
+
+### Payload budget: a new projection, not the full artist document
+
+`search-artist` and `search-artists-batch` now share one extracted body,
+`searchArtistsOnce` (module-private), so the artist-search HTTP contract —
+including `offset`, still forwarded end-to-end — lives in exactly one place.
+`search-artist` is UNCHANGED behaviourally: same arguments, same full
+MusicBrainz artist objects written to the same `artists`/`search` resource.
+`search-artists-batch` instead writes a new exported
+`projectArtistCandidates(artists)` projection — `{id, name, sort-name}` per hit,
+dropping `area`/`begin-area`/`life-span`/`aliases`/`tags`/etc — because it
+writes ONE document per run and the full shape risked the datastore's 16MB
+per-document limit on a large batch (measured: one unprojected `search-artist`
+row at the default limit is ~15.6KB; projected, a hit is ~110-130 bytes).
+
+### Breaking change: `retryAfterBackoffMs` returns a discriminated result
+
+`retryAfterBackoffMs(retryAfterHeader, minIntervalMs, maxBackoffMs = 60_000)`
+now returns `{kind: "sleep", ms}` or `{kind: "stop", retryAfterMs}` instead of a
+bare number of milliseconds — the whole `Retry-After` contract lives in this one
+pure classifier, and `mbFetch` only acts on the classification, never re-parsing
+the header itself. `mbFetch` behaviour changes for EVERY existing method, not
+just the new one: a `Retry-After` within `maxBackoffMs` still sleeps and retries
+exactly once, as before; a `Retry-After` EXCEEDING `maxBackoffMs` now throws a
+new exported `MusicBrainzBackoffError` (carrying `retryAfterMs`) immediately,
+without sleeping and without retrying — under the fan-out collapse, a single
+hostile or misconfigured multi-hour `Retry-After` would otherwise stall a whole
+batch invocation for that long while holding both the `musicbrainz` model lock
+and the caller's. `mbFetch` also gains an optional 5th `signal?: AbortSignal`
+parameter: checked before the rate-limit reservation, composed into the per-call
+`AbortController` via `AbortSignal.any` (never replacing the existing 30s
+client-side timeout), and raced against the `Retry-After` backoff sleep (no
+longer an uninterruptible `setTimeout`) — this is the only way a long batch's
+`--timeout` can be enforced INSIDE an in-flight request or backoff sleep, not
+just between queries. All four-argument callers (every existing method) are
+unchanged.
+
+### Documentation
+
+README.md's and manifest.yaml's "concurrency-safe, so multiple in-flight calls
+can never race" claim is now explicitly SCOPED to one method invocation — it was
+always true in-process and never extended across `context.runModel` invocations,
+and this release is what makes that boundary matter. Both files document
+`search-artists-batch`, the `Retry-After` stop-the-batch behaviour change, and
+the batch method's lock-hold window (~7.3 min nominal, ~11.5 min worst case at
+the defaults).
+
+### Tests
+
+Integrated into the five existing role-assigned suites, not bolted on as a sixth
+file. `musicbrainz_property_test.ts`: `retryAfterBackoffMs`'s five existing
+tests rewritten to the discriminated shape plus new classification properties;
+`projectArtistCandidates`, `dedupeQueries`, `planSearchBatch`, and
+`deriveMaxDurationMs` invariants (all pure, no stub needed).
+`musicbrainz_adversarial_test.ts`: the `stop`-classification throw (virtual
+elapsed time never reaches the header value), `mbFetch` cancellation (an
+already-aborted signal, `AbortSignal.any` composition, the backoff sleep racing
+an abort), and `search-artists-batch`'s six behaviours — spacing across the
+WHOLE batch (the assertion this issue exists for), per-query failure isolation,
+`max-queries` truncation, an explicit low `maxDurationMs` plus its
+derived-default companion, an already-aborted signal, and a mid-batch
+`MusicBrainzBackoffError` with the completed prefix still written.
+`musicbrainz_methods_test.ts`: the `search-artist` `offset=2` pin (`:245-268`)
+stays green UNCHANGED — the extraction's proof of behaviour preservation — plus
+`search-artists-batch`'s happy path (distinct queries never cross-mapped to each
+other's results), generated `batchId`, and duplicate-query dedup.
+`musicbrainz_coverage_test.ts`: a new closed-set
+`KNOWN_METHODS`/`KNOWN_RESOURCES` enumeration (18 methods, 12 resources — this
+model had none before, only per-feature pins), plus the payload-budget
+regression pin (a full MusicBrainz artist object writes a row whose artists
+carry none of `area`/`begin-area`/`life-span`/`aliases`/`tags`). 197 tests after
+this change (161 before). `quality.yaml`'s five suites and Grade-A ratchet are
+unaffected — every addition lands inside the existing five files.
+
 ## 2026.08.04.1
 
 Ports three additions (musicbrainz-discography-sync) from an older, untested

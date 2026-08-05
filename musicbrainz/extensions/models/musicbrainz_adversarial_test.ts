@@ -37,7 +37,7 @@
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
-import { mbFetch, model } from "./musicbrainz.ts";
+import { mbFetch, model, MusicBrainzBackoffError } from "./musicbrainz.ts";
 import artistSearch from "../../fixtures/artist-search.json" with {
   type: "json",
 };
@@ -873,6 +873,140 @@ Deno.test("LB7 FIX: mbFetch aborts a never-resolving fetch once the client-side 
 });
 
 // ---------------------------------------------------------------------------
+// mbFetch is CANCELLABLE via an optional 5th `signal` parameter — this is
+// the ONLY way `--timeout` on a long-running batch (search-artists-batch,
+// step 6) can be enforced at any point INSIDE a request, since v1 only
+// checked the flag BETWEEN queries. All existing 4-argument callers are
+// unchanged; a caller that never passes a signal sees identical behaviour.
+// ---------------------------------------------------------------------------
+
+Deno.test("mbFetch cancellation: an already-aborted external signal prevents the request entirely, checked BEFORE reserveRateLimitSlot", async () => {
+  using time = new FakeTime();
+  const controller = new AbortController();
+  controller.abort();
+  const original = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = (() => {
+    fetchCalled = true;
+    return Promise.reject(new Error("must never be called"));
+  }) as unknown as typeof globalThis.fetch;
+  try {
+    await drainAndAwait(
+      time,
+      assertRejects(() =>
+        mbFetch(
+          "test-agent/1.0",
+          "/artist/",
+          { query: "x" },
+          1100,
+          controller.signal,
+        )
+      ),
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+  assertEquals(
+    fetchCalled,
+    false,
+    "an already-aborted signal must short-circuit before any network call, including the rate-limit reservation",
+  );
+});
+
+Deno.test("mbFetch cancellation: the external signal is composed into the per-call AbortController via AbortSignal.any — aborting it aborts the in-flight fetch", async () => {
+  using time = new FakeTime();
+  const controller = new AbortController();
+  const original = globalThis.fetch;
+  let sawSignal: AbortSignal | undefined;
+  globalThis.fetch = ((
+    _input: Request | URL | string,
+    init?: RequestInit,
+  ) => {
+    sawSignal = init?.signal ?? undefined;
+    // Schedule the external abort only once fetch() has actually been
+    // called — proves the composed signal fetch received is LIVE, not
+    // evaluated ahead of time. A fake-clock timer (not a raw microtask
+    // flush) so drainAndAwait's tick loop reliably drives it.
+    setTimeout(() => controller.abort(), 10);
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        reject(new DOMException("The signal has been aborted", "AbortError"));
+      });
+    });
+  }) as unknown as typeof globalThis.fetch;
+  try {
+    await drainAndAwait(
+      time,
+      assertRejects(() =>
+        mbFetch(
+          "test-agent/1.0",
+          "/artist/",
+          { query: "x" },
+          1100,
+          controller.signal,
+        )
+      ),
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert(
+    sawSignal instanceof AbortSignal,
+    "a composed signal must have been passed to fetch",
+  );
+  assert(
+    sawSignal?.aborted,
+    "the composed signal must reflect the external signal's abort",
+  );
+});
+
+Deno.test("mbFetch cancellation: a 503 backoff sleep RACES the external signal instead of being an uninterruptible setTimeout — aborting during the backoff rejects immediately, well short of the full backoff", async () => {
+  using time = new FakeTime();
+  const controller = new AbortController();
+  let callCount = 0;
+  let firstFetchAt = 0;
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      callCount++;
+      if (callCount === 1) {
+        firstFetchAt = time.now;
+        // Schedule the abort right as the first 503 is produced — a
+        // fake-clock timer (not a manually-guessed tick amount, which broke
+        // under this file's module-level rate-limiter "virtual debt" from
+        // earlier tests, see the file header) so it reliably lands while
+        // mbFetch is inside the Retry-After backoff sleep, not before it.
+        setTimeout(() => controller.abort(), 1);
+      }
+      return json(error503, 503, { "Retry-After": "30" });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        (async () => {
+          const pending = mbFetch(
+            "test-agent/1.0",
+            "/artist/",
+            { query: "x" },
+            1100,
+            controller.signal,
+          );
+          await assertRejects(() => pending);
+          assert(
+            time.now - firstFetchAt < 30_000,
+            "the backoff sleep must have been interrupted by the abort, not run to completion",
+          );
+          assertEquals(
+            callCount,
+            1,
+            "an aborted backoff sleep must never reach the retry fetch",
+          );
+        })(),
+      ),
+  );
+});
+
+// ---------------------------------------------------------------------------
 // musicbrainz-discography-sync: mbFetch now retries a 503 exactly once
 // (honouring Retry-After as the backoff when present), and its rate-limit
 // queue is concurrency-safe. Ported from an older untested copy of this
@@ -904,6 +1038,40 @@ Deno.test("musicbrainz-discography-sync: a 503 WITH a Retry-After header is retr
             calls.length,
             2,
             "mbFetch retries exactly once after honouring the Retry-After backoff, then throws when the retry also 503s",
+          );
+        })(),
+      ),
+  );
+});
+
+Deno.test("search-artists-batch backoff: a 503 with a Retry-After EXCEEDING the cap throws MusicBrainzBackoffError immediately — no sleep, no retry, virtual elapsed time never reaches the header value", async () => {
+  using time = new FakeTime();
+  const { ctx } = makeCtx();
+  const t0 = time.now;
+  let callCount = 0;
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      callCount++;
+      return json(error503, 503, { "Retry-After": "3600" });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        (async () => {
+          const err = await assertRejects(
+            () => run("search-artist", { query: "x" }, ctx),
+            MusicBrainzBackoffError,
+          );
+          assertEquals(err.retryAfterMs, 3_600_000);
+          assertEquals(
+            callCount,
+            1,
+            "the classification is 'stop' — mbFetch must throw immediately, never retry",
+          );
+          assert(
+            time.now - t0 < 3_600_000,
+            "must not have slept out anywhere close to the 3600s Retry-After value",
           );
         })(),
       ),
@@ -1180,6 +1348,238 @@ Deno.test("pin: entity `data` from lookup-artist is written through with NO sche
   );
   const res = written.find((w) => w.spec === "entity")!;
   assertEquals(res.payload.data, hostileData);
+});
+
+// ---------------------------------------------------------------------------
+// search-artists-batch — the six behaviors this step owns (testStrategy RED
+// phase 4): (a) spacing across the WHOLE batch — the assertion this entire
+// issue exists for; (b) per-query failure isolation; (c) max-queries
+// truncation; (d) an explicit low maxDurationMs stopping with max-duration,
+// plus its derived-default companion; (e) an already-aborted context.signal;
+// (f) a mid-batch MusicBrainzBackoffError. Happy-path/dedup/batchId live in
+// musicbrainz_methods_test.ts.
+// ---------------------------------------------------------------------------
+
+function batchQueries(n: number): string[] {
+  return Array.from({ length: n }, (_, i) => `artist:"Fixture Batch ${i}"`);
+}
+
+Deno.test("search-artists-batch (a): consecutive MusicBrainz requests are spaced at least minIntervalMs apart across the WHOLE batch — the assertion this issue exists for", async () => {
+  using time = new FakeTime();
+  const { ctx } = makeCtx();
+  const requestTimes: number[] = [];
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      requestTimes.push(time.now);
+      return json({ artists: [], count: 0 });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries: batchQueries(5),
+          minIntervalMs: 1100,
+        }, ctx),
+      ),
+  );
+  assertEquals(requestTimes.length, 5);
+  for (let i = 1; i < requestTimes.length; i++) {
+    const gap = requestTimes[i] - requestTimes[i - 1];
+    assert(gap >= 1100, `gap ${gap}ms below the 1100ms floor`);
+  }
+});
+
+Deno.test("search-artists-batch (b): one query's fetch throwing does NOT abort the batch — its entry carries a non-empty error, distinguishable from a legitimate empty result, and the rest still search", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const queries = batchQueries(3);
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      const q = new URL(req.url).searchParams.get("query")!;
+      if (q === queries[1]) {
+        throw new Error("simulated network failure");
+      }
+      return json({ artists: [], count: 0 });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries,
+          minIntervalMs: 5,
+          // Explicit and generous — see the happy-path test's comment in
+          // musicbrainz_methods_test.ts: this file's shared module-level
+          // rate limiter carries virtual-time debt from every earlier
+          // FakeTime test, which the tiny DERIVED default at
+          // minIntervalMs=5 could otherwise trip as a false max-duration
+          // stop. This test is about per-query failure isolation, not the
+          // duration ceiling.
+          maxDurationMs: 600_000,
+        }, ctx),
+      ),
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  const rows = res.payload.queries as Array<
+    { query: string; artists: unknown[]; count: number; error?: string }
+  >;
+  assertEquals(rows.length, 3, "the failing query still gets an entry");
+  const failedRow = rows.find((r) => r.query === queries[1])!;
+  assert(
+    failedRow.error,
+    "the failed query's entry must carry a non-empty error",
+  );
+  assertEquals(failedRow.artists, []);
+  const okRow = rows.find((r) => r.query === queries[0])!;
+  assertEquals(
+    okRow.error,
+    undefined,
+    "a legitimately empty result must NOT carry an error field",
+  );
+  assertEquals(res.payload.failed, 1);
+  assertEquals(res.payload.searched, 3, "every query got a verdict attempt");
+  assertEquals(res.payload.stopReason, "complete");
+});
+
+Deno.test("search-artists-batch (c): maxQueries truncation — the deferred remainder is ABSENT from queries[] and PRESENT in deferred[], stopReason max-queries, truncated true", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const queries = batchQueries(5);
+  await withMbFixture(
+    { artists: [], count: 0 },
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries,
+          maxQueries: 2,
+          minIntervalMs: 5,
+          maxDurationMs: 600_000,
+        }, ctx),
+      ),
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  const rows = res.payload.queries as Array<{ query: string }>;
+  assertEquals(rows.map((r) => r.query), queries.slice(0, 2));
+  assertEquals(res.payload.deferred, queries.slice(2));
+  assertEquals(res.payload.truncated, true);
+  assertEquals(res.payload.stopReason, "max-queries");
+  assertEquals(res.payload.searched, 2);
+});
+
+Deno.test("search-artists-batch (d): an explicit low maxDurationMs stops the batch with stopReason max-duration, deferring the untried remainder", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const queries = batchQueries(5);
+  await withMbFixture(
+    { artists: [], count: 0 },
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries,
+          minIntervalMs: 1100,
+          maxDurationMs: 0,
+        }, ctx),
+      ),
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  assertEquals(res.payload.stopReason, "max-duration");
+  assertEquals(res.payload.truncated, true);
+  assert(
+    (res.payload.deferred as unknown[]).length > 0,
+    "at least the untried remainder must be deferred",
+  );
+});
+
+Deno.test("search-artists-batch (d, companion): with NO explicit maxDurationMs, a small nominal-speed batch stops on max-queries/completes rather than tripping the DERIVED max-duration backstop", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const queries = batchQueries(3);
+  await withMbFixture(
+    { artists: [], count: 0 },
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", { queries, minIntervalMs: 1100 }, ctx),
+      ),
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  assertEquals(
+    res.payload.stopReason,
+    "complete",
+    "the derived backstop (>= maxQueries*minIntervalMs, scaled generously) must not trip on a small nominal-speed batch",
+  );
+  assertEquals(res.payload.truncated, false);
+});
+
+Deno.test("search-artists-batch (e): an already-aborted context.signal stops the batch immediately with stopReason aborted, before any fetch", async () => {
+  const { ctx, written } = makeCtx();
+  const controller = new AbortController();
+  controller.abort();
+  const ctxWithSignal = { ...ctx, signal: controller.signal };
+  let fetchCalled = false;
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      fetchCalled = true;
+      return json({ artists: [], count: 0 });
+    }],
+    () =>
+      run("search-artists-batch", {
+        queries: batchQueries(3),
+        minIntervalMs: 5,
+      }, ctxWithSignal),
+  );
+  assertEquals(
+    fetchCalled,
+    false,
+    "an already-aborted signal must prevent any fetch",
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  assertEquals(res.payload.stopReason, "aborted");
+  assertEquals(res.payload.truncated, true);
+  assertEquals(res.payload.deferred, batchQueries(3));
+});
+
+Deno.test("search-artists-batch (f): a mid-batch MusicBrainzBackoffError (Retry-After exceeding the cap) stops the batch with stopReason backoff, AND the completed prefix is still written", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const queries = batchQueries(3);
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      const q = new URL(req.url).searchParams.get("query")!;
+      if (q === queries[1]) {
+        return json(error503, 503, { "Retry-After": "3600" });
+      }
+      return json({ artists: [], count: 0 });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries,
+          minIntervalMs: 5,
+          maxDurationMs: 600_000,
+        }, ctx),
+      ),
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  assertEquals(res.payload.stopReason, "backoff");
+  assertEquals(res.payload.truncated, true);
+  const rows = res.payload.queries as Array<{ query: string }>;
+  assertEquals(
+    rows.map((r) => r.query),
+    [queries[0]],
+    "the completed prefix (before the backoff-triggering query) is still written",
+  );
+  assert(
+    (res.payload.deferred as string[]).includes(queries[1]),
+    "the query that hit the backoff never got a verdict — it must be deferred, not recorded as a per-query error",
+  );
+  assert((res.payload.deferred as string[]).includes(queries[2]));
 });
 
 // ---------------------------------------------------------------------------

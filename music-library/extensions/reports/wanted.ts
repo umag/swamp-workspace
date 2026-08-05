@@ -67,6 +67,7 @@ export interface ArtistMapEntry {
   status: "resolved" | "ambiguous" | "unresolved";
   source: "seed" | "search" | null;
   candidates: Array<{ id: string; name: string }>;
+  checkedAt?: string;
 }
 
 interface ArtistMapContent {
@@ -76,6 +77,9 @@ interface ArtistMapContent {
   ambiguous: number;
   unresolved: number;
   entries: unknown[];
+  pendingSearch?: number;
+  truncated?: boolean;
+  stopReason?: string | null;
 }
 
 const MISSING_ARTISTS_MAX = 30;

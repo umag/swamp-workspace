@@ -286,6 +286,141 @@ Deno.test("search-artist: failure path — non-ok throws with status + body slic
 });
 
 // ---------------------------------------------------------------------------
+// search-artists-batch — single-invocation internal loop over
+// searchArtistsOnce, so the module-level rate-limit queue that is already
+// correct within one invocation becomes correct for the whole workload by
+// construction (this issue's fix). Spacing/failure-isolation/truncation/
+// abort/backoff behaviors live in musicbrainz_adversarial_test.ts (step 6's
+// six RED-phase items); this is the happy path — N distinct queries produce
+// N fetches, one written artistSearchBatch row whose queries[] carries each
+// query's OWN artist (via a per-query-distinct route — withMbFixture returns
+// the SAME body for every request, which would let a crossed
+// query-to-result mapping pass vacuously).
+// ---------------------------------------------------------------------------
+
+Deno.test("search-artists-batch: happy path — N distinct queries produce N fetches, writes artistSearchBatch with each query's OWN projected artist, echoing the caller's batchId", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const QUERIES = ['artist:"Fixture Aurora"', 'artist:"Fixture Nightfall"'];
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      const q = new URL(req.url).searchParams.get("query")!;
+      const idx = QUERIES.indexOf(q);
+      return json({
+        artists: [{
+          id: `00000000-0000-0000-0000-00000000000${idx + 1}`,
+          name: q,
+          "sort-name": q,
+          disambiguation: "must be dropped by the projection",
+        }],
+        count: 1,
+      });
+    }],
+    async (calls) => {
+      await drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries: QUERIES,
+          batchId: "batch-fixture-1",
+          minIntervalMs: 5,
+          // Explicit and generous: this file's module-level rate-limit
+          // queue carries accumulated "virtual debt" from every earlier
+          // FakeTime-driven test (see the RATE LIMITER section's header
+          // comment), which the tiny DERIVED default at minIntervalMs=5
+          // could otherwise trip as a false max-duration stop. This test is
+          // about the happy-path SHAPE, not the duration ceiling.
+          maxDurationMs: 600_000,
+        }, ctx),
+      );
+      assertEquals(
+        calls.filter(isMbHost).length,
+        2,
+        "one fetch per distinct query",
+      );
+    },
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  assertEquals(res.name, "artist-search-batch");
+  assertEquals(res.payload.batchId, "batch-fixture-1");
+  const rows = res.payload.queries as Array<
+    { query: string; artists: Array<{ id: string; name: string }> }
+  >;
+  assertEquals(rows.length, 2);
+  for (const q of QUERIES) {
+    const row = rows.find((r) => r.query === q)!;
+    assert(row, `must carry a row for ${q}`);
+    assertEquals(
+      row.artists[0].name,
+      q,
+      "each query's OWN artist must come back, not a shared/crossed one",
+    );
+    assertEquals(
+      Object.keys(row.artists[0]).sort(),
+      ["id", "name", "sort-name"],
+      "projected shape only — sort-name kept (it was present), disambiguation/other MusicBrainz fields dropped",
+    );
+  }
+  assertEquals(res.payload.requested, 2);
+  assertEquals(res.payload.searched, 2);
+  assertEquals(res.payload.failed, 0);
+  assertEquals(res.payload.deferred, []);
+  assertEquals(res.payload.truncated, false);
+  assertEquals(res.payload.stopReason, "complete");
+  assertEquals(typeof res.payload.timestamp, "string");
+});
+
+Deno.test("search-artists-batch: batchId is generated when the caller omits it", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  await withMbFixture(
+    { artists: [], count: 0 },
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries: ['artist:"Fixture Solo"'],
+          minIntervalMs: 5,
+          maxDurationMs: 600_000,
+        }, ctx),
+      ),
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  assertEquals(typeof res.payload.batchId, "string");
+  assert((res.payload.batchId as string).length > 0);
+});
+
+Deno.test("search-artists-batch: duplicate queries are deduped — one fetch and one queries[] row per DISTINCT query, not per input entry", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  let fetchCount = 0;
+  await withFetchStub(
+    [(req) => {
+      if (!isMbHost(req)) return undefined;
+      fetchCount++;
+      return json({ artists: [], count: 0 });
+    }],
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries: [
+            'artist:"Fixture Dup"',
+            'artist:"Fixture Dup"',
+            'artist:"Fixture Other"',
+          ],
+          minIntervalMs: 5,
+          maxDurationMs: 600_000,
+        }, ctx),
+      ),
+  );
+  assertEquals(fetchCount, 2, "deduped to 2 distinct queries");
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  assertEquals((res.payload.queries as unknown[]).length, 2);
+  assertEquals(res.payload.requested, 2);
+});
+
+// ---------------------------------------------------------------------------
 // search-release-group
 // ---------------------------------------------------------------------------
 

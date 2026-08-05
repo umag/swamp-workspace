@@ -1,5 +1,109 @@
 # Changelog
 
+## 2026.08.05.1
+
+Fixes `musicbrainz-ratelimit-runmodel-fanout`, measured live:
+`swamp model method run <instance> resolve-artists` completed in 581s having
+fired ~1483 MusicBrainz searches over a library of 2258 artists — ~2.5 req/sec
+against MusicBrainz's documented 1 req/sec limit. The root cause: `mbFetch`'s
+rate limiter (in `@magistr/musicbrainz`) is correct WITHIN one method
+invocation, but resolve-artists reached MusicBrainz through ~1483 SEPARATE
+`context.runModel` invocations of `search-artist`, each starting with no
+rate-limit memory. `model.version` and `manifest.yaml` move `2026.08.04.1` ->
+`2026.08.05.1`.
+
+### resolve-artists: at most ONE runModel call per run, persisted as a reusable cache
+
+`searchMusicBrainzArtists` and its `isLatest` selector are DELETED outright — no
+dual path. `resolve-artists` now collects every DISTINCT name needing a
+MusicBrainz verdict (seed-unresolved, and either uncached or past its TTL),
+builds one Lucene query per name via the existing `escapeLuceneQuery`, and
+issues EXACTLY ONE call to `@magistr/musicbrainz`'s new `search-artists-batch`
+method — deterministically selecting its own result row by a generated `batchId`
+correlation identity (never `isLatest`/array order, which nothing in this
+codebase ever set). Zero names needing a search means zero `runModel` calls.
+
+`resolve-artists` also now LOADS its own prior output (`context.readResource`, a
+NEW capability requirement for this method, optional-chained so an absent prior
+— including the very first post-merge run — degrades to empty rather than
+throwing) and treats it as a persistent, load-modify-write aggregate: a
+seed-unresolved artist whose last search verdict (`checkedAt`) is younger than
+`ttlMs` (new arg, default 30 days) is reused VERBATIM (mbid/status/source/
+candidates/checkedAt) without a fresh search — except the LIBRARY's current name
+always wins, so a renamed artist is never stuck with a stale display name. A
+converged re-run therefore costs ZERO MusicBrainz requests. Two new method
+arguments force a re-check: `refresh` (everything) and `refreshKeys` (specific
+artists, ordered FIRST in the batch so an explicit re-check can never be
+silently discarded by the `maxQueries` ceiling). An artist present in the
+library with no prior entry is written; an entry in the prior map whose artist
+is no longer in the library is dropped — only artists actually in the library
+are ever written.
+
+`checkedAt` means exactly "the timestamp of the last MusicBrainz SEARCH that
+produced a verdict" — it is NEVER set on a seed match (seed coverage is free and
+re-derived every run, not a search verdict) and NEVER set when a query's fetch
+errored, was deferred, or was never reached this run (the prior value, still
+stale, is preserved so the next run retries). A genuine no-match (MusicBrainz
+returned zero candidates, no error) still gets a fresh `checkedAt` — it got a
+real verdict this run, just a negative one.
+
+### Completeness: pendingSearch / truncated / stopReason
+
+`search-artists-batch` bounds one run by `maxQueries` (default 400, passed
+through) and a derived `maxDurationMs` backstop; a run that hits either ceiling
+— or an aborted signal, or a Retry-After backoff — defers the remainder rather
+than searching it. Without visibility into that, `unresolved:
+1083` on a first
+post-merge run would be indistinguishable from "MusicBrainz doesn't know 1083
+artists". Three new OPTIONAL top-level fields on the written `artistMap` —
+`pendingSearch` (distinct artists that needed a verdict this run and didn't get
+one), `truncated`, `stopReason` — make that distinction observable: re-run
+`resolve-artists` until `pendingSearch` is 0 to confirm convergence (about 4
+runs for a cold ~1459-1483-artist library at the default `maxQueries`). All
+three are optional in the schema (the live 2258-entry map predates them) and
+always set on write.
+
+### Schema: five mirrors move together
+
+`ArtistMapEntrySchema` gains optional `checkedAt`; `ArtistMapSchema` gains
+optional `pendingSearch`/`truncated`/`stopReason`; `wanted.ts`'s report-side
+`ArtistMapEntry`/`ArtistMapContent` interfaces mirror both; and — the mirror
+missed once already in an earlier draft of this fix — the LOCAL TypeScript
+`type ArtistMapEntry` that `resolve-artists` actually constructs against also
+gains `checkedAt`, or the object literal it builds trips a TS2353
+excess-property error under `deno check` (`music_library.ts`'s `check` task
+enumerates this file explicitly). New exported pure
+`needsSearch(prior, now,
+ttlMs)` freshness predicate sits beside
+`ArtistMapEntrySchema`, mirroring how `@magistr/musicbrainz`'s `isCacheStale`
+sits beside the cache it governs.
+
+### Tests
+
+213 tests before this change, 227 after — all integrated into the five existing
+role-assigned suites, no sixth file. New fixture
+`fixtures/mb_artist_search_batch.json` (hand-authored synthetic, hexspeak MBIDs,
+registered in both `music_library_test.ts`'s contract-fixture pin and the
+adversarial suite's fixtures-secret-scan map — see `PROVENANCE.md`).
+`music_library_methods_test.ts` and `music_library_adversarial_test.ts` both
+gain an optional `runModelHandler` seam on their `makeModelDataCtx` harness
+(additive — every existing call site unchanged) that synthesizes an
+`artistSearchBatch` row from the RECORDED queries and echoes the
+runtime-generated `batchId`, since neither a static fixture nor fast-check's
+per-run-fresh names can pre-seed one. The adversarial suite's harness also gains
+the `runModelCalls` recorder it previously lacked, plus `fast-check`. Coverage:
+N-independence (fast-check over library size 0-50, exactly one `runModel` call
+and one query per distinct name needing a search); non-destructive rerun (the
+fixture proving the prior map's resolved/ambiguous verdicts survive untouched
+except for the library's current name, a new artist is written, a removed one is
+dropped, and a newly-seed-covered artist flips provenance with no `checkedAt`);
+per-query error/deferred/absent preservation vs. a genuine no-match;
+`refreshKeys` priority as an ORDER assertion (not mere membership — the ceiling
+is applied on the musicbrainz side of the `runModel` boundary); Lucene escaping
+surviving the boundary; batch-row selection by `batchId` even when it is not
+last in the array, and a throw when none matches; and a truncated batch never
+being finished by looping `runModel`.
+
 ## 2026.08.04.1
 
 Adds the **wanted derivation** — "what music do I want that I do not have" as a

@@ -64,18 +64,53 @@ function reserveRateLimitSlot(minIntervalMs: number): Promise<void> {
 
 /** Runs one `fetch()` guarded by a per-call `AbortController` timeout —
  * factored out so mbFetch's initial request and its single 503 retry (see
- * below) share the exact same timeout behavior instead of duplicating it. */
+ * below) share the exact same timeout behavior instead of duplicating it.
+ * When a caller-supplied `signal` is present it is composed with the
+ * timeout controller's own signal via `AbortSignal.any` — abort from EITHER
+ * source cancels the fetch — rather than replacing the timeout guard, so a
+ * long-running caller's cancellation can never widen the 30s per-request
+ * bound. */
 async function fetchWithTimeout(
   url: URL,
   headers: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const composedSignal = signal
+    ? AbortSignal.any([controller.signal, signal])
+    : controller.signal;
   try {
-    return await fetch(url.toString(), { headers, signal: controller.signal });
+    return await fetch(url.toString(), { headers, signal: composedSignal });
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Sleeps `ms` milliseconds, but rejects immediately if `signal` aborts
+ * first — used for the 503 backoff wait so an external cancellation can
+ * interrupt it instead of it being an uninterruptible `setTimeout`. With no
+ * `signal` this is a plain timed sleep (unchanged behaviour for the four
+ * existing mbFetch callers that never pass one). */
+function sleepOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 // Exported (not just module-private) so the test suite can exercise the
@@ -86,7 +121,11 @@ export async function mbFetch(
   path: string,
   params: Record<string, string> = {},
   minIntervalMs = 1100,
+  signal?: AbortSignal,
 ) {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  }
   const url = new URL(`${BASE}${path}`);
   url.searchParams.set("fmt", "json");
   for (const [k, v] of Object.entries(params)) {
@@ -95,20 +134,28 @@ export async function mbFetch(
   const headers = { "User-Agent": userAgent, Accept: "application/json" };
 
   await reserveRateLimitSlot(minIntervalMs);
-  let response = await fetchWithTimeout(url, headers);
+  let response = await fetchWithTimeout(url, headers, signal);
 
   if (response.status === 503) {
-    // MusicBrainz asking us to back off — drain the body, wait out the
-    // computed backoff, reserve a fresh rate-limit slot, and retry exactly
-    // once rather than hammering the endpoint.
-    const backoffMs = retryAfterBackoffMs(
+    // MusicBrainz asking us to back off — classify the Retry-After header
+    // ONCE (retryAfterBackoffMs owns the whole contract) and act on the
+    // classification alone: "sleep" drains the body, waits out the computed
+    // backoff (racing the caller's signal so it can be interrupted), reserves
+    // a fresh rate-limit slot, and retries exactly once; "stop" throws
+    // immediately, without sleeping and without retrying, so a
+    // hostile/misconfigured Retry-After (e.g. an hour) can never stall the
+    // caller while holding a model lock.
+    const backoff = retryAfterBackoffMs(
       response.headers.get("Retry-After"),
       minIntervalMs,
     );
     await response.text();
-    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    if (backoff.kind === "stop") {
+      throw new MusicBrainzBackoffError(backoff.retryAfterMs);
+    }
+    await sleepOrAbort(backoff.ms, signal);
     await reserveRateLimitSlot(minIntervalMs);
-    response = await fetchWithTimeout(url, headers);
+    response = await fetchWithTimeout(url, headers, signal);
   }
 
   if (!response.ok) {
@@ -511,22 +558,138 @@ export function rateLimitDelayMs(
   return remaining > 0 ? remaining : 0;
 }
 
+/** Discriminated result of classifying a `Retry-After` header — see
+ * `retryAfterBackoffMs` below. `mbFetch` acts on the `kind` alone and never
+ * re-parses the header itself, so the whole Retry-After contract lives in
+ * one place. */
+export type RetryAfterBackoff =
+  | { kind: "sleep"; ms: number }
+  | { kind: "stop"; retryAfterMs: number };
+
+/** Thrown by `mbFetch` when a 503's `Retry-After` exceeds `maxBackoffMs` —
+ * the caller decides whether/how long to wait rather than `mbFetch` sleeping
+ * out an arbitrarily long, server-dictated delay (e.g. an hour) while
+ * holding both the musicbrainz AND the caller's model lock. */
+export class MusicBrainzBackoffError extends Error {
+  readonly retryAfterMs: number;
+  constructor(retryAfterMs: number) {
+    super(
+      `MusicBrainz requested a backoff of ${retryAfterMs}ms via Retry-After, exceeding the cap — stopping rather than sleeping it out`,
+    );
+    this.name = "MusicBrainzBackoffError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 /**
- * Pure backoff calculator for a MusicBrainz `503` response: honour
+ * Pure backoff CLASSIFIER for a MusicBrainz `503` response: honour
  * `Retry-After` (seconds, per HTTP semantics) when it parses to a finite
- * positive number; otherwise fall back to one more spacing interval so a
- * 503 without the header still backs off instead of retrying immediately.
- * No clock reads, no I/O — `mbFetch` (the impure boundary) is the only
- * caller and supplies the actual header value and interval.
+ * positive number no greater than `maxBackoffMs`, clamped UP to the
+ * `minIntervalMs` floor — `{kind: "sleep", ms}`. An absent, unparsable,
+ * non-finite or non-positive header falls back to one more spacing interval
+ * so a 503 without the header still backs off instead of retrying
+ * immediately — also `{kind: "sleep", ms: minIntervalMs}`. A finite positive
+ * header EXCEEDING `maxBackoffMs` classifies as `{kind: "stop",
+ * retryAfterMs}`, carrying the full UNCAPPED value so the caller (mbFetch)
+ * never needs to re-parse the header to learn how long MusicBrainz actually
+ * asked for. No clock reads, no I/O — `mbFetch` (the impure boundary) is the
+ * only caller and supplies the actual header value and interval.
  */
 export function retryAfterBackoffMs(
   retryAfterHeader: string | null,
   minIntervalMs: number,
-): number {
+  maxBackoffMs = 60_000,
+): RetryAfterBackoff {
   const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
-  return Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-    ? retryAfterSeconds * 1000
-    : minIntervalMs;
+  if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+    return { kind: "sleep", ms: minIntervalMs };
+  }
+  const ms = retryAfterSeconds * 1000;
+  if (ms > maxBackoffMs) {
+    return { kind: "stop", retryAfterMs: ms };
+  }
+  return { kind: "sleep", ms: Math.max(ms, minIntervalMs) };
+}
+
+// --- search-artists-batch planning helpers (pure, no I/O) ---
+//
+// Back `search-artists-batch` below the same way the sync-artist-
+// discographies helpers above back that method: pure, exported so the
+// property suite exercises the real implementation, no clock read, no I/O.
+
+/**
+ * Order-preserving, idempotent dedup: the FIRST occurrence of each distinct
+ * query string survives, in its original relative position. `planSearchBatch`
+ * and `search-artists-batch`'s `queries[]`/`deferred[]` are unambiguously
+ * over this DEDUPED list, not the raw caller-supplied one.
+ */
+export function dedupeQueries(queries: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const q of queries) {
+    if (!seen.has(q)) {
+      seen.add(q);
+      out.push(q);
+    }
+  }
+  return out;
+}
+
+/** Result of `planSearchBatch`: `batch` is what this run will actually
+ * search, `deferred` is the untried remainder (picked up by a future run),
+ * and `truncated` says whether the ceiling actually cut anything. */
+export interface SearchBatchPlan {
+  batch: string[];
+  deferred: string[];
+  truncated: boolean;
+}
+
+/**
+ * Applies the `maxQueries` ceiling: takes the FIRST `maxQueries` entries of
+ * `queries` (already deduped by the caller) as `batch`, pushing everything
+ * past that into `deferred`. `batch` and `deferred` together reconstruct
+ * `queries` exactly once — no gap, no overlap — mirroring the invariant
+ * `advanceSyncCursor` is held to. Respecting INPUT ORDER is what makes
+ * `refreshKeys`-first ordering (music-library, step 10 rule 8) meaningful:
+ * an explicitly requested re-check placed first in the input can never be
+ * silently discarded by this cut.
+ */
+export function planSearchBatch(
+  queries: string[],
+  maxQueries: number,
+): SearchBatchPlan {
+  const batch = queries.slice(0, maxQueries);
+  const deferred = queries.slice(maxQueries);
+  return { batch, deferred, truncated: deferred.length > 0 };
+}
+
+/**
+ * Derives the wall-clock backstop for `search-artists-batch`'s lock hold —
+ * TWO properties over DISJOINT domains, never one property with an unstated
+ * exception:
+ *
+ *  - `explicit` ABSENT (the DERIVED branch): the result is a slow-upstream
+ *    backstop that SCALES WITH the query ceiling, `>= maxQueries *
+ *    minIntervalMs` and non-decreasing in `maxQueries` — this is what keeps
+ *    `max-queries`, not `max-duration`, the designed stop on a routine
+ *    nominal-speed batch. The 1.5x margin plus a flat 30s floor allowance
+ *    tolerates a mean request somewhat slower than `minIntervalMs` and small
+ *    batches where one 30s `FETCH_TIMEOUT_MS` timeout would otherwise
+ *    consume the whole budget.
+ *  - `explicit` PRESENT (the EXPLICIT branch): returned VERBATIM, with NO
+ *    floor applied — a deliberately tight bound (e.g. for a fast smoke test)
+ *    must be respected exactly, or the escape hatch this argument exists for
+ *    would be silently defeated.
+ *
+ * Pure — no clock read, no I/O.
+ */
+export function deriveMaxDurationMs(
+  maxQueries: number,
+  minIntervalMs: number,
+  explicit?: number,
+): number {
+  if (explicit !== undefined) return explicit;
+  return Math.ceil(maxQueries * minIntervalMs * 1.5) + 30_000;
 }
 
 // --- sync-artist-discographies method support ---
@@ -543,6 +706,76 @@ const DISCOGRAPHY_SYNC_CURSOR_INSTANCE = "discography-sync-cursor";
  * single artist can consume.
  */
 const DEFAULT_DISCOGRAPHY_MAX_PAGES = 20;
+
+// --- shared artist-search body (search-artist + search-artists-batch) ---
+
+/**
+ * Shared body for a single MusicBrainz artist search — extracted so
+ * `search-artist` and `search-artists-batch` can never drift from each
+ * other. Builds `params` exactly as `search-artist` always has —
+ * `{query}`, plus `limit` when truthy, plus `offset` when truthy — calls
+ * `mbFetch`, and returns `{artists, count}` with the existing
+ * `Array.isArray` guard. `offset` is preserved end-to-end here even though
+ * `search-artists-batch` never passes one — dropping it would silently
+ * strip a live pagination capability from `search-artist`
+ * (musicbrainz_methods_test.ts:245-268 pins `offset` reaching the wire).
+ */
+async function searchArtistsOnce(
+  userAgent: string,
+  query: string,
+  limit: number | undefined,
+  offset: number | undefined,
+  minIntervalMs = 1100,
+  signal?: AbortSignal,
+): Promise<{ artists: Record<string, unknown>[]; count: number }> {
+  const params: Record<string, string> = { query };
+  if (limit) params.limit = String(limit);
+  if (offset) params.offset = String(offset);
+  const data = await mbFetch(
+    userAgent,
+    "/artist/",
+    params,
+    minIntervalMs,
+    signal,
+  );
+  const artists = Array.isArray(data.artists) ? data.artists : [];
+  return { artists, count: data.count || artists.length };
+}
+
+/** The projected shape `search-artists-batch` writes per hit — deliberately
+ * narrower than the full MusicBrainz artist document `search-artist` still
+ * writes verbatim (see the payload-budget note on the `artistSearchBatch`
+ * resource below). */
+export interface CandidateProjection {
+  id: string;
+  name: string;
+  "sort-name"?: string;
+}
+
+/**
+ * Projects raw MusicBrainz artist search hits down to `{id, name,
+ * sort-name}` — `matchArtist` (the music-library caller) only ever needs
+ * those three fields, and `search-artists-batch` writes ONE document per
+ * run, so keeping every hit's full `area`/`begin-area`/`life-span`/
+ * `aliases`/`tags` would blow past the 16MB MongoDB document limit on a
+ * full-size batch. A pure key-set projection: output keys are always a
+ * subset of `{id, name, sort-name}` and always contain `id` + `name`,
+ * regardless of what extra keys the input carries.
+ */
+export function projectArtistCandidates(
+  artists: Record<string, unknown>[],
+): CandidateProjection[] {
+  return artists.map((a) => {
+    const projected: CandidateProjection = {
+      id: typeof a.id === "string" ? a.id : "",
+      name: typeof a.name === "string" ? a.name : "",
+    };
+    if (typeof a["sort-name"] === "string") {
+      projected["sort-name"] = a["sort-name"];
+    }
+    return projected;
+  });
+}
 
 // --- resource schemas ---
 
@@ -634,6 +867,51 @@ const DiscographySyncStateSchema = z.object({
   updatedAt: z.string(),
 });
 
+// `queries` is an ARRAY of {query, ...} records, not an object keyed by
+// query string, so arbitrary Lucene query text can never become a schema
+// key. Each hit is the `projectArtistCandidates` projection (id/name/
+// sort-name) — NOT the full ArtistSchema, NOT `.passthrough()` — see the
+// payload-budget note on the `artistSearchBatch` resource registration
+// below for why.
+const ArtistSearchBatchQuerySchema = z.object({
+  query: z.string(),
+  artists: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      "sort-name": z.string().optional(),
+    }),
+  ),
+  count: z.number(),
+  // Present ONLY when this query's fetch failed, so a failed query stays
+  // distinguishable from a legitimately empty one (artists: [], count: 0,
+  // no error).
+  error: z.string().optional(),
+});
+
+const ArtistSearchBatchSchema = z.object({
+  batchId: z.string(),
+  queries: z.array(ArtistSearchBatchQuerySchema),
+  // Queries the batch never reached this run — absent from `queries` above,
+  // present here, never a third "empty-looking" state.
+  deferred: z.array(z.string()),
+  requested: z.number(),
+  searched: z.number(),
+  failed: z.number(),
+  truncated: z.boolean(),
+  // REQUIRED, not optional — this is what a caller reads to learn which
+  // ceiling (if any) produced a partial result; an optional field would be
+  // silently absent exactly when it matters most.
+  stopReason: z.enum([
+    "complete",
+    "max-queries",
+    "max-duration",
+    "aborted",
+    "backoff",
+  ]),
+  timestamp: z.string(),
+});
+
 /**
  * MusicBrainz metadata model — search and look up artists, release groups,
  * releases, recordings, and labels via the MusicBrainz Web Service v2, with
@@ -641,7 +919,7 @@ const DiscographySyncStateSchema = z.object({
  */
 export const model = {
   type: "@magistr/musicbrainz",
-  version: "2026.08.04.1",
+  version: "2026.08.05.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -655,6 +933,13 @@ export const model = {
       toVersion: "2026.08.04.1",
       description:
         "Adds sync-artist-discographies: a cursored, resumable, rate-limited fan-out over a list of artist MBIDs that caches each one's full release-group discography, routed through the existing mbFetch + browse/rg-by-artist-<mbid> write path (same as browse-release-groups), bounded by a new maxPages method arg (default 20) with an explicit truncated flag on the cached entry so a ceiling-truncated discography is never mistaken for a complete one. New optional discographySyncState resource (resumable {cursor,processed,skipped,updatedAt} cursor state) and a new optional, defaulted truncated field on the existing browse resource schema — both additive; no existing resource shape changes, no globalArguments change. mbFetch's internal rate limiter also moves from a plain read-then-write timestamp check to a module-level promise-chain queue that reserves each call's slot synchronously before any await, closing a race where concurrent callers could read the same stale lastRequest and fire together; mbFetch also gains a single 503/Retry-After retry with backoff before throwing (previously the header was only surfaced, never acted on).",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.04.1",
+      toVersion: "2026.08.05.1",
+      description:
+        "Fixes musicbrainz-ratelimit-runmodel-fanout: mbFetch's rate limiter is correct WITHIN one method invocation but has no memory across separate context.runModel invocations, so a caller fanning out one search per artist (e.g. music-library's resolve-artists) sent real traffic at ~2.5 req/sec against the documented 1 req/sec limit. New method search-artists-batch takes MANY Lucene artist queries and loops internally over the existing mbFetch, so the module-level limiter that is already correct within one invocation becomes correct for a whole workload by construction. New artistSearchBatch resource (one document per run; per-hit candidates are the NEW projectArtistCandidates {id, name, sort-name} projection, never the full MusicBrainz artist document, to stay inside MongoDB's 16MB document limit). retryAfterBackoffMs's exported signature changes from returning a bare number to a discriminated {kind:'sleep',ms} | {kind:'stop',retryAfterMs} result, and mbFetch now THROWS a new MusicBrainzBackoffError instead of sleeping when a 503's Retry-After exceeds a cap (default 60s) — a behaviour change to every existing single-query method, deliberate so a hostile/misconfigured Retry-After (e.g. one hour) can never stall a batch invocation for that long while holding a model lock. mbFetch also gains an optional 5th signal parameter (AbortSignal) so a long batch's --timeout is enforceable inside an in-flight request or backoff sleep, not just between queries; all four-argument callers are unchanged. search-artist's extracted body (searchArtistsOnce) preserves offset end-to-end — no narrowing of a published method's contract. No globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -734,6 +1019,16 @@ export const model = {
       lifetime: "infinite",
       garbageCollection: 10,
     },
+    artistSearchBatch: {
+      description:
+        "One search-artists-batch run: per-query PROJECTED candidate hits (id/name/sort-name only, never the full MusicBrainz artist document — this resource is one document per run, and the full shape would risk MongoDB's 16MB document limit on a large batch), the deferred remainder past maxQueries, and a stopReason distinguishing a fully-served batch from one cut short by max-queries/max-duration/an aborted signal/a Retry-After backoff",
+      schema: ArtistSearchBatchSchema,
+      lifetime: "infinite",
+      // Deliberately BELOW the 10 every other spec in this model uses — one
+      // document per run, at up to a few MB projected, so a smaller
+      // retention window keeps storage bounded without losing recent runs.
+      garbageCollection: 3,
+    },
     seedUrls: {
       description:
         "MusicBrainz release editor seed URLs generated from Bandcamp",
@@ -801,16 +1096,145 @@ export const model = {
       }),
       execute: async (args, context) => {
         const { userAgent } = context.globalArgs;
-        const params: Record<string, string> = { query: args.query };
-        if (args.limit) params.limit = String(args.limit);
-        if (args.offset) params.offset = String(args.offset);
-        const data = await mbFetch(userAgent, "/artist/", params);
-        const artists = Array.isArray(data.artists) ? data.artists : [];
+        const { artists, count } = await searchArtistsOnce(
+          userAgent,
+          args.query,
+          args.limit,
+          args.offset,
+        );
         const handle = await context.writeResource("artists", "search", {
           artists,
-          count: data.count || artists.length,
+          count,
           timestamp: new Date().toISOString(),
         });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    "search-artists-batch": {
+      description:
+        "Search MusicBrainz for MANY artist queries in a single invocation — the fan-out fix for musicbrainz-ratelimit-runmodel-fanout. Loops internally over the same mbFetch the single-query methods use, so the module-level rate-limit queue that is already correct within one invocation becomes correct for the WHOLE workload by construction: N runModel calls (each starting with no rate-limit memory) become one call that shares one continuous limiter. Bounded by maxQueries (the designed stop) and a maxDurationMs slow-upstream backstop derived from it, an already-aborted context.signal, and a MusicBrainzBackoffError (a Retry-After exceeding the cap) — each recorded in stopReason with the untried remainder pushed to deferred[]. A per-query fetch failure is isolated (recorded with an error, batch continues); a MusicBrainzBackoffError stops the whole batch instead, because that query never got a verdict. The written artistSearchBatch resource is ALWAYS produced, including on every early stop, so completed work survives.",
+      arguments: z.object({
+        queries: z.array(z.string()).describe(
+          "Lucene artist search queries to run — one MusicBrainz search per DISTINCT query (deduped, input order preserved)",
+        ),
+        batchId: z.string().optional().describe(
+          "Correlation id echoed onto the written artistSearchBatch row so the caller can find its own write without relying on array order/isLatest; generated here when omitted",
+        ),
+        limit: z.number().optional().describe(
+          "Max candidates requested per query (default 10 — matchArtist needs a candidate SET to disambiguate against, not a single ranked top hit)",
+        ),
+        minIntervalMs: z.number().optional().describe(
+          "Minimum milliseconds between MusicBrainz requests, enforced by mbFetch (default 1100, matching mbFetch's own default spacing — MusicBrainz allows ~1 req/sec)",
+        ),
+        maxQueries: z.number().optional().describe(
+          "Max distinct queries served in this run before the remainder is deferred to a future run (default 400) — the designed lock-hold bound",
+        ),
+        maxDurationMs: z.number().optional().describe(
+          "Wall-clock ceiling for this run, checked between queries. Defaults to a value DERIVED from maxQueries*minIntervalMs (see deriveMaxDurationMs) rather than a flat number, so raising maxQueries also raises this slow-upstream backstop; an explicit value is honoured verbatim, with no floor applied",
+        ),
+      }),
+      execute: async (args, context) => {
+        const { userAgent } = context.globalArgs;
+        const batchId = args.batchId ?? crypto.randomUUID();
+        const limit = args.limit ?? 10;
+        const minIntervalMs = args.minIntervalMs ?? 1100;
+        const maxQueries = args.maxQueries ?? 400;
+        const maxDurationMs = deriveMaxDurationMs(
+          maxQueries,
+          minIntervalMs,
+          args.maxDurationMs,
+        );
+
+        const deduped = dedupeQueries(args.queries);
+        const { batch, deferred: ceilingDeferred } = planSearchBatch(
+          deduped,
+          maxQueries,
+        );
+
+        const queries: Array<{
+          query: string;
+          artists: CandidateProjection[];
+          count: number;
+          error?: string;
+        }> = [];
+        const deferred: string[] = [...ceilingDeferred];
+        let failed = 0;
+        let stopReason:
+          | "complete"
+          | "max-queries"
+          | "max-duration"
+          | "aborted"
+          | "backoff" = "complete";
+        let stoppedEarly = false;
+        const startedAt = Date.now();
+
+        for (let i = 0; i < batch.length; i++) {
+          if (context.signal?.aborted) {
+            stopReason = "aborted";
+            deferred.push(...batch.slice(i));
+            stoppedEarly = true;
+            break;
+          }
+          if (Date.now() - startedAt >= maxDurationMs) {
+            stopReason = "max-duration";
+            deferred.push(...batch.slice(i));
+            stoppedEarly = true;
+            break;
+          }
+          const query = batch[i];
+          try {
+            const { artists, count } = await searchArtistsOnce(
+              userAgent,
+              query,
+              limit,
+              undefined,
+              minIntervalMs,
+              context.signal,
+            );
+            queries.push({
+              query,
+              artists: projectArtistCandidates(artists),
+              count,
+            });
+          } catch (err) {
+            if (err instanceof MusicBrainzBackoffError) {
+              // That query never got a verdict — defer it (and everything
+              // after it) rather than recording a per-query error.
+              stopReason = "backoff";
+              deferred.push(...batch.slice(i));
+              stoppedEarly = true;
+              break;
+            }
+            failed++;
+            queries.push({
+              query,
+              artists: [],
+              count: 0,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        if (!stoppedEarly && ceilingDeferred.length > 0) {
+          stopReason = "max-queries";
+        }
+
+        const handle = await context.writeResource(
+          "artistSearchBatch",
+          "artist-search-batch",
+          {
+            batchId,
+            queries,
+            deferred,
+            requested: deduped.length,
+            searched: queries.length,
+            failed,
+            truncated: deferred.length > 0,
+            stopReason,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },

@@ -925,3 +925,160 @@ Deno.test("sync-artist-discographies: a discography that ends naturally within t
   assertEquals(cached.payload.truncated, false);
   assertEquals((cached.payload.results as unknown[]).length, 137);
 });
+
+// ---------------------------------------------------------------------------
+// Model surface enumeration — closed-set guard over model.methods /
+// model.resources, in music-library's style (music_library_coverage_test.ts:
+// 418-450): "if someone adds a method or resource to musicbrainz.ts without
+// adding a matching test suite entry, does a test go red?" musicbrainz had
+// NO closed-set enumeration before this — only per-feature "NEW SURFACE"
+// pins (one existed, above) — so surface growth failed nothing
+// automatically, which is exactly how search-artists-batch nearly shipped
+// unenumerated. Seeded from model.methods/model.resources AS THEY STAND
+// after step 6 (18 methods, 12 resources) — must be updated in the SAME
+// change that adds a method or resource, not as an afterthought.
+// ---------------------------------------------------------------------------
+
+const KNOWN_METHODS = [
+  "search-artist",
+  "search-artists-batch",
+  "search-release-group",
+  "search-release",
+  "search-recording",
+  "search-label",
+  "lookup-artist",
+  "lookup-release-group",
+  "lookup-release",
+  "lookup-recording",
+  "lookup-label",
+  "browse-release-groups",
+  "browse-releases",
+  "browse-recordings",
+  "sync-artist-discographies",
+  "seed-from-bandcamp",
+  "find-missing",
+  "seed-all-missing",
+  "search",
+].sort();
+
+const KNOWN_RESOURCES = [
+  "search",
+  "entity",
+  "browse",
+  "discographySyncState",
+  "artists",
+  "releaseGroups",
+  "releases",
+  "recordings",
+  "labels",
+  "artistSearchBatch",
+  "seedUrls",
+  "missingReleases",
+].sort();
+
+Deno.test("model surface: methods enumerate to EXACTLY the known 18 — a new method must be added here too", () => {
+  assertEquals(Object.keys(model.methods).sort(), KNOWN_METHODS);
+});
+
+Deno.test("model surface: resources enumerate to EXACTLY the known 12 — a new resource must be added here too", () => {
+  assertEquals(Object.keys(model.resources).sort(), KNOWN_RESOURCES);
+});
+
+// ---------------------------------------------------------------------------
+// NEW SURFACE: search-artists-batch — registered method + artistSearchBatch
+// resource, correct instance name, and the regression pin for the payload
+// budget (step 5's MongoDB 16MB guard): a full MusicBrainz artist object
+// carrying area/begin-area/life-span/aliases/tags must NOT survive into the
+// written row — only projectArtistCandidates' {id, name, sort-name}.
+// ---------------------------------------------------------------------------
+
+Deno.test("NEW SURFACE: search-artists-batch is a registered method with its own artistSearchBatch resource", () => {
+  const method = (model.methods as MethodMap)["search-artists-batch"];
+  assert(method, "search-artists-batch must be a registered method");
+  assert(
+    "artistSearchBatch" in model.resources,
+    "the artistSearchBatch resource must be registered",
+  );
+});
+
+Deno.test("NEW SURFACE: search-artists-batch writes instance name 'artist-search-batch' — explicitly NOT 'search' (the colliding instance every other search-* method writes to)", async () => {
+  using time = new FakeTime();
+  const store: SyncStore = new Map();
+  const { written, ctx } = makeSyncCtx(store);
+  await withFetchStub(
+    [(req) => (isMbHost(req) ? json({ artists: [], count: 0 }) : undefined)],
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries: ['artist:"Fixture Solo"'],
+          minIntervalMs: 5,
+          maxDurationMs: 600_000,
+        }, ctx),
+      ),
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  assert(res, "must have written the artistSearchBatch spec");
+  assertEquals(res.name, "artist-search-batch");
+  assert(
+    res.name !== "search",
+    "must never collide with the shared 'search' instance",
+  );
+});
+
+Deno.test("NEW SURFACE (payload budget regression): a full MusicBrainz artist object with area/begin-area/life-span/aliases/tags writes a row whose artist objects contain NONE of those keys", async () => {
+  using time = new FakeTime();
+  const store: SyncStore = new Map();
+  const { written, ctx } = makeSyncCtx(store);
+  const fullArtist = {
+    id: "00000000-0000-0000-0000-000000000001",
+    name: "Fixture Full Artist",
+    "sort-name": "Fixture Full Artist",
+    type: "Person",
+    score: 100,
+    country: "US",
+    area: { id: "area-1", name: "Fixture Land" },
+    "begin-area": { id: "area-2", name: "Fixture City" },
+    "life-span": { begin: "1990", ended: false },
+    aliases: [{ name: "Fixture Alias", "sort-name": "Alias, Fixture" }],
+    tags: [{ count: 5, name: "fixture-tag" }],
+    disambiguation: "the fixture one",
+  };
+  await withFetchStub(
+    [(req) =>
+      isMbHost(req) ? json({ artists: [fullArtist], count: 1 }) : undefined],
+    () =>
+      drainAndAwait(
+        time,
+        run("search-artists-batch", {
+          queries: ['artist:"Fixture Full Artist"'],
+          minIntervalMs: 5,
+          maxDurationMs: 600_000,
+        }, ctx),
+      ),
+  );
+  const res = written.find((w) => w.spec === "artistSearchBatch")!;
+  const rows = res.payload.queries as Array<
+    { artists: Array<Record<string, unknown>> }
+  >;
+  const projected = rows[0].artists[0];
+  for (
+    const forbidden of [
+      "area",
+      "begin-area",
+      "life-span",
+      "aliases",
+      "tags",
+      "type",
+      "score",
+      "country",
+      "disambiguation",
+    ]
+  ) {
+    assert(
+      !Object.hasOwn(projected, forbidden),
+      `must NOT carry "${forbidden}" — only the projected {id, name, sort-name} shape`,
+    );
+  }
+  assertEquals(Object.keys(projected).sort(), ["id", "name", "sort-name"]);
+});
