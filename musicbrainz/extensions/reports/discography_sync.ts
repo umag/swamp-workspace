@@ -11,10 +11,14 @@
 // crash the run.
 //
 // Five render cases, evaluated in a PINNED order because (a) and (d)
-// overlap: (d) no stored state at all splits on the method (the "no
-// resource found" shape for sync-artist-discographies itself, EMPTY
-// markdown — no stray timestamp — for any other method on a fresh
-// instance); (a) a method OTHER than sync-artist-discographies with stored
+// overlap: (d) no stored state at all splits on the method — for
+// sync-artist-discographies itself it further splits on executionStatus:
+// a failure-led banner (never the neutral "run the method" instruction,
+// which would tell the operator to re-run the exact method that just
+// failed) when this is a fresh instance's FAILED first run, the neutral
+// "no resource found" shape when it succeeded with nothing to show yet;
+// EMPTY markdown — no stray timestamp — for any other method on a fresh
+// instance; (a) a method OTHER than sync-artist-discographies with stored
 // state present renders one line naming that state's updatedAt and no
 // coverage numbers; (b) this execution wrote the state — render its
 // numbers, leading with a partial-pass banner when executionStatus is
@@ -262,7 +266,7 @@ function toJson(
 export const report = {
   name: "@magistr/musicbrainz-discography-sync",
   description:
-    "Coverage surface over sync-artist-discographies' discographySyncState: this run's numbers when this execution wrote the state (with a loud partial-pass banner on a failed run), the previous run's numbers with an explicit 'does NOT describe this one' disclaimer when this execution wrote no state, one line naming just the timestamp for any other method, and nothing at all for a fresh instance's first non-sync method run. Independently cross-checks the sync's processed/skipped/uncovered accounting against the actual cached rg-by-artist-* rows and renders any disagreement loudly.",
+    "Coverage surface over sync-artist-discographies' discographySyncState: this run's numbers when this execution wrote the state (with a loud partial-pass banner on a failed run), the previous run's numbers with an explicit 'does NOT describe this one' disclaimer when this execution wrote no state, a failure-led banner (never the 'run the method' instruction) when a fresh instance's first sync run FAILED before writing anything, one line naming just the timestamp for any other method, and nothing at all for a fresh instance's first non-sync method run. Independently cross-checks the sync's processed/skipped/uncovered accounting against the actual cached rg-by-artist-* rows and renders any disagreement loudly.",
   scope: "model" as const,
   labels: ["musicbrainz", "discography", "sync", "coverage"],
 
@@ -298,6 +302,13 @@ export const report = {
       // discography-coverage line naming a timestamp that doesn't exist.
       if (!latest) {
         if (context.methodName === SYNC_METHOD_NAME) {
+          if (context.executionStatus === "failed") {
+            return {
+              markdown:
+                "# Discography sync coverage\n\nThis run FAILED before writing any sync state — the coverage numbers below do not exist yet. Do not re-run `sync-artist-discographies` blind: inspect the failure first (`swamp report get @swamp/method-summary --model musicbrainz --json`) before retrying.",
+              json: { status: "no-data-failed" },
+            };
+          }
           return {
             markdown:
               "# Discography sync coverage\n\nNo resource found — run the `sync-artist-discographies` method first.",

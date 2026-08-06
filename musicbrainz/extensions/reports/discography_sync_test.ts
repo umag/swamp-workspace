@@ -113,6 +113,33 @@ Deno.test("report.execute (d)(1): no stored state, methodName IS sync-artist-dis
   );
 });
 
+Deno.test("report.execute (d)(1) FAILED: no stored state, methodName IS sync-artist-discographies, executionStatus FAILED — leads with the failure, never tells the operator to run the method that just failed", async () => {
+  // Reachable path: the very first sync on a fresh instance throws on
+  // missing artistMbids before any state is written. A neutral "run the
+  // method first" instruction here would send the operator straight back
+  // into the run that just failed, with no failure signal at all -- the
+  // exact defect class this report exists to prevent, surviving in this
+  // one branch until now.
+  const result = await report.execute({
+    ...BASE_CONTEXT,
+    methodName: "sync-artist-discographies",
+    executionStatus: "failed",
+    dataHandles: [],
+    dataRepository: buildRepo([]),
+  });
+  assertEquals(result.json.status, "no-data-failed");
+  assert(
+    result.markdown.includes("FAILED"),
+    "must lead with the failure, not a neutral instruction",
+  );
+  assert(
+    !result.markdown.includes(
+      "run the `sync-artist-discographies` method first",
+    ),
+    "must NOT tell the operator to run the method that just failed with no failure signal",
+  );
+});
+
 Deno.test("report.execute (d)(2)/(e): no stored state, methodName is something ELSE — renders EMPTY markdown, no stray timestamp placeholder", async () => {
   const result = await report.execute({
     ...BASE_CONTEXT,

@@ -53,10 +53,21 @@ edit to that workflow definition — it is the only thing that exercises the gat
 chain's CEL semantics, which neither `swamp workflow validate` nor either
 package's test suite can see (the test task grants no `--allow-read` on the
 workflow file). Evidence this control catches real regressions: the dry run of
-2026-08-06 failed at the preflight job (a `data.latest(...)` call missing
-`.attributes` in the informational cursor read, fixed in this same pass) and
-correctly skipped the resolve, sync and derive jobs rather than running any of
-them against unproven state.
+2026-08-06 failed TWICE at the preflight job before passing, and the second
+failure is the real lesson, not just the first. Dry run #1 failed with
+`Invalid expression: has() invalid argument`. That was mis-attributed to a
+`data.latest(...)` call missing `.attributes` in the informational cursor read,
+so only `.attributes` was added — dry run #2 failed IDENTICALLY. The actual
+cause: this CEL engine (`@marcbachmann/cel-js`) rejects `has()` whenever its
+receiver is a function-call result, so `has(data.latest(...).attributes.cursor)`
+fails regardless of what path follows the call — adding `.attributes` alone
+could never fix it. The fix was to drop `has()` entirely, rewriting the check as
+`data.latest(...) == null || data.latest(...).attributes.cursor != null`. Both
+facts were needed: `data.latest(...)` returns a DataRecord, so the payload
+genuinely is under `.attributes` — but `has()` cannot take that call's result as
+its receiver, no matter the path underneath it. Both dry runs correctly skipped
+the resolve, sync and derive jobs rather than running any of them against
+unproven state.
 
 ## 2026.08.05.2
 
