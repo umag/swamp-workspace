@@ -36,7 +36,7 @@
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
-import { model } from "./musicbrainz.ts";
+import { fingerprintMbids, model } from "./musicbrainz.ts";
 import { ALBUM_JSONLD_HTML } from "../../fixtures/bandcamp/album_jsonld.ts";
 import { ARTIST_MUSICGRID_HTML } from "../../fixtures/bandcamp/artist_musicgrid.ts";
 
@@ -1202,6 +1202,17 @@ const SYNC_TEST_MBIDS = [
   "aaaaaaaa-0000-4000-8000-000000000003",
 ];
 
+/** Generates `n` synthetic hexspeak-form MBIDs, disjoint across tests via
+ * `offset` — never a real MusicBrainz MBID, per both PROVENANCE.md files'
+ * standing prohibition on live capture. */
+function syntheticMbids(n: number, offset = 0): string[] {
+  return Array.from(
+    { length: n },
+    (_, i) =>
+      `aaaaaaaa-0000-4000-8000-${String(offset + i + 1).padStart(12, "0")}`,
+  );
+}
+
 Deno.test("sync-artist-discographies: happy path — explicit artistMbids caches each artist's discography via the browse/rg-by-artist-<mbid> path and records them processed", async () => {
   using time = new FakeTime();
   const { written, ctx } = makeSyncCtx();
@@ -1235,8 +1246,7 @@ Deno.test("sync-artist-discographies: happy path — explicit artistMbids caches
   );
 });
 
-Deno.test("sync-artist-discographies: with no artistMbids arg, falls back to the artists cached by this instance's last search-artist run", async () => {
-  using time = new FakeTime();
+Deno.test("sync-artist-discographies: a POPULATED search resource is NOT consulted — with no artistMbids arg the run rejects rather than silently syncing whatever 'search' holds", async () => {
   const store: SyncStore = new Map();
   store.set("search", {
     artists: [
@@ -1247,23 +1257,19 @@ Deno.test("sync-artist-discographies: with no artistMbids arg, falls back to the
     timestamp: new Date().toISOString(),
   });
   const { written, ctx } = makeSyncCtx(store);
-  await withMbFixture(
-    { "release-groups": [] },
-    () =>
-      drainAndAwait(
-        time,
-        run("sync-artist-discographies", { minIntervalMs: 5 }, ctx),
-      ),
+  await assertRejects(
+    () => run("sync-artist-discographies", { minIntervalMs: 5 }, ctx),
+    Error,
+    "was given no artistMbids",
   );
-  const state = written.find((w) => w.spec === "discographySyncState")!;
   assertEquals(
-    state.payload.processed,
-    [SYNC_TEST_MBIDS[0], SYNC_TEST_MBIDS[1]],
-    "fell back to the two artists cached by search-artist's own bare 'search' instance write",
+    written.find((w) => w.spec === "discographySyncState"),
+    undefined,
+    "a rejected run with a populated 'search' resource must not have synced anything, and must not have written state",
   );
 });
 
-Deno.test("sync-artist-discographies: no explicit artistMbids AND no cached search-artist results — throws an actionable error naming the full command via context.definition.name", async () => {
+Deno.test("sync-artist-discographies: no explicit artistMbids at all — throws an actionable error naming the full runnable --input command via context.definition.name, never suggesting search-artist or --query as the fix", async () => {
   const { ctx } = makeSyncCtx(new Map(), "my-musicbrainz-instance");
   const err = await assertRejects(
     () => run("sync-artist-discographies", {}, ctx),
@@ -1275,9 +1281,23 @@ Deno.test("sync-artist-discographies: no explicit artistMbids AND no cached sear
   );
   assert(
     err.message.includes(
+      "swamp model method run my-musicbrainz-instance sync-artist-discographies --input 'artistMbids:json=",
+    ),
+    "the error must give the exact runnable command, including the --input flag form, to unblock the user",
+  );
+  assert(
+    !err.message.includes(
       "swamp model method run my-musicbrainz-instance search-artist",
     ),
-    "the error must give the exact runnable command to unblock the user",
+    "the error must no longer suggest running search-artist as the fix — the mention of the deleted fallback in the historical-context sentence is fine, a suggested search-artist COMMAND is not",
+  );
+  assert(
+    !err.message.includes("--query "),
+    "the error must not use the unrunnable --query flag form",
+  );
+  assert(
+    err.message.includes("Before 2026.08.05.2"),
+    "the error must say 'Before', not 'Until', naming the version that removed the fallback",
   );
 });
 
@@ -1346,5 +1366,587 @@ Deno.test("sync-artist-discographies: resuming from a persisted cursor across tw
     allProcessed,
     fiveMbids,
     "the two runs together cover the input exactly once, no gap, no overlap",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Cursor keying — `discographySyncState` is a resumable cursor with identity:
+// it must identify the list it indexes (fingerprint + persisted distinct
+// count), not just an offset into an unnamed list. All four cases below
+// share the shape: pre-seed "discography-sync-cursor" directly in the store,
+// then run and inspect `startOffset` on the freshly-written state.
+// ---------------------------------------------------------------------------
+
+Deno.test("sync-artist-discographies: cursor keying — a persisted state with NO listFingerprint at all (the pre-this-change shape) always restarts at offset 0, never resumes", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(4, 300);
+  const store: SyncStore = new Map();
+  store.set("discography-sync-cursor", {
+    cursor: { offset: 2 },
+    processed: [mbids[0]],
+    skipped: [mbids[1]],
+    updatedAt: new Date().toISOString(),
+    // no listFingerprint at all — the live pre-this-change shape
+  });
+  const { written, ctx } = makeSyncCtx(store);
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(
+    state.payload.startOffset,
+    0,
+    "a state with no fingerprint at all must never be resumed from — it always restarts at 0",
+  );
+});
+
+Deno.test("sync-artist-discographies: cursor keying — a persisted listFingerprint that does not match this run's list restarts at offset 0", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(4, 310);
+  const otherMbids = syntheticMbids(4, 400);
+  const store: SyncStore = new Map();
+  store.set("discography-sync-cursor", {
+    cursor: { offset: 2 },
+    processed: [],
+    skipped: [],
+    updatedAt: new Date().toISOString(),
+    listFingerprint: fingerprintMbids(otherMbids),
+    requested: otherMbids.length,
+  });
+  const { written, ctx } = makeSyncCtx(store);
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(
+    state.payload.startOffset,
+    0,
+    "a fingerprint mismatch must never be resumed from",
+  );
+});
+
+Deno.test("sync-artist-discographies: cursor keying — a matching fingerprint with a persisted requested count that differs from this run's deduped length restarts at offset 0 (the list grew or shrank)", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(6, 320);
+  const store: SyncStore = new Map();
+  store.set("discography-sync-cursor", {
+    cursor: { offset: 3 },
+    processed: [],
+    skipped: [],
+    updatedAt: new Date().toISOString(),
+    // Fingerprint matches BY CONSTRUCTION (same helper, same list) — but
+    // `requested` is stale, as if the list grew since this state was
+    // written. A 32-bit digest alone cannot promise collision-freedom
+    // across different-length inputs at ~2^-32; the persisted-count
+    // comparison is what makes growth detection exact.
+    listFingerprint: fingerprintMbids(mbids),
+    requested: mbids.length - 1,
+  });
+  const { written, ctx } = makeSyncCtx(store);
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(
+    state.payload.startOffset,
+    0,
+    "a persisted requested count that disagrees with this run's deduped length must never be resumed from, even with a matching fingerprint",
+  );
+});
+
+Deno.test("sync-artist-discographies: cursor keying — same fingerprint AND same requested count resumes from the persisted non-zero offset", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(6, 330);
+  const store: SyncStore = new Map();
+  store.set("discography-sync-cursor", {
+    cursor: { offset: 3 },
+    processed: mbids.slice(0, 3),
+    skipped: [],
+    updatedAt: new Date().toISOString(),
+    listFingerprint: fingerprintMbids(mbids),
+    requested: mbids.length,
+  });
+  const { written, ctx } = makeSyncCtx(store);
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(
+    state.payload.startOffset,
+    3,
+    "a matching fingerprint and requested count must resume from the persisted offset, not restart at 0",
+  );
+  assertEquals(
+    state.payload.processed,
+    mbids.slice(3),
+    "resuming must process exactly the remainder, not re-process the first 3",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// batchSize default — must cover the WHOLE deduped list, not the old 10.
+// ---------------------------------------------------------------------------
+
+Deno.test("sync-artist-discographies: with no batchSize argument, processes the WHOLE deduped list (12 synthetic MBIDs), not the old default of 10", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(12, 340);
+  const { written, ctx } = makeSyncCtx();
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(
+    (state.payload.processed as string[]).length,
+    12,
+    "batchSize must default to the whole 12-artist deduped list, not 10",
+  );
+  assertEquals((state.payload.cursor as { offset: number }).offset, 12);
+});
+
+// ---------------------------------------------------------------------------
+// Coverage accounting — THE DIRECT PIN FOR THE CRITICAL. covered =
+// processedCount + skippedCount; remaining = requested - covered. The
+// rejected `requested - cursor.offset` formula is algebraically identical to
+// the defect this issue was filed about and must NOT be what these numbers
+// equal.
+// ---------------------------------------------------------------------------
+
+Deno.test("sync-artist-discographies: coverage accounting — a full pass over 12 distinct MBIDs records startOffset 0, covered 12, remaining 0", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(12, 350);
+  const { written, ctx } = makeSyncCtx();
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(state.payload.startOffset, 0);
+  assertEquals(state.payload.covered, 12);
+  assertEquals(state.payload.remaining, 0);
+});
+
+Deno.test("sync-artist-discographies: coverage accounting — THE LIVE SHAPE (775 distinct, startOffset 1, 765 processed + 9 skipped) records covered 774 and remaining 1, NOT the rejected requested-cursor.offset=0, and the cursor.offset (775) is a distinct LIST POSITION from remaining", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(775, 100_000);
+  const skipMbids = mbids.slice(1, 10); // 9 fresh-cache skips within the batch
+  const store: SyncStore = new Map();
+  store.set("discography-sync-cursor", {
+    cursor: { offset: 1 },
+    processed: [],
+    skipped: [],
+    updatedAt: new Date().toISOString(),
+    listFingerprint: fingerprintMbids(mbids),
+    requested: mbids.length,
+  });
+  for (const mbid of skipMbids) {
+    store.set(`rg-by-artist-${mbid}`, {
+      entity: "release-group",
+      linkedEntity: "artist",
+      linkedId: mbid,
+      results: [],
+      count: 0,
+      offset: 0,
+      truncated: false,
+      timestamp: new Date().toISOString(), // fresh — never stale
+    });
+  }
+  const { written, ctx } = makeSyncCtx(store);
+  let result: { dataHandles: unknown[] } | undefined;
+  await withMbFixture(
+    { "release-groups": [] },
+    async () => {
+      result = await drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          minIntervalMs: 1,
+        }, ctx),
+      ) as { dataHandles: unknown[] };
+    },
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(state.payload.startOffset, 1);
+  assertEquals(
+    (state.payload.processed as string[]).length +
+      (state.payload.skipped as string[]).length,
+    774,
+    "774 artists were visited this run (765 processed + 9 skipped)",
+  );
+  assertEquals((state.payload.skipped as string[]).length, 9);
+  assertEquals(state.payload.covered, 774);
+  assertEquals(
+    state.payload.remaining,
+    1,
+    "the rejected formula requested - cursor.offset (775 - 775) gives 0; the correct definition gives 1",
+  );
+  assertEquals(
+    (state.payload.cursor as { offset: number }).offset,
+    775,
+    "the cursor (a LIST POSITION) and remaining (a RUN COVERAGE SHORTFALL) are different values on the same row",
+  );
+
+  // Pin the method's RESOLVED VALUE, not just the written store — the only
+  // assertion that catches the finally-write-before-return `[undefined]`
+  // bug, since the written store looks identical either way.
+  assert(result, "the method must have resolved");
+  assertEquals(result!.dataHandles.length, 1, "exactly one element");
+  assert(
+    result!.dataHandles[0] !== undefined,
+    "the element must be defined, never undefined",
+  );
+  assertEquals(
+    (result!.dataHandles[0] as { name: string }).name,
+    "discography-sync-cursor",
+    "the returned handle must name the discography-sync-cursor instance",
+  );
+});
+
+Deno.test("sync-artist-discographies: coverage accounting — a partial run from offset 0 with batchSize 5 over 12 MBIDs records covered 5, remaining 7, cursor.offset 5", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(12, 200_000);
+  const { written, ctx } = makeSyncCtx();
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          batchSize: 5,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(state.payload.covered, 5);
+  assertEquals(state.payload.remaining, 7);
+  assertEquals((state.payload.cursor as { offset: number }).offset, 5);
+});
+
+// ---------------------------------------------------------------------------
+// Dedupe — at list-resolution time, so `requested`/the cursor/the fingerprint
+// all index the SAME deduped list a duplicate-bearing caller handed in once.
+// ---------------------------------------------------------------------------
+
+Deno.test("sync-artist-discographies: dedupe — a repeated MBID is fetched once, requested is the DISTINCT count, requestedRaw is the raw length, and the duplicate never appears in skipped masquerading as a cache hit", async () => {
+  using time = new FakeTime();
+  const base = syntheticMbids(3, 360);
+  const withDupe = [base[0], base[1], base[0], base[2]]; // base[0] repeated
+  const { written, ctx } = makeSyncCtx();
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: withDupe,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(state.payload.requested, 3, "requested is the DISTINCT count");
+  assertEquals(
+    state.payload.requestedRaw,
+    4,
+    "requestedRaw is the raw list length, dupes included",
+  );
+  const processed = state.payload.processed as string[];
+  const skipped = state.payload.skipped as string[];
+  assertEquals(
+    processed.filter((m) => m === base[0]).length,
+    1,
+    "the duplicated MBID was fetched exactly once",
+  );
+  assertEquals(
+    skipped.includes(base[0]),
+    false,
+    "the duplicate must not appear in skipped masquerading as a cache hit",
+  );
+});
+
+Deno.test("sync-artist-discographies: dedupe placement — a persisted cursor at an offset below the RAW length but at/past the DEDUPED length resets to 0 and produces a non-empty batch", async () => {
+  using time = new FakeTime();
+  const base = syntheticMbids(3, 370);
+  const withDupe = [base[0], base[1], base[0], base[2]]; // deduped length 3, raw length 4
+  const store: SyncStore = new Map();
+  store.set("discography-sync-cursor", {
+    cursor: { offset: 3 }, // below raw length (4), AT the deduped length (3)
+    processed: [],
+    skipped: [],
+    updatedAt: new Date().toISOString(),
+    listFingerprint: fingerprintMbids([base[0], base[1], base[2]]),
+    requested: 3,
+  });
+  const { written, ctx } = makeSyncCtx(store);
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: withDupe,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(
+    state.payload.startOffset,
+    0,
+    "an offset at/past the DEDUPED length must reset to 0, not produce an empty batch forever",
+  );
+  assertEquals(
+    (state.payload.processed as string[]).length +
+      (state.payload.skipped as string[]).length,
+    3,
+    "the reset batch must be non-empty — it covers the full 3-artist deduped list",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// The uncovered set — computed from stored data (which MBIDs this run's
+// requested list has no cached rg-by-artist row for), not from any counter.
+// ---------------------------------------------------------------------------
+
+Deno.test("sync-artist-discographies: the uncovered set — an MBID with no cached rg-by-artist row is recorded uncovered; a fully cached list has none", async () => {
+  using time = new FakeTime();
+
+  {
+    const mbids = syntheticMbids(3, 380);
+    const store: SyncStore = new Map();
+    for (const mbid of [mbids[0], mbids[2]]) {
+      store.set(`rg-by-artist-${mbid}`, {
+        entity: "release-group",
+        linkedEntity: "artist",
+        linkedId: mbid,
+        results: [],
+        count: 0,
+        offset: 0,
+        truncated: false,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    const { written, ctx } = makeSyncCtx(store);
+    await withMbFixture(
+      { "release-groups": [] },
+      () =>
+        drainAndAwait(
+          time,
+          run("sync-artist-discographies", {
+            artistMbids: mbids,
+            batchSize: 0,
+            minIntervalMs: 5,
+          }, ctx),
+        ),
+    );
+    const state = written.find((w) => w.spec === "discographySyncState")!;
+    assertEquals(state.payload.uncoveredCount, 1);
+    assertEquals(state.payload.uncovered, [mbids[1]]);
+  }
+
+  {
+    const mbids = syntheticMbids(3, 390);
+    const store: SyncStore = new Map();
+    for (const mbid of mbids) {
+      store.set(`rg-by-artist-${mbid}`, {
+        entity: "release-group",
+        linkedEntity: "artist",
+        linkedId: mbid,
+        results: [],
+        count: 0,
+        offset: 0,
+        truncated: false,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    const { written, ctx } = makeSyncCtx(store);
+    await withMbFixture(
+      { "release-groups": [] },
+      () =>
+        drainAndAwait(
+          time,
+          run("sync-artist-discographies", {
+            artistMbids: mbids,
+            batchSize: 0,
+            minIntervalMs: 5,
+          }, ctx),
+        ),
+    );
+    const state = written.find((w) => w.spec === "discographySyncState")!;
+    assertEquals(state.payload.uncoveredCount, 0);
+    assertEquals(state.payload.uncovered, []);
+  }
+});
+
+Deno.test("sync-artist-discographies: the uncovered set caps the reported list at 50 while uncoveredCount holds the true total", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(60, 400);
+  const { written, ctx } = makeSyncCtx();
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          batchSize: 0,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(state.payload.uncoveredCount, 60);
+  assertEquals((state.payload.uncovered as string[]).length, 50);
+});
+
+Deno.test("sync-artist-discographies: a full pass over the whole list records uncoveredCount 0 without any extra readResource calls for already-visited MBIDs", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(5, 410);
+  const readCountsByKey = new Map<string, number>();
+  const store: SyncStore = new Map();
+  const { written, ctx: baseCtx } = makeSyncCtx(store);
+  const ctx = {
+    ...baseCtx,
+    readResource: (name: string) => {
+      readCountsByKey.set(name, (readCountsByKey.get(name) ?? 0) + 1);
+      return Promise.resolve(store.get(name) ?? null);
+    },
+  };
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  assertEquals(state.payload.uncoveredCount, 0);
+  for (const mbid of mbids) {
+    assertEquals(
+      readCountsByKey.get(`rg-by-artist-${mbid}`),
+      1,
+      `${mbid} must be read exactly once — the cache check in the main loop, no extra read for the uncovered computation on a full pass`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A crash mid-batch still leaves a record — durability is part of the
+// process-state entity's contract, not an optimisation for the happy path.
+// ---------------------------------------------------------------------------
+
+Deno.test("sync-artist-discographies: a crash mid-batch still persists an accurate cursor, covered, remaining, and uncovered — and the original error propagates", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(5, 420);
+  const { written, ctx } = makeSyncCtx();
+  let callCount = 0;
+  await assertRejects(
+    () =>
+      withFetchStub(
+        [(req) => {
+          if (!isMbHost(req)) return undefined;
+          callCount++;
+          if (callCount === 3) {
+            throw new Error("simulated MusicBrainz network failure");
+          }
+          return json({ "release-groups": [] });
+        }],
+        () =>
+          drainAndAwait(
+            time,
+            run("sync-artist-discographies", {
+              artistMbids: mbids,
+              minIntervalMs: 5,
+            }, ctx),
+          ),
+      ),
+    Error,
+    "simulated MusicBrainz network failure",
+  );
+  const state = written.find((w) => w.spec === "discographySyncState");
+  assert(
+    state,
+    "a discographySyncState must still have been written despite the crash",
+  );
+  const covered = state!.payload.covered as number;
+  assertEquals(
+    covered,
+    2,
+    "exactly the 2 artists fetched before the 3rd request threw",
+  );
+  assertEquals(
+    (state!.payload.cursor as { offset: number }).offset,
+    0 + covered,
+    "cursor.offset == startOffset + covered, so a re-run resumes at the failed artist",
+  );
+  assert(
+    (state!.payload.remaining as number) > 0,
+    "remaining must be non-zero after a partial pass",
+  );
+  assert(
+    (state!.payload.uncoveredCount as number) > 0,
+    "the artists never visited before the throw must be recorded uncovered",
+  );
+});
+
+Deno.test("sync-artist-discographies: the missing-artistMbids throw writes NO state at all", async () => {
+  const { written, ctx } = makeSyncCtx();
+  await assertRejects(() => run("sync-artist-discographies", {}, ctx), Error);
+  assertEquals(
+    written.find((w) => w.spec === "discographySyncState"),
+    undefined,
+    "a missing-artistMbids rejection is not a sync attempt — it must write no state whatsoever",
   );
 });

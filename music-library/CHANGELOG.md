@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026.08.05.2
+
+Fixes `music-wanted-sequence-not-wired`. `model.version` and `manifest.yaml`
+move `2026.08.05.1` -> `2026.08.05.2`.
+
+### `wanted`: the missing-browse-cache throw named a nonexistent method
+
+`wanted`'s missing-MusicBrainz-browse-cache error told the operator to run
+`swamp model method run <mbInstance> browse` — there is no `browse` method
+(`browse-release-groups` / `browse-releases` / `browse-recordings` exist;
+`browse` is a resource spec name, not a method), so an operator who skipped the
+discography sync got `unknown_method` instead of an actionable fix. The throw
+now names the real runnable command —
+`swamp model method run <mbInstance> sync-artist-discographies --input
+'artistMbids:json=[...]'`
+— plus the `swamp data query` extraction command (with its envelope shape,
+`{"results": [[...]], "total": 1}`) to build that artist list from this
+instance's own `artistMap`, and the repo-local `music-wanted` workflow line. No
+schema or resource shape change.
+
 ## 2026.08.05.1
 
 Fixes `musicbrainz-ratelimit-runmodel-fanout`, measured live:

@@ -1,7 +1,7 @@
 {
   "tasks": {
-    "check": "deno check extensions/models/musicbrainz.ts",
-    "test": "deno test --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    "check": "deno check extensions/models/musicbrainz.ts extensions/reports/discography_sync.ts extensions/reports/discography_sync_test.ts",
+    "test": "deno test --allow-env=FC_NUM_RUNS extensions/models/ extensions/reports/ --permit-no-files",
     "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/musicbrainz_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",

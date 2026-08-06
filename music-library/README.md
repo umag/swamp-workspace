@@ -113,15 +113,41 @@ Run the three steps **in this order**; they span two model instances:
 # 1. artist name -> MusicBrainz ID map (this model)
 swamp model method run <instance> resolve-artists
 
-# 2. cache each artist's discography (the musicbrainz model, NOT this one)
-swamp model method run <musicbrainz-instance> sync-artist-discographies
+# 2. get the artist list, then cache each artist's discography (the
+# musicbrainz model, NOT this one)
+swamp data query 'modelName == "<instance>" && name == "artist-map" && isLatest' \
+  --select 'attributes.entries.filter(e, e.status == "resolved").map(e, e.mbid)' --json
+# That prints a query envelope, {"results": [[...the MBIDs...]], "total": 1};
+# pass the single element of "results" as the artistMbids array below, not
+# the whole document.
+swamp model method run <musicbrainz-instance> sync-artist-discographies \
+  --input 'artistMbids:json=["<mbid>","<mbid>"]'
 
 # 3. derive the gap (this model, pure — no network)
 swamp model method run <instance> wanted
 ```
 
-Each step fails with an error naming the command you skipped, so getting the
-order wrong is loud rather than silently producing an empty gap report.
+Step 2 is the expensive one: at MusicBrainz's public 1 req/sec a cold pass over
+~775 artists is ~775 requests and takes ~35 minutes, and it prints nothing until
+it finishes. It holds the `musicbrainz` model lock for that whole time — do not
+start it between 02:30 and 03:15, when the nightly extension canary may probe
+that instance. An interrupted pass persists its cursor and counts, so a re-run
+continues rather than repeating.
+
+Step 2 throws when given no artist list and step 3 throws when the discography
+cache is missing, both naming a runnable command.
+
+In the homelab repo the whole sequence is wired as one workflow —
+`swamp
+workflow run music-wanted` — which carries the artist list between the
+two instances for you, gates each hand-off with an assert, and refuses to derive
+a want set from an incomplete catalog. That workflow lives in that private repo,
+not in this package; the three commands above are the portable form.
+
+Run it without `--fail-on`. The default fails the run on ANY assert, including
+the medium-severity want-total sanity band and the medium-severity artist-map
+floor. `--fail-on high` downgrades both to warnings — use it only in CI, and
+read the assert results rather than the exit code.
 
 **`resolve-artists`** seeds the map for free from a headphones instance, whose
 artists are already MusicBrainz-keyed, then falls back to token-set MusicBrainz
@@ -183,6 +209,14 @@ swamp data query 'modelName == "<instance>" && name == "wanted" && isLatest' \
 swamp report get @magistr/music-wanted --model <instance> --markdown
 ```
 
+Three things are now called some form of "wanted", and they do not collide at
+the CLI but are easy to conflate: `swamp workflow run music-wanted` PRODUCES the
+want set (the homelab-repo workflow above),
+`swamp report get
+@magistr/music-wanted` RENDERS the most recently produced one,
+and `wanted` is the method the workflow calls. An operator who runs the report
+against stale data gets a report that renders happily and looks like success.
+
 The report renders totals, missing grouped by artist (biggest gaps first),
 upgrade candidates grouped by current quality (worst first), and the artists
 needing human review. That last section is the point of parking rather than
@@ -191,7 +225,7 @@ guessing, so it is first-class output.
 ### Why not a self-hosted MusicBrainz mirror?
 
 The discography sync is rate-limited to MusicBrainz's public 1 req/sec, making a
-full pass a batched, resumable ~38-minute operation. A local mirror would remove
+full pass a batched, resumable ~35-minute operation. A local mirror would remove
 that limit, and was evaluated and rejected: Postgres live-data-feed replication
 over the internet, and resuming it cleanly after a restart, costs more to
 operate than the sync costs to run. If it is ever revisited, a periodic full

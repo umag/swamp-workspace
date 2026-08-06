@@ -1950,14 +1950,36 @@ Deno.test("wanted: missing artistMap resource fails with an actionable error nam
   );
 });
 
-Deno.test("wanted: missing MusicBrainz browse cache fails with an actionable error naming the musicbrainz INSTANCE and its browse prerequisite", async () => {
+Deno.test("wanted: missing MusicBrainz browse cache fails with an actionable error naming the RUNNABLE sync-artist-discographies command, not the nonexistent 'browse' method", async () => {
   const { ctx } = makeModelDataCtx(
     { musicbrainz: { browse: [] }, music: { album: [] } },
     { "artist-map": ARTIST_MAP_FIXTURE },
   );
-  await assertRejects(
-    () => run("wanted", {}, ctx),
-    Error,
-    "swamp model method run musicbrainz browse",
+  const err = await assertRejects(() => run("wanted", {}, ctx), Error);
+  assert(
+    err.message.includes(
+      "swamp model method run musicbrainz sync-artist-discographies --input 'artistMbids:json=",
+    ),
+    "there is no 'browse' method (browse-release-groups/browse-releases/browse-recordings exist; 'browse' is a resource spec name) — the error must give the real runnable command",
+  );
+  assert(
+    !err.message.includes('swamp model method run musicbrainz browse"'),
+    "must not still tell the operator to run the nonexistent 'browse' method",
+  );
+  assert(
+    err.message.includes(
+      "--select 'attributes.entries.filter(e, e.status == \"resolved\").map(e, e.mbid)' --json",
+    ),
+    "must include the MBID extraction command",
+  );
+  assert(
+    err.message.includes("query envelope") &&
+      err.message.includes('{"results"') &&
+      err.message.includes("total"),
+    "must state the envelope clause — the extraction command prints {results, total}, not a bare array",
+  );
+  assert(
+    err.message.includes("swamp workflow run music-wanted"),
+    "must name the repo-local workflow that wires the whole sequence",
   );
 });

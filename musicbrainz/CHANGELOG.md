@@ -1,5 +1,74 @@
 # Changelog
 
+## 2026.08.05.2
+
+Fixes `music-wanted-sequence-not-wired`. `model.version` and `manifest.yaml`
+move `2026.08.05.1` -> `2026.08.05.2`.
+
+### Breaking change: `sync-artist-discographies` no longer falls back to a cached search result
+
+Before this change, running `sync-artist-discographies` with no `artistMbids`
+argument silently fell back to the artists cached by this instance's last
+`search-artist` run — an implicit dependency on the `search` resource, whose
+writer is five different methods with incompatible shapes. Live, that produced a
+one-artist "successful" sync with no error at all. The method now throws
+immediately when `artistMbids` is absent or empty, naming the runnable command:
+`swamp model method run <name> sync-artist-discographies --input
+'artistMbids:json=["<mbid>","<mbid>"]'`,
+plus the `swamp data query` extraction command (and its envelope shape —
+`{"results": [[...]], "total":
+1}`, not a bare array) to build that list from a
+`@magistr/music-library` instance's `artist-map`.
+
+### `batchSize` now defaults to the whole deduped list, not 10
+
+`artistMbids` is deduped at list-resolution time — `requested` is the DISTINCT
+count, `requestedRaw` the raw input length — and `batchSize` defaults to
+`requested` rather than 10. One run is now a single complete pass by default
+(~35 minutes / ~775 requests for a cold ~775-artist list at 1 req/sec) instead
+of a 78-batch cold pass at the old default. The cursor still exists for two
+cases: a deliberate partial via an explicit smaller `batchSize`, and an
+interrupted pass.
+
+### The cursor is now keyed to the list it indexes
+
+`discographySyncState` gains a `listFingerprint` (length-prefixed FNV-1a over
+the deduped list) and persists the distinct `requested` count. A persisted
+cursor is only resumed from when BOTH match this run's list; otherwise
+(including every state written before this change, none of which carry a
+fingerprint) the run restarts at offset 0. This closes the defect this issue was
+filed about: a cursor left at offset 1 by a one-artist list was silently applied
+to the real 775-artist list and skipped index 0 forever.
+
+### One definition of run coverage: `covered` and `remaining`
+
+Eight new optional `discographySyncState` fields — `requested`, `requestedRaw`,
+`listFingerprint`, `startOffset`, `covered`, `remaining`, `uncovered`,
+`uncoveredCount` — record one run's coverage against its requested list.
+`covered = processedCount + skippedCount`; `remaining =
+requested - covered`.
+`remaining` is deliberately NOT `requested -
+cursor.offset`, which is
+algebraically identical to a formula that always reports 0 for a run that never
+reached its full list. `uncovered` / `uncoveredCount` record which requested
+MBIDs have no cached discography at all, computed from stored data rather than
+any counter.
+
+### A crash now leaves a record
+
+The state write moves into a `finally` covering the whole post-loop accounting
+block, and `execute`'s `return` moves out of the `try` — so a throw partway
+through a batch still persists an accurate cursor, coverage and uncovered set,
+and a successful run's returned `dataHandles` always names the handle it wrote
+rather than risking `{dataHandles: [undefined]}`.
+
+### New report: `@magistr/musicbrainz-discography-sync`
+
+A new default model-scope report rendering `discographySyncState`'s coverage,
+bound to the execution that produced it (never claims a run's numbers unless
+that run's own write is present in `context.dataHandles`), with an independent
+cross-check against the actual cached `rg-by-artist-*` rows.
+
 ## 2026.08.05.1
 
 Fixes `musicbrainz-ratelimit-runmodel-fanout`, measured live:

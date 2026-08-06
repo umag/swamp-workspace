@@ -543,6 +543,76 @@ export function advanceSyncCursor(
 }
 
 /**
+ * Order-preserving, idempotent dedup over artist MBIDs — the FIRST
+ * occurrence of each distinct MBID survives, in its original relative
+ * position. `sync-artist-discographies` dedupes AT LIST-RESOLUTION TIME, so
+ * `requested`, the cursor and the fingerprint all index the same deduped
+ * list a duplicate-bearing caller handed in once.
+ */
+export function dedupeMbids(mbids: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of mbids) {
+    if (!seen.has(m)) {
+      seen.add(m);
+      out.push(m);
+    }
+  }
+  return out;
+}
+
+/**
+ * Deterministic, length-prefixed FNV-1a hex digest over a deduped MBID
+ * list — identifies the list a persisted `discographySyncState` cursor
+ * indexes, so a changed list is never silently resumed against a
+ * meaningless offset. No crypto import, no async, no clock read. A 32-bit
+ * digest collides across different-length inputs at ~2^-32; the length
+ * prefix changes the hash INPUT so most length changes also change the
+ * digest, but it does not itself make growth detection exact — the
+ * persisted distinct-count comparison in the cursor reset rule is what
+ * does that. NOT pinned as "different for any two lists of different
+ * length" — that would be a false invariant.
+ */
+export function fingerprintMbids(mbids: string[]): string {
+  const input = `${mbids.length}:${mbids.join(",")}`;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/** One run's coverage of its requested artist list. `covered` is the
+ * distinct requested artists this run actually visited (fetched OR
+ * fresh-cache-skipped); `remaining` is how many of the requested distinct
+ * artists this run never attempted. */
+export interface SyncRunCoverage {
+  covered: number;
+  remaining: number;
+}
+
+/**
+ * THE ONE DEFINITION of a sync run's coverage, used identically by
+ * `DiscographySyncStateSchema`, the music-wanted workflow's coverage gate,
+ * the discography-sync report and every test: `covered = processedCount +
+ * skippedCount`; `remaining = requested - covered`. `startOffset` is
+ * deliberately NOT an input here — it is recorded separately, precisely so
+ * a LIST POSITION and a RUN COVERAGE SHORTFALL can never be confused again
+ * (the defect this function's introduction fixes: `requested -
+ * nextCursor.offset` is algebraically identical to the formula that always
+ * reports 0 for an incomplete run).
+ */
+export function syncRunCoverage(
+  requested: number,
+  processedCount: number,
+  skippedCount: number,
+): SyncRunCoverage {
+  const covered = processedCount + skippedCount;
+  return { covered, remaining: requested - covered };
+}
+
+/**
  * Pure rate-limit spacing calculator backing `mbFetch`'s queue above.
  * Returns the number of milliseconds to wait before the next request; 0 if
  * the minimum interval has already elapsed. `lastRequestAt` is `null` when
@@ -876,6 +946,20 @@ const DiscographySyncStateSchema = z.object({
   processed: z.array(z.string()),
   skipped: z.array(z.string()),
   updatedAt: z.string(),
+  // Eight additive fields (all optional — a state written before this
+  // change has none of them and must still parse cleanly). requested/
+  // requestedRaw/listFingerprint/startOffset key the cursor to the list it
+  // indexes (see dedupeMbids/fingerprintMbids above); covered/remaining are
+  // syncRunCoverage's one definition; uncovered/uncoveredCount are computed
+  // from stored data, not from any counter.
+  requested: z.number().optional(),
+  requestedRaw: z.number().optional(),
+  listFingerprint: z.string().optional(),
+  startOffset: z.number().optional(),
+  covered: z.number().optional(),
+  remaining: z.number().optional(),
+  uncovered: z.array(z.string()).optional(),
+  uncoveredCount: z.number().optional(),
 });
 
 // `queries` is an ARRAY of {query, ...} records, not an object keyed by
@@ -930,7 +1014,7 @@ const ArtistSearchBatchSchema = z.object({
  */
 export const model = {
   type: "@magistr/musicbrainz",
-  version: "2026.08.05.1",
+  version: "2026.08.05.2",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -953,7 +1037,15 @@ export const model = {
         "Fixes musicbrainz-ratelimit-runmodel-fanout: mbFetch's rate limiter is correct WITHIN one method invocation but has no memory across separate context.runModel invocations, so a caller fanning out one search per artist (e.g. music-library's resolve-artists) sent real traffic at ~2.5 req/sec against the documented 1 req/sec limit. New method search-artists-batch takes MANY Lucene artist queries and loops internally over the existing mbFetch, so the module-level limiter that is already correct within one invocation becomes correct for a whole workload by construction. New artistSearchBatch resource (one document per run; per-hit candidates are the NEW projectArtistCandidates {id, name, sort-name} projection, never the full MusicBrainz artist document, to stay inside MongoDB's 16MB document limit). retryAfterBackoffMs's exported signature changes from returning a bare number to a discriminated {kind:'sleep',ms} | {kind:'stop',retryAfterMs} result, and mbFetch now THROWS a new MusicBrainzBackoffError instead of sleeping when a 503's Retry-After exceeds a cap (default 60s) — a behaviour change to every existing single-query method, deliberate so a hostile/misconfigured Retry-After (e.g. one hour) can never stall a batch invocation for that long while holding a model lock. mbFetch also gains an optional 5th signal parameter (AbortSignal) so a long batch's --timeout is enforceable inside an in-flight request or backoff sleep, not just between queries; all four-argument callers are unchanged. search-artist's extracted body (searchArtistsOnce) preserves offset end-to-end — no narrowing of a published method's contract. No globalArguments change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      fromVersion: "2026.08.05.1",
+      toVersion: "2026.08.05.2",
+      description:
+        "Fixes music-wanted-sequence-not-wired: sync-artist-discographies' artistMbids fallback to this instance's last search-artist run is DELETED — a breaking behaviour change. The method now throws immediately (naming the runnable --input command) when artistMbids is absent or empty, rather than silently syncing whatever the collided `search` resource last held, often a single artist. artistMbids is deduped at list-resolution time (requested is now the DISTINCT count, requestedRaw the raw length); batchSize now defaults to the whole deduped list rather than 10, making one run a single complete pass (~35 minutes for ~775 artists) instead of a 78-batch cold pass. The persisted discographySyncState cursor is now KEYED to the list it indexes — a length-prefixed FNV-1a listFingerprint plus the persisted distinct requested count — so a changed artist list always restarts at offset 0 rather than resuming against a meaningless position; every state written before this change (none of which carry a fingerprint) also restarts at 0 on first use. Eight new optional discographySyncState fields (requested, requestedRaw, listFingerprint, startOffset, covered, remaining, uncovered, uncoveredCount) record one run's coverage accounting (covered = processedCount + skippedCount; remaining = requested - covered — deliberately NOT requested - cursor.offset, which is algebraically identical to a formula that always reports 0 for an incomplete run) and the set of requested MBIDs with no cached discography at all. The state write moves into a guarded `finally` covering the whole post-loop accounting block, and the method's `return` moves out of the `try`, so a crash partway through a batch still persists an accurate cursor/coverage/uncovered set instead of nothing, and a successful run's returned dataHandles always names the written handle rather than risking `[undefined]`. New default model-scope report @magistr/musicbrainz-discography-sync renders this coverage, bound to the execution that produced it via context.dataHandles, with an independent TypeScript cross-check against stored rg-by-artist-* rows. No globalArguments change; discographySyncState's four new-in-2026.08.04.1 fields plus these eight are all additive and optional.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
+  reports: ["@magistr/musicbrainz-discography-sync"],
   globalArguments: GlobalArgsSchema,
   resources: {
     search: {
@@ -1666,18 +1758,20 @@ export const model = {
 
     "sync-artist-discographies": {
       description:
-        "Fan out over a list of artist MBIDs and cache each one's full release-group discography, routed through the same mbFetch + `browse`/`rg-by-artist-<mbid>` write path as browse-release-groups, extended with pagination. 1 req/sec spacing is enforced once, at the mbFetch boundary — shared by every method in this model, not reimplemented here. Cursored and resumable: each run processes one batch starting at the persisted cursor, so an interrupted sync resumes rather than restarting, and repeated batches cover the artist list exactly once. A cached `count: 0` is treated as a legitimate empty discography (skipped like any other fresh cache), never re-fetched merely for being empty — only for being stale or never having been fetched at all. Per-artist pagination stops at `maxPages` and marks the cached entry `truncated: true` rather than silently returning a partial discography as if it were complete.",
+        "Fan out over a list of artist MBIDs and cache each one's full release-group discography, routed through the same mbFetch + `browse`/`rg-by-artist-<mbid>` write path as browse-release-groups, extended with pagination. 1 req/sec spacing is enforced once, at the mbFetch boundary — shared by every method in this model, not reimplemented here. The artist list is a required explicit input with no fallback. By default one run is a single complete pass over the whole deduped list (~35 minutes for ~775 artists at 1 req/sec). The cursor exists for two cases only: a deliberate partial via a smaller batchSize, which the next run over the SAME list resumes from, and an interrupted pass, whose progress is persisted so a re-run continues rather than restarting. The cursor is fingerprinted to its list, so a changed list always restarts at 0. A cached `count: 0` is treated as a legitimate empty discography (skipped like any other fresh cache), never re-fetched merely for being empty — only for being stale or never having been fetched at all. Per-artist pagination stops at `maxPages` and marks the cached entry `truncated: true` rather than silently returning a partial discography as if it were complete.",
       arguments: z.object({
         artistMbids: z
           .array(z.string())
           .optional()
           .describe(
-            "Explicit artist MBIDs to sync. Defaults to the artists cached by this instance's most recent search-artist run.",
+            "Artist MBIDs to sync. Required in practice: the method throws when this is absent or empty — it does NOT fall back to any cached search result. Duplicates are removed before syncing, and batchSize defaults to the whole deduped list.",
           ),
         batchSize: z
           .number()
           .optional()
-          .describe("Max number of artists to process this run (default 10)"),
+          .describe(
+            "Max artists to process this run. Defaults to the WHOLE deduped artistMbids list — a cold pass over ~775 artists is ~775 MusicBrainz requests and takes ~35 minutes at 1 req/sec, printing nothing until it finishes. Pass a smaller number for a deliberate partial; the cursor resumes from where it stopped on the next run with the SAME list.",
+          ),
         ttlMs: z
           .number()
           .optional()
@@ -1701,132 +1795,215 @@ export const model = {
         const { userAgent } = context.globalArgs;
         const instanceName = context.definition.name;
 
-        // Resolve the artist MBID list: explicit arg wins; otherwise fall
-        // back to the artists cached by this instance's last search-artist
-        // run (writeResource("artists", "search", ...) above). The generic
-        // `search` method (below) writes instance name `<entity>-search`,
-        // never bare "search", so it cannot collide with this read. NOTE:
-        // search-release-group / search-release / search-recording /
-        // search-label also write bare instance "search" (with their own,
-        // incompatible shapes) — running one of those after search-artist
-        // WOULD make this read return the wrong shape. That's a pre-existing
-        // sibling-collision risk, not this method's bug to fix.
-        let artistMbids = args.artistMbids;
-        if (!artistMbids || artistMbids.length === 0) {
-          const searchData = await context.readResource("search");
-          artistMbids = (searchData?.artists ?? []).map((a) => a.id);
-          if (artistMbids.length === 0) {
-            throw new Error(
-              `No artist list available on instance "${instanceName}". Run ` +
-                `'swamp model method run ${instanceName} search-artist --query <name>' ` +
-                `first, or pass artistMbids explicitly.`,
-            );
-          }
-        }
-
-        const batchSize = args.batchSize ?? 10;
-        const ttlMs = args.ttlMs ?? 7 * 24 * 60 * 60 * 1000;
-        const minIntervalMs = args.minIntervalMs ?? 1100;
-        const maxPages = args.maxPages ?? DEFAULT_DISCOGRAPHY_MAX_PAGES;
-
-        // Resume from the persisted cursor rather than restarting at 0.
-        const state = await context.readResource(
-          DISCOGRAPHY_SYNC_CURSOR_INSTANCE,
-        );
-        let cursor: SyncCursor = state?.cursor ?? { offset: 0 };
-
-        // A cursor at/past the end of the (possibly changed) input starts a
-        // fresh pass instead of producing an empty batch forever.
-        if (cursor.offset >= artistMbids.length) {
-          cursor = { offset: 0 };
-        }
-
-        const batch = artistMbids.slice(
-          cursor.offset,
-          cursor.offset + batchSize,
-        );
+        // Hoisted above the try so the `finally` below can always produce a
+        // record, including on a throw partway through the loop. `mbids`
+        // and `startOffset` staying null is exactly how the finally knows
+        // the missing-artistMbids throw below fired BEFORE any sync was
+        // attempted, and must write no state at all.
+        let mbids: string[] | null = null;
+        let startOffset: number | null = null;
+        let requestedRaw = 0;
+        let listFingerprint = "";
+        let cursor: SyncCursor = { offset: 0 };
+        let handle;
         const processed: string[] = [];
         const skipped: string[] = [];
+        let threw = false;
 
-        for (const mbid of batch) {
-          const cached = await context.readResource(`rg-by-artist-${mbid}`);
-          const status = classifyDiscographyCache(cached);
-          if (
-            status !== "never-fetched" &&
-            cached &&
-            !isCacheStale(cached.timestamp, Date.now(), ttlMs)
-          ) {
-            skipped.push(mbid);
-            continue;
-          }
-
-          // Paginate this artist's full discography. Request spacing is
-          // handled inside mbFetch itself (see the module-level rate
-          // limiter above) — this loop just keeps calling it and stops at
-          // maxPages so one huge catalogue can't consume the whole batch.
-          const results: unknown[] = [];
-          let count = 0;
-          let offset = 0;
-          let pagesFetched = 0;
-          let truncated = false;
-          while (true) {
-            const data = await mbFetch(
-              userAgent,
-              "/release-group/",
-              { artist: mbid, limit: "100", offset: String(offset) },
-              minIntervalMs,
+        try {
+          const artistMbidsArg = args.artistMbids;
+          if (!artistMbidsArg || artistMbidsArg.length === 0) {
+            throw new Error(
+              `sync-artist-discographies on instance "${instanceName}" was given no artistMbids, so it has nothing to sync and will not guess. Nothing was fetched and no discography cache was written.\n` +
+                `Before 2026.08.05.2 this fell back to the artists cached by the last search-artist run on this instance, which silently synced whatever that resource held — often a single artist — and exited 0.\n` +
+                `Run: swamp model method run ${instanceName} sync-artist-discographies --input 'artistMbids:json=["<mbid>","<mbid>"]' (about 1 request/sec — a cold pass over ~775 artists is ~35 minutes and prints nothing until it finishes; add --input batchSize=N for a deliberate partial)\n` +
+                `Get the list from a @magistr/music-library instance: swamp data query 'modelName == "<music-instance>" && name == "artist-map" && isLatest' --select 'attributes.entries.filter(e, e.status == "resolved").map(e, e.mbid)' --json — that prints a query envelope, {"results": [[...the MBIDs...]], "total": 1}; pass the single element of "results" as the artistMbids array, not the whole document\n` +
+                `Repo-local: the homelab repo wires the whole sequence as a workflow — swamp workflow run music-wanted`,
             );
-            pagesFetched++;
-
-            const rgs = Array.isArray(data["release-groups"])
-              ? data["release-groups"]
-              : [];
-            results.push(...rgs);
-            count = data["release-group-count"] ?? results.length;
-            if (rgs.length < 100) break; // reached the real end of this artist's discography
-
-            if (pagesFetched >= maxPages) {
-              // Hit the page ceiling with a still-full page: more release
-              // groups almost certainly remain (e.g. a large classical
-              // catalogue). Stop rather than consuming the rest of the run
-              // on one artist — but record the truncation so it's visible
-              // instead of silently caching a partial discography as
-              // complete.
-              truncated = true;
-              break;
-            }
-            offset += 100;
           }
 
-          await context.writeResource("browse", `rg-by-artist-${mbid}`, {
-            entity: "release-group",
-            linkedEntity: "artist",
-            linkedId: mbid,
-            results,
-            count,
-            offset: 0,
-            truncated,
-            timestamp: new Date().toISOString(),
-          });
-          processed.push(mbid);
+          // Dedupe AT LIST-RESOLUTION TIME — the end-of-list reset check,
+          // the slice, the fingerprint and `requested` must all index this
+          // SAME deduped list, or a cursor can compare against the raw
+          // length while slicing the deduped one and produce an empty
+          // batch forever.
+          requestedRaw = artistMbidsArg.length;
+          mbids = dedupeMbids(artistMbidsArg);
+          listFingerprint = fingerprintMbids(mbids);
+          const requested = mbids.length;
+
+          const ttlMs = args.ttlMs ?? 7 * 24 * 60 * 60 * 1000;
+          const minIntervalMs = args.minIntervalMs ?? 1100;
+          const maxPages = args.maxPages ?? DEFAULT_DISCOGRAPHY_MAX_PAGES;
+          const batchSize = args.batchSize ?? mbids.length;
+
+          // Resume from the persisted cursor ONLY when it indexes THIS
+          // list: an absent fingerprint (every state written before this
+          // change), a fingerprint mismatch, or a persisted distinct count
+          // that no longer matches this run's list (the list grew or
+          // shrank) all restart at offset 0 rather than resuming against a
+          // meaningless position. The existing at/past-the-end reset is
+          // folded into the same offset check.
+          const state = await context.readResource(
+            DISCOGRAPHY_SYNC_CURSOR_INSTANCE,
+          );
+          const priorFingerprint = typeof state?.listFingerprint === "string"
+            ? state.listFingerprint
+            : null;
+          const priorRequested = typeof state?.requested === "number"
+            ? state.requested
+            : null;
+          const priorCursor = state?.cursor as SyncCursor | undefined;
+          const canResume = priorFingerprint !== null &&
+            priorFingerprint === listFingerprint &&
+            priorRequested === requested &&
+            priorCursor !== undefined &&
+            priorCursor.offset < mbids.length;
+          cursor = canResume ? priorCursor! : { offset: 0 };
+          startOffset = cursor.offset;
+
+          const batch = mbids.slice(startOffset, startOffset + batchSize);
+
+          for (const mbid of batch) {
+            const cached = await context.readResource(`rg-by-artist-${mbid}`);
+            const status = classifyDiscographyCache(cached);
+            if (
+              status !== "never-fetched" &&
+              cached &&
+              !isCacheStale(cached.timestamp, Date.now(), ttlMs)
+            ) {
+              skipped.push(mbid);
+              continue;
+            }
+
+            // Paginate this artist's full discography. Request spacing is
+            // handled inside mbFetch itself (see the module-level rate
+            // limiter above) — this loop just keeps calling it and stops at
+            // maxPages so one huge catalogue can't consume the whole batch.
+            const results: unknown[] = [];
+            let count = 0;
+            let offset = 0;
+            let pagesFetched = 0;
+            let truncated = false;
+            while (true) {
+              const data = await mbFetch(
+                userAgent,
+                "/release-group/",
+                { artist: mbid, limit: "100", offset: String(offset) },
+                minIntervalMs,
+              );
+              pagesFetched++;
+
+              const rgs = Array.isArray(data["release-groups"])
+                ? data["release-groups"]
+                : [];
+              results.push(...rgs);
+              count = data["release-group-count"] ?? results.length;
+              if (rgs.length < 100) break; // reached the real end of this artist's discography
+
+              if (pagesFetched >= maxPages) {
+                // Hit the page ceiling with a still-full page: more release
+                // groups almost certainly remain (e.g. a large classical
+                // catalogue). Stop rather than consuming the rest of the run
+                // on one artist — but record the truncation so it's visible
+                // instead of silently caching a partial discography as
+                // complete.
+                truncated = true;
+                break;
+              }
+              offset += 100;
+            }
+
+            await context.writeResource("browse", `rg-by-artist-${mbid}`, {
+              entity: "release-group",
+              linkedEntity: "artist",
+              linkedId: mbid,
+              results,
+              count,
+              offset: 0,
+              truncated,
+              timestamp: new Date().toISOString(),
+            });
+            processed.push(mbid);
+          }
+        } catch (e) {
+          threw = true;
+          throw e;
+        } finally {
+          // Durability is part of this process-state entity's contract, not
+          // an optimisation for the happy path: the whole post-loop
+          // accounting block lives here so a throw partway through the
+          // batch persists an accurate cursor, covered/remaining and the
+          // uncovered set too — not just a completed pass.
+          if (mbids !== null && startOffset !== null) {
+            try {
+              const requested = mbids.length;
+              const { covered, remaining } = syncRunCoverage(
+                requested,
+                processed.length,
+                skipped.length,
+              );
+              const nextCursor = advanceSyncCursor(cursor, {
+                processedCount: covered,
+              });
+
+              // The independently-observable "what SHOULD be cached"
+              // check, computed from stored data rather than any counter.
+              // On a completed full pass `visited == mbids`, so this loop
+              // performs no extra reads at all.
+              const visited = new Set([...processed, ...skipped]);
+              const uncoveredAll: string[] = [];
+              for (const mbid of mbids) {
+                if (visited.has(mbid)) continue;
+                const cached = await context.readResource(
+                  `rg-by-artist-${mbid}`,
+                );
+                if (classifyDiscographyCache(cached) === "never-fetched") {
+                  uncoveredAll.push(mbid);
+                }
+              }
+              const uncoveredCount = uncoveredAll.length;
+              const uncovered = uncoveredAll.slice(0, 50);
+
+              handle = await context.writeResource(
+                "discographySyncState",
+                DISCOGRAPHY_SYNC_CURSOR_INSTANCE,
+                {
+                  cursor: nextCursor,
+                  processed,
+                  skipped,
+                  updatedAt: new Date().toISOString(),
+                  requested,
+                  requestedRaw,
+                  listFingerprint,
+                  startOffset,
+                  covered,
+                  remaining,
+                  uncovered,
+                  uncoveredCount,
+                },
+              );
+            } catch (writeErr) {
+              // On the THROW path this swallows: a failed state write must
+              // never mask the original error already propagating out of
+              // `try`. On the SUCCESS path there is no original failure to
+              // mask, so log it — `handle` stays undefined and the method
+              // returns an EMPTY dataHandles array below, never a
+              // one-element array containing `undefined`.
+              if (!threw) {
+                console.error(
+                  `sync-artist-discographies on instance "${instanceName}" completed but failed to persist discographySyncState: ${
+                    writeErr instanceof Error
+                      ? writeErr.message
+                      : String(writeErr)
+                  }`,
+                );
+              }
+            }
+          }
         }
 
-        const nextCursor = advanceSyncCursor(cursor, {
-          processedCount: batch.length,
-        });
-
-        const handle = await context.writeResource(
-          "discographySyncState",
-          DISCOGRAPHY_SYNC_CURSOR_INSTANCE,
-          {
-            cursor: nextCursor,
-            processed,
-            skipped,
-            updatedAt: new Date().toISOString(),
-          },
-        );
-
-        return { dataHandles: [handle] };
+        return { dataHandles: handle ? [handle] : [] };
       },
     },
 

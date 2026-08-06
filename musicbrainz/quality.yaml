@@ -16,6 +16,7 @@ tests:
     state: present
     files:
       - "extensions/models/musicbrainz_test.ts"
+      - "extensions/reports/discography_sync_test.ts"
   methods:
     state: present
     files:
