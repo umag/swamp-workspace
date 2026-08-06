@@ -1286,13 +1286,18 @@ Deno.test("sync-artist-discographies: no explicit artistMbids at all — throws 
     "the error must give the exact runnable command, including the --input flag form, to unblock the user",
   );
   assert(
-    !err.message.includes(
-      "swamp model method run my-musicbrainz-instance search-artist",
-    ),
-    "the error must no longer suggest running search-artist as the fix — the mention of the deleted fallback in the historical-context sentence is fine, a suggested search-artist COMMAND is not",
+    // Broadened past the instance-qualified literal: a mutant that
+    // suggests running search-artist against a DIFFERENT, hardcoded
+    // instance name (not context.definition.name) must still be caught.
+    // The negative lookahead excludes "search-artists-batch", a real,
+    // valid method whose name merely starts with the same substring.
+    !/swamp model method run \S+ search-artist(?!s)/.test(err.message),
+    "the error must no longer suggest running search-artist as the fix — the mention of the deleted fallback in the historical-context sentence is fine, a suggested search-artist COMMAND (against any instance name) is not",
   );
   assert(
-    !err.message.includes("--query "),
+    // No trailing space: "--query " alone would miss a mutant that writes
+    // "--query=..." instead of "--query ...".
+    !err.message.includes("--query"),
     "the error must not use the unrunnable --query flag form",
   );
   assert(
@@ -1824,6 +1829,39 @@ Deno.test("sync-artist-discographies: the uncovered set — an MBID with no cach
     assertEquals(state.payload.uncoveredCount, 0);
     assertEquals(state.payload.uncovered, []);
   }
+});
+
+Deno.test("sync-artist-discographies: discographySyncState's DECLARED resource schema still round-trips uncoveredCount -- pins the resource contract, not just the stub's captured payload", async () => {
+  using time = new FakeTime();
+  const mbids = syntheticMbids(3, 420);
+  const { written, ctx } = makeSyncCtx();
+  await withMbFixture(
+    { "release-groups": [] },
+    () =>
+      drainAndAwait(
+        time,
+        run("sync-artist-discographies", {
+          artistMbids: mbids,
+          batchSize: 0,
+          minIntervalMs: 5,
+        }, ctx),
+      ),
+  );
+  const state = written.find((w) => w.spec === "discographySyncState")!;
+  // Every MBID is uncovered here (empty store, no prior cache), so the
+  // written payload's uncoveredCount is non-zero -- if the resource's own
+  // declared schema no longer lists uncoveredCount, zod's default
+  // unknown-key stripping silently drops it on parse even though the
+  // method still writes it, and this assertion (not just the raw payload
+  // read above) is what catches that drift.
+  const parsed = model.resources.discographySyncState.schema.parse(
+    state.payload,
+  ) as Record<string, unknown>;
+  assert(
+    "uncoveredCount" in parsed,
+    "the discographySyncState resource schema must declare uncoveredCount -- it silently vanished on parse",
+  );
+  assertEquals(parsed.uncoveredCount, state.payload.uncoveredCount);
 });
 
 Deno.test("sync-artist-discographies: the uncovered set caps the reported list at 50 while uncoveredCount holds the true total", async () => {

@@ -1963,7 +1963,7 @@ Deno.test("wanted: missing MusicBrainz browse cache fails with an actionable err
     "there is no 'browse' method (browse-release-groups/browse-releases/browse-recordings exist; 'browse' is a resource spec name) — the error must give the real runnable command",
   );
   assert(
-    !err.message.includes('swamp model method run musicbrainz browse"'),
+    !err.message.includes("swamp model method run musicbrainz browse"),
     "must not still tell the operator to run the nonexistent 'browse' method",
   );
   assert(

@@ -1,5 +1,63 @@
 # Changelog
 
+## Unreleased
+
+Review-fix pass over the `music-wanted-sequence-not-wired` change above — no
+`model.version` bump, no schema or method-contract change; report wording and
+test-suite hardening only.
+
+### `@magistr/musicbrainz-discography-sync` report: coverage wording is now conditional on which run the state belongs to
+
+`renderCoverage` hard-coded "this run" in its full-coverage line and its resume
+clause. Render case (c) (this execution wrote no sync state, so the report falls
+back to the PREVIOUS run's state) fed it that previous run's numbers regardless,
+so a failed run with a full-coverage previous state printed "Full coverage —
+every requested artist was visited this run." — contradicting the report's own
+"does NOT describe this one" lead banner in the same document. `renderCoverage`
+now takes an optional `describesThisRun` (default `true`); case (c) passes
+`false` and both lines are reworded to never claim anything about "this run"
+when they are not describing it.
+
+### Test-suite hardening (mutation-testing findings)
+
+- `discographySyncState`'s written payload is now also validated against the
+  resource's own DECLARED schema
+  (`model.resources.discographySyncState.schema`), not just the test stub's
+  captured call arguments — closes a blind spot where deleting `uncoveredCount`
+  from the schema left the suite green.
+- The report's duplicate-MBID-count test now asserts the exact rendered phrase
+  (`"8 duplicate MBID(s)"`), not a bare `includes("8")`, which was separately
+  satisfied by the unrelated `2026-08-04` timestamp in the same markdown.
+- The "must not still suggest search-artist as the fix" and "must not use
+  `--query`" negative assertions in the missing-`artistMbids` test are
+  broadened: the search-artist check is no longer qualified to one hardcoded
+  instance name (a suggestion against a different instance name used to slip
+  through), and the `--query` check no longer requires a trailing space (so
+  `--query=` can no longer slip through either).
+- Added a case-(c) test and prefix assertion pinning that a failed execution
+  which wrote no state still carries the "This run FAILED. " prefix in the
+  report's lead banner.
+
+All four hardened assertions were verified by re-introducing the exact mutant
+they target and confirming the suite fails, then reverting.
+
+### Operating-procedure documentation for `music-wanted` (main-repo workflow)
+
+Unrelated to this package's own code, but recorded here since this package's
+`sync-artist-discographies` is one leg of the gated sequence: the repo-local
+`music-wanted` workflow's description now states, explicitly and as a required
+(not optional) control, that
+`swamp workflow run music-wanted
+--input dryRun=true` must be re-run after any
+edit to that workflow definition — it is the only thing that exercises the gate
+chain's CEL semantics, which neither `swamp workflow validate` nor either
+package's test suite can see (the test task grants no `--allow-read` on the
+workflow file). Evidence this control catches real regressions: the dry run of
+2026-08-06 failed at the preflight job (a `data.latest(...)` call missing
+`.attributes` in the informational cursor read, fixed in this same pass) and
+correctly skipped the resolve, sync and derive jobs rather than running any of
+them against unproven state.
+
 ## 2026.08.05.2
 
 Fixes `music-wanted-sequence-not-wired`. `model.version` and `manifest.yaml`

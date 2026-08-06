@@ -240,7 +240,42 @@ Deno.test("report.execute (c): this execution wrote NO state — renders the PRE
     result.markdown.includes(state.updatedAt),
     "must name the previous run's updatedAt",
   );
+  assert(
+    result.markdown.includes("This run FAILED. "),
+    "a failed execution that wrote no state must still carry the 'This run FAILED.' prefix in the lead banner (mutant M15: dropping this prefix must fail this test)",
+  );
   assertEquals(result.json.status, "no-state-this-run");
+});
+
+Deno.test("report.execute (c): a full-coverage PREVIOUS run's state must never claim the coverage happened 'this run'", async () => {
+  // remaining: 0 triggers renderCoverage's "Full coverage" line — case (c)
+  // feeds renderCoverage the PREVIOUS run's state, so that line (and the
+  // resume clause) must not claim anything about "this run" even though
+  // the raw numbers are real.
+  const state = syncState({ covered: 775, remaining: 0, startOffset: 0 });
+  const result = await report.execute({
+    ...BASE_CONTEXT,
+    methodName: "sync-artist-discographies",
+    executionStatus: "failed",
+    dataHandles: [],
+    dataRepository: buildRepo([{
+      specName: "discographySyncState",
+      name: "discography-sync-cursor",
+      content: state,
+    }]),
+  });
+  assert(
+    result.markdown.includes("Full coverage"),
+    "the previous run's real full-coverage numbers must still render",
+  );
+  assert(
+    !result.markdown.includes("visited this run"),
+    "case (c) renders a PREVIOUS run's state -- it must never assert the coverage happened 'this run', which would contradict its own lead banner",
+  );
+  assert(
+    result.markdown.includes("This run FAILED. "),
+    "a failed execution that wrote no state must still carry the 'This run FAILED.' prefix",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -375,13 +410,46 @@ Deno.test("renderCoverage: remaining 0 prints a quiet full-coverage confirmation
   assert(md.includes("Full coverage"));
 });
 
+Deno.test("renderCoverage: describesThisRun defaults to true and claims 'this run' in the full-coverage line", () => {
+  const md = renderCoverage(
+    syncState({ covered: 775, remaining: 0, startOffset: 0 }),
+    { agrees: true, missingRows: [], unexpectedRows: [] },
+  );
+  assert(md.includes("visited this run"));
+});
+
+Deno.test("renderCoverage: describesThisRun: false never claims 'this run' in the full-coverage or resume-clause wording", () => {
+  const md = renderCoverage(
+    syncState({ covered: 775, remaining: 0, startOffset: 0 }),
+    { agrees: true, missingRows: [], unexpectedRows: [] },
+    { describesThisRun: false },
+  );
+  assert(md.includes("Full coverage"));
+  assert(!md.includes("this run"));
+  assert(!md.includes("This run"));
+
+  const resumed = renderCoverage(
+    syncState({ covered: 2, remaining: 3, requested: 5, startOffset: 2 }),
+    { agrees: true, missingRows: [], unexpectedRows: [] },
+    { describesThisRun: false },
+  );
+  assert(resumed.includes("started at cursor offset 2"));
+  assert(!resumed.includes("this run"));
+  assert(!resumed.includes("This run"));
+});
+
 Deno.test("renderCoverage: requestedRaw != requested names the duplicate count", () => {
   const md = renderCoverage(
     syncState({ requested: 767, requestedRaw: 775 }),
     { agrees: true, missingRows: [], unexpectedRows: [] },
   );
   assert(md.includes("duplicate MBID"));
-  assert(md.includes("8"));
+  // Must name the exact computed count (requestedRaw - requested = 8) tied
+  // to the word it modifies -- a bare `includes("8")` is also satisfied by
+  // the unrelated "2026-08-04" updatedAt timestamp elsewhere in the
+  // markdown and would not catch a wrong-count regression.
+  assert(md.includes("8 duplicate MBID(s)"));
+  assert(!md.includes("7 duplicate MBID(s)"));
 });
 
 Deno.test("renderCoverage: uncoveredCount > 0 renders the catalog-incomplete section naming the missing MBIDs", () => {

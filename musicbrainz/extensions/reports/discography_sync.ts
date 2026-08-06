@@ -140,13 +140,20 @@ export async function buildCrossCheck(
 export function renderCoverage(
   state: DiscographySyncStateContent,
   crossCheck: CrossCheckResult,
-  opts: { leadBanner?: string } = {},
+  opts: { leadBanner?: string; describesThisRun?: boolean } = {},
 ): string {
+  // describesThisRun defaults to true because renderCoverage's ONLY other
+  // caller (case (b)) always feeds it the execution's own just-written
+  // state. Case (c) feeds it a PREVIOUS run's state and must pass false --
+  // the coverage numbers are real, but nothing below may claim they
+  // happened "this run" (that claim belongs to the previous run the
+  // leadBanner already names).
+  const { leadBanner, describesThisRun = true } = opts;
   const lines: string[] = [];
   lines.push("# Discography sync coverage");
   lines.push("");
-  if (opts.leadBanner) {
-    lines.push(opts.leadBanner);
+  if (leadBanner) {
+    lines.push(leadBanner);
     lines.push("");
   }
 
@@ -159,7 +166,9 @@ export function renderCoverage(
     remaining !== undefined
   ) {
     const resumeClause = startOffset !== undefined && startOffset > 0
-      ? ` This run started at cursor offset ${startOffset}, so it never reached the start of the list. Re-run to cover the remainder.`
+      ? describesThisRun
+        ? ` This run started at cursor offset ${startOffset}, so it never reached the start of the list. Re-run to cover the remainder.`
+        : ` That run started at cursor offset ${startOffset}, so it never reached the start of the list.`
       : "";
     lines.push(
       `Discography sync: ${covered} of ${requested} requested artists covered — ` +
@@ -168,7 +177,9 @@ export function renderCoverage(
     );
     if (remaining === 0) {
       lines.push(
-        "Full coverage — every requested artist was visited this run.",
+        describesThisRun
+          ? "Full coverage — every requested artist was visited this run."
+          : "Full coverage — every requested artist was visited in that run.",
       );
     }
     if (requestedRaw !== undefined && requestedRaw !== requested) {
@@ -334,6 +345,7 @@ export const report = {
           markdown: renderCoverage(latest, crossCheck, {
             leadBanner:
               `${failedPrefix}This run wrote no sync state. The coverage below is from the previous run at ${latest.updatedAt} and does NOT describe this one.`,
+            describesThisRun: false,
           }),
           json: {
             status: "no-state-this-run",

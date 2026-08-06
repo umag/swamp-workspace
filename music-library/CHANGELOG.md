@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+Review-fix pass over the `music-wanted-sequence-not-wired` change above — no
+`model.version` bump, no schema or method-contract change; test-suite hardening
+only.
+
+### Test-suite hardening (mutation-testing finding)
+
+The negative assertion guarding against `wanted`'s missing-browse-cache throw
+regressing back to suggesting the nonexistent `browse` method had a stray
+trailing double-quote in its needle
+(`'swamp model method run musicbrainz browse"'`), which never matched the defect
+it names (the old broken message had nothing after `browse`). Fixed by dropping
+the stray quote. Verified by re-applying the append-the-old-text mutation this
+needle exists to catch and confirming the test now fails, then reverting.
+
+### Operating-procedure documentation for `music-wanted` (main-repo workflow)
+
+Unrelated to this package's own code, but recorded here since this package's
+`wanted` method is one leg of the gated sequence: see the `musicbrainz`
+package's CHANGELOG (Unreleased) for the required-dry-run control now documented
+on the repo-local `music-wanted` workflow.
+
 ## 2026.08.05.2
 
 Fixes `music-wanted-sequence-not-wired`. `model.version` and `manifest.yaml`
