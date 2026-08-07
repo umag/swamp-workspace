@@ -333,3 +333,252 @@ Deno.test("computeBucket: mid-week set change can shift day-index membership (ac
   assert(bucketBefore.length <= windowSize(before.length));
   assert(bucketAfter.length <= windowSize(after.length));
 });
+
+// ---------------------------------------------------------------------------
+// discoverPropertyTestFiles — RECURSIVE discovery under extensions/models/
+//
+// The defect: discovery currently reads only the DIRECT entries of
+// `<ext>/extensions/models/`, one level deep. jscad-cad's real property test
+// suite lives one level deeper, at
+// `jscad-cad/extensions/models/jscad/jscad_cad_property_test.ts` — it has
+// therefore NEVER been picked up by any night's bucket, and has never
+// actually been soaked. Discovery must walk extensions/models/ recursively.
+// ---------------------------------------------------------------------------
+
+Deno.test("discoverPropertyTestFiles: finds a property test file NESTED one level deeper than extensions/models/ (jscad-cad's real shape)", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${root}/jscad-cad/extensions/models/jscad`, {
+      recursive: true,
+    });
+    await Deno.writeTextFile(
+      `${root}/jscad-cad/extensions/models/jscad/jscad_cad_property_test.ts`,
+      "",
+    );
+    const found = await discoverPropertyTestFiles(root);
+    const rel = found.map((f) => `${f.extension}/${f.file}`);
+    assertEquals(rel, [
+      "jscad-cad/extensions/models/jscad/jscad_cad_property_test.ts",
+    ]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("discoverPropertyTestFiles: finds jscad-cad's REAL nested property test file in the actual repo (currently invisible — non-recursive discovery bug)", async () => {
+  const root = new URL("../", import.meta.url).pathname;
+  const found = await discoverPropertyTestFiles(root);
+  const jscadFiles = found.filter((f) => f.extension === "jscad-cad").map((
+    f,
+  ) => f.file);
+  assertEquals(jscadFiles, [
+    "extensions/models/jscad/jscad_cad_property_test.ts",
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// denoArgsJson — every emitted bucket entry must carry the exact deno
+// permission flags to run its property file with, derived from the
+// extension's own `test` task (scripts/lib/soak_permissions.ts), as a
+// JSON-encoded STRING (never a bare array) so it can travel through a single
+// GITHUB_OUTPUT matrix field and be JSON.parse'd back into an argv array by
+// scripts/run_soak.ts.
+// ---------------------------------------------------------------------------
+
+async function writeMinimalExtension(
+  root: string,
+  extension: string,
+  testTask: string,
+  propertyFile = `${extension.replaceAll("-", "_")}_property_test.ts`,
+): Promise<void> {
+  await Deno.mkdir(`${root}/${extension}/extensions/models`, {
+    recursive: true,
+  });
+  await Deno.writeTextFile(
+    `${root}/${extension}/extensions/models/${propertyFile}`,
+    "",
+  );
+  await Deno.writeTextFile(
+    `${root}/${extension}/deno.json`,
+    JSON.stringify({ tasks: { test: testTask } }),
+  );
+}
+
+Deno.test("buildTonightsBucket: every emitted entry carries denoArgsJson as a JSON-encoded STRING, not a bare array", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await writeMinimalExtension(
+      root,
+      "ext-a",
+      "deno test --allow-env=FC_NUM_RUNS extensions/models/",
+    );
+    const bucket = await buildTonightsBucket(root, {
+      all: true,
+      now: new Date(),
+    });
+    assertEquals(bucket.length, 1);
+    const entry = bucket[0] as unknown as {
+      extension: string;
+      file: string;
+      denoArgsJson: unknown;
+    };
+    assertEquals(
+      typeof entry.denoArgsJson,
+      "string",
+      `denoArgsJson must be a JSON-encoded string, got ${typeof entry
+        .denoArgsJson}: ${JSON.stringify(entry.denoArgsJson)}`,
+    );
+    const parsedArgs = JSON.parse(entry.denoArgsJson as string);
+    assert(
+      Array.isArray(parsedArgs),
+      "denoArgsJson must decode to an array, not an object or scalar",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("buildTonightsBucket: denoArgsJson round-trips through JSON.parse to the expected argv, derived from the extension's own test task", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await writeMinimalExtension(
+      root,
+      "ext-a",
+      "deno test --allow-env=FC_NUM_RUNS extensions/models/",
+    );
+    const bucket = await buildTonightsBucket(root, {
+      all: true,
+      now: new Date(),
+    });
+    const entry = bucket[0] as unknown as { denoArgsJson: string };
+    const parsedArgs = JSON.parse(entry.denoArgsJson);
+    assertEquals(parsedArgs, ["--allow-env=FC_NUM_RUNS"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CLI summary line — surfaces each entry's resolved permissions (the MEDIUM
+// finding this pins): the human-readable summary used to list only
+// extension/file, forcing an operator debugging a soak failure to open the
+// raw JSON to see the permission argv. Default now includes the resolved
+// flag COUNT (cheap, always-on); --verbose shows the full argv.
+// ---------------------------------------------------------------------------
+
+async function writeSummaryFixtureExtension(root: string): Promise<void> {
+  await Deno.mkdir(`${root}/ext-a/extensions/models`, { recursive: true });
+  await Deno.writeTextFile(
+    `${root}/ext-a/extensions/models/a_property_test.ts`,
+    "",
+  );
+  await Deno.writeTextFile(
+    `${root}/ext-a/deno.json`,
+    JSON.stringify({
+      tasks: {
+        test:
+          "deno test --allow-read --allow-env=FC_NUM_RUNS extensions/models/",
+      },
+    }),
+  );
+}
+
+Deno.test("soak_schedule.ts CLI: default summary line includes each entry's resolved permission FLAG COUNT", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await writeSummaryFixtureExtension(root);
+    const scriptUrl = new URL("./soak_schedule.ts", import.meta.url);
+    const cmd = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-read",
+        scriptUrl.pathname,
+        "--root",
+        root,
+        "--all",
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { code, stdout, stderr } = await cmd.output();
+    assertEquals(code, 0, new TextDecoder().decode(stderr));
+    const out = new TextDecoder().decode(stdout);
+    assert(
+      out.includes("ext-a/extensions/models/a_property_test.ts (2 flags)"),
+      `expected the summary line to include the resolved flag count, got: ${out}`,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("soak_schedule.ts CLI: --verbose shows the full resolved argv per entry instead of just the count", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await writeSummaryFixtureExtension(root);
+    const scriptUrl = new URL("./soak_schedule.ts", import.meta.url);
+    const cmd = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-read",
+        scriptUrl.pathname,
+        "--root",
+        root,
+        "--all",
+        "--verbose",
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { code, stdout, stderr } = await cmd.output();
+    assertEquals(code, 0, new TextDecoder().decode(stderr));
+    const out = new TextDecoder().decode(stdout);
+    assert(
+      out.includes(
+        "ext-a/extensions/models/a_property_test.ts [--allow-read --allow-env=FC_NUM_RUNS]",
+      ),
+      `expected the verbose summary line to include the full resolved argv, got: ${out}`,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("buildTonightsBucket: no emitted field on any bucket entry contains a raw newline (feeds a files<<EOF GITHUB_OUTPUT heredoc)", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await writeMinimalExtension(
+      root,
+      "ext-a",
+      "deno test --allow-read=extensions,fixtures --allow-env=FC_NUM_RUNS,OTHER_VAR extensions/models/",
+    );
+    await writeMinimalExtension(
+      root,
+      "ext-b",
+      "deno test --allow-all extensions/models/",
+    );
+    const bucket = await buildTonightsBucket(root, {
+      all: true,
+      now: new Date(),
+    });
+    assertEquals(bucket.length, 2);
+    for (const raw of bucket) {
+      const entry = raw as unknown as Record<string, unknown>;
+      // denoArgsJson must actually be present (not just "no newline in
+      // whatever happens to exist today") — otherwise this check is
+      // vacuously true before the field is implemented at all.
+      assertEquals(typeof entry.denoArgsJson, "string", JSON.stringify(entry));
+      for (const [key, value] of Object.entries(entry)) {
+        if (typeof value !== "string") continue;
+        assert(
+          !value.includes("\n"),
+          `field "${key}" on bucket entry contains a raw newline: ${
+            JSON.stringify(value)
+          }`,
+        );
+      }
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

@@ -73,6 +73,19 @@ canary:
   # cover CI here; CI itself cannot hold real Stripe test-mode secrets.
   state: backlog
   justification: "live canary workflow not built yet — tracked in ext-quality-test-backfill"
+# soak: stripe-mpp's test task grants an UNSCOPED --allow-net (broad, per
+# scripts/lib/soak_permissions.ts's isBroadGrant) because its suite stubs
+# `fetch` entirely rather than scoping to specific Stripe/mppx hosts — there
+# is no narrower real host list to enumerate. Narrowed here to just
+# --allow-env (the property test harness only needs FC_NUM_RUNS, and an
+# unscoped --allow-env trivially covers it) per checkSoakAuthority — an
+# unattended nightly soak must never silently inherit unscoped network
+# access. Tracked in ext-quality-release-watch-soak (Phase B,
+# property-soak-permission-source-of-truth).
+soak:
+  state: present
+  denoArgs:
+    - "--allow-env"
 docs:
   readme:
     state: present

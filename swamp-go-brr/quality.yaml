@@ -80,6 +80,19 @@ watch:
 canary:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+# soak: swamp-go-brr's test task is bare `--allow-all` — the broadest
+# possible grant — because its suite stubs Deno.Command/jjRun/ssh entirely
+# rather than scoping real filesystem/subprocess access; there is no
+# narrower real set of paths/binaries to enumerate. Narrowed here to just
+# --allow-env=FC_NUM_RUNS (the only thing the property test harness itself
+# reads) per scripts/lib/soak_permissions.ts's checkSoakAuthority — an
+# unattended nightly soak must never silently inherit --allow-all. Tracked
+# in ext-quality-release-watch-soak (Phase B, property-soak-permission-
+# source-of-truth).
+soak:
+  state: present
+  denoArgs:
+    - "--allow-env=FC_NUM_RUNS"
 docs:
   readme:
     state: present

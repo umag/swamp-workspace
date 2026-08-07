@@ -36,9 +36,22 @@ export type SuiteName = typeof REQUIRED_SUITES[number];
  * is traceable from every quality.yaml that carries debt. */
 export const BACKLOG_TRACKING_ISSUE = "ext-quality-test-backfill";
 
+/** A `soak:` block's "backlog" state cites THIS tracking issue instead of
+ * BACKLOG_TRACKING_ISSUE — the property-soak-permission-source-of-truth work
+ * is Phase B (ext-quality-release-watch-soak), not Phase D's generic test
+ * backfill, so debt in this specific block must be traceable to the phase
+ * that actually owns it. */
+export const SOAK_TRACKING_ISSUE = "ext-quality-release-watch-soak";
+
 const MIN_JUSTIFICATION_LENGTH = 12;
 
-function justificationSchema(requireBacklogIssue: boolean) {
+/** `requiredIssue`, when given, is the exact tracking-issue string a
+ * "backlog" justification must cite — generalised (rather than a hardcoded
+ * boolean toggle for BACKLOG_TRACKING_ISSUE) so a NEW backlog-gated block
+ * (e.g. `soak:`) can require its OWN tracking issue instead of blindly
+ * reusing Phase D's. Omit for a justification with no required-issue check
+ * at all (the "na" states). */
+function justificationSchema(requiredIssue?: string) {
   return z.string().superRefine((val, ctx) => {
     const trimmed = val.trim();
     if (trimmed.length < MIN_JUSTIFICATION_LENGTH) {
@@ -48,11 +61,11 @@ function justificationSchema(requireBacklogIssue: boolean) {
           `justification must be at least ${MIN_JUSTIFICATION_LENGTH} trimmed characters (got ${trimmed.length})`,
       });
     }
-    if (requireBacklogIssue && !trimmed.includes(BACKLOG_TRACKING_ISSUE)) {
+    if (requiredIssue && !trimmed.includes(requiredIssue)) {
       ctx.addIssue({
         code: "custom",
         message:
-          `backlog justification must cite the Phase D tracking issue "${BACKLOG_TRACKING_ISSUE}"`,
+          `backlog justification must cite the tracking issue "${requiredIssue}"`,
       });
     }
   });
@@ -70,12 +83,12 @@ const presentState = z.object({
 
 const naState = z.object({
   state: z.literal("na"),
-  justification: justificationSchema(false),
+  justification: justificationSchema(),
 }).strict();
 
 const backlogState = z.object({
   state: z.literal("backlog"),
-  justification: justificationSchema(true),
+  justification: justificationSchema(BACKLOG_TRACKING_ISSUE),
 }).strict();
 
 export const SuiteStateSchema = z.discriminatedUnion("state", [
@@ -168,6 +181,43 @@ const RatchetSchema = z.object({
   label: z.string().min(1),
 }).strict();
 
+/**
+ * `soak:` block — the property-soak-permission-source-of-truth PR's
+ * addition (scripts/lib/soak_permissions.ts). OPTIONAL: every quality.yaml
+ * authored before this PR has no `soak:` key at all and must keep
+ * validating unchanged, so this is NOT added to QualityFileSchema as a
+ * required field (SCHEMA_VERSION is not bumped either — an optional field
+ * is a backward-compatible addition). Same present/na/backlog envelope as
+ * `watch:`/`canary:`, and — like them — intentionally excluded from
+ * `collectStates`/`hasAnyBacklog`: a "backlog" `soak:` block is exempt from
+ * allowlist gating, same rationale as `watch:`/`canary:` (every extension's
+ * soak override will legitimately be "backlog" until it's hand-authored).
+ *
+ * `present` carries a plain, non-empty `denoArgs` string array — the exact
+ * deno permission flags scripts/run_soak.ts should run the property soak
+ * with — rather than `files[]`; there is no file to check for existence
+ * here, only an authority comparison against the extension's own `test`
+ * task (scripts/lib/soak_permissions.ts's checkSoakAuthority, enforced by
+ * scripts/quality/check_soak.ts, not by this schema).
+ */
+const soakPresentState = z.object({
+  state: z.literal("present"),
+  denoArgs: z.array(z.string().min(1)).min(1),
+}).strict();
+
+const soakBacklogState = z.object({
+  state: z.literal("backlog"),
+  justification: justificationSchema(SOAK_TRACKING_ISSUE),
+}).strict();
+
+const SoakSchema = z.discriminatedUnion("state", [
+  soakPresentState,
+  naState,
+  soakBacklogState,
+]);
+
+export type SoakBlock = z.infer<typeof SoakSchema>;
+
 export const QualityFileSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   extension: z.string().min(1),
@@ -176,6 +226,7 @@ export const QualityFileSchema = z.object({
   canary: CanarySchema,
   docs: DocsSchema,
   ratchet: RatchetSchema,
+  soak: SoakSchema.optional(),
 }).strict();
 
 export type QualityFile = z.infer<typeof QualityFileSchema>;

@@ -52,6 +52,26 @@ watch:
 canary:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+# soak: jscad-cad's test task grants all-unscoped --allow-read/--allow-write/
+# --allow-run/--allow-env/--allow-net (broad, per
+# scripts/lib/soak_permissions.ts's isBroadGrant — unscoped --allow-run and
+# --allow-net both qualify on their own) because the suite drives a real
+# nested `deno run` eval subprocess (script_evaluator_test.ts's LIVE e2e
+# pin) against a stubbed globalThis.Deno.Command/fetch elsewhere — there is
+# no narrower real path/host list to enumerate for the stubbed suites, and
+# the live e2e test isn't part of the property soak. Narrowed here to
+# --allow-read/--allow-write (JSCAD's own scratch/temp-file needs) plus
+# --allow-env=FC_NUM_RUNS, dropping --allow-run and --allow-net entirely per
+# checkSoakAuthority — an unattended nightly soak must never silently
+# inherit subprocess or network access. Tracked in
+# ext-quality-release-watch-soak (Phase B,
+# property-soak-permission-source-of-truth).
+soak:
+  state: present
+  denoArgs:
+    - "--allow-read"
+    - "--allow-write"
+    - "--allow-env=FC_NUM_RUNS"
 docs:
   readme:
     state: present
