@@ -1097,7 +1097,7 @@ Deno.test("musicbrainz-discography-sync: a 503 with NO Retry-After backs off one
       ),
   );
   assertEquals(callCount, 2, "the retry succeeds on the second attempt");
-  const res = written.find((w) => w.spec === "artists")!;
+  const res = written.find((w) => w.name === "search-artist")!;
   assertEquals(res.payload.count, 0);
 });
 
@@ -1340,7 +1340,7 @@ Deno.test("LB7 FIX: a truthy non-array `artists` field (hostile/malformed respon
     { artists: "not-an-array", count: 999 },
     () => drainAndAwait(time, run("search-artist", { query: "x" }, ctx)),
   );
-  const res = written.find((w) => w.spec === "artists")!;
+  const res = written.find((w) => w.name === "search-artist")!;
   assertEquals(
     res.payload.artists,
     [],
@@ -1360,7 +1360,7 @@ Deno.test("LB7 FIX: when `count` is ALSO absent, a truthy non-array `artists` no
     { artists: "abcdefghij" },
     () => drainAndAwait(time, run("search-artist", { query: "x" }, ctx)),
   );
-  const res = written.find((w) => w.spec === "artists")!;
+  const res = written.find((w) => w.name === "search-artist")!;
   assertEquals(res.payload.artists, []);
   assertEquals(
     res.payload.count,

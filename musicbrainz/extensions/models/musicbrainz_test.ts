@@ -224,7 +224,7 @@ Deno.test("contract: artist-search.json — search-artist writes {artists, count
     artistSearch,
     () => run("search-artist", { query: "fixture" }, ctx),
   );
-  const res = written.find((w) => w.spec === "artists")!;
+  const res = written.find((w) => w.name === "search-artist")!;
   const artists = res.payload.artists as Array<Record<string, unknown>>;
   assertEquals(artists.length, artistSearch.artists.length);
   assertEquals(res.payload.count, artistSearch.count);

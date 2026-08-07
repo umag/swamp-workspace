@@ -153,7 +153,11 @@ for (const [method, args, wireKey, payloadKey] of SEARCH_GUARD_CASES) {
     using time = new FakeTime();
     const { ctx, written } = makeCtx();
     await withMbFixture({}, () => drainAndAwait(time, run(method, args, ctx)));
-    const res = written.find((w) => w.spec === payloadKey)!;
+    // Selected by INSTANCE NAME, not spec: once search-artist ALSO writes a
+    // deprecated alias under the same spec "artists" (a different instance
+    // name, "search"), `method` (which equals the canonical instance name
+    // for every row in SEARCH_GUARD_CASES) stays the only unambiguous key.
+    const res = written.find((w) => w.name === method)!;
     assertEquals(res.payload[payloadKey], []);
     assertEquals(res.payload.count, 0);
   });
@@ -166,7 +170,11 @@ for (const [method, args, wireKey, payloadKey] of SEARCH_GUARD_CASES) {
       { [wireKey]: items },
       () => drainAndAwait(time, run(method, args, ctx)),
     );
-    const res = written.find((w) => w.spec === payloadKey)!;
+    // Selected by INSTANCE NAME, not spec: once search-artist ALSO writes a
+    // deprecated alias under the same spec "artists" (a different instance
+    // name, "search"), `method` (which equals the canonical instance name
+    // for every row in SEARCH_GUARD_CASES) stays the only unambiguous key.
+    const res = written.find((w) => w.name === method)!;
     assertEquals(res.payload[payloadKey], items);
     assertEquals(res.payload.count, 1);
   });
@@ -1216,8 +1224,7 @@ function makeCollisionCtx() {
     ctx: {
       globalArgs: GLOBAL_ARGS,
       definition: { name: "collision-test-instance" },
-      readResource: (name: string) =>
-        Promise.resolve(store.get(name) ?? null),
+      readResource: (name: string) => Promise.resolve(store.get(name) ?? null),
       writeResource: (spec: string, name: string, payload: unknown) => {
         store.set(name, payload as Record<string, unknown>);
         written.push({ spec, name });
@@ -1447,7 +1454,9 @@ Deno.test("COLLISION INVARIANT: every resource instance this model writes maps t
       observedAllowlistKeys.add(key);
       continue;
     }
-    offenders.push(`instance "${name}" maps to specs [${[...specs].sort().join(", ")}]`);
+    offenders.push(
+      `instance "${name}" maps to specs [${[...specs].sort().join(", ")}]`,
+    );
   }
 
   assertEquals(

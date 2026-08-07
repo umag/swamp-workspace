@@ -595,6 +595,64 @@ for (const [method, wireKey, spec] of INSTANCE_NAME_PINS) {
 }
 
 // ---------------------------------------------------------------------------
+// DEPRECATION ALIAS pin (musicbrainz-search-resource-collision) —
+// search-artist ALSO writes the historical "search" instance (spec
+// "artists"), marked deprecated/supersededBy, for the time-bounded
+// migration window (removed no earlier than 2026-09-07, see
+// README.md/CHANGELOG.md). Two parts, because part (ii) is unobservable
+// without part (i): this file's writeResource stub records the payload
+// VERBATIM, before any schema runs (musicbrainz_adversarial_test.ts:1372
+// pins that directly), so only running the alias payload through the
+// resource's OWN declared schema (part ii) can see a change to the two
+// additive `artists` schema fields — zod strips unknown keys on `.parse()`
+// by default. Pattern copied from the cast form already used at
+// musicbrainz_coverage_test.ts:831-834.
+// ---------------------------------------------------------------------------
+
+Deno.test("search-artist: ALSO writes the deprecated 'search' alias (spec artists) with deprecated/supersededBy markers; the canonical write carries neither", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const artists = [{ id: "00000000-0000-0000-0000-000000000001", name: "A" }];
+  await withMbFixture(
+    { artists, count: 1 },
+    () => drainAndAwait(time, run("search-artist", { query: "x" }, ctx)),
+  );
+
+  const canonical = written.find((w) => w.name === "search-artist")!;
+  assert(canonical, "the canonical write must exist");
+  assertEquals(
+    canonical.payload.deprecated,
+    undefined,
+    "the canonical search-artist row must never carry the deprecated marker",
+  );
+  assertEquals(canonical.payload.supersededBy, undefined);
+
+  const aliasWrite = written.find((w) => w.name === "search")!;
+  assert(
+    aliasWrite,
+    "search-artist must ALSO write the deprecated 'search' alias",
+  );
+  assertEquals(aliasWrite.spec, "artists");
+  assertEquals(aliasWrite.payload.deprecated, true);
+  assertEquals(aliasWrite.payload.supersededBy, "search-artist");
+  assertEquals(aliasWrite.payload.artists, artists);
+
+  // (ii) Assert on the SCHEMA-PARSED payload, not just the raw recorded
+  // one — this is the ONLY assertion in the suite that would notice the two
+  // additive `artists` schema fields being deleted.
+  const parsed = (model.resources as Record<
+    string,
+    { schema: { parse: (v: unknown) => unknown } }
+  >).artists.schema.parse(aliasWrite.payload) as Record<string, unknown>;
+  assert(
+    "deprecated" in parsed && "supersededBy" in parsed,
+    "the artists resource schema must declare deprecated/supersededBy — they silently vanished on parse",
+  );
+  assertEquals(parsed.deprecated, true);
+  assertEquals(parsed.supersededBy, "search-artist");
+});
+
+// ---------------------------------------------------------------------------
 // lookup-artist / lookup-release-group / lookup-release / lookup-recording /
 // lookup-label
 // ---------------------------------------------------------------------------

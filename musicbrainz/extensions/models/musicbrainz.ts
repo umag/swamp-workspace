@@ -1122,6 +1122,13 @@ export const model = {
         artists: z.array(ArtistSchema),
         count: z.number(),
         timestamp: z.string(),
+        // Present ONLY on the deprecated "search" alias write from
+        // search-artist (see DEPRECATED_SEARCH_ALIAS_INSTANCE) — never on
+        // the canonical "search-artist" row. Additive/optional so every row
+        // written before this change still parses. Alias removed no
+        // earlier than 2026-09-07 — see README.md/CHANGELOG.md.
+        deprecated: z.boolean().optional(),
+        supersededBy: z.string().optional(),
       }),
       lifetime: "infinite",
       garbageCollection: 10,
@@ -1249,16 +1256,30 @@ export const model = {
           args.limit,
           args.offset,
         );
+        const timestamp = new Date().toISOString();
         const handle = await context.writeResource(
           "artists",
           SEARCH_INSTANCE_NAMES["search-artist"],
+          { artists, count, timestamp },
+        );
+        // Time-bounded deprecation alias (musicbrainz-search-resource-
+        // collision) — removed no earlier than 2026-09-07, see
+        // README.md/CHANGELOG.md for the migration path. Only search-artist
+        // writes DEPRECATED_SEARCH_ALIAS_INSTANCE, so the model-wide
+        // instance -> spec mapping stays single-valued even with this alias
+        // in place.
+        const aliasHandle = await context.writeResource(
+          "artists",
+          DEPRECATED_SEARCH_ALIAS_INSTANCE,
           {
             artists,
             count,
-            timestamp: new Date().toISOString(),
+            timestamp,
+            deprecated: true,
+            supersededBy: SEARCH_INSTANCE_NAMES["search-artist"],
           },
         );
-        return { dataHandles: [handle] };
+        return { dataHandles: [handle, aliasHandle] };
       },
     },
 
