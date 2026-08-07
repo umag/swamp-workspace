@@ -1,0 +1,27 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/reading_list.ts",
+    "test": "deno test --allow-env extensions/models/ --permit-no-files",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env extensions/models/reading_list_property_test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "zod": "npm:zod@4"
+  },
+  "compilerOptions": {
+    "noImplicitAny": false
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

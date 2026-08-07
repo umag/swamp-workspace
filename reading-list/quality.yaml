@@ -1,0 +1,75 @@
+# Quality record for @magistr/reading-list — see STANDARD.md and
+# scripts/quality/schema.ts (the enforced shape).
+#
+# Born compliant: this extension enters swamp-workspace after the five-suite
+# standard landed, so every suite is `present` from its first published version
+# and it carries no allowlist-gated debt — it is deliberately absent from
+# quality-allowlist.txt.
+#
+# Role map (each file assigned exactly ONE honest role):
+#   contract-fixture        -> reading_list_test.ts (pins the RSS/Atom and
+#                              LinkedIn JSON-LD wire formats — CDATA
+#                              unwrapping, Atom link/@href, dc:creator, the
+#                              entity table — against synthetic documents, with
+#                              no live network call)
+#   methods                 -> reading_list_methods_test.ts (all 7 methods,
+#                              success and failure, globalThis.fetch stubbed)
+#   adversarial             -> reading_list_adversarial_test.ts
+#   coverage                -> reading_list_coverage_test.ts
+#   property-invariant-flow -> reading_list_property_test.ts
+schemaVersion: 1
+extension: reading-list
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/reading_list_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/reading_list_methods_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/reading_list_adversarial_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/reading_list_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/reading_list_property_test.ts
+watch:
+  state: backlog
+  justification: >-
+    release-watch not yet wired — the "upstream" here is a dozen independent
+    third-party feeds plus LinkedIn's unversioned public markup, none of which
+    publish a release channel to subscribe to, so the source shape needs
+    deciding alongside Phase B; tracked in ext-quality-test-backfill
+canary:
+  state: backlog
+  justification: >-
+    live canary deferred to Phase C — a live `reading` instance exists, but
+    every probe would hit third-party servers we do not own, so the canary
+    needs Phase C's rate-limit and redaction contract before it can be defined;
+    tracked in ext-quality-test-backfill
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: na
+    justification: >-
+      reading-list bundles no Claude skill — it is a read-only feed reader plus
+      a Telegram digest composer, driven entirely by model methods and a
+      workflow, with nothing skill-shaped to document
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"

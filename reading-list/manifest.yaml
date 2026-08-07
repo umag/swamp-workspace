@@ -1,0 +1,53 @@
+manifestVersion: 1
+name: "@magistr/reading-list"
+version: "2026.08.07.1"
+description: |
+  A tiered reading list for a hand-picked set of writers — reads the Swamp
+  Club feed first, then the Wardley-mapping crowd, and merges everything into
+  one priority-ordered digest.
+
+  Model:
+  - `@magistr/reading-list` — `fetch` reads every enabled source in a single
+    execution (fan-out, one model lock) and writes a `feed` resource per
+    source plus a merged `digest` ordered by tier then recency. A source that
+    fails is recorded with `ok: false` and its error, and never aborts the
+    run. `latest` rebuilds a filtered digest from stored feeds without
+    re-fetching (filter by tier, source, recency, or only-new). `sources`
+    lists the configured sources and tiers.
+
+  Two source kinds are supported. `rss` handles RSS 2.0 and Atom, unwrapping
+  CDATA first — Substack, Medium and WordPress wrap titles and authors in
+  CDATA, which an XML parser otherwise reports as empty. `linkedin` reads the
+  JSON-LD `@graph` embedded in a public LinkedIn profile, covering both short
+  posts and Pulse articles; it is unauthenticated and therefore fragile by
+  nature, so it is isolated behind the same per-source error handling.
+
+  Re-running `fetch` is idempotent for `firstSeenAt`: the previous run's
+  values are carried forward per article URL, so only genuinely unseen items
+  are flagged `isNew`.
+
+  Ships with a curated default source set (Swamp Club at tier 1; joapen,
+  Chris Daniel, Jon Ayre, Adrian Cockcroft and Simon Wardley at tier 2), so
+  the model works with no configuration. Override `sources` to read anyone
+  else.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/reading_list.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - rss
+  - atom
+  - feed
+  - reading
+  - wardley
+  - linkedin
