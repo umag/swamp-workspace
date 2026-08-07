@@ -33,20 +33,23 @@
  *      an always-full-page stub and asserting the walk stops after exactly
  *      2 pages.
  */
-import { assertEquals } from "jsr:@std/assert@1";
+import { assertEquals, assertNotEquals } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
 import { FakeTime } from "jsr:@std/testing@1/time";
 import {
   advanceSyncCursor,
   classifyDiscographyCache,
+  dedupeMbids,
   dedupeQueries,
   deriveMaxDurationMs,
+  fingerprintMbids,
   isCacheStale,
   model,
   planSearchBatch,
   projectArtistCandidates,
   rateLimitDelayMs,
   retryAfterBackoffMs,
+  syncRunCoverage,
 } from "./musicbrainz.ts";
 
 // Property iteration count — overridable for the nightly soak via
@@ -1212,4 +1215,124 @@ Deno.test("deriveMaxDurationMs: at the search-artists-batch defaults (maxQueries
 
 Deno.test("deriveMaxDurationMs: an explicit bound below the nominal maxQueries*minIntervalMs product is respected VERBATIM, not clamped up — the escape hatch actually works", () => {
   assertEquals(deriveMaxDurationMs(400, 1100, 5_000), 5_000);
+});
+
+// ---------------------------------------------------------------------------
+// sync-artist-discographies pure helpers — dedupeMbids, syncRunCoverage,
+// fingerprintMbids. Exported so the test suite exercises the real
+// implementation, per this package's established convention (see this
+// file's header and the dedupeQueries/planSearchBatch properties above).
+// ---------------------------------------------------------------------------
+
+const arbMbid = fc.string({ minLength: 1, maxLength: 40 });
+
+Deno.test("property: dedupeMbids is order-preserving — the FIRST occurrence of each distinct MBID survives, in original relative order", () => {
+  fc.assert(
+    fc.property(fc.array(arbMbid, { maxLength: 30 }), (mbids) => {
+      const deduped = dedupeMbids(mbids);
+      const seen = new Set<string>();
+      const expected: string[] = [];
+      for (const m of mbids) {
+        if (!seen.has(m)) {
+          seen.add(m);
+          expected.push(m);
+        }
+      }
+      return JSON.stringify(deduped) === JSON.stringify(expected);
+    }),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: dedupeMbids is idempotent — deduping an already-deduped list changes nothing", () => {
+  fc.assert(
+    fc.property(fc.array(arbMbid, { maxLength: 30 }), (mbids) => {
+      const once = dedupeMbids(mbids);
+      const twice = dedupeMbids(once);
+      return JSON.stringify(once) === JSON.stringify(twice);
+    }),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: dedupeMbids's output is a SUBSET of the input with no duplicate elements", () => {
+  fc.assert(
+    fc.property(fc.array(arbMbid, { maxLength: 30 }), (mbids) => {
+      const deduped = dedupeMbids(mbids);
+      const inputSet = new Set(mbids);
+      const dedupedSet = new Set(deduped);
+      return deduped.length === dedupedSet.size &&
+        deduped.every((m) => inputSet.has(m));
+    }),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: syncRunCoverage — covered == processedCount + skippedCount, remaining == requested - covered, by definition", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 0, max: 2000 }),
+      fc.integer({ min: 0, max: 2000 }),
+      fc.integer({ min: 0, max: 2000 }),
+      (requested, processedCount, skippedCount) => {
+        const { covered, remaining } = syncRunCoverage(
+          requested,
+          processedCount,
+          skippedCount,
+        );
+        return covered === processedCount + skippedCount &&
+          remaining === requested - covered;
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: syncRunCoverage — remaining is never negative whenever covered <= requested", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 0, max: 2000 }),
+      fc.integer({ min: 0, max: 1000 }),
+      fc.integer({ min: 0, max: 1000 }),
+      (requested, processedCount, skippedCount) => {
+        const covered = processedCount + skippedCount;
+        fc.pre(covered <= requested);
+        const { remaining } = syncRunCoverage(
+          requested,
+          processedCount,
+          skippedCount,
+        );
+        return remaining >= 0;
+      },
+    ),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+Deno.test("property: fingerprintMbids is deterministic — equal inputs give equal digests", () => {
+  fc.assert(
+    fc.property(fc.array(arbMbid, { maxLength: 30 }), (mbids) => {
+      return fingerprintMbids(mbids) === fingerprintMbids([...mbids]);
+    }),
+    { numRuns: NIGHT(200) },
+  );
+});
+
+// DO NOT pin "different for any two lists of different length" — length-
+// prefixing changes the hash INPUT, not the output space, and a 32-bit
+// FNV-1a hex digest still collides at ~2^-32. That guarantee comes from the
+// persisted-count comparison in the cursor reset rule, not from the digest;
+// pinning it here would be a false invariant. Named examples only.
+Deno.test("fingerprintMbids: different for these specific example lists (a same-length change, and a length change)", () => {
+  const a = [
+    "aaaaaaaa-0000-4000-8000-000000000001",
+    "aaaaaaaa-0000-4000-8000-000000000002",
+  ];
+  const b = [
+    "aaaaaaaa-0000-4000-8000-000000000001",
+    "aaaaaaaa-0000-4000-8000-000000000003",
+  ];
+  const c = ["aaaaaaaa-0000-4000-8000-000000000001"];
+  assertNotEquals(fingerprintMbids(a), fingerprintMbids(b));
+  assertNotEquals(fingerprintMbids(a), fingerprintMbids(c));
 });

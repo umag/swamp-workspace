@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+Review-fix pass over the `music-wanted-sequence-not-wired` change above — no
+`model.version` bump, no schema or method-contract change; test-suite hardening
+only.
+
+### Test-suite hardening (mutation-testing finding)
+
+The negative assertion guarding against `wanted`'s missing-browse-cache throw
+regressing back to suggesting the nonexistent `browse` method had a stray
+trailing double-quote in its needle
+(`'swamp model method run musicbrainz browse"'`), which never matched the defect
+it names (the old broken message had nothing after `browse`). Fixed by dropping
+the stray quote. Verified by re-applying the append-the-old-text mutation this
+needle exists to catch and confirming the test now fails, then reverting.
+
+### Operating-procedure documentation for `music-wanted` (main-repo workflow)
+
+Unrelated to this package's own code, but recorded here since this package's
+`wanted` method is one leg of the gated sequence: see the `musicbrainz`
+package's CHANGELOG (Unreleased) for the required-dry-run control now documented
+on the repo-local `music-wanted` workflow.
+
+## 2026.08.05.2
+
+Fixes `music-wanted-sequence-not-wired`. `model.version` and `manifest.yaml`
+move `2026.08.05.1` -> `2026.08.05.2`.
+
+### `wanted`: the missing-browse-cache throw named a nonexistent method
+
+`wanted`'s missing-MusicBrainz-browse-cache error told the operator to run
+`swamp model method run <mbInstance> browse` — there is no `browse` method
+(`browse-release-groups` / `browse-releases` / `browse-recordings` exist;
+`browse` is a resource spec name, not a method), so an operator who skipped the
+discography sync got `unknown_method` instead of an actionable fix. The throw
+now names the real runnable command —
+`swamp model method run <mbInstance> sync-artist-discographies --input
+'artistMbids:json=[...]'`
+— plus the `swamp data query` extraction command (with its envelope shape,
+`{"results": [[...]], "total": 1}`) to build that artist list from this
+instance's own `artistMap`, and the repo-local `music-wanted` workflow line. No
+schema or resource shape change.
+
 ## 2026.08.05.1
 
 Fixes `musicbrainz-ratelimit-runmodel-fanout`, measured live:

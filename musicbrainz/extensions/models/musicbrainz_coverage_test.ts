@@ -817,11 +817,64 @@ Deno.test("NEW SURFACE: sync-artist-discographies is a registered method with it
   assertEquals(
     method.arguments.parse({}),
     {},
-    "every argument is optional — a bare {} must parse cleanly",
+    "every argument is optional — a bare {} must parse cleanly — batchSize has no zod .default(), the list-length default lives in the execute body",
   );
   assert(
     "discographySyncState" in model.resources,
     "the discographySyncState resource must be registered",
+  );
+  // The eight new coverage/keying fields (requested, requestedRaw,
+  // listFingerprint, startOffset, covered, remaining, uncovered,
+  // uncoveredCount) are all OPTIONAL — a state written by a version before
+  // this change (which has none of them) must still parse cleanly, and no
+  // `resetCursor` argument was added, so nothing new enters this pin.
+  const resourceSchema = (model.resources as Record<
+    string,
+    { schema: { parse: (v: unknown) => unknown } }
+  >).discographySyncState.schema;
+  const updatedAt = new Date().toISOString();
+  const minimal = resourceSchema.parse({
+    cursor: { offset: 0 },
+    processed: [],
+    skipped: [],
+    updatedAt,
+  });
+  assertEquals(
+    minimal,
+    { cursor: { offset: 0 }, processed: [], skipped: [], updatedAt },
+    "a pre-this-change state (none of the eight new fields present) must still parse cleanly",
+  );
+});
+
+Deno.test("HELP-TEXT GUARD: sync-artist-discographies' argument describes and method description no longer advertise the deleted search-artist fallback or the stale batchSize default — this is what stops the authoritative machine surface (swamp model type describe) drifting back", () => {
+  const method = (model.methods as Record<string, {
+    description: string;
+    arguments: { shape: Record<string, { description?: string }> };
+  }>)["sync-artist-discographies"];
+  assert(
+    !method.description.includes("search-artist"),
+    "the method description must not mention the deleted search-artist fallback",
+  );
+  assert(
+    !method.description.includes(
+      "repeated batches cover the artist list exactly once",
+    ),
+    "the method description must not claim batches cover the list exactly once by default — one run now covers it",
+  );
+  const shape = method.arguments.shape;
+  assert(
+    !shape.artistMbids.description?.includes("search-artist"),
+    "artistMbids' describe() must not mention the deleted search-artist fallback",
+  );
+  for (const [key, field] of Object.entries(shape)) {
+    assert(
+      !field.description?.includes("default 10"),
+      `${key}'s describe() must not contain the literal "default 10"`,
+    );
+  }
+  assert(
+    shape.batchSize.description?.includes("~35"),
+    "batchSize's describe() must state the ~35-minute cold-pass cost",
   );
 });
 

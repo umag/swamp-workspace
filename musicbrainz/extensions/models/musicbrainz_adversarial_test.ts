@@ -1188,14 +1188,17 @@ type SyncStore = Map<string, Record<string, unknown>>;
  * contract), pre-seedable so a test can install a cached entry before the
  * method runs. No other harness in this file needs `readResource` since no
  * other method reads what an earlier run wrote. */
-function makeSyncCtx(store: SyncStore = new Map()) {
+function makeSyncCtx(
+  store: SyncStore = new Map(),
+  instanceName = "test-instance",
+) {
   const written: Written[] = [];
   return {
     written,
     store,
     ctx: {
       globalArgs: GLOBAL_ARGS,
-      definition: { name: "test-instance" },
+      definition: { name: instanceName },
       readResource: (name: string) => Promise.resolve(store.get(name) ?? null),
       writeResource: (spec: string, name: string, payload: unknown) => {
         store.set(name, payload as Record<string, unknown>);
@@ -1295,6 +1298,34 @@ Deno.test("musicbrainz-discography-sync: a FRESH cached count:0 discography is s
   const state = written.find((w) => w.spec === "discographySyncState")!;
   assertEquals(state.payload.processed, []);
   assertEquals(state.payload.skipped, [artistMbid]);
+});
+
+Deno.test("musicbrainz-discography-sync LIVE FAILURE, verbatim: a 'search' resource holding exactly ONE artist must raise, never complete with processed of length 1", async () => {
+  // The regression this whole issue is about, reproduced with synthetic
+  // MBIDs (never a real artist name or MBID — both PROVENANCE.md files'
+  // standing prohibition). Before this change, an operator who ran
+  // sync-artist-discographies with no artistMbids arg on an instance whose
+  // 'search' resource held one lone cached artist got a silent, "successful"
+  // one-artist sync instead of the actionable rejection this test pins.
+  const artistMbid = "aaaaaaaa-0000-4000-8000-000000000501";
+  const store: SyncStore = new Map();
+  store.set("search", {
+    artists: [{ id: artistMbid, name: "Fixture Solitary Artist" }],
+    count: 1,
+    timestamp: new Date().toISOString(),
+  });
+  const { written, ctx } = makeSyncCtx(store, "my-musicbrainz-instance");
+  await assertRejects(
+    () => run("sync-artist-discographies", {}, ctx),
+    Error,
+    "was given no artistMbids",
+  );
+  const state = written.find((w) => w.spec === "discographySyncState");
+  assertEquals(
+    state,
+    undefined,
+    "must never complete with processed of length 1 — no state write at all, and definitely no one-artist success",
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -2329,7 +2329,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.08.05.1",
+  version: "2026.08.05.2",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2350,6 +2350,13 @@ export const model = {
       toVersion: "2026.08.05.1",
       description:
         "Fixes musicbrainz-ratelimit-runmodel-fanout, measured live: resolve-artists fanned out ONE context.runModel call per seed-unresolved artist (~1483 calls in one run), and MusicBrainz's rate limiter has no memory across separate runModel invocations, so real traffic ran at ~2.5 req/sec against the documented 1 req/sec limit. resolve-artists now issues AT MOST ONE runModel call per run, to the new @magistr/musicbrainz search-artists-batch method, and persists its own output as a reusable cache: a prior run's artistMap is loaded (context.readResource, a new capability requirement for this method, optional-chained so a missing/absent prior degrades to empty rather than throwing) and a seed-unresolved artist whose verdict is younger than ttlMs (new arg, default 30 days) is reused without a fresh search, so a converged re-run costs zero MusicBrainz requests. Deletes searchMusicBrainzArtists and its isLatest selector outright -- no dual path. New optional entry field checkedAt (the timestamp of the last MusicBrainz SEARCH that produced a verdict; NEVER set on a seed match) and three new optional top-level fields pendingSearch/truncated/stopReason on ArtistMapSchema, distinguishing a converged run from one cut short by search-artists-batch's own maxQueries/maxDurationMs/an aborted signal/a Retry-After backoff -- all four optional since the live map predates them. resolve-artists gains refresh (force-recheck everything), refreshKeys (force-recheck specific artists, ordered first in the batch so they can never be crowded out by maxQueries), maxQueries, and maxDurationMs method arguments. New exported pure needsSearch(prior, now, ttlMs) freshness predicate beside ArtistMapEntrySchema, mirroring musicbrainz.ts's isCacheStale. wanted.ts's ArtistMapEntry/ArtistMapContent report-side mirrors gain the same four fields. All additive to ArtistMapSchema -- no existing field changes shape, so the live 2258-entry map validates and loads unchanged on the first post-merge run.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.05.1",
+      toVersion: "2026.08.05.2",
+      description:
+        "Fixes music-wanted-sequence-not-wired: wanted's missing-browse-cache throw named a nonexistent 'browse' method (browse-release-groups/browse-releases/browse-recordings exist; 'browse' is a resource spec name, not a method), so an operator who skipped the discography sync got unknown_method instead of an actionable fix. The throw now names the real runnable command — swamp model method run <mbInstance> sync-artist-discographies --input 'artistMbids:json=[...]' — plus the swamp data query extraction command (with its envelope shape) to build that artist list from this instance's own artistMap, and the repo-local music-wanted workflow line. No schema or resource shape change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -3883,8 +3890,10 @@ export const model = {
         );
         if (browseRows.length === 0) {
           throw new Error(
-            `No MusicBrainz browse cache found for instance "${args.musicbrainzInstance}" ` +
-              `— run: swamp model method run ${args.musicbrainzInstance} browse`,
+            `No MusicBrainz browse cache found for instance "${args.musicbrainzInstance}" — nothing has been synced yet, so no want set can be derived.\n` +
+              `Run: swamp model method run ${args.musicbrainzInstance} sync-artist-discographies --input 'artistMbids:json=["<mbid>","<mbid>"]' (about 1 request/sec — a cold pass over ~775 artists is ~35 minutes and prints nothing until it finishes)\n` +
+              `Get the list from this instance's own artistMap: swamp data query 'modelName == "${context.definition.name}" && name == "${args.artistMapName}" && isLatest' --select 'attributes.entries.filter(e, e.status == "resolved").map(e, e.mbid)' --json — that prints a query envelope, {"results": [[...the MBIDs...]], "total": 1}; pass the single element of "results" as the artistMbids array, not the whole document\n` +
+              `Repo-local: the homelab repo wires the whole sequence as a workflow — swamp workflow run music-wanted`,
           );
         }
 

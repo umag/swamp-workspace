@@ -1,5 +1,143 @@
 # Changelog
 
+## Unreleased
+
+Review-fix pass over the `music-wanted-sequence-not-wired` change above — no
+`model.version` bump, no schema or method-contract change; report wording and
+test-suite hardening only.
+
+### `@magistr/musicbrainz-discography-sync` report: coverage wording is now conditional on which run the state belongs to
+
+`renderCoverage` hard-coded "this run" in its full-coverage line and its resume
+clause. Render case (c) (this execution wrote no sync state, so the report falls
+back to the PREVIOUS run's state) fed it that previous run's numbers regardless,
+so a failed run with a full-coverage previous state printed "Full coverage —
+every requested artist was visited this run." — contradicting the report's own
+"does NOT describe this one" lead banner in the same document. `renderCoverage`
+now takes an optional `describesThisRun` (default `true`); case (c) passes
+`false` and both lines are reworded to never claim anything about "this run"
+when they are not describing it.
+
+### Test-suite hardening (mutation-testing findings)
+
+- `discographySyncState`'s written payload is now also validated against the
+  resource's own DECLARED schema
+  (`model.resources.discographySyncState.schema`), not just the test stub's
+  captured call arguments — closes a blind spot where deleting `uncoveredCount`
+  from the schema left the suite green.
+- The report's duplicate-MBID-count test now asserts the exact rendered phrase
+  (`"8 duplicate MBID(s)"`), not a bare `includes("8")`, which was separately
+  satisfied by the unrelated `2026-08-04` timestamp in the same markdown.
+- The "must not still suggest search-artist as the fix" and "must not use
+  `--query`" negative assertions in the missing-`artistMbids` test are
+  broadened: the search-artist check is no longer qualified to one hardcoded
+  instance name (a suggestion against a different instance name used to slip
+  through), and the `--query` check no longer requires a trailing space (so
+  `--query=` can no longer slip through either).
+- Added a case-(c) test and prefix assertion pinning that a failed execution
+  which wrote no state still carries the "This run FAILED. " prefix in the
+  report's lead banner.
+
+All four hardened assertions were verified by re-introducing the exact mutant
+they target and confirming the suite fails, then reverting.
+
+### Operating-procedure documentation for `music-wanted` (main-repo workflow)
+
+Unrelated to this package's own code, but recorded here since this package's
+`sync-artist-discographies` is one leg of the gated sequence: the repo-local
+`music-wanted` workflow's description now states, explicitly and as a required
+(not optional) control, that
+`swamp workflow run music-wanted
+--input dryRun=true` must be re-run after any
+edit to that workflow definition — it is the only thing that exercises the gate
+chain's CEL semantics, which neither `swamp workflow validate` nor either
+package's test suite can see (the test task grants no `--allow-read` on the
+workflow file). Evidence this control catches real regressions: the dry run of
+2026-08-06 failed TWICE at the preflight job before passing, and the second
+failure is the real lesson, not just the first. Dry run #1 failed with
+`Invalid expression: has() invalid argument`. That was mis-attributed to a
+`data.latest(...)` call missing `.attributes` in the informational cursor read,
+so only `.attributes` was added — dry run #2 failed IDENTICALLY. The actual
+cause: this CEL engine (`@marcbachmann/cel-js`) rejects `has()` whenever its
+receiver is a function-call result, so `has(data.latest(...).attributes.cursor)`
+fails regardless of what path follows the call — adding `.attributes` alone
+could never fix it. The fix was to drop `has()` entirely, rewriting the check as
+`data.latest(...) == null || data.latest(...).attributes.cursor != null`. Both
+facts were needed: `data.latest(...)` returns a DataRecord, so the payload
+genuinely is under `.attributes` — but `has()` cannot take that call's result as
+its receiver, no matter the path underneath it. Both dry runs correctly skipped
+the resolve, sync and derive jobs rather than running any of them against
+unproven state.
+
+## 2026.08.05.2
+
+Fixes `music-wanted-sequence-not-wired`. `model.version` and `manifest.yaml`
+move `2026.08.05.1` -> `2026.08.05.2`.
+
+### Breaking change: `sync-artist-discographies` no longer falls back to a cached search result
+
+Before this change, running `sync-artist-discographies` with no `artistMbids`
+argument silently fell back to the artists cached by this instance's last
+`search-artist` run — an implicit dependency on the `search` resource, whose
+writer is five different methods with incompatible shapes. Live, that produced a
+one-artist "successful" sync with no error at all. The method now throws
+immediately when `artistMbids` is absent or empty, naming the runnable command:
+`swamp model method run <name> sync-artist-discographies --input
+'artistMbids:json=["<mbid>","<mbid>"]'`,
+plus the `swamp data query` extraction command (and its envelope shape —
+`{"results": [[...]], "total":
+1}`, not a bare array) to build that list from a
+`@magistr/music-library` instance's `artist-map`.
+
+### `batchSize` now defaults to the whole deduped list, not 10
+
+`artistMbids` is deduped at list-resolution time — `requested` is the DISTINCT
+count, `requestedRaw` the raw input length — and `batchSize` defaults to
+`requested` rather than 10. One run is now a single complete pass by default
+(~35 minutes / ~775 requests for a cold ~775-artist list at 1 req/sec) instead
+of a 78-batch cold pass at the old default. The cursor still exists for two
+cases: a deliberate partial via an explicit smaller `batchSize`, and an
+interrupted pass.
+
+### The cursor is now keyed to the list it indexes
+
+`discographySyncState` gains a `listFingerprint` (length-prefixed FNV-1a over
+the deduped list) and persists the distinct `requested` count. A persisted
+cursor is only resumed from when BOTH match this run's list; otherwise
+(including every state written before this change, none of which carry a
+fingerprint) the run restarts at offset 0. This closes the defect this issue was
+filed about: a cursor left at offset 1 by a one-artist list was silently applied
+to the real 775-artist list and skipped index 0 forever.
+
+### One definition of run coverage: `covered` and `remaining`
+
+Eight new optional `discographySyncState` fields — `requested`, `requestedRaw`,
+`listFingerprint`, `startOffset`, `covered`, `remaining`, `uncovered`,
+`uncoveredCount` — record one run's coverage against its requested list.
+`covered = processedCount + skippedCount`; `remaining =
+requested - covered`.
+`remaining` is deliberately NOT `requested -
+cursor.offset`, which is
+algebraically identical to a formula that always reports 0 for a run that never
+reached its full list. `uncovered` / `uncoveredCount` record which requested
+MBIDs have no cached discography at all, computed from stored data rather than
+any counter.
+
+### A crash now leaves a record
+
+The state write moves into a `finally` covering the whole post-loop accounting
+block, and `execute`'s `return` moves out of the `try` — so a throw partway
+through a batch still persists an accurate cursor, coverage and uncovered set,
+and a successful run's returned `dataHandles` always names the handle it wrote
+rather than risking `{dataHandles: [undefined]}`.
+
+### New report: `@magistr/musicbrainz-discography-sync`
+
+A new default model-scope report rendering `discographySyncState`'s coverage,
+bound to the execution that produced it (never claims a run's numbers unless
+that run's own write is present in `context.dataHandles`), with an independent
+cross-check against the actual cached `rg-by-artist-*` rows.
+
 ## 2026.08.05.1
 
 Fixes `musicbrainz-ratelimit-runmodel-fanout`, measured live:
