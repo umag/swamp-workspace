@@ -1,7 +1,7 @@
 {
   "tasks": {
     "build-promptfoo": "deno run --allow-read --allow-write build-promptfoo-tests.ts",
-    "check": "deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts lib/watch_schema.ts release_watch.ts soak_schedule.ts registry_drift.ts",
+    "check": "deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts lib/watch_schema.ts lib/soak_permissions.ts release_watch.ts soak_schedule.ts run_soak.ts registry_drift.ts",
     "registry-drift": "deno run --allow-read --allow-run=swamp registry_drift.ts --root ..",
     "test": "deno test --allow-read --allow-write --allow-run --allow-env=FC_NUM_RUNS,QUALITY_REPO_ROOT,PATH .",
     "fmt": "deno fmt",
@@ -11,6 +11,7 @@
     "quality:allowlist": "deno run --allow-read --allow-write --allow-run=git --allow-env=QUALITY_REPO_ROOT quality/check_allowlist.ts",
     "quality:ratchet": "deno run --allow-read --allow-write --allow-run=swamp --allow-env=QUALITY_REPO_ROOT quality/score_ratchet.ts",
     "quality:harness": "deno run --allow-read --allow-write --allow-env=QUALITY_REPO_ROOT quality/check_property_harness.ts",
+    "quality:soak": "deno run --allow-read --allow-write --allow-env=QUALITY_REPO_ROOT quality/check_soak.ts",
     "quality:scaffold": "deno run --allow-read --allow-write quality/scaffold.ts"
   },
   "imports": { "zod": "npm:zod@4" },

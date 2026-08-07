@@ -32,6 +32,9 @@ env:
   # `release-notes-cap` guard and the publisher must agree on the number.
   REGISTRY_NOTES_CAP: 4900
 
+permissions:
+  contents: read
+
 jobs:
   discover:
     name: discover extensions + skills
@@ -218,7 +221,8 @@ jobs:
         working-directory: scripts
         run: >-
           deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts
-          lib/watch_schema.ts release_watch.ts soak_schedule.ts
+          lib/watch_schema.ts lib/soak_permissions.ts release_watch.ts
+          soak_schedule.ts run_soak.ts
 
   release-notes-cap:
     name: release-notes (fits the immutable registry cap)
@@ -360,6 +364,11 @@ jobs:
         working-directory: scripts
         run: deno task quality:harness --json ../property-harness-summary.json
 
+      - name: Check soak permissions (property-soak permission source of truth)
+        if: ${{ !cancelled() }}
+        working-directory: scripts
+        run: deno task quality:soak --json ../soak-summary.json
+
       - name: Upload compliance summary
         if: always()
         uses: actions/upload-artifact@v7
@@ -370,6 +379,7 @@ jobs:
             allowlist-summary.json
             ratchet-summary.json
             property-harness-summary.json
+            soak-summary.json
 
   skill-review:
     name: skill-review (tessl)

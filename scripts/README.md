@@ -162,3 +162,17 @@ deno run --allow-read scripts/soak_schedule.ts --root . --all         # every fi
 deno run --allow-read scripts/soak_schedule.ts --root . --target stripe-mpp
 deno run --allow-read scripts/soak_schedule.ts --root .               # tonight's rotation window
 ```
+
+Each emitted bucket entry also carries `denoArgsJson` — a JSON-encoded STRING
+(never a bare array, since no GitHub Actions matrix field here is array-valued)
+of the exact `deno test` permission flags to run that file with. Resolved from,
+in priority order: (1) a narrowed `<extension>/quality.yaml` `soak:` override,
+when one exists and validates (`scripts/quality/check_soak.ts` is the PR-time
+gate that verifies it never exceeds its own test task's authority — see
+STANDARD.md's `soak:` block), or (2) failing that, derived directly from the
+extension's own `deno.json` `test` task (`scripts/lib/soak_permissions.ts`'s
+`parsePermissionSet` + `permissionSetToArgs`) — the common-case path requiring
+zero per-extension hand-authoring. `.github/workflows/property-soak.yml`'s
+`soak` job passes both `file` and `denoArgsJson` through `env:` (never spliced
+directly into the step body) to `scripts/run_soak.ts`, which resolves
+`${HOME}`/`$HOME` tokens, prints the effective command, and actually runs it.

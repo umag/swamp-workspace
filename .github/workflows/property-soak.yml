@@ -1,9 +1,15 @@
 # Generic nightly rotating property-soak: auto-discovers every
-# `<extension>/extensions/models/*_property_test.ts` file (scripts/
-# soak_schedule.ts) and soaks tonight's 7-night-rotation bucket at a much
-# higher fast-check iteration count than CI's tuned default. Replaces
-# stripe-mpp's bespoke property-soak workflow (deleted in the SAME commit as
-# this file lands — atomic migration, see the commit message).
+# `<extension>/extensions/models/*_property_test.ts` file RECURSIVELY
+# (scripts/soak_schedule.ts) and soaks tonight's 7-night-rotation bucket at
+# a much higher fast-check iteration count than CI's tuned default. Each
+# bucket entry carries the exact deno permission argv resolved from the
+# extension's own deno.json `test` task (or, for the three broad-grant
+# extensions, a narrowed `quality.yaml` `soak:` override) — scripts/
+# run_soak.ts is invoked to actually run it, so the workflow YAML itself
+# never hardcodes a one-size-fits-all permission set (the defect that used
+# to silently NotCapable-fail 24 of 51 extensions every time the rotation
+# reached them). Replaced stripe-mpp's bespoke property-soak workflow
+# (deleted in the same commit as this file first landed).
 #
 # Nights with fewer than 7 discovered files are EXPECTED to have an empty
 # bucket on some days — the `soak` job below is gated on
@@ -68,6 +74,13 @@ jobs:
           fi
           deno run --allow-read=.. --allow-write=../soak-bucket.json soak_schedule.ts "${args[@]}"
           {
+            # Literal "EOF" delimiter, not a randomized one — safe ONLY
+            # because soak-bucket.json's payload is guaranteed to be a
+            # single line (JSON.stringify with no embedded newlines; see
+            # serializeBucketForOutputFile's docblock in soak_schedule.ts
+            # for the invariant and the test that pins it). A payload that
+            # could ever legitimately contain a line reading exactly "EOF"
+            # would need a randomized delimiter here instead.
             echo "files<<EOF"
             cat ../soak-bucket.json
             # Unconditional blank line: guarantees "EOF" starts on its own
@@ -101,11 +114,29 @@ jobs:
         working-directory: ${{ matrix.pair.extension }}
         run: deno task check
 
-      - name: Property soak (FC_NUM_RUNS)
-        working-directory: ${{ matrix.pair.extension }}
+      - name: Property soak (via run_soak.ts, resolved permission argv)
         env:
+          # matrix.pair.file / matrix.pair.denoArgsJson are untrusted
+          # workflow-generated data (a file path, a JSON-encoded argv
+          # string) — passed through env, never spliced with `${{ }}`
+          # directly into this step's run: body, matching the
+          # anti-injection discipline release-watch.yml's header documents.
+          EXTENSION: ${{ matrix.pair.extension }}
+          FILE: ${{ matrix.pair.file }}
+          DENO_ARGS_JSON: ${{ matrix.pair.denoArgsJson }}
           # Scheduled runs have no `runs` input → default to the multi-hour
           # 1,000,000-per-property soak (same convention as the original
           # stripe-mpp bespoke workflow). Manual dispatch uses the input.
-          FC_NUM_RUNS: ${{ github.event.inputs.runs || '1000000' }}
-        run: deno test --allow-env=FC_NUM_RUNS "${{ matrix.pair.file }}"
+          RUNS: ${{ github.event.inputs.runs || '1000000' }}
+        run: |
+          set -eo pipefail
+          # No --allow-write here: run_soak.ts itself never writes a file
+          # (only spawns the child `deno test` process and reads env vars) —
+          # the CHILD process's own permission set comes entirely from
+          # $DENO_ARGS_JSON, resolved separately below.
+          deno run --allow-read --allow-run --allow-env \
+            scripts/run_soak.ts \
+            --extension "$EXTENSION" \
+            --file "$FILE" \
+            --deno-args-json "$DENO_ARGS_JSON" \
+            --runs "$RUNS"

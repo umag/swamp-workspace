@@ -129,6 +129,41 @@ canary:
 suites. `skill` covers the bundled-Claude-skill tessl score (≥90); `na` when the
 extension bundles no skill at all.
 
+### `soak:` block (property-soak-permission-source-of-truth)
+
+```yaml
+soak:
+  state: present
+  denoArgs: ["--allow-read", "--allow-write", "--allow-env=FC_NUM_RUNS"]
+```
+
+OPTIONAL — same present/na/backlog envelope as `watch:`/`canary:`, and (like
+them) exempt from allowlist gating. The single source of truth for what a
+`test` task's permission authority means, and for what counts as a legitimate
+NARROWING of it, is
+[`scripts/lib/soak_permissions.ts`](scripts/lib/soak_permissions.ts),
+enforced at PR time by `scripts/quality/check_soak.ts`
+(`deno task quality:soak`).
+
+**The extension's own `deno.json` `test` task IS the default source of
+authority** — `scripts/soak_schedule.ts` derives the nightly soak's argv
+directly from it for every extension with no `soak:` block at all. A `soak:`
+override is a RARE, human-reviewed exception, needed only when the test
+task's authority is BROAD — exactly `--allow-all`, an unscoped `--allow-run`,
+or an unscoped `--allow-net` (nothing else; see `isBroadGrant`) — because an
+unattended nightly soak must never silently inherit that. Today only three
+extensions qualify: `swamp-go-brr`, `stripe-mpp`, `jscad-cad`.
+
+`present` carries `denoArgs`, not `files[]` — the exact deno permission flags
+`run_soak.ts` should run the property soak with. `check_soak.ts` verifies it
+NEVER exceeds the test task's own authority (an allow flag the test task
+doesn't grant, a scope wider than the test task's, or a `--deny-X` guard
+dropped/narrowed vs. the test task's) and always adequately covers
+`FC_NUM_RUNS` via `--allow-env`. `backlog` cites its OWN tracking issue,
+`ext-quality-release-watch-soak` (Phase B) — not Phase D's
+`ext-quality-test-backfill` — since authoring a narrowed override is Phase
+B's work, not the five-suite backfill's.
+
 ### `ratchet:` block
 
 ```yaml
@@ -250,6 +285,7 @@ deno task quality:check -- widget    # scope to one extension
 deno task quality:allowlist          # check_allowlist.ts
 deno task quality:ratchet            # score_ratchet.ts (shells out to swamp)
 deno task quality:harness            # check_property_harness.ts
+deno task quality:soak               # check_soak.ts (property-soak permissions)
 deno task test                       # the validators' own unit tests
 ```
 

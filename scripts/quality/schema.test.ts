@@ -13,6 +13,7 @@ import {
   QualityFileSchema,
   REQUIRED_SUITES,
   SCHEMA_VERSION,
+  SOAK_TRACKING_ISSUE,
 } from "./schema.ts";
 
 const REPO_ROOT = join(dirname(fromFileUrl(import.meta.url)), "..", "..");
@@ -309,4 +310,102 @@ Deno.test("watch present state REJECTS a malformed source (no more opaque passth
   };
   const result = QualityFileSchema.safeParse(fixture);
   assert(!result.success);
+});
+
+// ---------------------------------------------------------------------------
+// soak: block — the property-soak-permission-source-of-truth PR's addition.
+// Optional envelope (present/na/backlog, same shape as watch:/canary:) that
+// lets an extension declare the exact deno permission ARGS its nightly
+// property soak should run with, narrowed from (never exceeding) its own
+// `test` task's authority — see scripts/lib/soak_permissions.ts.
+// ---------------------------------------------------------------------------
+
+Deno.test("soak: block is OPTIONAL — an existing quality.yaml with no soak: key at all still validates", () => {
+  // validFixture() never sets `soak` — this pins that adding soak: support
+  // to the schema must not become a required field, so every quality.yaml
+  // authored before this PR keeps validating unchanged.
+  const result = QualityFileSchema.safeParse(validFixture());
+  assert(
+    result.success,
+    JSON.stringify(!result.success && result.error.issues),
+  );
+});
+
+Deno.test("soak: present state with a non-empty denoArgs array validates", () => {
+  const fixture = validFixture();
+  fixture.soak = {
+    state: "present",
+    denoArgs: ["--allow-read", "--allow-write", "--allow-env=FC_NUM_RUNS"],
+  };
+  const result = QualityFileSchema.safeParse(fixture);
+  assert(
+    result.success,
+    JSON.stringify(!result.success && result.error.issues),
+  );
+});
+
+Deno.test("soak: na state requires a justification of at least 12 trimmed characters, same as watch/canary", () => {
+  const fixture = validFixture();
+  fixture.soak = { state: "na", justification: "too short" };
+  const result = QualityFileSchema.safeParse(fixture);
+  assert(!result.success);
+  assertStringIncludes(
+    result.error!.issues.map((issue) => issue.message).join("\n"),
+    "12",
+  );
+});
+
+Deno.test("soak: backlog state citing its OWN tracking issue (SOAK_TRACKING_ISSUE) is ACCEPTED", () => {
+  const fixture = validFixture();
+  fixture.soak = {
+    state: "backlog",
+    justification:
+      `no narrowed override authored yet — tracked in ${SOAK_TRACKING_ISSUE}`,
+  };
+  const result = QualityFileSchema.safeParse(fixture);
+  assert(
+    result.success,
+    JSON.stringify(!result.success && result.error.issues),
+  );
+});
+
+Deno.test("soak: backlog state citing the WRONG tracking issue (the generic test-backfill issue) is REJECTED", () => {
+  // The trap this test exists to catch: schema.ts's justificationSchema()
+  // helper takes a boolean `requireBacklogIssue` hardcoded to check for the
+  // literal BACKLOG_TRACKING_ISSUE ("ext-quality-test-backfill"). Reusing
+  // that helper AS-IS for soak's backlog state would incorrectly ACCEPT a
+  // justification citing the wrong issue (test-backfill) and, worse, would
+  // incorrectly REJECT a justification correctly citing SOAK_TRACKING_ISSUE
+  // (asserted above) — forcing the implementer to generalise
+  // justificationSchema to take the required issue string as a parameter
+  // instead of reusing it blindly for a different tracking issue.
+  const fixture = validFixture();
+  fixture.soak = {
+    state: "backlog",
+    justification:
+      `no narrowed override authored yet — tracked in ${BACKLOG_TRACKING_ISSUE}`,
+  };
+  const result = QualityFileSchema.safeParse(fixture);
+  assert(!result.success);
+});
+
+Deno.test("soak: backlog state with a justification citing NEITHER tracking issue is rejected, mentioning SOAK_TRACKING_ISSUE in the error", () => {
+  const fixture = validFixture();
+  fixture.soak = {
+    state: "backlog",
+    justification: "we just haven't gotten around to this at all yet",
+  };
+  const result = QualityFileSchema.safeParse(fixture);
+  assert(!result.success);
+  assertStringIncludes(
+    result.error!.issues.map((issue) => issue.message).join("\n"),
+    SOAK_TRACKING_ISSUE,
+  );
+});
+
+Deno.test("soak: SCHEMA_VERSION is NOT bumped for the added optional soak: field", () => {
+  // Adding an optional field is a backward-compatible schema change — every
+  // quality.yaml authored under schemaVersion 1 before this PR remains valid
+  // schemaVersion-1 content, so this PR must not bump SCHEMA_VERSION.
+  assertEquals(SCHEMA_VERSION, 1);
 });
