@@ -1,0 +1,58 @@
+# Quality declaration for @magistr/herdr — see ../STANDARD.md.
+#
+# Authored with the extension, not scaffolded after the fact: a NEW extension
+# cannot join quality-allowlist.txt (it is shrink-only), so every required
+# suite and doc is `present` from the first commit.
+#
+# All five suites drive the exported method implementations against an
+# injected CommandRunner and a context double that validates each write
+# against the model's real Zod schema. Nothing spawns a process or opens a
+# socket, so the whole suite runs in CI with no herdr installed.
+schemaVersion: 1
+extension: herdr
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - "extensions/models/herdr_test.ts"
+  methods:
+    state: present
+    files:
+      - "extensions/models/herdr_methods_test.ts"
+  adversarial:
+    state: present
+    files:
+      - "extensions/models/herdr_adversarial_test.ts"
+  coverage:
+    state: present
+    files:
+      - "extensions/models/herdr_coverage_test.ts"
+  property-invariant-flow:
+    state: present
+    files:
+      - "extensions/models/herdr_property_test.ts"
+watch:
+  state: backlog
+  justification: no generalized release-watch yet — tracked in ext-quality-test-backfill
+canary:
+  state: present
+  instance: herd
+  method: status
+  args: {}
+  assert: "data.latest('herd', 'status').attributes.clientVersion != ''"
+docs:
+  readme:
+    state: present
+    files:
+      - "README.md"
+  changelog:
+    state: present
+    files:
+      - "CHANGELOG.md"
+  skill:
+    state: na
+    justification: herdr bundles no Claude skill — the model's own method descriptions are the interface, there is no multi-step workflow to document
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"

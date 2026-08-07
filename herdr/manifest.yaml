@@ -1,0 +1,92 @@
+manifestVersion: 1
+name: "@magistr/herdr"
+version: "2026.08.08.1"
+description: |
+  Drive a herdr terminal-agent runtime from swamp.
+
+  herdr (https://herdr.dev) is a terminal multiplexer built for AI coding
+  agents: a background server owns persistent workspaces → tabs → panes,
+  recognises the agent running inside each pane, and exposes the whole tree
+  over a local Unix socket. This model turns that fleet into swamp data and
+  swamp methods.
+
+  Model:
+  - `@magistr/herdr` — one instance per herdr server: the local one (default
+    session, a named session, or an explicit socket path), or a server on
+    another host reached over ssh by setting `sshHost`. The transport is the
+    only difference — every method below works identically against either.
+
+    Observe:
+    - `status`   — client/server versions, protocol compatibility, socket in
+      use and the named-session inventory. A stopped server is reported, not
+      thrown.
+    - `snapshot` — the whole session in ONE socket round-trip: a `fleet`
+      roll-up (workspaces, tabs, pane count, per-state agent histogram) plus
+      one `agent` resource per agent. Filter by workspace id/label and by
+      agent state.
+    - `read`     — capture a pane's or agent's output (visible screen,
+      scrollback tail, or the agent classifier's own detection buffer),
+      bounded by `maxOutputBytes` and tagged with its pane/tab/workspace.
+
+    Drive:
+    - `prompt`      — submit a prompt to many agents in one run, optionally
+      waiting for each to settle.
+    - `wait-agent`  — block until agents reach a state (idle/blocked/done).
+    - `start-agent` — launch an agent of a given kind in a pane.
+    - `send-keys` / `send-text` / `run-command` — key presses, literal text,
+      and submitted shell commands, fanned out across panes.
+    - `wait-output` — block until a pane's output matches a string or regex.
+
+    Shape:
+    - `create-workspace`, `create-tab`, `split-pane`, `create-worktree`,
+      `close`, `notify`.
+
+    Server and sessions:
+    - `server-stop`, `server-reload-config` (validates config.toml first),
+      `server-live-handoff`, `session-stop`, `session-delete`.
+    - `agent-manifests`, `update-agent-manifests` (reports exactly which
+      agents moved), `reload-agent-manifests`.
+
+  Idempotent by construction: every mutating method reads herdr's state
+  first. `close` on a missing id is a recorded no-op; `create-workspace`,
+  `create-tab` and `create-worktree` reuse an existing container with the
+  same label/branch; `start-agent` leaves a pane that already hosts an agent
+  running. Re-running any method is safe.
+
+  Safe to run from inside the fleet it manages: swamp normally executes in a
+  herdr pane, so the model reads herdr's own `HERDR_PANE_ID` / `HERDR_TAB_ID`
+  / `HERDR_WORKSPACE_ID` to refuse to close the terminal issuing the command
+  and to skip the caller when a prompt fans out (an agent prompting itself
+  would wait on its own turn forever).
+
+  Transport is the herdr CLI over `Deno.Command` — never a shell — so every
+  label, prompt and command travels as one literal argv element. Ids and key
+  names that would be read as flags are refused before anything is sent. Over
+  ssh a remote shell is unavoidable, so every argument is POSIX-quoted and the
+  quoting is proved against a real `/bin/sh` in the property suite.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/herdr.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - CHANGELOG.md
+
+platforms: []
+
+labels:
+  - herdr
+  - ssh
+  - remote
+  - terminal
+  - multiplexer
+  - agents
+  - ai-agents
+  - claude-code
+  - orchestration
+  - cli
