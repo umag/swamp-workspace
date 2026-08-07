@@ -1,14 +1,15 @@
 {
   "tasks": {
-    "check": "deno check extensions/models/music_library.ts extensions/models/music_library_test.ts extensions/models/music_library_methods_test.ts extensions/models/music_library_adversarial_test.ts extensions/models/music_library_coverage_test.ts extensions/models/music_library_property_test.ts extensions/lib/running.ts extensions/lib/running_test.ts extensions/lib/artist_match.ts extensions/lib/artist_match_test.ts extensions/lib/wanted.ts extensions/lib/wanted_test.ts extensions/lib/norm.ts extensions/reports/verify_triage.ts extensions/reports/verify_triage_test.ts extensions/reports/bpm_running.ts extensions/reports/wanted.ts extensions/reports/wanted_test.ts",
-    "test": "deno test --allow-env=FC_NUM_RUNS --permit-no-files extensions/models/ extensions/lib/ extensions/reports/",
+    "check": "deno check extensions/models/music_library.ts extensions/models/music_library_test.ts extensions/models/music_library_methods_test.ts extensions/models/music_library_adversarial_test.ts extensions/models/music_library_coverage_test.ts extensions/models/music_library_property_test.ts extensions/lib/running.ts extensions/lib/running_test.ts extensions/lib/artist_match.ts extensions/lib/artist_match_test.ts extensions/lib/wanted.ts extensions/lib/wanted_test.ts extensions/lib/norm.ts extensions/reports/verify_triage.ts extensions/reports/verify_triage_test.ts extensions/reports/bpm_running.ts extensions/reports/wanted.ts extensions/reports/wanted_test.ts extensions/workflows/music_wanted_workflow_test.ts",
+    "test": "deno test --allow-env=FC_NUM_RUNS --allow-read=extensions/workflows --permit-no-files extensions/models/ extensions/lib/ extensions/reports/ extensions/workflows/",
     "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/music_library_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"
   },
   "imports": {
-    "zod": "npm:zod@4"
+    "zod": "npm:zod@4",
+    "@std/yaml": "jsr:@std/yaml@1"
   },
   "compilerOptions": {
     "noImplicitAny": false
