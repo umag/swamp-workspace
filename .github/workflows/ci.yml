@@ -7,8 +7,30 @@ on:
     branches: [master, main]
 
 concurrency:
+  # PRs: cancel superseded runs — only the newest push to a branch matters.
+  #
+  # master/main: NEVER cancel. Every push to master is a distinct RELEASE event.
+  # `extension-publish` fires only on the one commit whose own diff carries the
+  # `+version:` line (see "Detect manifest version changes" below), so a
+  # cancelled master run drops that publish PERMANENTLY — the job has no retry
+  # and no later run re-detects it. Merging two PRs within one run's duration
+  # therefore de-published one of them silently. That is not hypothetical: on
+  # 2026-08-07 #180 and #181 merged three seconds apart, #180's run was
+  # cancelled, and @magistr/musicbrainz stayed a version behind the repo. A
+  # sweep then found 18 packages in that state across 2026-08-01..07.
+  #
+  # Same group, so master runs still SERIALISE — they queue instead of racing,
+  # which is what we want for a publish pipeline.
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: >-
+    ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/main' }}
+
+env:
+  # swamp-registry per-version release notes are IMMUTABLE. `extension-publish`
+  # truncates the CHANGELOG section to this many bytes before pushing, so an
+  # over-cap section ships cut mid-line FOREVER. Defined once here because the
+  # `release-notes-cap` guard and the publisher must agree on the number.
+  REGISTRY_NOTES_CAP: 4900
 
 jobs:
   discover:
@@ -197,6 +219,71 @@ jobs:
         run: >-
           deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts
           lib/watch_schema.ts release_watch.ts soak_schedule.ts
+
+  release-notes-cap:
+    name: release-notes (fits the immutable registry cap)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need the diff base to tell "this change bumps a version" from
+          # "this version was already published long ago".
+          fetch-depth: 0
+
+      - name: Check the section that will ship fits the cap
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -eo pipefail
+          # Only versions this change is ABOUT TO PUBLISH are checked. Sections
+          # for versions already on the registry are deliberately ignored: their
+          # notes are immutable, so editing the file cannot un-truncate them and
+          # failing here would only block unrelated work on that package.
+          zero="0000000000000000000000000000000000000000"
+          if [ "$EVENT" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          elif [ "$EVENT" = "push" ] && [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$zero" ] \
+               && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+            base="$PUSH_BEFORE"
+          else
+            base="HEAD~1"
+          fi
+          if ! git rev-parse "$base" >/dev/null 2>&1; then
+            echo "No usable diff base — nothing to check."; exit 0
+          fi
+
+          changed=$(git diff --name-only "$base" HEAD -- '*/manifest.yaml' || true)
+          if [ -z "$changed" ]; then
+            echo "No manifest touched vs ${base:0:12} — nothing to check."; exit 0
+          fi
+
+          rc=0
+          checked=0
+          while IFS= read -r manifest; do
+            [ -z "$manifest" ] && continue
+            git diff "$base" HEAD -- "$manifest" | grep -qE '^\+version:' || continue
+            dir="$(dirname "$manifest")"
+            ver="$(grep -m1 '^version:' "$manifest" \
+              | sed -E 's/^version:[[:space:]]*"?([^"]+)"?.*/\1/')"
+            checked=$((checked + 1))
+            notes="$(scripts/changelog-section.sh "$dir/CHANGELOG.md" "$ver")"
+            if [ -z "$notes" ]; then
+              echo "::warning file=$dir/CHANGELOG.md::no '## $ver' section; the registry will get the commit message as release notes instead"
+              continue
+            fi
+            bytes=$(printf '%s' "$notes" | wc -c | tr -d ' ')
+            if [ "$bytes" -gt "$REGISTRY_NOTES_CAP" ]; then
+              echo "::error file=$dir/CHANGELOG.md::'## $ver' section is $bytes bytes, over the ${REGISTRY_NOTES_CAP}-byte registry cap by $((bytes - REGISTRY_NOTES_CAP)). Per-version release notes are IMMUTABLE, so this would ship truncated mid-line forever. Trim the section, and put breaking-change and migration content FIRST so any future cut lands on the least important prose."
+              rc=1
+            else
+              echo "ok  $dir  $ver  $bytes/${REGISTRY_NOTES_CAP} bytes"
+            fi
+          done <<< "$changed"
+
+          [ "$checked" -eq 0 ] && echo "Manifest touched but no version line changed — nothing to publish."
+          exit $rc
 
   compliance:
     name: compliance (extension quality standard)
@@ -550,23 +637,22 @@ jobs:
           # version being published (so the registry notes match the repo
           # changelog); fall back to the version-bump commit message. (The README
           # ships automatically via each manifest's additionalFiles.)
-          commit_notes="$(git log -1 --format=%B HEAD | head -c 4900)"
+          commit_notes="$(git log -1 --format=%B HEAD | head -c "$REGISTRY_NOTES_CAP")"
           [ -z "$commit_notes" ] && commit_notes="Release of $(git rev-parse --short HEAD)"
           while IFS= read -r manifest; do
             [ -z "$manifest" ] && continue
             dir="$(dirname "$manifest")"
             ver="$(grep -m1 '^version:' "$manifest" \
               | sed -E 's/^version:[[:space:]]*"?([^"]+)"?.*/\1/')"
-            # Extract the `## <ver> …` section from the extension's CHANGELOG
-            # (everything up to the next `## ` heading). The char-after-version
-            # guard stops `…19.1` from also matching a `…19.10` heading.
+            # Extract the `## <ver> …` section from the extension's CHANGELOG.
+            # scripts/changelog-section.sh is the SINGLE SOURCE OF TRUTH for this
+            # extraction — the `release-notes-cap` job measures the very same
+            # bytes at PR time, so the guard cannot pass while this ships
+            # something different.
             notes=""
-            if [ -n "$ver" ] && [ -f "$dir/CHANGELOG.md" ]; then
-              notes="$(awk -v v="$ver" '
-                index($0, "## " v) == 1 && substr($0, length("## " v) + 1, 1) !~ /[0-9.]/ { f=1; print; next }
-                f && /^## / { exit }
-                f { print }
-              ' "$dir/CHANGELOG.md" | head -c 4900)"
+            if [ -n "$ver" ]; then
+              notes="$(scripts/changelog-section.sh "$dir/CHANGELOG.md" "$ver" \
+                | head -c "$REGISTRY_NOTES_CAP")"
             fi
             [ -z "$notes" ] && notes="$commit_notes"
             # Per-extension release channel selector: an optional
@@ -592,3 +678,52 @@ jobs:
             # manifest's own subdirectory.
             swamp extension push "$manifest" -y --channel "$channel" --release-notes "$notes"
           done <<< "${{ steps.manifest-changed.outputs.manifests }}"
+
+  registry-drift:
+    name: registry-drift (repo vs registry)
+    runs-on: ubuntu-latest
+    # Runs AFTER publish, on master only, and `always()` so it still reports
+    # when extension-publish itself failed — a failed publish is exactly the
+    # state this job exists to make visible.
+    needs: extension-publish
+    if: >-
+      always() && github.event_name == 'push'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.3
+
+      - name: Setup swamp
+        uses: ./.github/actions/setup-swamp
+
+      - name: Authenticate swamp
+        env:
+          SWAMP_API_KEY: ${{ secrets.SWAMP_API_KEY }}
+          SWAMP_API_KEY_ID: ${{ secrets.SWAMP_API_KEY_ID }}
+        run: |
+          set -eo pipefail
+          if [ -z "$SWAMP_API_KEY" ]; then
+            echo "::error::SWAMP_API_KEY secret is not set" >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.config/swamp"
+          jq -n \
+            --arg key "$SWAMP_API_KEY" \
+            --arg id "$SWAMP_API_KEY_ID" \
+            '{
+               serverUrl: "https://swamp-club.com",
+               apiKey: $key,
+               apiKeyId: $id,
+               username: "magistr",
+               collectives: ["bad-at-naming", "magistr"]
+             }' > "$HOME/.config/swamp/auth.json"
+          chmod 600 "$HOME/.config/swamp/auth.json"
+          swamp auth whoami
+
+      - name: Every declared version exists on the registry
+        working-directory: scripts
+        run: deno task registry-drift
