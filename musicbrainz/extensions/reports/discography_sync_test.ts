@@ -367,6 +367,77 @@ Deno.test("report.execute: a synthetic state whose processed contains an MBID wi
   assertEquals(result.json.crossCheckAgrees, false);
 });
 
+Deno.test("buildCrossCheck: an uncovered MBID that DOES have a cached rg-by-artist row is reported as unexpectedRows, not agrees", async () => {
+  // Mirror image of the missingRows-only case above: here processed/skipped
+  // are empty (so missingRows must stay []) and the disagreement comes
+  // entirely from the state claiming an MBID is uncovered when a browse row
+  // for it already exists in the repo.
+  const state = syncState({
+    processed: [],
+    skipped: [],
+    uncovered: ["aaaaaaaa-0000-4000-8000-000000000097"],
+  });
+  const repo = buildRepo([
+    {
+      specName: "browse",
+      name: "rg-by-artist-aaaaaaaa-0000-4000-8000-000000000097",
+      content: {},
+    },
+  ]);
+  const result = await buildCrossCheck(
+    repo,
+    BASE_CONTEXT.modelType,
+    BASE_CONTEXT.modelId,
+    state,
+  );
+  assertEquals(result.agrees, false);
+  assertEquals(result.missingRows, []);
+  assertEquals(result.unexpectedRows, [
+    "aaaaaaaa-0000-4000-8000-000000000097",
+  ]);
+});
+
+Deno.test("report.execute: an uncovered MBID with a cached rg-by-artist row renders the unexpected-row disagreement line", async () => {
+  const state = syncState({
+    processed: [],
+    skipped: [],
+    uncovered: ["aaaaaaaa-0000-4000-8000-000000000097"],
+    uncoveredCount: 1,
+  });
+  const result = await report.execute({
+    ...BASE_CONTEXT,
+    methodName: "sync-artist-discographies",
+    executionStatus: "succeeded",
+    dataHandles: [{
+      name: "discography-sync-cursor",
+      specName: "discographySyncState",
+    }],
+    dataRepository: buildRepo([
+      {
+        specName: "discographySyncState",
+        name: "discography-sync-cursor",
+        content: state,
+      },
+      {
+        specName: "browse",
+        name: "rg-by-artist-aaaaaaaa-0000-4000-8000-000000000097",
+        content: {},
+      },
+    ]),
+  });
+  assert(
+    result.markdown.includes("self-report disagrees with stored data"),
+    "must render the loud disagreement block",
+  );
+  assert(
+    result.markdown.includes(
+      "1 MBID(s) reported uncovered DO have a cached row: aaaaaaaa-0000-4000-8000-000000000097",
+    ),
+    "must render the unexpectedRows-specific line naming the MBID",
+  );
+  assertEquals(result.json.crossCheckAgrees, false);
+});
+
 // ---------------------------------------------------------------------------
 // never-throws contract
 // ---------------------------------------------------------------------------
