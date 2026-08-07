@@ -276,7 +276,7 @@ Deno.test("property: search-artist preserves every generated artist, in order, w
           { artists },
           () => drainAndAwait(time, run("search-artist", { query: "x" }, ctx)),
         );
-        const res = written.find((w) => w.spec === "artists")!;
+        const res = written.find((w) => w.name === "search-artist")!;
         return (
           JSON.stringify(res.payload.artists) === JSON.stringify(artists) &&
           res.payload.count === artists.length

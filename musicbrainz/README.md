@@ -31,7 +31,7 @@ hard ceiling against a misbehaving endpoint that never returns a short page).
 
 ```yaml
 type: "@magistr/musicbrainz"
-typeVersion: "2026.05.25.1"
+typeVersion: "2026.08.07.1"
 name: musicbrainz
 globalArguments:
   userAgent: "MyApp/1.0.0 (contact@example.com)"
@@ -41,27 +41,35 @@ methods: {}
 
 ## Methods
 
-| Method                      | Purpose                                                                                                                       |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `search-artist`             | Search artists by name or Lucene query                                                                                        |
-| `search-artists-batch`      | Search MANY artist queries in ONE invocation — the fan-out-safe alternative to calling `search-artist` once per artist        |
-| `search-release-group`      | Search release groups (albums/EPs/singles)                                                                                    |
-| `search-release`            | Search releases                                                                                                               |
-| `search-recording`          | Search recordings (tracks)                                                                                                    |
-| `search-label`              | Search record labels                                                                                                          |
-| `search`                    | Generic search over any entity type                                                                                           |
-| `lookup-artist`             | Look up an artist by MBID (with optional `inc` includes)                                                                      |
-| `lookup-release-group`      | Look up a release group by MBID                                                                                               |
-| `lookup-release`            | Look up a release by MBID                                                                                                     |
-| `lookup-recording`          | Look up a recording by MBID                                                                                                   |
-| `lookup-label`              | Look up a label by MBID                                                                                                       |
-| `browse-release-groups`     | Browse release groups by artist MBID                                                                                          |
-| `browse-releases`           | Browse releases by artist, label, or release-group MBID                                                                       |
-| `browse-recordings`         | Browse recordings by artist or release MBID                                                                                   |
-| `seed-from-bandcamp`        | Generate a MusicBrainz seed URL from one Bandcamp album                                                                       |
-| `find-missing`              | Compare a Bandcamp discography to MusicBrainz, list missing                                                                   |
-| `seed-all-missing`          | Generate seed URLs for all missing releases of an artist                                                                      |
-| `sync-artist-discographies` | Cursored, resumable fan-out that caches each artist's full release-group discography — `artistMbids` is REQUIRED, no fallback |
+`swamp model type describe @magistr/musicbrainz --json` returns each method's 12
+resource SPEC names but no INSTANCE names at all — the "Writes instance" column
+below is the only place to learn which instance name a method writes to, which
+is what `data.latest("musicbrainz", "<instance>")` needs as its second argument.
+A literal cell is the exact, fixed name that method always writes; a
+`<placeholder>` cell is a template the method fills in per call (usually from an
+MBID argument).
+
+| Method                      | Purpose                                                                                                                       | Writes instance                                                |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `search-artist`             | Search artists by name or Lucene query                                                                                        | `search-artist` (plus `search`, deprecated — see below)        |
+| `search-artists-batch`      | Search MANY artist queries in ONE invocation — the fan-out-safe alternative to calling `search-artist` once per artist        | `artist-search-batch`                                          |
+| `search-release-group`      | Search release groups (albums/EPs/singles)                                                                                    | `search-release-group`                                         |
+| `search-release`            | Search releases                                                                                                               | `search-release`                                               |
+| `search-recording`          | Search recordings (tracks)                                                                                                    | `search-recording`                                             |
+| `search-label`              | Search record labels                                                                                                          | `search-label`                                                 |
+| `search`                    | Generic search over any entity type                                                                                           | `<entity>-search`                                              |
+| `lookup-artist`             | Look up an artist by MBID (with optional `inc` includes)                                                                      | `artist-<id>`                                                  |
+| `lookup-release-group`      | Look up a release group by MBID                                                                                               | `rg-<id>`                                                      |
+| `lookup-release`            | Look up a release by MBID                                                                                                     | `release-<id>`                                                 |
+| `lookup-recording`          | Look up a recording by MBID                                                                                                   | `recording-<id>`                                               |
+| `lookup-label`              | Look up a label by MBID                                                                                                       | `label-<id>`                                                   |
+| `browse-release-groups`     | Browse release groups by artist MBID                                                                                          | `rg-by-artist-<mbid>`                                          |
+| `browse-releases`           | Browse releases by artist, label, or release-group MBID                                                                       | `releases-by-<entity>-<id>`                                    |
+| `browse-recordings`         | Browse recordings by artist or release MBID                                                                                   | `recordings-by-<entity>-<id>`                                  |
+| `seed-from-bandcamp`        | Generate a MusicBrainz seed URL from one Bandcamp album                                                                       | `seed-single`                                                  |
+| `find-missing`              | Compare a Bandcamp discography to MusicBrainz, list missing                                                                   | `<artistMbid>` (falls back to `unknown`)                       |
+| `seed-all-missing`          | Generate seed URLs for all missing releases of an artist                                                                      | `<artistMbid>` (falls back to `all-missing`)                   |
+| `sync-artist-discographies` | Cursored, resumable fan-out that caches each artist's full release-group discography — `artistMbids` is REQUIRED, no fallback | `rg-by-artist-<mbid>` (per artist) + `discography-sync-cursor` |
 
 ## Usage
 
@@ -161,14 +169,65 @@ discography at all) directly. Or render it:
 --markdown`.
 
 Results are written to swamp data and can be queried with CEL. The second
-argument to `data.latest` is the resource's INSTANCE name, not its spec name —
-`search-artist` writes instance `search` with spec `artists`, so the expression
-is `data.latest("musicbrainz", "search").attributes.artists`. Note that all five
-typed search methods write that one instance name, so it holds only the most
-recent search;
-`swamp data query 'modelName == "musicbrainz" && isLatest'
---select 'name' --json`
+argument to `data.latest` is the resource's INSTANCE name, not its spec name.
+Each typed search method writes its OWN instance (see the "Writes instance"
+column above), so read expressions differ per method:
+
+```
+data.latest("musicbrainz", "search-artist").attributes.artists
+data.latest("musicbrainz", "search-release-group").attributes.releaseGroups
+data.latest("musicbrainz", "search-release").attributes.releases
+data.latest("musicbrainz", "search-recording").attributes.recordings
+data.latest("musicbrainz", "search-label").attributes.labels
+```
+
+`swamp data query 'modelName == "musicbrainz" && isLatest' --select 'name'
+--json`
 lists what is actually stored.
+
+### `search-artist` vs `artist-search` vs `artist-search-batch`
+
+These three names are easy to confuse and pointing a `data.latest` read at the
+wrong one returns `null`, not an error:
+
+| Instance              | Written by                          | Spec                | Payload shape                                                                      |
+| --------------------- | ----------------------------------- | ------------------- | ---------------------------------------------------------------------------------- |
+| `search-artist`       | `search-artist`                     | `artists`           | `{artists, count, timestamp}`                                                      |
+| `artist-search`       | `search` (generic, `entity=artist`) | `search`            | `{query, entity, results, count, offset, timestamp}`                               |
+| `artist-search-batch` | `search-artists-batch`              | `artistSearchBatch` | `{batchId, queries, deferred, requested, searched, failed, stopReason, timestamp}` |
+
+### Migrating off the deprecated `search` instance
+
+Before this fix, all five typed search methods wrote the shared instance
+`search`, so `search-artist` writing there was the ONLY working read path a
+caller could reach. `search-artist` still writes `search` too, as a TIME-BOUNDED
+DEPRECATION ALIAS — but `search` is DEPRECATED and removed no earlier than
+**2026-09-07** (tracked as `musicbrainz-search-alias-removal`), never "this
+version only" (this package shipped five versions in the eight days before this
+one — a version count is not a duration here). Migrate any existing read now:
+
+```
+# before (deprecated, removed no earlier than 2026-09-07)
+data.latest("musicbrainz", "search").attributes.artists
+
+# after
+data.latest("musicbrainz", "search-artist").attributes.artists
+```
+
+The alias write carries two additive payload keys, present ONLY on the `search`
+row and NEVER on `search-artist`'s own canonical row: `deprecated: true` and
+`supersededBy: "search-artist"`. The documented `.attributes.artists` path above
+never surfaces them — to see them directly:
+
+```
+swamp data query 'modelName == "musicbrainz" && name == "search" && isLatest' \
+  --select 'attributes' --json
+```
+
+Tracked follow-up: a second, unrelated instance collision between `find-missing`
+(spec `missingReleases`) and `seed-all-missing` (spec `seedUrls`), both keyed on
+`artistMbid`, is OUT OF SCOPE for this fix and tracked separately as
+`musicbrainz-missing-seed-instance-collision`.
 
 The three-command sequence above is the portable form this package ships. In the
 homelab repo the whole artist-map -> sync -> want-derivation sequence is wired

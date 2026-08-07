@@ -22,6 +22,7 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
 import { formatDuration, model } from "./musicbrainz.ts";
 import { ARTIST_MUSICGRID_HTML } from "../../fixtures/bandcamp/artist_musicgrid.ts";
+import { ALBUM_JSONLD_HTML } from "../../fixtures/bandcamp/album_jsonld.ts";
 
 const GLOBAL_ARGS = {
   userAgent: "swamp-musicbrainz-coverage-test/1.0 (fixture@example.com)",
@@ -152,7 +153,11 @@ for (const [method, args, wireKey, payloadKey] of SEARCH_GUARD_CASES) {
     using time = new FakeTime();
     const { ctx, written } = makeCtx();
     await withMbFixture({}, () => drainAndAwait(time, run(method, args, ctx)));
-    const res = written.find((w) => w.spec === payloadKey)!;
+    // Selected by INSTANCE NAME, not spec: once search-artist ALSO writes a
+    // deprecated alias under the same spec "artists" (a different instance
+    // name, "search"), `method` (which equals the canonical instance name
+    // for every row in SEARCH_GUARD_CASES) stays the only unambiguous key.
+    const res = written.find((w) => w.name === method)!;
     assertEquals(res.payload[payloadKey], []);
     assertEquals(res.payload.count, 0);
   });
@@ -165,7 +170,11 @@ for (const [method, args, wireKey, payloadKey] of SEARCH_GUARD_CASES) {
       { [wireKey]: items },
       () => drainAndAwait(time, run(method, args, ctx)),
     );
-    const res = written.find((w) => w.spec === payloadKey)!;
+    // Selected by INSTANCE NAME, not spec: once search-artist ALSO writes a
+    // deprecated alias under the same spec "artists" (a different instance
+    // name, "search"), `method` (which equals the canonical instance name
+    // for every row in SEARCH_GUARD_CASES) stays the only unambiguous key.
+    const res = written.find((w) => w.name === method)!;
     assertEquals(res.payload[payloadKey], items);
     assertEquals(res.payload.count, 1);
   });
@@ -980,6 +989,25 @@ Deno.test("sync-artist-discographies: a discography that ends naturally within t
 });
 
 // ---------------------------------------------------------------------------
+// Version self-consistency — model.version must equal the newest
+// upgrades[].toVersion, so the upgrades chain and the published version
+// can never silently drift apart.
+// ---------------------------------------------------------------------------
+
+Deno.test("model surface: model.version equals the newest upgrades[].toVersion", () => {
+  const upgrades = model.upgrades as Array<
+    { fromVersion: string; toVersion: string }
+  >;
+  assert(upgrades.length > 0, "model.upgrades must not be empty");
+  const newest = upgrades[upgrades.length - 1];
+  assertEquals(
+    newest.toVersion,
+    model.version,
+    "the LAST upgrades entry's toVersion must equal model.version",
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Model surface enumeration — closed-set guard over model.methods /
 // model.resources, in music-library's style (music_library_coverage_test.ts:
 // 418-450): "if someone adds a method or resource to musicbrainz.ts without
@@ -1054,7 +1082,7 @@ Deno.test("NEW SURFACE: search-artists-batch is a registered method with its own
   );
 });
 
-Deno.test("NEW SURFACE: search-artists-batch writes instance name 'artist-search-batch' — explicitly NOT 'search' (the colliding instance every other search-* method writes to)", async () => {
+Deno.test("NEW SURFACE: search-artists-batch writes instance name 'artist-search-batch' — never any other method's resource instance", async () => {
   using time = new FakeTime();
   const store: SyncStore = new Map();
   const { written, ctx } = makeSyncCtx(store);
@@ -1073,9 +1101,10 @@ Deno.test("NEW SURFACE: search-artists-batch writes instance name 'artist-search
   const res = written.find((w) => w.spec === "artistSearchBatch")!;
   assert(res, "must have written the artistSearchBatch spec");
   assertEquals(res.name, "artist-search-batch");
-  assert(
-    res.name !== "search",
-    "must never collide with the shared 'search' instance",
+  assertEquals(
+    written.length,
+    1,
+    "search-artists-batch must write exactly one resource — never any other method's resource instance (e.g. no search-artist deprecation alias)",
   );
 });
 
@@ -1134,4 +1163,334 @@ Deno.test("NEW SURFACE (payload budget regression): a full MusicBrainz artist ob
     );
   }
   assertEquals(Object.keys(projected).sort(), ["id", "name", "sort-name"]);
+});
+
+// ---------------------------------------------------------------------------
+// COLLISION INVARIANT (musicbrainz-search-resource-collision) — every
+// resource INSTANCE this model writes must map to exactly one resource SPEC.
+// Before this fix, all five typed search methods wrote the shared literal
+// instance "search" under five different specs (artists/releaseGroups/
+// releases/recordings/labels), so a reader keyed on instance name alone
+// (`readResource(name)`) saw whichever method happened to run last.
+//
+// COLLISION_FIXTURES carries one execution recipe per model method, pinned
+// 1:1 against `model.methods` (assertEquals below) so a new method cannot be
+// added to this model without a fixture covering it here — every method
+// writes a resource, so every method needs one. The generic `search` entry
+// expands over its OWN entity enum, read live from
+// `model.methods.search.arguments` (never hardcoded), rather than counting
+// as a single execution: 18 non-generic fixtures + 12 entity-expanded
+// `search` runs = 30 method executions total, not 19 and not 31 (the
+// unexpanded `search` entry only counts once as a KEY, not as an
+// execution). Every fixture runs through this file's existing host-routed
+// fetch stub (`withFetchStub`/`json`/`html`/`isMbHost`/`isBcHost`) and the
+// shared `FakeTime`/`drainAndAwait` pair used everywhere else in this
+// suite — the module-level ~1100ms mbFetch spacer applies to every fixture
+// except `seed-from-bandcamp` (Bandcamp scraping is not rate-limited; see
+// musicbrainz.ts's own comment above `mbFetch`), so a bare `await` here
+// would hang, not fail, without draining the fake clock. Bandcamp-backed
+// fixtures (`seed-from-bandcamp`, `find-missing`, `seed-all-missing`) reuse
+// the shared fixture modules under `fixtures/bandcamp/` already imported by
+// this file and by `musicbrainz_methods_test.ts`, rather than inlining new
+// HTML.
+//
+// SCOPE, stated honestly in this comment because it must not be overclaimed
+// anywhere else either: this is a BEHAVIOURAL statement over the fixture set
+// actually executed below, not a proof over every possible argument.
+// `find-missing` and `seed-all-missing` both derive their written instance
+// name directly from an UNCONSTRAINED free-string `artistMbid`
+// (`artistMbid || "unknown"` / `artistMbid || "all-missing"` in
+// musicbrainz.ts), so any caller-supplied string reaches the instance name
+// unfiltered — no test, this one included, can close that channel. This
+// invariant only ever says "collision-free across the fixtures actually run
+// here, with one named, tracked carve-out" — never "any present or future
+// collision".
+//
+// The one carve-out: `find-missing` and `seed-all-missing` both key their
+// write on the SAME optional `artistMbid` argument (`missingReleases` vs
+// `seedUrls`), so one artist run through both methods produces the
+// identical defect this issue fixes for the five search methods — pinned
+// live already at musicbrainz_methods_test.ts:1151-1152 and :1216-1217, with
+// one row already on the live instance. It is explicitly OUT OF SCOPE here
+// (see the plan's hard constraints) and tracked by its own filed issue,
+// `musicbrainz-missing-seed-instance-collision`. `KNOWN_UNFIXED_COLLISIONS`
+// is keyed on the INSTANCE NAME **and** the sorted spec set together, not
+// the spec set alone: spec `seedUrls` has a SECOND writer at instance
+// `seed-single` (`seed-from-bandcamp`, musicbrainz.ts:2117), and a
+// spec-set-only key would silently excuse a future `{missingReleases,
+// seedUrls}` pair arising at any OTHER instance name too. The test also
+// asserts every allowlist key was actually observed, so this carve-out
+// self-destructs (goes red) the moment the follow-up issue lands and the
+// collision it names stops occurring.
+// ---------------------------------------------------------------------------
+
+const COLLISION_ARTIST_MBID = "00000000-0000-0000-0000-000000000001";
+const COLLISION_SYNC_ARTIST_MBID = "aaaaaaaa-0000-4000-8000-000000009001";
+const COLLISION_BROWSE_ARTIST = "aaaaaaaa-0000-4000-8000-000000009002";
+
+type CollisionWrite = { name: string; spec: string };
+
+/** Context shared by every collision fixture: a single in-memory store backs
+ * BOTH `readResource` (so `sync-artist-discographies`' cursor/cache reads
+ * resolve to `null` -> "never fetched", never throwing) and `writeResource`
+ * (which records every write for the invariant to inspect). No other
+ * fixture needs `readResource`, but sharing one context shape keeps this
+ * table uniform instead of branching per method. */
+function makeCollisionCtx() {
+  const written: CollisionWrite[] = [];
+  const store = new Map<string, Record<string, unknown>>();
+  return {
+    written,
+    ctx: {
+      globalArgs: GLOBAL_ARGS,
+      definition: { name: "collision-test-instance" },
+      readResource: (name: string) => Promise.resolve(store.get(name) ?? null),
+      writeResource: (spec: string, name: string, payload: unknown) => {
+        store.set(name, payload as Record<string, unknown>);
+        written.push({ spec, name });
+        return Promise.resolve({ spec, name });
+      },
+      logger: { info: () => {}, warning: () => {} },
+    },
+  };
+}
+
+/** Runs one method to completion against a fresh fetch stub + collision
+ * context, returning every (instanceName, specName) pair it wrote. */
+async function runCollision(
+  time: FakeTime,
+  method: string,
+  args: Record<string, unknown>,
+  routes: Route[],
+): Promise<CollisionWrite[]> {
+  const { written, ctx } = makeCollisionCtx();
+  await withFetchStub(
+    routes,
+    () => drainAndAwait(time, run(method, args, ctx)),
+  );
+  return written;
+}
+
+const mbRoute = (body: unknown): Route => (req) =>
+  isMbHost(req) ? json(body) : undefined;
+const bcRoute = (body: string): Route => (req) =>
+  isBcHost(req) ? html(body) : undefined;
+
+/** The generic `search` method's entity enum, read LIVE off the model's own
+ * declared arguments schema (musicbrainz.ts:2406-2418) rather than
+ * hardcoded — a 13th entity added to the enum is automatically covered by
+ * one more execution here, with no edit needed in this file. */
+type SearchEntityShape = {
+  arguments: { shape: { entity: { options: readonly string[] } } };
+};
+const SEARCH_ENTITIES =
+  (model.methods as unknown as Record<string, SearchEntityShape>).search
+    .arguments.shape.entity.options;
+
+const COLLISION_FIXTURES: Record<
+  string,
+  (time: FakeTime) => Promise<CollisionWrite[]>
+> = {
+  "search-artist": (time) =>
+    runCollision(time, "search-artist", { query: "x" }, [
+      mbRoute({ artists: [], count: 0 }),
+    ]),
+  "search-artists-batch": (time) =>
+    runCollision(
+      time,
+      "search-artists-batch",
+      { queries: ["x"], minIntervalMs: 5, maxDurationMs: 600_000 },
+      [mbRoute({ artists: [], count: 0 })],
+    ),
+  "search-release-group": (time) =>
+    runCollision(time, "search-release-group", { query: "x" }, [
+      mbRoute({ "release-groups": [], count: 0 }),
+    ]),
+  "search-release": (time) =>
+    runCollision(time, "search-release", { query: "x" }, [
+      mbRoute({ releases: [], count: 0 }),
+    ]),
+  "search-recording": (time) =>
+    runCollision(time, "search-recording", { query: "x" }, [
+      mbRoute({ recordings: [], count: 0 }),
+    ]),
+  "search-label": (time) =>
+    runCollision(time, "search-label", { query: "x" }, [
+      mbRoute({ labels: [], count: 0 }),
+    ]),
+  "lookup-artist": (time) =>
+    runCollision(time, "lookup-artist", { id: "collision-artist" }, [
+      mbRoute({}),
+    ]),
+  "lookup-release-group": (time) =>
+    runCollision(time, "lookup-release-group", { id: "collision-rg" }, [
+      mbRoute({}),
+    ]),
+  "lookup-release": (time) =>
+    runCollision(time, "lookup-release", { id: "collision-rel" }, [
+      mbRoute({}),
+    ]),
+  "lookup-recording": (time) =>
+    runCollision(time, "lookup-recording", { id: "collision-rec" }, [
+      mbRoute({}),
+    ]),
+  "lookup-label": (time) =>
+    runCollision(time, "lookup-label", { id: "collision-lbl" }, [
+      mbRoute({}),
+    ]),
+  "browse-release-groups": (time) =>
+    runCollision(
+      time,
+      "browse-release-groups",
+      { artist: COLLISION_BROWSE_ARTIST },
+      [mbRoute({ "release-groups": [] })],
+    ),
+  "browse-releases": (time) =>
+    runCollision(
+      time,
+      "browse-releases",
+      { artist: COLLISION_BROWSE_ARTIST },
+      [mbRoute({ releases: [] })],
+    ),
+  "browse-recordings": (time) =>
+    runCollision(
+      time,
+      "browse-recordings",
+      { artist: COLLISION_BROWSE_ARTIST },
+      [mbRoute({ recordings: [] })],
+    ),
+  "sync-artist-discographies": (time) =>
+    runCollision(
+      time,
+      "sync-artist-discographies",
+      { artistMbids: [COLLISION_SYNC_ARTIST_MBID], minIntervalMs: 5 },
+      [mbRoute({ "release-groups": [] })],
+    ),
+  "seed-from-bandcamp": (time) =>
+    runCollision(
+      time,
+      "seed-from-bandcamp",
+      { bandcampUrl: "https://fixturecollision.bandcamp.com/album/x" },
+      [bcRoute(ALBUM_JSONLD_HTML)],
+    ),
+  // find-missing and seed-all-missing are BOTH given the SAME artistMbid —
+  // matching the existing live pins at musicbrainz_methods_test.ts:1151-1152
+  // and :1216-1217 — so the second, already-tracked live collision
+  // (KNOWN_UNFIXED_COLLISIONS below) is genuinely observed here, not assumed.
+  "find-missing": (time) =>
+    runCollision(
+      time,
+      "find-missing",
+      {
+        bandcampUrl: "https://fixturecollision.bandcamp.com",
+        artistMbid: COLLISION_ARTIST_MBID,
+      },
+      [
+        bcRoute(ARTIST_MUSICGRID_HTML),
+        mbRoute({
+          "release-groups": [
+            { id: "rg-1", title: "Fixture Drift Sessions" },
+          ],
+          "release-group-count": 1,
+          "release-group-offset": 0,
+        }),
+      ],
+    ),
+  "seed-all-missing": (time) =>
+    runCollision(
+      time,
+      "seed-all-missing",
+      {
+        bandcampUrl: "https://fixturecollision.bandcamp.com",
+        artistMbid: COLLISION_ARTIST_MBID,
+      },
+      [
+        bcRoute(ARTIST_MUSICGRID_HTML),
+        mbRoute({
+          "release-groups": [
+            { id: "rg-1", title: "Fixture Drift Sessions" },
+          ],
+          "release-group-count": 1,
+          "release-group-offset": 0,
+        }),
+      ],
+    ),
+  search: async (time) => {
+    const all: CollisionWrite[] = [];
+    for (const entity of SEARCH_ENTITIES) {
+      const writes = await runCollision(
+        time,
+        "search",
+        { entity, query: "x" },
+        [mbRoute({ count: 0, offset: 0 })],
+      );
+      all.push(...writes);
+    }
+    return all;
+  },
+};
+
+/** The one named, tracked carve-out — see the section comment above for why
+ * it is keyed on the instance name AND the sorted spec set together. */
+const KNOWN_UNFIXED_COLLISIONS = new Map<
+  string,
+  { producers: string[]; tracking: string }
+>([
+  [
+    `${COLLISION_ARTIST_MBID}|missingReleases|seedUrls`,
+    {
+      producers: ["find-missing", "seed-all-missing"],
+      tracking: "musicbrainz-missing-seed-instance-collision",
+    },
+  ],
+]);
+
+Deno.test("COLLISION INVARIANT: every resource instance this model writes maps to exactly one spec, except the one named, tracked carve-out", async () => {
+  using time = new FakeTime();
+
+  assertEquals(
+    Object.keys(COLLISION_FIXTURES).sort(),
+    Object.keys(model.methods).sort(),
+    "every model method must have a COLLISION_FIXTURES entry — a new method must be added here too",
+  );
+
+  const byInstance = new Map<string, Set<string>>();
+  for (const [method, fixture] of Object.entries(COLLISION_FIXTURES)) {
+    const writes = await fixture(time);
+    assert(writes.length > 0, `${method}'s collision fixture wrote nothing`);
+    for (const { name, spec } of writes) {
+      const specs = byInstance.get(name) ?? new Set<string>();
+      specs.add(spec);
+      byInstance.set(name, specs);
+    }
+  }
+
+  const observedAllowlistKeys = new Set<string>();
+  const offenders: string[] = [];
+  for (const [name, specs] of byInstance) {
+    if (specs.size <= 1) continue;
+    const key = `${name}|${[...specs].sort().join("|")}`;
+    if (KNOWN_UNFIXED_COLLISIONS.has(key)) {
+      observedAllowlistKeys.add(key);
+      continue;
+    }
+    offenders.push(
+      `instance "${name}" maps to specs [${[...specs].sort().join(", ")}]`,
+    );
+  }
+
+  assertEquals(
+    offenders,
+    [],
+    `collision-free invariant violated (a resource instance mapped to more than one spec, with no matching allowlist entry): ${
+      offenders.join("; ")
+    }`,
+  );
+
+  for (const key of KNOWN_UNFIXED_COLLISIONS.keys()) {
+    assert(
+      observedAllowlistKeys.has(key),
+      `KNOWN_UNFIXED_COLLISIONS entry "${key}" was never observed in this run — the carve-out has rotted into a silent no-op (either the collision was fixed, or the fixture no longer reproduces it) and must be removed`,
+    );
+  }
 });

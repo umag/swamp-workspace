@@ -768,6 +768,50 @@ export function deriveMaxDurationMs(
 const DISCOGRAPHY_SYNC_CURSOR_INSTANCE = "discography-sync-cursor";
 
 /**
+ * Registry of the five typed search methods' OWN resource instance names
+ * (musicbrainz-search-resource-collision). Before this fix all five wrote
+ * the shared literal instance "search", so a reader keyed on instance name
+ * alone (`readResource(name)`) saw whichever method ran last. The instance
+ * name equals the producing method's own name — the same token an operator
+ * types in `swamp model method run musicbrainz search-artist` — so a future
+ * collision is self-evident at the call site and the read expression is
+ * derivable from the run command with no lookup. Key and value coincide
+ * deliberately: that IS the naming rule, made explicit and type-checked —
+ * do not "simplify" this back to five inline literals.
+ *
+ * The EXPLICIT `Record<SearchMethod, string>` annotation (not a bare object
+ * literal or `as const`) is deliberate: this package sets `noImplicitAny:
+ * false` (deno.json), which suppresses the `TS7053` a bracket-accessed
+ * inferred/`as const` object would raise on a missing key, so only the
+ * explicit annotation turns a deleted entry into a `deno task check` error
+ * (`TS2741`) instead of a silent no-op.
+ */
+type SearchMethod =
+  | "search-artist"
+  | "search-release-group"
+  | "search-release"
+  | "search-recording"
+  | "search-label";
+
+const SEARCH_INSTANCE_NAMES: Record<SearchMethod, string> = {
+  "search-artist": "search-artist",
+  "search-release-group": "search-release-group",
+  "search-release": "search-release",
+  "search-recording": "search-recording",
+  "search-label": "search-label",
+};
+
+/**
+ * Instance the deprecated `search-artist` alias write goes to — the
+ * historical shared literal every typed search method used to collide on.
+ * Only `search-artist` writes it now, so the model-wide instance -> spec
+ * mapping stays single-valued even with the alias in place. Removed no
+ * earlier than 2026-09-07 — see README.md/CHANGELOG.md for the migration
+ * path and removal criterion.
+ */
+const DEPRECATED_SEARCH_ALIAS_INSTANCE = "search";
+
+/**
  * Default page ceiling (100 release groups per page) for one artist's
  * discography per `sync-artist-discographies` run. At mbFetch's ~1100ms
  * default spacing this caps a single artist's pagination at ~22s and 2,000
@@ -1014,7 +1058,7 @@ const ArtistSearchBatchSchema = z.object({
  */
 export const model = {
   type: "@magistr/musicbrainz",
-  version: "2026.08.05.2",
+  version: "2026.08.07.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1042,6 +1086,13 @@ export const model = {
       toVersion: "2026.08.05.2",
       description:
         "Fixes music-wanted-sequence-not-wired: sync-artist-discographies' artistMbids fallback to this instance's last search-artist run is DELETED — a breaking behaviour change. The method now throws immediately (naming the runnable --input command) when artistMbids is absent or empty, rather than silently syncing whatever the collided `search` resource last held, often a single artist. artistMbids is deduped at list-resolution time (requested is now the DISTINCT count, requestedRaw the raw length); batchSize now defaults to the whole deduped list rather than 10, making one run a single complete pass (~35 minutes for ~775 artists) instead of a 78-batch cold pass. The persisted discographySyncState cursor is now KEYED to the list it indexes — a length-prefixed FNV-1a listFingerprint plus the persisted distinct requested count — so a changed artist list always restarts at offset 0 rather than resuming against a meaningless position; every state written before this change (none of which carry a fingerprint) also restarts at 0 on first use. Eight new optional discographySyncState fields (requested, requestedRaw, listFingerprint, startOffset, covered, remaining, uncovered, uncoveredCount) record one run's coverage accounting (covered = processedCount + skippedCount; remaining = requested - covered — deliberately NOT requested - cursor.offset, which is algebraically identical to a formula that always reports 0 for an incomplete run) and the set of requested MBIDs with no cached discography at all. The state write moves into a guarded `finally` covering the whole post-loop accounting block, and the method's `return` moves out of the `try`, so a crash partway through a batch still persists an accurate cursor/coverage/uncovered set instead of nothing, and a successful run's returned dataHandles always names the written handle rather than risking `[undefined]`. New default model-scope report @magistr/musicbrainz-discography-sync renders this coverage, bound to the execution that produced it via context.dataHandles, with an independent TypeScript cross-check against stored rg-by-artist-* rows. No globalArguments change; discographySyncState's four new-in-2026.08.04.1 fields plus these eight are all additive and optional.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.05.2",
+      toVersion: "2026.08.07.1",
+      description:
+        'Fixes musicbrainz-search-resource-collision: the five typed search methods (search-artist, search-release-group, search-release, search-recording, search-label) each wrote the shared literal instance "search" under five different resource specs, so readResource(name), which resolves on the instance name alone, returned whichever method ran last — a producer-side defect (no live reader remains; only the published README documented the collision as the contract). Each method now writes its own instance, named for itself, via a new module-scope SEARCH_INSTANCE_NAMES registry. Breaking change: data.latest("musicbrainz", "search").attributes.artists no longer reflects search-artist\'s output going forward; use data.latest("musicbrainz", "search-artist").attributes.artists (and the equivalent typed instance name for the other four). search-artist ALSO writes the historical "search" instance as a time-bounded deprecation alias (two new additive optional fields on the artists resource schema, deprecated: true / supersededBy: "search-artist"), removed no earlier than 2026-09-07, so the currently-published data.latest read keeps working during the migration window instead of going silently null the moment this version publishes. No resource SPEC changes and no new resource — the five existing specs are unchanged, only the instance argument was wrong; the artists spec\'s two new fields are additive and optional. globalArguments unchanged. A second, unrelated instance collision (find-missing\'s missingReleases and seed-all-missing\'s seedUrls both keying on artistMbid) is explicitly OUT OF SCOPE here and tracked separately as musicbrainz-missing-seed-instance-collision. Pre-existing "search" data rows from before this change are left in place, not deleted or renamed (two lineages share the name under one model UUID; swamp data delete resurrects rows from the datastore per Lab #1440).',
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1078,6 +1129,13 @@ export const model = {
         artists: z.array(ArtistSchema),
         count: z.number(),
         timestamp: z.string(),
+        // Present ONLY on the deprecated "search" alias write from
+        // search-artist (see DEPRECATED_SEARCH_ALIAS_INSTANCE) — never on
+        // the canonical "search-artist" row. Additive/optional so every row
+        // written before this change still parses. Alias removed no
+        // earlier than 2026-09-07 — see README.md/CHANGELOG.md.
+        deprecated: z.boolean().optional(),
+        supersededBy: z.string().optional(),
       }),
       lifetime: "infinite",
       garbageCollection: 10,
@@ -1205,12 +1263,30 @@ export const model = {
           args.limit,
           args.offset,
         );
-        const handle = await context.writeResource("artists", "search", {
-          artists,
-          count,
-          timestamp: new Date().toISOString(),
-        });
-        return { dataHandles: [handle] };
+        const timestamp = new Date().toISOString();
+        const handle = await context.writeResource(
+          "artists",
+          SEARCH_INSTANCE_NAMES["search-artist"],
+          { artists, count, timestamp },
+        );
+        // Time-bounded deprecation alias (musicbrainz-search-resource-
+        // collision) — removed no earlier than 2026-09-07, see
+        // README.md/CHANGELOG.md for the migration path. Only search-artist
+        // writes DEPRECATED_SEARCH_ALIAS_INSTANCE, so the model-wide
+        // instance -> spec mapping stays single-valued even with this alias
+        // in place.
+        const aliasHandle = await context.writeResource(
+          "artists",
+          DEPRECATED_SEARCH_ALIAS_INSTANCE,
+          {
+            artists,
+            count,
+            timestamp,
+            deprecated: true,
+            supersededBy: SEARCH_INSTANCE_NAMES["search-artist"],
+          },
+        );
+        return { dataHandles: [handle, aliasHandle] };
       },
     },
 
@@ -1362,11 +1438,15 @@ export const model = {
         const rgs = Array.isArray(data["release-groups"])
           ? data["release-groups"]
           : [];
-        const handle = await context.writeResource("releaseGroups", "search", {
-          releaseGroups: rgs,
-          count: data.count || rgs.length,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "releaseGroups",
+          SEARCH_INSTANCE_NAMES["search-release-group"],
+          {
+            releaseGroups: rgs,
+            count: data.count || rgs.length,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
@@ -1385,11 +1465,15 @@ export const model = {
         if (args.offset) params.offset = String(args.offset);
         const data = await mbFetch(userAgent, "/release/", params);
         const releases = Array.isArray(data.releases) ? data.releases : [];
-        const handle = await context.writeResource("releases", "search", {
-          releases,
-          count: data.count || releases.length,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "releases",
+          SEARCH_INSTANCE_NAMES["search-release"],
+          {
+            releases,
+            count: data.count || releases.length,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
@@ -1410,11 +1494,15 @@ export const model = {
         const recordings = Array.isArray(data.recordings)
           ? data.recordings
           : [];
-        const handle = await context.writeResource("recordings", "search", {
-          recordings,
-          count: data.count || recordings.length,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "recordings",
+          SEARCH_INSTANCE_NAMES["search-recording"],
+          {
+            recordings,
+            count: data.count || recordings.length,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
@@ -1433,11 +1521,15 @@ export const model = {
         if (args.offset) params.offset = String(args.offset);
         const data = await mbFetch(userAgent, "/label/", params);
         const labels = Array.isArray(data.labels) ? data.labels : [];
-        const handle = await context.writeResource("labels", "search", {
-          labels,
-          count: data.count || labels.length,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "labels",
+          SEARCH_INSTANCE_NAMES["search-label"],
+          {
+            labels,
+            count: data.count || labels.length,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },

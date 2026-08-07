@@ -1097,7 +1097,7 @@ Deno.test("musicbrainz-discography-sync: a 503 with NO Retry-After backs off one
       ),
   );
   assertEquals(callCount, 2, "the retry succeeds on the second attempt");
-  const res = written.find((w) => w.spec === "artists")!;
+  const res = written.find((w) => w.name === "search-artist")!;
   assertEquals(res.payload.count, 0);
 });
 
@@ -1300,16 +1300,17 @@ Deno.test("musicbrainz-discography-sync: a FRESH cached count:0 discography is s
   assertEquals(state.payload.skipped, [artistMbid]);
 });
 
-Deno.test("musicbrainz-discography-sync LIVE FAILURE, verbatim: a 'search' resource holding exactly ONE artist must raise, never complete with processed of length 1", async () => {
+Deno.test("musicbrainz-discography-sync LIVE FAILURE, verbatim: a 'search-artist' resource holding exactly ONE artist must raise, never complete with processed of length 1", async () => {
   // The regression this whole issue is about, reproduced with synthetic
   // MBIDs (never a real artist name or MBID — both PROVENANCE.md files'
   // standing prohibition). Before this change, an operator who ran
   // sync-artist-discographies with no artistMbids arg on an instance whose
-  // 'search' resource held one lone cached artist got a silent, "successful"
-  // one-artist sync instead of the actionable rejection this test pins.
+  // 'search-artist' resource held one lone cached artist got a silent,
+  // "successful" one-artist sync instead of the actionable rejection this
+  // test pins.
   const artistMbid = "aaaaaaaa-0000-4000-8000-000000000501";
   const store: SyncStore = new Map();
-  store.set("search", {
+  store.set("search-artist", {
     artists: [{ id: artistMbid, name: "Fixture Solitary Artist" }],
     count: 1,
     timestamp: new Date().toISOString(),
@@ -1340,7 +1341,7 @@ Deno.test("LB7 FIX: a truthy non-array `artists` field (hostile/malformed respon
     { artists: "not-an-array", count: 999 },
     () => drainAndAwait(time, run("search-artist", { query: "x" }, ctx)),
   );
-  const res = written.find((w) => w.spec === "artists")!;
+  const res = written.find((w) => w.name === "search-artist")!;
   assertEquals(
     res.payload.artists,
     [],
@@ -1360,7 +1361,7 @@ Deno.test("LB7 FIX: when `count` is ALSO absent, a truthy non-array `artists` no
     { artists: "abcdefghij" },
     () => drainAndAwait(time, run("search-artist", { query: "x" }, ctx)),
   );
-  const res = written.find((w) => w.spec === "artists")!;
+  const res = written.find((w) => w.name === "search-artist")!;
   assertEquals(res.payload.artists, []);
   assertEquals(
     res.payload.count,

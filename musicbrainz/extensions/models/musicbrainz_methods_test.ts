@@ -260,8 +260,7 @@ Deno.test("search-artist: happy path — GET /ws/2/artist/, writes {artists,coun
     assertEquals(calls[0].headers.get("Accept"), "application/json");
     assertEquals(calls[0].headers.get("User-Agent"), GLOBAL_ARGS.userAgent);
   });
-  const res = written.find((w) => w.spec === "artists")!;
-  assertEquals(res.name, "search");
+  const res = written.find((w) => w.name === "search-artist")!;
   assertEquals(res.payload.artists, artists);
   assertEquals(res.payload.count, 1);
   assertEquals(typeof res.payload.timestamp, "string");
@@ -552,6 +551,105 @@ Deno.test("search-label: failure path — non-ok throws", async () => {
       ),
     500,
   );
+});
+
+// ---------------------------------------------------------------------------
+// INSTANCE NAME pins (musicbrainz-search-resource-collision) — each typed
+// search method writes its OWN resource instance now (named for itself),
+// never the shared "search" instance all five collided on before this fix.
+// Four of these five had NO instance-name assertion at all before this
+// change — a single-site revert of exactly one call site back to the
+// literal "search" was invisible to every existing test in this file, since
+// each test above only ever selected its write by SPEC. Selection here is
+// on the INSTANCE NAME, which stays unique per method even once
+// search-artist ALSO writes a deprecated alias under the same spec
+// "artists" (see the DEPRECATION ALIAS pin below) — selecting by spec alone
+// would become order-dependent at that point.
+// ---------------------------------------------------------------------------
+
+const INSTANCE_NAME_PINS: Array<
+  [method: string, wireKey: string, spec: string]
+> = [
+  ["search-artist", "artists", "artists"],
+  ["search-release-group", "release-groups", "releaseGroups"],
+  ["search-release", "releases", "releases"],
+  ["search-recording", "recordings", "recordings"],
+  ["search-label", "labels", "labels"],
+];
+
+for (const [method, wireKey, spec] of INSTANCE_NAME_PINS) {
+  Deno.test(`${method}: writes instance "${method}" under spec "${spec}"`, async () => {
+    using time = new FakeTime();
+    const { ctx, written } = makeCtx();
+    await withMbFixture(
+      { [wireKey]: [], count: 0 },
+      () => drainAndAwait(time, run(method, { query: "x" }, ctx)),
+    );
+    const res = written.find((w) => w.name === method);
+    assert(
+      res,
+      `${method} must write to an instance literally named "${method}"`,
+    );
+    assertEquals(res!.spec, spec);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// DEPRECATION ALIAS pin (musicbrainz-search-resource-collision) —
+// search-artist ALSO writes the historical "search" instance (spec
+// "artists"), marked deprecated/supersededBy, for the time-bounded
+// migration window (removed no earlier than 2026-09-07, see
+// README.md/CHANGELOG.md). Two parts, because part (ii) is unobservable
+// without part (i): this file's writeResource stub records the payload
+// VERBATIM, before any schema runs (musicbrainz_adversarial_test.ts:1373
+// pins that directly), so only running the alias payload through the
+// resource's OWN declared schema (part ii) can see a change to the two
+// additive `artists` schema fields — zod strips unknown keys on `.parse()`
+// by default. Pattern copied from the cast form already used at
+// musicbrainz_coverage_test.ts:840-843.
+// ---------------------------------------------------------------------------
+
+Deno.test("search-artist: ALSO writes the deprecated 'search' alias (spec artists) with deprecated/supersededBy markers; the canonical write carries neither", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const artists = [{ id: "00000000-0000-0000-0000-000000000001", name: "A" }];
+  await withMbFixture(
+    { artists, count: 1 },
+    () => drainAndAwait(time, run("search-artist", { query: "x" }, ctx)),
+  );
+
+  const canonical = written.find((w) => w.name === "search-artist")!;
+  assert(canonical, "the canonical write must exist");
+  assertEquals(
+    canonical.payload.deprecated,
+    undefined,
+    "the canonical search-artist row must never carry the deprecated marker",
+  );
+  assertEquals(canonical.payload.supersededBy, undefined);
+
+  const aliasWrite = written.find((w) => w.name === "search")!;
+  assert(
+    aliasWrite,
+    "search-artist must ALSO write the deprecated 'search' alias",
+  );
+  assertEquals(aliasWrite.spec, "artists");
+  assertEquals(aliasWrite.payload.deprecated, true);
+  assertEquals(aliasWrite.payload.supersededBy, "search-artist");
+  assertEquals(aliasWrite.payload.artists, artists);
+
+  // (ii) Assert on the SCHEMA-PARSED payload, not just the raw recorded
+  // one — this is the ONLY assertion in the suite that would notice the two
+  // additive `artists` schema fields being deleted.
+  const parsed = (model.resources as Record<
+    string,
+    { schema: { parse: (v: unknown) => unknown } }
+  >).artists.schema.parse(aliasWrite.payload) as Record<string, unknown>;
+  assert(
+    "deprecated" in parsed && "supersededBy" in parsed,
+    "the artists resource schema must declare deprecated/supersededBy — they silently vanished on parse",
+  );
+  assertEquals(parsed.deprecated, true);
+  assertEquals(parsed.supersededBy, "search-artist");
 });
 
 // ---------------------------------------------------------------------------
@@ -1246,9 +1344,9 @@ Deno.test("sync-artist-discographies: happy path — explicit artistMbids caches
   );
 });
 
-Deno.test("sync-artist-discographies: a POPULATED search resource is NOT consulted — with no artistMbids arg the run rejects rather than silently syncing whatever 'search' holds", async () => {
+Deno.test("sync-artist-discographies: a POPULATED search-artist resource is NOT consulted — with no artistMbids arg the run rejects rather than silently syncing whatever 'search-artist' holds", async () => {
   const store: SyncStore = new Map();
-  store.set("search", {
+  store.set("search-artist", {
     artists: [
       { id: SYNC_TEST_MBIDS[0], name: "Fixture Artist One" },
       { id: SYNC_TEST_MBIDS[1], name: "Fixture Artist Two" },
@@ -1265,7 +1363,7 @@ Deno.test("sync-artist-discographies: a POPULATED search resource is NOT consult
   assertEquals(
     written.find((w) => w.spec === "discographySyncState"),
     undefined,
-    "a rejected run with a populated 'search' resource must not have synced anything, and must not have written state",
+    "a rejected run with a populated 'search-artist' resource must not have synced anything, and must not have written state",
   );
 });
 
