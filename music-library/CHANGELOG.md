@@ -1,12 +1,80 @@
 # Changelog
 
-## Unreleased
+## 2026.08.07.1
 
-Review-fix pass over the `music-wanted-sequence-not-wired` change above — no
-`model.version` bump, no schema or method-contract change; test-suite hardening
-only.
+Fixes `music-wanted-workflow-packaging`. `model.version` and `manifest.yaml`
+move `2026.08.05.2` -> `2026.08.07.1`.
 
-### Test-suite hardening (mutation-testing finding)
+### Ship the `music-wanted` workflow body as part of this package
+
+Adds `extensions/workflows/music-wanted.yaml`
+(`@magistr/music-wanted-sequence`), registered under a new manifest `workflows:`
+key, so a 464-line artefact that previously existed in exactly one copy — in a
+homelab-repo tree with neither `.git` nor `.jj` — gets version control, review
+and diffability. **Installing this extension does NOT make the workflow
+runnable**: `swamp extension pull` / `extension source add` do not register a
+workflow file, so nothing under this name exists until you create it yourself
+with `swamp workflow create` and paste the body in. That caveat is stated in
+three places on the discovery path: the manifest `description`'s new Workflows
+section, the packaged file's own first description paragraph, and this package's
+README.
+
+The packaged copy also corrects several claims the repo-local body carried, all
+fixed in the author's own homelab copy in the same change (outside this package,
+not part of this PR): the REQUIRED dry-run procedure claimed gate 6
+(catalog-completeness) "fails only on a cold catalog and passes once the catalog
+is warm" — false, since the only recorded dry run (`dc413fca`, 2026-08-06)
+failed gate 4 AND gate 6, because the resolve job has no `dryRun` guard and
+resolves artists for real while the sync step's `batchSize: 0` caches nothing;
+the stale `~775 MusicBrainz requests` / `775 of 2258` figures understated the
+last real run's cost (1165 resolved) by roughly 50%; and the unconditional
+`ext-canary-nightly` 02:30-03:15 collision rule is replaced by the mechanism it
+was a special case of — a cold sync holds the `musicbrainz` model lock for the
+whole pass, and `swamp model method run` waits only `DEFAULT_LOCK_TIMEOUT_MS`
+(60s) for a contended lock — dropped WITH THIS NOTE, not silently:
+`ext-canary-nightly` has not run since 2026-07-27 and appears in none of five
+days of serve scheduler logs, so the named window guards nothing today, but the
+lock-contention hazard itself is real regardless of what is or isn't scheduled.
+
+Required-dry-run control: see the `musicbrainz` package's own CHANGELOG for the
+control's original documentation; it is now documented identically on both the
+shipped `@magistr/music-wanted-sequence` workflow (this package) and the
+author's homelab copy, not on a "repo-local" workflow only.
+
+### `wanted`'s missing-browse-cache throw no longer says "Repo-local"
+
+The throw's last line, "Repo-local: the homelab repo wires the whole sequence as
+a workflow — swamp workflow run music-wanted", was wrong the moment the workflow
+started shipping in this package. It now names the shipped file and the
+create-and-paste procedure, keeping the substring
+`swamp workflow run music-wanted` for the author's own homelab copy — so the
+existing pinning assertion at `music_library_methods_test.ts:1982` keeps passing
+— and gains a `!includes("Repo-local")` negative beside it.
+
+### README and structural test
+
+README: the "wanted derivation" section's "that workflow lives in that private
+repo, not in this package" paragraph, now false, is replaced with the
+shipped-but-not-runnable statement, the eight gates, the REQUIRED dry run's true
+expected outcome, the two literal instance names the body assumes and how to
+retarget them, and the two-copy drift comparison. The
+three-things-called-"wanted" disambiguation paragraph gains a fourth item for
+the packaged workflow file itself. Both `ext-canary-nightly` 02:30-03:15 /
+02:45-03:15 windows already documented in this file are replaced by the same
+lock-contention mechanism, with the same note as above.
+
+Adds `extensions/workflows/music_wanted_workflow_test.ts` — the only automated
+coverage that exists for the packaged file, since `swamp workflow validate`
+cannot be pointed at a workflow with no `id:` and
+`swamp extension push --dry-run` performs no workflow validation at all. Parses
+the file (new pinned import `jsr:@std/yaml@1`) and asserts its name, the absence
+of a top-level `id`, all ten assert-step names and their gate-name-leading
+messages, the `allowFailure` split (nine false, one true), the three
+`model_method` steps' literal `music`/`musicbrainz`/`music` targets, the
+corrected gate-6 sentence, the not-runnable caveat, and the absence of `775` /
+`2026-08-06` / `ext-canary-nightly`.
+
+### Test-suite hardening (mutation-testing finding, folded from Unreleased)
 
 The negative assertion guarding against `wanted`'s missing-browse-cache throw
 regressing back to suggesting the nonexistent `browse` method had a stray
@@ -16,12 +84,17 @@ it names (the old broken message had nothing after `browse`). Fixed by dropping
 the stray quote. Verified by re-applying the append-the-old-text mutation this
 needle exists to catch and confirming the test now fails, then reverting.
 
-### Operating-procedure documentation for `music-wanted` (main-repo workflow)
+### Deferred
 
-Unrelated to this package's own code, but recorded here since this package's
-`wanted` method is one leg of the gated sequence: see the `musicbrainz`
-package's CHANGELOG (Unreleased) for the required-dry-run control now documented
-on the repo-local `music-wanted` workflow.
+Two follow-ups, both filed: `music-wanted-stale-shared-strings` (the stale
+`~775` figure at its remaining five package-side sites —
+`musicbrainz/README.md:134`, `musicbrainz.ts:1761`/`:1773`/`:1819`, and
+`music_library.ts:3894` two lines above the rewritten throw — plus
+`musicbrainz/README.md:139`'s own "lives in the private homelab repo, not in
+this package" pointer, now also stale) and
+`music-wanted-headphones-instance-implicit` (the workflow's `resolve` job passes
+only `refresh` to `resolve-artists`, relying silently on that method's own
+`headphonesInstance` default rather than an explicit input).
 
 ## 2026.08.05.2
 

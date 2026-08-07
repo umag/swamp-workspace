@@ -129,25 +129,80 @@ swamp model method run <instance> wanted
 
 Step 2 is the expensive one: at MusicBrainz's public 1 req/sec a cold pass over
 ~775 artists is ~775 requests and takes ~35 minutes, and it prints nothing until
-it finishes. It holds the `musicbrainz` model lock for that whole time — do not
-start it between 02:30 and 03:15, when the nightly extension canary may probe
-that instance. An interrupted pass persists its cursor and counts, so a re-run
-continues rather than repeating.
+it finishes. It holds the `musicbrainz` model lock for that whole time, and
+`swamp model method run` only waits up to 60 seconds (`DEFAULT_LOCK_TIMEOUT_MS`,
+see below) for a contended lock before timing out — avoid starting it while
+anything else needs that instance's lock. An interrupted pass persists its
+cursor and counts, so a re-run continues rather than repeating.
 
 Step 2 throws when given no artist list and step 3 throws when the discography
 cache is missing, both naming a runnable command.
 
-In the homelab repo the whole sequence is wired as one workflow —
-`swamp
-workflow run music-wanted` — which carries the artist list between the
-two instances for you, gates each hand-off with an assert, and refuses to derive
-a want set from an incomplete catalog. That workflow lives in that private repo,
-not in this package; the three commands above are the portable form.
+The whole sequence is also wired as one gated workflow, shipped in this package
+as `extensions/workflows/music-wanted.yaml` (`@magistr/music-wanted-sequence`) —
+it carries the artist list between the two instances for you, gates each
+hand-off with an assert, and refuses to derive a want set from an incomplete
+catalog. **Installing this extension does NOT make it runnable**:
+`swamp extension pull` / `extension source add` do not register a workflow file,
+so nothing under that name exists until you create it yourself. Create it with
+`swamp workflow create`, paste the file's body in, and invoke it under whatever
+name you gave it. The three commands above remain the portable form and need no
+workflow at all.
 
 Run it without `--fail-on`. The default fails the run on ANY assert, including
 the medium-severity want-total sanity band and the medium-severity artist-map
 floor. `--fail-on high` downgrades both to warnings — use it only in CI, and
 read the assert results rather than the exit code.
+
+The workflow body hardcodes two literal swamp model instance names throughout —
+`music` (this model, matching the `Setup` section below) and `musicbrainz` —
+both in the three step targets (`modelIdOrName`) and in every gate's
+`data.query('modelName == "music" && ...')` /
+`'modelName == "musicbrainz" && ...'` CEL predicate. Neither is a workflow
+input: a dynamic step target does not remove swamp's step-input validation, it
+keeps the check and makes it report `passed: true` while verifying nothing, so
+parameterising would have silently turned three of the workflow's 22
+`swamp workflow validate` checks into checks that always pass. If your own
+instances are named `music` and `musicbrainz` — the names this README's own
+examples use — the file runs as pasted, with no edits. If they are named
+differently, retargeting it is a global find/replace of those two literal
+strings across the whole file (every step target AND every gate's query literal
+must move together, or a gate queries the instance the step never wrote to and
+fails by indexing `[0]` on an empty result) — mechanical, but not confined to
+one line.
+
+It enforces eight gates, every one `allowFailure: false`: (1)
+preflight-dimensions — the artist and album dimensions are populated before
+anything runs; (2) resolve-produced-something — resolve-artists resolved at
+least one artist this run; (3) artist-map-floor — resolved artists are at least
+20% of the library's artist dimension; (4) sync-coverage — the sync made one
+complete pass (`startOffset` 0, `remaining` 0); (5) sync-handoff — the sync was
+handed THIS run's full resolved list, not a stale or empty one; (6)
+catalog-completeness — every requested artist now has a cached discography; (7)
+derive-existence — the `wanted` step actually wrote a resource this run; (8)
+want-total-band — the derived want total is not implausibly large against the
+owned album count. Full detail, including recovery guidance per gate, is in the
+file's own `description:` block and each assert step's `message`.
+
+REQUIRED after any edit to the workflow: run it with `--input dryRun=true`
+before trusting the edit. This forces the sync step's `batchSize` to 0 (no new
+MusicBrainz requests) while still exercising every gate and the CEL hand-off.
+Because the resolve job has no `dryRun` guard, a dry run against a library with
+anything still unresolved fails BOTH gate 4 (sync-coverage — nothing was
+covered) AND gate 6 (catalog-completeness — the newly-resolved artist has no
+cached discography yet); that two-gate failure, `derive` SKIPPED, is the
+expected shape on a growing library, not a bug. `swamp workflow validate` checks
+schema and DAG shape only, never CEL semantics, so this dry run is the only
+control over the gate chain.
+
+Two copies of this workflow exist: the shipped one described here, and (in the
+author's own homelab, not part of this package) a live copy registered under the
+bare name `music-wanted` and invoked as `swamp workflow run music-wanted`.
+Everything from the `tags:` line to EOF is byte-identical between the two by
+construction, so diffing both files from that line onward is the mechanical
+drift check; the only differences above it are the `id:`/`name:` header lines
+and one appended homelab-only operating paragraph in the live copy's
+description.
 
 **`resolve-artists`** seeds the map for free from a headphones instance, whose
 artists are already MusicBrainz-keyed, then falls back to token-set MusicBrainz
@@ -184,12 +239,11 @@ defaults, one run holds the `musicbrainz` model lock continuously for roughly
 7.3 minutes at nominal speed, up to roughly 11.5 minutes worst case — and
 `swamp model method run` only WAITS up to 60 seconds for a contended model lock
 (`DEFAULT_LOCK_TIMEOUT_MS`) before timing out, so avoid starting a
-`resolve-artists` batch inside the window 02:45-03:15, when `ext-canary-nightly`
-probes the `musicbrainz` instance at 03:00. `SWAMP_LOCK_TIMEOUT_MS` is a lever
-on the WAITER — the process trying to ACQUIRE the lock, i.e. the
-workflow-runner's own environment when it executes `ext-canary-nightly` — not on
-the operator's shell running `resolve-artists`, which HOLDS the lock and never
-waits for it; setting it there changes nothing.
+`resolve-artists` batch while anything else needs the `musicbrainz` instance's
+lock. `SWAMP_LOCK_TIMEOUT_MS` is a lever on the WAITER — the process trying to
+ACQUIRE the lock, e.g. another scheduled workflow's own environment when it runs
+against this instance — not on the operator's shell running `resolve-artists`,
+which HOLDS the lock and never waits for it; setting it there changes nothing.
 
 **`wanted`** is pure — no network at all — and emits two kinds of want:
 `missing` (in the discography, absent from disk) and `upgrade` (present but
@@ -209,13 +263,23 @@ swamp data query 'modelName == "<instance>" && name == "wanted" && isLatest' \
 swamp report get @magistr/music-wanted --model <instance> --markdown
 ```
 
-Three things are now called some form of "wanted", and they do not collide at
-the CLI but are easy to conflate: `swamp workflow run music-wanted` PRODUCES the
-want set (the homelab-repo workflow above),
-`swamp report get
-@magistr/music-wanted` RENDERS the most recently produced one,
-and `wanted` is the method the workflow calls. An operator who runs the report
-against stale data gets a report that renders happily and looks like success.
+Four things are now called some form of "wanted", and they do not collide at the
+CLI but are easy to conflate:
+
+- `@magistr/music-wanted-sequence` — the packaged workflow FILE, shipped in this
+  package at `extensions/workflows/music-wanted.yaml`. Not runnable until
+  created with `swamp workflow create` (see above).
+- `swamp workflow run <the name you created it under>` — RUNS that workflow and
+  PRODUCES the want set (the author's own homelab copy is literally named
+  `music-wanted`, so for them this is `swamp workflow run
+  music-wanted`).
+- `swamp report get @magistr/music-wanted --model <instance>` — RENDERS the most
+  recently produced want set.
+- `wanted` — the model METHOD the workflow's `derive` job calls, and which step
+  3 of the portable three-command form above runs directly.
+
+An operator who runs the report against stale data gets a report that renders
+happily and looks like success.
 
 The report renders totals, missing grouped by artist (biggest gaps first),
 upgrade candidates grouped by current quality (worst first), and the artists
