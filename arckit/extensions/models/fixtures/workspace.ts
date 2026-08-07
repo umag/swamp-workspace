@@ -162,12 +162,22 @@ export type MethodMap = Record<string, {
  * `startProject`'s `profile: "standard"`) actually apply. Calling `execute`
  * directly with a raw args object would silently skip every default.
  */
-export function run(
+export async function run(
   model: unknown,
   name: string,
   args: Record<string, unknown>,
   ctx: FakeContext,
 ): Promise<{ dataHandles: unknown[] }> {
   const method = (model as { methods: MethodMap }).methods[name];
-  return method.execute(method.arguments.parse(args), ctx);
+  // `async` is load-bearing, not decoration: `arguments.parse()` is zod's
+  // SYNCHRONOUS parse, evaluated as an argument expression before `execute`
+  // returns anything. In a non-async `run` a validation failure escapes this
+  // helper synchronously, so `assertRejects` reports "Function throws when
+  // expected to reject" instead of observing the rejection — making it
+  // impossible to assert that bad arguments are refused AT THE SCHEMA
+  // BOUNDARY. `async` converts that throw into a rejected promise, which is
+  // also the faithful emulation: the real swamp runtime invokes methods
+  // asynchronously. Every existing call site already awaits, so this is a
+  // no-op for them.
+  return await method.execute(method.arguments.parse(args), ctx);
 }

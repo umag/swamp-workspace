@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/arckit"
-version: "2026.08.02.1"
+version: "2026.08.06.1"
 description: |
   Standalone swamp port of ArcKit (https://github.com/tractorjuice/arc-kit —
   the Enterprise Architecture Governance Harness): a skill-driven governance
@@ -20,20 +20,37 @@ description: |
   `advance` re-scans the disk and refuses unless every gate group of the
   current phase has an ARC-* artifact present; `skipPhase` records an
   explicit bypass of skippable phases. Profiles (standard | uk-gov | mod |
-  ai) add gate groups (uk-gov: tcop + secure; mod: mod-secure; ai:
-  data-model + ai-playbook + atrs). 000-global artifacts (e.g. principles)
-  satisfy gates workspace-wide.
+  ai | nl-gov) add gate groups (uk-gov: tcop + secure; mod: mod-secure; ai:
+  data-model + ai-playbook + atrs; nl-gov: nl-tbb + nl-cloud + nl-bio +
+  nl-exit + eu-sovereignty). 000-global artifacts (e.g. principles) satisfy
+  gates workspace-wide.
+
+  ## Netherlands sovereign-cloud overlay (nl-gov)
+
+  Six artifact types grounded in current Dutch and EU instruments —
+  Herziening rijksbreed cloudbeleid 2026 (3 juli 2026), VIRBI 2025 with the
+  Te Beschermen Belangen systematiek, Cbw + Wwke (in force 15 August 2026),
+  BIO2, and the EU Cloud Sovereignty Framework v1.2.1. Two of them are
+  computable rather than prose-only.
 
   ## Methods
 
   - startProject / status / advance / skipPhase / abandon — the lifecycle
-  - template / templates / provisionTemplates — 65 bundled arc-kit v6.2.0
-    templates, served with doc code, target ARC filename, and mandatory
-    input artifacts
+  - template / templates / provisionTemplates — 71 bundled templates
+    (65 arc-kit v6.2.0 plus 6 NL/EU), served with doc code, target ARC
+    filename, and mandatory input artifacts
   - init / scan / gaps — workspace scaffold, full artifact inventory,
     mandatory-dependency violation report
-  - migrateClassification — port of `arckit migrate-classification`
-    (UK ladder → UAE Smart Data ladder, report-only by default)
+  - migrateClassification — port of `arckit migrate-classification`;
+    `ladder` selects the target ladder (uae = UK → UAE Smart Data, the
+    default and unchanged; nl = UK → NL rubricering), report-only by default
+  - euSovereigntyScore — EU Cloud Sovereignty Framework v1.2.1 weighted
+    score over SOV-1..SOV-8 with caller-supplied minimum SEAL floors.
+    Records an assessment; it does not certify
+  - nlCloudEligibility — public-cloud eligibility under the Herziening
+    rijksbreed cloudbeleid 2026, returning allowed | conditional |
+    discouraged | prohibited with every fired clause and a plain-language
+    reason
 
   Ships the `arckit` skill that drives Claude through the loop: status →
   fetch template → read mandatory inputs → produce artifact → human
@@ -71,6 +88,7 @@ additionalFiles:
   - templates/dld-review-template.md
   - templates/dos-requirements-template.md
   - templates/dpia-template.md
+  - templates/eu-sovereignty-assessment-template.md
   - templates/evaluation-criteria-template.md
   - templates/finops-template.md
   - templates/framework-overview-template.md
@@ -87,6 +105,11 @@ additionalFiles:
   - templates/maturity-model-template.md
   - templates/mlops-template.md
   - templates/mod-secure-by-design-template.md
+  - templates/nl-bio-conformance-template.md
+  - templates/nl-cloud-assessment-template.md
+  - templates/nl-dtia-template.md
+  - templates/nl-exit-plan-template.md
+  - templates/nl-tbb-classification-template.md
   - templates/operationalize-template.md
   - templates/platform-design-template.md
   - templates/presentation-template.md
@@ -117,6 +140,7 @@ additionalFiles:
   - templates/wardley-map-template.md
   - templates/wardley-value-chain-template.md
   - templates/pages-template.html.txt
+  - templates/_partials/document-control-nl.md
   - templates/_partials/document-control-uae.md
   - templates/_partials/document-control-uk.md
 

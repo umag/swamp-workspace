@@ -1,5 +1,161 @@
 # Changelog
 
+## 2026.08.06.1
+
+NL sovereign-cloud jurisdiction overlay. Adds an `nl-gov` governance profile,
+six new NL/EU artifact types with bundled templates, a generalized
+classification-ladder registry (`migrateClassification` gains a `ladder`
+argument), and two new computable model methods grounding sovereign-cloud
+governance in current Dutch/EU law and policy. Tracked on the LOCAL
+`arckit-nl-sovereign-cloud` issue-lifecycle model.
+
+- **`nl-gov` profile.** `PROFILE_EXTRAS` gains a fifth profile alongside
+  `standard | uk-gov | mod | ai`: risk gate `+ nl-tbb`; design gate
+  `+ nl-cloud`; assurance gate `+ nl-bio`, `+ nl-exit`, `+ eu-sovereignty`
+  (three separate mandatory groups, order-insensitive). `nl-dtia` is
+  deliberately **not** gate-required anywhere — it is a mandatory input for
+  other artifacts (produced on demand per Rijksbreed cloudbeleid 2026 §3.1 when
+  a third-country transfer without an adequacy decision is in scope), never
+  itself required by a phase.
+- **Six new NL/EU doc codes, templates and dependency edges**, wired into
+  `DOC_CODES` / `COMMAND_TO_CODE` / `TEMPLATE_MAP` / `MANDATORY_DEPS`:
+
+  | Command          | Doc code | Template file                           | Gating phase (nl-gov) | Mandatory inputs         |
+  | ---------------- | -------- | --------------------------------------- | --------------------- | ------------------------ |
+  | `nl-tbb`         | NLTBB    | `nl-tbb-classification-template.md`     | risk                  | stakeholders             |
+  | `nl-cloud`       | NLCLD    | `nl-cloud-assessment-template.md`       | design                | requirements, nl-tbb     |
+  | `eu-sovereignty` | EUSOV    | `eu-sovereignty-assessment-template.md` | assurance             | requirements             |
+  | `nl-bio`         | NLBIO    | `nl-bio-conformance-template.md`        | assurance             | requirements, principles |
+  | `nl-exit`        | NLEXIT   | `nl-exit-plan-template.md`              | assurance             | nl-cloud                 |
+  | `nl-dtia`        | NLDTIA   | `nl-dtia-template.md`                   | **not gated**         | data-model, requirements |
+
+  Every dependency's gating phase precedes or equals its dependent's
+  (`stakeholders`→context precedes `nl-tbb`→risk precedes `nl-cloud`→design
+  precedes `nl-exit`→assurance), verified by the existing table-driven
+  phase-ordering property test swept across all profiles including `nl-gov`.
+  None of the six new codes collide with the existing 62-entry `DOC_CODES` table
+  and none contains a hyphen, so `CODES_BY_LENGTH` longest-first resolution is
+  unaffected.
+- **`migrateClassification` gains a `ladder` argument** (`z.enum` of registered
+  ladder names, default `"uae"` — existing callers unaffected).
+  `CLASSIFICATION_MAPPING` (UK → UAE Smart Data) generalizes into
+  `CLASSIFICATION_LADDERS`, a registry keyed by ladder name; the shared
+  `CLASSIFICATION_LINE` regex (bound to the fixed UK source vocabulary) is
+  unchanged byte-for-byte, so only the per-ladder TARGET table varies — this
+  keeps the existing UAE contract and its idempotence property test valid
+  unmodified, and makes cross-ladder idempotence structural (NL targets are not
+  UK tokens, so a second pass under either ladder matches nothing).
+  `MigrationSchema` now records which `ladder` ran. New `ladder: "nl"` maps the
+  UK ladder to VIRBI 2025 rubricering, and **maps only what a published source
+  supports**:
+  - `SECRET` → `Stg. GEHEIM` and `TOP SECRET` → `Stg. ZEER GEHEIM` are
+    **sourced**, via the German BMI cross-national equivalence table
+    (`BMI-IS-20060329-KF01-A004.1`), which aligns NATO markings with both the NL
+    and UK national ladders: `SECRET ≡ NATO SECRET ≡ GEHEIM STG` and
+    `TOP SECRET ≡ COSMIC TOP SECRET ≡ ZEER GEHEIM STG`.
+  - `PUBLIC` → `Ongerubriceerd` is **reasoned, not cited** — both denote the
+    absence of a classification and `Ongerubriceerd` is the lowest NL level, so
+    it cannot under-protect.
+  - `OFFICIAL` and `OFFICIAL-SENSITIVE` are **refused, not guessed**. The BMI
+    table's UK row predates the April 2014 UK reform that replaced the lower
+    tiers with `OFFICIAL` plus the `-SENSITIVE` caveat, and no published UK → NL
+    equivalence covers them. Such lines are left byte-unchanged and reported in
+    the run's `skipped` list for an explicit human decision; one undecidable
+    document never aborts a whole-workspace migration.
+  - `Stg. CONFIDENTIEEL` is **unreachable by migration** — by the same table it
+    corresponds to UK `CONFIDENTIAL`, abolished in April 2014.
+
+  ⚠️ This ladder rewrites **governance-document markings only**. UK Cabinet
+  Office guidance (_International Classified Exchanges_ v1.5, Annex B) is that
+  international classified information is not re-marked with another nation's
+  classification — the norm is to protect it at the equivalent level. Do not
+  point this migration at genuine foreign classified material.
+- **`euSovereigntyScore` method** — new resource `sovereigntyAssessment`
+  (`sovereignty-${slugify(subject)}`, optionally `${project}-`-prefixed).
+  Implements `computeSovereigntyScore`: scores the EU Cloud Sovereignty
+  Framework v1.2.1's eight weighted Sovereignty Objectives (SOV-1..SOV-8,
+  weights 15/10/10/15/20/15/10/5, summing to exactly 100), fail-closed (rejects
+  a missing objective, a negative score, a score exceeding its `maxScore`, or
+  `maxScore <= 0`). Per-objective SEAL floors are **caller-supplied, never
+  hardcoded** — the framework states the tender specification sets the minimum
+  SEAL per objective, and the Dutch Verkenning notitie (NDS Cloudprogramma, 11
+  juni 2026) independently confirms floors are demand-side. `SEAL_LABELS`
+  carries both the English and official Dutch rendering for SEAL0–SEAL4 (Geen
+  soevereiniteit .. Volledige digitale soevereiniteit). The method computes and
+  reports; it does not certify — the written payload carries no
+  attestation/certified field, and carries a per-objective `evidence` field
+  through from the arguments.
+- **`nlCloudEligibility` method** — new resource `cloudEligibility`
+  (`cloud-eligibility-${slugify(subject)}`, optionally `${project}-` -prefixed).
+  Implements `evaluateCloudEligibility`, encoding the Herziening rijksbreed
+  cloudbeleid 2026 (EZK, 3 juli 2026, definitief) eligibility rules as a
+  **four-value verdict** — `allowed | conditional | discouraged |
+  prohibited`
+  — resolved as a strict total order
+  (`prohibited > conditional > discouraged > allowed`) over **every** fired
+  rule, never first-match, with every fired clause returned alongside a
+  human-readable `reason`. Fail-closed: every governance input
+  (`processingRegion`, `supplierJurisdiction`, `isPrimaryProcess`,
+  `isBasisregistratie`, `isEmailOrWorkplace`, the three separate clause-4.5
+  condition booleans, and the three entity-type flags) is a required argument
+  with no permissive default; `rubricering`/`tbbCategory` (at least one
+  required) are validated as zod enums at the argument boundary.
+  `supplierJurisdiction` is independent of `processingRegion` — an EEA
+  processing region does not suppress the §4.3 discouraged rule when the
+  supplier jurisdiction is non-EU/EEA. The one-way TBB↔rubricering inference
+  (Stg. GEHEIM implies TBB 2, not the reverse) is honoured in that direction
+  only when both are supplied and disagree.
+- **Terminology rule**: field/argument names and `.describe()` text stay in
+  English; enum values preserve the official Dutch/EU legal term verbatim
+  (translating a classification level risks misstating the law), and every
+  `.describe()` glosses the term in English on first use.
+- **Templates** (`templates/`): the six new templates above plus
+  `templates/_partials/document-control-nl.md` (an NL rubricering Document
+  Control block, alongside the existing `document-control-uk.md` /
+  `document-control-uae.md`). Every template carries a community-overlay banner
+  (not officially validated — verify citations before reliance) and cites its
+  grounding instrument + date directly, including the VIRBI 2013→VIRBI 2025
+  repeal/replacement (9 September 2025), the TBB systematiek (Gereedschap v1.0,
+  2026-06-06), BIO2 (vastgesteld OBDO 23 September 2025, v1.3 2026-01-09), and
+  the Cyberbeveiligingswet/Wwke (in force 15 August 2026).
+  `eu-sovereignty-assessment-template.md` carries a per-objective **evidence
+  column** derived from the EU CSF's own observable contributing factors
+  (decisive authority, governing legal system, cryptographic key holder,
+  support-staff jurisdiction, hardware/firmware/software provenance, API/licence
+  exit rights) and states plainly that vendor-analyst market reports are not
+  acceptable evidence and that a self-declared SEAL is an unverified claim until
+  the assessor records evidence per objective.
+- `manifest.yaml` / `model.version`: bumped `2026.08.02.1` → `2026.08.06.1` in
+  lockstep, with a new `upgrades[]` entry (`upgradeAttributes: identity` — the
+  `PROFILES` widening is backward-compatible for reads and the two new resource
+  schemas are additive, so no stored data needs transformation).
+  `additionalFiles` gains the six new templates plus the new partial.
+- `.claude/skills/arckit/SKILL.md`: `nl-gov` added to the `profile` enum in the
+  `startProject` example; frontmatter `description` gains NL/EU trigger phrases
+  ("rijksbreed cloudbeleid", "rubricering", "TBB", "sovereign cloud assessment",
+  "nl-gov", "BIO2", "EU Cloud Sovereignty Framework"). No legal exposition added
+  to SKILL.md's body — that stays in the templates.
+- `.claude/skills/arckit/references/state-machine.md`: `nl-gov` row added to the
+  Profile-extras table; two new Method-reference rows for `euSovereigntyScore`
+  and `nlCloudEligibility`; `migrateClassification`'s row updated for its new
+  `ladder` argument.
+- `.claude/skills/arckit/references/phases.md` and `README.md`: terse nl-gov
+  notes added to the risk/design/assurance sections and the model-methods list
+  respectively.
+- The installed skill copy at `swamp/.claude/skills/arckit/` was resynced from
+  this workspace source and diff-verified identical, avoiding the known
+  workspace-vs-installed drift failure mode documented in project memory.
+- `extensions/models/arckit_workspace_nl_test.ts` (new, 115 tests) covers the
+  ladder registry, cross-ladder idempotence, table wiring (doc codes, template
+  map, profile extras, mandatory deps, phase-ordering), the two pure functions'
+  fail-closed boundaries (every required argument asserted individually rejected
+  when omitted, not silently defaulted), the verdict total order across every
+  co-firing pair, and the two new methods' resource
+  naming/logging/argument-schema behavior. All 228 tests
+  (`deno test
+  --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/`)
+  pass, including the pre-existing 5 suites unmodified.
+
 ## 2026.08.02.1
 
 Real-fix pass closing all six remaining latent bugs tracked on the LOCAL

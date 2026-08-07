@@ -12,7 +12,9 @@ description: >
   status", "advance phase", "governance gaps", "architecture principles",
   "requirements document", "risk register", "stakeholder analysis", "SOBC",
   "business case", "ADR", "wardley map for project", "HLD review",
-  "secure by design", "TCoP", "governance artifact". Do NOT use for swamp
+  "secure by design", "TCoP", "governance artifact", "rijksbreed
+  cloudbeleid", "rubricering", "TBB", "sovereign cloud assessment",
+  "nl-gov", "BIO2", "EU Cloud Sovereignty Framework". Do NOT use for swamp
   issue tracking (use `issue-lifecycle`) or standalone Wardley strategy
   questions (use `weak-signal-analysis`).
 ---
@@ -57,7 +59,7 @@ swamp model method run governance provisionTemplates   # optional: on-disk templ
 ## The loop (per project)
 
 ```bash
-# 1. start (profile: standard | uk-gov | mod | ai)
+# 1. start (profile: standard | uk-gov | mod | ai | nl-gov)
 swamp model method run governance startProject \
   --input title="NHS Appointment Booking" --input profile=uk-gov
 

@@ -390,3 +390,36 @@ Deno.test("sanity: codeArb/idArb/instanceArb can each produce more than one dist
   assert(ids.size > 1);
   assert(sawInstance && sawNoInstance);
 });
+
+// ---------------------------------------------------------------------------
+// NL overlay prep: regression pin (arckit-nl-sovereign-cloud). proposeClassification
+// is about to gain an optional `ladder` argument backed by a
+// CLASSIFICATION_LADDERS registry (see arckit_workspace_nl_test.ts), varying
+// only the TARGET table per ladder while the source regex/vocabulary stays
+// fixed. This property generalizes the existing (f) idempotence check to the
+// exact seam that refactor must not disturb: for ANY out-of-vocabulary
+// Classification value, called with no ladder argument, proposeClassification
+// must keep producing zero changes — never an identity {from,to} entry. Kept
+// as its own new test (not a modification of the existing (f)/(g) properties
+// above) so a careless ladder refactor that starts generating identity
+// entries for unrecognized values is caught here before it reaches the new
+// NL ladder tests.
+// ---------------------------------------------------------------------------
+
+Deno.test("property: proposeClassification called with no ladder argument yields zero changes for ANY Classification value outside the UK source vocabulary (regression pin ahead of the NL ladder registry)", () => {
+  const recognized = new Set(CLASSIFICATION_VALUES as readonly string[]);
+  fc.assert(
+    fc.property(
+      fc.stringMatching(/^[a-zA-Z0-9 _.-]{1,20}$/).filter((v) =>
+        !recognized.has(v)
+      ),
+      fc.stringMatching(/^[a-zA-Z0-9 _-]{0,20}$/),
+      (value, filler) => {
+        const text = `${filler}\n| **Classification** | ${value} |\n${filler}`;
+        const { changes, newText } = proposeClassification(text);
+        return changes.length === 0 && newText === text;
+      },
+    ),
+    FC_RUNS,
+  );
+});
