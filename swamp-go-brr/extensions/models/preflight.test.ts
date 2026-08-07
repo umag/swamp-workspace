@@ -14,9 +14,9 @@ import {
 
 const SUB: SubstrateOpts = {
   registryAddr: "127.0.0.1:5000",
-  sshUser: "zeroclaw",
-  jjPath: "/home/zeroclaw/.local/bin/jj",
-  fcHost: "firecracker.aopab.art",
+  sshUser: "runner",
+  jjPath: "jj",
+  fcHost: "firecracker.example.com",
   snapshotPath: "/opt/firecracker/agent-snapshot.snap",
   memFilePath: "/opt/firecracker/agent-snapshot.mem",
   queueRoot: "/tmp/fc-fabric",
@@ -42,15 +42,15 @@ Deno.test("instanceCommands wires si/dv/fab with global args", () => {
   assertEquals(cmds.length, 3);
   assertStringIncludes(
     cmds[0],
-    "source-integration si --global-arg jjPath=/home/zeroclaw/.local/bin/jj",
+    "source-integration si --global-arg jjPath=jj",
   );
   assertStringIncludes(
     cmds[1],
-    "docker-verify dv --global-arg sshHost=127.0.0.1 --global-arg sshUser=zeroclaw",
+    "docker-verify dv --global-arg sshHost=127.0.0.1 --global-arg sshUser=runner",
   );
   assertStringIncludes(
     cmds[2],
-    "@magistr/firecracker fab --global-arg host=firecracker.aopab.art",
+    "@magistr/firecracker fab --global-arg host=firecracker.example.com",
   );
 });
 

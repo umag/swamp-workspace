@@ -127,7 +127,7 @@ Deno.test("vmNotRunning requires the 'domain' anchor, not a bare 'not running'",
 });
 
 // --- Network lifecycle idempotency (issue umag/swamp-workspace#1) ---
-// Real virsh strings captured live on host 192.168.88.242:
+// Real virsh strings captured live on a homelab libvirt host:
 //   net-start on an already-active network:
 //     "error: Requested operation is not valid: network is already active"
 //   net-destroy on an inactive network:

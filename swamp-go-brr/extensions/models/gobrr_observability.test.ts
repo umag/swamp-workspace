@@ -4,7 +4,7 @@
 // (orphan suppression + 4-state status + per-leaf attributes), buildMetrics, and
 // the intake/spec sensitive marks. Kept in a separate file so the existing
 // gobrr.test.ts stays green while these are RED.
-// Run: /home/zeroclaw/.swamp/deno/deno test extensions/models/gobrr_observability.test.ts
+// Run: ~/.swamp/deno/deno test extensions/models/gobrr_observability.test.ts
 import {
   assert,
   assertEquals,

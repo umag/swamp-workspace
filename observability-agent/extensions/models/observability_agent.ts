@@ -38,7 +38,7 @@ const GlobalArgsSchema = z.object({
     .string()
     .optional()
     .describe(
-      "VictoriaLogs Elasticsearch-bulk endpoint, e.g. http://192.168.88.242:9428/insert/elasticsearch/ . When unset, Vector is not configured.",
+      "VictoriaLogs Elasticsearch-bulk endpoint, e.g. http://192.0.2.42:9428/insert/elasticsearch/ . When unset, Vector is not configured.",
     ),
   hostLabel: z
     .string()

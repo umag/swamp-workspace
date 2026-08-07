@@ -15,8 +15,8 @@ decodes against, independent of any real Pi-hole instance.
 
 A sanitized capture from the homelab `aopab-local-dns` instance can be produced
 later via the existing `ext-canary-fixtures` swamp workflow (id `d1354265`), run
-from a WireGuard-connected host (zeroclaw/DO) — never from a developer laptop.
-Any such capture MUST go through the workflow's in-memory sanitizer AND a human
+from a WireGuard-connected host — never from a developer laptop. Any such
+capture MUST go through the workflow's in-memory sanitizer AND a human
 diff-review before commit: trim the record set to a small wire-shape sample, and
 re-verify (or replace) the two safety assertions in `pihole_test.ts` (no
 `192.168.x` address, no real `*.aopab.art` host, fake-looking `sid`/`csrf`).

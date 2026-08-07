@@ -19,7 +19,7 @@ extension does not use.
 
 ```bash
 swamp vault create @webframp/hashicorp-vault lastfm \
-  --config '{"address":"http://192.168.88.242:8200","mount":"swamp/lastfm","kvVersion":"2"}'
+  --config '{"address":"http://192.0.2.10:8200","mount":"swamp/lastfm","kvVersion":"2"}'
 swamp vault put lastfm LASTFM_API_KEY=<your-key> -f
 ```
 

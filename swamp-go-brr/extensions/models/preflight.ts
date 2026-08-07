@@ -286,11 +286,11 @@ const GlobalArgs = z.object({
   registryAddr: z.string().default("127.0.0.1:5000").describe(
     "Local OCI registry for the digest pin",
   ),
-  sshUser: z.string().default("zeroclaw").describe(
+  sshUser: z.string().default("runner").describe(
     "SSH user for the local docker-verify gate",
   ),
-  jjPath: z.string().default("/home/zeroclaw/.local/bin/jj"),
-  fcHost: z.string().default("firecracker.aopab.art").describe(
+  jjPath: z.string().default("jj"),
+  fcHost: z.string().default("firecracker.example.com").describe(
     "Firecracker fabric host (fab instance)",
   ),
   snapshotPath: z.string().default("/opt/firecracker/agent-snapshot.snap"),
@@ -326,13 +326,20 @@ function substrateFrom(g: z.infer<typeof GlobalArgs>): SubstrateOpts {
 /** @internal — the preflight model definition; invoke its methods via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/preflight",
-  version: "2026.08.02.1",
+  version: "2026.08.07.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
       toVersion: "2026.08.02.1",
       description:
         "Real-fix B2: scaffoldRepo now pre-validates every ScaffoldFile.path with pathEscapes BEFORE any write, rejecting a `../`-traversal (or absolute/whitespace) path with `unsafe scaffold path: <path>` instead of writing it straight into repoPath's parent. Fail-closed, no partial scaffold. No resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.07.1",
+      description:
+        "Privacy fix: GlobalArgs.sshUser/jjPath/fcHost defaulted to this homelab's REAL ssh username, home-directory path, and Firecracker fabric hostname — any installer who didn't override them inherited that disclosure. Defaults are now neutral placeholders (`runner`, `jj` (PATH-relative, matching source-integration's own jjPath default), `firecracker.example.com`). An existing instance that already pins explicit globalArguments is unaffected; only the un-set defaults change. No resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

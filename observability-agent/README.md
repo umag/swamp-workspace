@@ -50,8 +50,8 @@ alerting.
 
 ```bash
 swamp model create @magistr/observability/agent do-observability
-# set globalArguments: sshHost do.aopab.art, bindAddress 192.168.100.4,
-#   logsEndpoint http://192.168.88.242:9428/insert/elasticsearch/
+# set globalArguments: sshHost observability-target.example.com, bindAddress 192.0.2.4,
+#   logsEndpoint http://192.0.2.42:9428/insert/elasticsearch/
 swamp model method run do-observability install
 swamp model method run do-observability configure
 swamp model method run do-observability status

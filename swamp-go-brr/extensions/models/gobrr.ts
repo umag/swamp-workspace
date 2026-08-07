@@ -1351,13 +1351,20 @@ function persist(context: Ctx, run: Run): Promise<unknown> {
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/gobrr",
-  version: "2026.08.02.1",
+  version: "2026.08.07.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
       toVersion: "2026.08.02.1",
       description:
         "Version-aligned with the other four swamp-go-brr models for the B1-B8 latent-bug real-fix release (B4/B5 tighten + extend lib/scrub.ts, consumed here unconditionally at the verifyTail storage boundary). gobrr.ts itself is functionally unchanged: still a pure DAG state machine, no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.07.1",
+      description:
+        "Version-aligned with the other four swamp-go-brr models for the preflight privacy fix (real homelab sshUser/jjPath/fcHost defaults replaced with neutral placeholders). gobrr.ts itself is unchanged, no resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

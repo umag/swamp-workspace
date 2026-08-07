@@ -4,7 +4,7 @@
 // the network is stubbed (no real egress). Endpoint + token are method args (the
 // workflow wires them via a vault CEL); the resolved URL/key are NEVER persisted
 // or logged.
-// Run: /home/zeroclaw/.swamp/deno/deno test extensions/models/otlp_export.test.ts
+// Run: ~/.swamp/deno/deno test extensions/models/otlp_export.test.ts
 import {
   assert,
   assertEquals,
