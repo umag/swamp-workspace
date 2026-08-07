@@ -601,12 +601,12 @@ for (const [method, wireKey, spec] of INSTANCE_NAME_PINS) {
 // migration window (removed no earlier than 2026-09-07, see
 // README.md/CHANGELOG.md). Two parts, because part (ii) is unobservable
 // without part (i): this file's writeResource stub records the payload
-// VERBATIM, before any schema runs (musicbrainz_adversarial_test.ts:1372
+// VERBATIM, before any schema runs (musicbrainz_adversarial_test.ts:1373
 // pins that directly), so only running the alias payload through the
 // resource's OWN declared schema (part ii) can see a change to the two
 // additive `artists` schema fields — zod strips unknown keys on `.parse()`
 // by default. Pattern copied from the cast form already used at
-// musicbrainz_coverage_test.ts:831-834.
+// musicbrainz_coverage_test.ts:840-843.
 // ---------------------------------------------------------------------------
 
 Deno.test("search-artist: ALSO writes the deprecated 'search' alias (spec artists) with deprecated/supersededBy markers; the canonical write carries neither", async () => {

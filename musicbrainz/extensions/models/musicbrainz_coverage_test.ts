@@ -1210,13 +1210,13 @@ Deno.test("NEW SURFACE (payload budget regression): a full MusicBrainz artist ob
 // write on the SAME optional `artistMbid` argument (`missingReleases` vs
 // `seedUrls`), so one artist run through both methods produces the
 // identical defect this issue fixes for the five search methods — pinned
-// live already at musicbrainz_methods_test.ts:1053-1054 and :1118-1119, with
+// live already at musicbrainz_methods_test.ts:1151-1152 and :1216-1217, with
 // one row already on the live instance. It is explicitly OUT OF SCOPE here
 // (see the plan's hard constraints) and tracked by its own filed issue,
 // `musicbrainz-missing-seed-instance-collision`. `KNOWN_UNFIXED_COLLISIONS`
 // is keyed on the INSTANCE NAME **and** the sorted spec set together, not
 // the spec set alone: spec `seedUrls` has a SECOND writer at instance
-// `seed-single` (`seed-from-bandcamp`, musicbrainz.ts:2025), and a
+// `seed-single` (`seed-from-bandcamp`, musicbrainz.ts:2117), and a
 // spec-set-only key would silently excuse a future `{missingReleases,
 // seedUrls}` pair arising at any OTHER instance name too. The test also
 // asserts every allowlist key was actually observed, so this carve-out
@@ -1277,7 +1277,7 @@ const bcRoute = (body: string): Route => (req) =>
   isBcHost(req) ? html(body) : undefined;
 
 /** The generic `search` method's entity enum, read LIVE off the model's own
- * declared arguments schema (musicbrainz.ts:2314-2326) rather than
+ * declared arguments schema (musicbrainz.ts:2406-2418) rather than
  * hardcoded — a 13th entity added to the enum is automatically covered by
  * one more execution here, with no edit needed in this file. */
 type SearchEntityShape = {
@@ -1374,8 +1374,8 @@ const COLLISION_FIXTURES: Record<
       [bcRoute(ALBUM_JSONLD_HTML)],
     ),
   // find-missing and seed-all-missing are BOTH given the SAME artistMbid —
-  // matching the existing live pins at musicbrainz_methods_test.ts:1053-1054
-  // and :1118-1119 — so the second, already-tracked live collision
+  // matching the existing live pins at musicbrainz_methods_test.ts:1151-1152
+  // and :1216-1217 — so the second, already-tracked live collision
   // (KNOWN_UNFIXED_COLLISIONS below) is genuinely observed here, not assumed.
   "find-missing": (time) =>
     runCollision(
