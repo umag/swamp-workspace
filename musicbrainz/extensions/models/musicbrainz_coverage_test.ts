@@ -989,6 +989,25 @@ Deno.test("sync-artist-discographies: a discography that ends naturally within t
 });
 
 // ---------------------------------------------------------------------------
+// Version self-consistency — model.version must equal the newest
+// upgrades[].toVersion, so the upgrades chain and the published version
+// can never silently drift apart.
+// ---------------------------------------------------------------------------
+
+Deno.test("model surface: model.version equals the newest upgrades[].toVersion", () => {
+  const upgrades = model.upgrades as Array<
+    { fromVersion: string; toVersion: string }
+  >;
+  assert(upgrades.length > 0, "model.upgrades must not be empty");
+  const newest = upgrades[upgrades.length - 1];
+  assertEquals(
+    newest.toVersion,
+    model.version,
+    "the LAST upgrades entry's toVersion must equal model.version",
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Model surface enumeration — closed-set guard over model.methods /
 // model.resources, in music-library's style (music_library_coverage_test.ts:
 // 418-450): "if someone adds a method or resource to musicbrainz.ts without
