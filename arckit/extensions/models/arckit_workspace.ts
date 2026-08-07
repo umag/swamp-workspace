@@ -458,6 +458,7 @@ const SOV_WEIGHTS: Record<string, number> = {
 };
 
 const SOV_IDS = Object.keys(SOV_WEIGHTS);
+const SOV_ID_SET = new Set(SOV_IDS);
 
 /** SEAL0..SEAL4 rank, for comparing an achieved SEAL against a caller-supplied floor. */
 const SEAL_RANK: Record<string, number> = {
@@ -681,10 +682,19 @@ const ProvisionResultSchema = z.object({
   provisionedAt: z.string(),
 });
 
-const MigrationSchema = z.object({
+// Exported (unlike most resource schemas in this file) so a pre-2026.08.06.1
+// (no `ladder` key) classificationMigration record's backward-compatible
+// parse can be pinned directly by a test — see MigrationSchema.ladder's
+// `.default("uae")` comment.
+export const MigrationSchema = z.object({
   path: z.string(),
   apply: z.boolean(),
-  ladder: z.enum(CLASSIFICATION_LADDER_NAMES),
+  // Defaulted (like `skipped` below) so a pre-2026.08.06.1 classificationMigration
+  // record — written before this field existed, necessarily by the only
+  // ladder that existed then — still parses. classificationMigration is
+  // lifetime "infinite" with garbageCollection 5, so old records persist and
+  // can be restored from the datastore; a required field here would break them.
+  ladder: z.enum(CLASSIFICATION_LADDER_NAMES).default("uae"),
   scannedFiles: z.number(),
   files: z.array(z.object({
     relPath: z.string(),
@@ -968,12 +978,17 @@ export function proposeClassification(text: string, ladder: string = "uae"): {
 /**
  * EU Cloud Sovereignty Framework v1.2.1: score eight weighted Sovereignty
  * Objectives (SOV-1..SOV-8, weights 15/10/10/15/20/15/10/5, summing to 100).
- * Score = sum((score/maxScore) * weight), rounded to 2dp. FAIL-CLOSED:
- * rejects a missing objective, a negative score, a score exceeding its
- * maxScore, or maxScore <= 0. Per-objective SEAL floors are CALLER-SUPPLIED
- * (never hardcoded — the framework states the tender specification defines
- * the minimum SEAL per objective); when supplied, every objective whose
- * achieved SEAL falls below its floor is named in `objectivesBelowFloor`.
+ * Score = sum((score/maxScore) * weight), rounded to 2dp. FAIL-CLOSED —
+ * `objectives` must contain EXACTLY the eight known ids, each EXACTLY once:
+ * rejects a missing objective, a DUPLICATE objective id (the array must not
+ * name the same objective twice — a later duplicate silently overriding an
+ * earlier one is a fail-open shape this function refuses), an UNRECOGNIZED
+ * objective id (one outside SOV-1..SOV-8), a negative score, a score
+ * exceeding its maxScore, or maxScore <= 0. Per-objective SEAL floors are
+ * CALLER-SUPPLIED (never hardcoded — the framework states the tender
+ * specification defines the minimum SEAL per objective); when supplied,
+ * every objective whose achieved SEAL falls below its floor is named in
+ * `objectivesBelowFloor`.
  */
 export function computeSovereigntyScore(input: {
   objectives: Array<
@@ -1001,6 +1016,24 @@ export function computeSovereigntyScore(input: {
   floorsPassed: boolean;
   objectivesBelowFloor: string[];
 } {
+  const seenIds = new Set<string>();
+  for (const o of input.objectives) {
+    if (!SOV_ID_SET.has(o.id)) {
+      throw new Error(
+        `computeSovereigntyScore: unrecognized objective "${o.id}" — objectives must be exactly ${
+          SOV_IDS.join(", ")
+        }`,
+      );
+    }
+    if (seenIds.has(o.id)) {
+      throw new Error(
+        `computeSovereigntyScore: duplicate objective "${o.id}" — objectives must be exactly ${
+          SOV_IDS.join(", ")
+        }, each exactly once`,
+      );
+    }
+    seenIds.add(o.id);
+  }
   const byId = new Map(input.objectives.map((o) => [o.id, o]));
   for (const id of SOV_IDS) {
     const o = byId.get(id);

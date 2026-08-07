@@ -134,6 +134,7 @@ import {
   evaluateCloudEligibility,
   gateFor,
   MANDATORY_DEPS,
+  MigrationSchema,
   model,
   NL_REQUIRES_EXPLICIT_DECISION,
   parseArtifactFilename,
@@ -345,6 +346,24 @@ Deno.test("proposeClassification rejects an unknown ladder name, listing the reg
     err.message.includes("uae") && err.message.includes("nl"),
     `error should list registered ladders, got: ${err.message}`,
   );
+});
+
+Deno.test("MigrationSchema parses a pre-2026.08.06.1 classificationMigration record (no `ladder` key at all) and defaults ladder to 'uae' — backward compatibility for records restored from the datastore (code review defect: `ladder` was a REQUIRED enum with no default, so old records without it failed to parse, inconsistent with `skipped`'s own `.default([])` one version earlier)", () => {
+  const oldShapedRecord = {
+    path: "/some/workspace",
+    apply: false,
+    // no `ladder` key — exactly what every classificationMigration record
+    // written before this field existed looks like.
+    scannedFiles: 3,
+    files: [
+      { relPath: "001-x/ARC-001-REQ-v1.0.md", changes: [] },
+    ],
+    totalChanges: 0,
+    skipped: [],
+    ranAt: "2026-07-20T00:00:00.000Z",
+  };
+  const parsed = MigrationSchema.parse(oldShapedRecord);
+  assertEquals(parsed.ladder, "uae");
 });
 
 Deno.test("methods: migrateClassification records which ladder ran, defaulting to uae when omitted", async () => {
@@ -806,6 +825,43 @@ Deno.test("computeSovereigntyScore rejects maxScore <= 0", () => {
     o.id === "SOV-3" ? { ...o, score: 0, maxScore: 0 } : o
   );
   assertThrows(() => computeSovereigntyScore({ objectives }));
+});
+
+Deno.test("computeSovereigntyScore rejects a DUPLICATE objective id, naming the duplicate — a later entry must not silently override an earlier one via a Map construction (code review defect: SOV-1 passed twice was silently accepted, changing the score with no error)", () => {
+  const objectives = [
+    ...fullMarksObjectives(),
+    { id: "SOV-1", score: 3, maxScore: 10 }, // duplicate of the first SOV-1
+  ];
+  const err = assertThrows(
+    () => computeSovereigntyScore({ objectives }),
+    Error,
+  );
+  assert(
+    err.message.includes("SOV-1"),
+    `error should name the duplicated id, got: ${err.message}`,
+  );
+});
+
+Deno.test("computeSovereigntyScore rejects an UNRECOGNIZED objective id, naming it — an id outside SOV-1..SOV-8 must not be silently ignored (code review defect: SOV-99 alongside the eight was silently dropped)", () => {
+  const objectives = [
+    ...fullMarksObjectives(),
+    { id: "SOV-99", score: 10, maxScore: 10 },
+  ];
+  const err = assertThrows(
+    () => computeSovereigntyScore({ objectives }),
+    Error,
+  );
+  assert(
+    err.message.includes("SOV-99"),
+    `error should name the unrecognized id, got: ${err.message}`,
+  );
+});
+
+Deno.test("computeSovereigntyScore accepts exactly the eight known ids, each exactly once, with no error (the fail-closed id checks do not false-positive on well-formed input)", () => {
+  const objectives = fullMarksObjectives();
+  assertEquals(objectives.length, 8);
+  const r = asScore(computeSovereigntyScore({ objectives }));
+  assertAlmostEquals(r.score, 100, 0.01);
 });
 
 Deno.test("computeSovereigntyScore: omitting sealFloors performs no floor check", () => {
