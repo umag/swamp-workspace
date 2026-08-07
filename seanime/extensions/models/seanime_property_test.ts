@@ -24,7 +24,7 @@
  *  (d) torrent/list round-trip — array and {torrents:[...]} inputs both
  *      normalize losslessly to {torrents, timestamp}.
  */
-import { assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
 import { model } from "./seanime.ts";
 
@@ -76,20 +76,45 @@ function run(name: string, args: Record<string, unknown>, ctx: unknown) {
 
 type Route = (req: Request) => Response | Promise<Response> | undefined;
 
+// Eager plain-object snapshot instead of `.clone()` — cloning a body-bearing
+// Request tees its body into a ReadableStream that is never consumed or
+// cancelled, leaking ~6KB per stubbed fetch call (see
+// fix/soak-property-harness-heap-leak, and the heap-leak regression pin
+// further down this file). The body is read ONCE via `await req.text()`;
+// routes get a freshly reconstructed Request built from the captured text
+// so existing route logic (which may itself read the body) keeps working.
+type CapturedRequest = {
+  method: string;
+  url: string;
+  headers: Headers;
+  body: string;
+};
+
 async function withFetchStub(
   routes: Route[],
-  fn: (calls: Request[]) => Promise<void>,
+  fn: (calls: CapturedRequest[]) => Promise<void>,
 ) {
   const original = globalThis.fetch;
-  const calls: Request[] = [];
+  const calls: CapturedRequest[] = [];
   globalThis.fetch = (async (
     input: Request | URL | string,
     init?: RequestInit,
   ) => {
     const req = input instanceof Request ? input : new Request(input, init);
-    calls.push(req.clone());
+    const body = await req.text();
+    calls.push({
+      method: req.method,
+      url: req.url,
+      headers: req.headers,
+      body,
+    });
+    const routable = new Request(req.url, {
+      method: req.method,
+      headers: req.headers,
+      body: ["GET", "HEAD"].includes(req.method) ? undefined : body,
+    });
     for (const route of routes) {
-      const res = await route(req);
+      const res = await route(routable);
       if (res) return res;
     }
     throw new Error(`fetch stub: unrouted request ${req.method} ${req.url}`);
@@ -528,4 +553,156 @@ Deno.test("property: torrent-list round-trips an {torrents:[...]} object lossles
     ),
     FC_RUNS,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Heap-leak regression pin (fix/soak-property-harness-heap-leak)
+// ---------------------------------------------------------------------------
+
+// withFetchStub's `calls.push(req.clone())` above tees each stubbed
+// Request's body into a ReadableStream that is never consumed or cancelled.
+// This pin drives sync-planning-rules' heaviest fixed shape (15 unique,
+// all-eligible PLANNING entries -> 2 baseline reads + 15 POSTs = 17
+// body-bearing fetch calls/iteration, the most of any property in this
+// file) IN-PROCESS for a FIXED iteration count -- deterministic, no
+// subprocess, no extra deno.json permissions beyond the --v8-flags runtime
+// flag below.
+//
+// Measuring `Deno.memoryUsage().heapUsed` without forcing a GC cycle
+// conflates uncollected garbage with genuinely retained memory: an early
+// (unforced-GC) round of this pin measured 100.7/85.2/100.4MB for a faithful
+// eager-snapshot fix against a 100MB bound -- flaky, 2 of 3 runs over
+// bound. Forcing a full GC immediately before *and* after the timing window
+// separates the two regimes cleanly. `gc` is only defined when the process
+// is launched with `--v8-flags=--expose-gc` (wired into this extension's
+// `test` and `test:soak` tasks in deno.json); under a plain `deno test`
+// (e.g. a contributor running the file directly) `gc` is undefined and the
+// pin is marked `ignore` instead of silently passing or throwing, so the
+// rest of the file still runs clean. Deno's test runner has no separate
+// ignore-reason field — `deno test` only ever prints a bare `ignored (0ms)`
+// for a skipped test, regardless of `ignore`'s value, so the reason is
+// appended to the test NAME itself instead; that's the only place it is
+// actually surfaced in `deno test` output.
+//
+// This pin is also SKIPPED when FC_NUM_RUNS is set above HEAP_PIN_ITERS
+// (e.g. the nightly soak's FC_NUM_RUNS=1000000, or `test:soak`'s 10000).
+// It exists as a regression guard for the ordinary CI suite (`deno task
+// test`, no FC_NUM_RUNS, default 200 property runs) — in the soak this same
+// process has already run every OTHER property in this file at up to
+// 1,000,000 iterations before reaching this test, which measurably shifts
+// GC-timing margins (14-26% swings were observed between a filtered
+// single-test run and a full-file run even WITH forced GC). At soak scale
+// the static `.clone()`-ban gate (check_property_harness.ts) is the actual
+// safety net, not this fixed-iteration pin — running it there would only
+// add flake, not coverage.
+//
+// Measured directly on this branch (forced GC before/after,
+// Deno 2.7.13 x86_64-apple-darwin macOS, idle laptop, `deno test
+// --v8-flags=--expose-gc --allow-env=FC_NUM_RUNS extensions/models/`,
+// 8 runs per figure — see fix/soak-property-harness-heap-leak PR
+// description for the full spread):
+//   - WITH req.clone() (today, this branch): heapUsed grows 112-132MB over
+//     6,000 iterations, worst (lowest) observed run 112.21MB.
+//   - WITHOUT it (a faithful eager-snapshot prototype of the planned fix —
+//     snapshot {method,url,body}, reconstruct a Request only when a body
+//     exists): heapUsed grows 0.1-0.8MB over the same 6,000 iterations —
+//     ordinary GC-reclaimable per-iteration garbage, not a leak.
+// These are indicative, not contractual — expect different absolute numbers
+// on different hardware/Deno versions, but the same order-of-magnitude
+// separation (the leaky regime clears the bound by >=22x on every run
+// observed here; the snapshot regime never comes close to it). BOUND_MB=5
+// gives the snapshot prototype's worst observed reading (0.8MB) a >=6x
+// margin below the bound, while the leakiest-code worst reading (112.21MB)
+// clears the bound by >=22x and the typical reading by >=23x.
+const HEAP_PIN_ITERS = 6000;
+const HEAP_PIN_BOUND_MB = 5;
+
+const exposedGc = (globalThis as { gc?: () => void }).gc;
+const heapPinSkipReason = exposedGc
+  ? (ENV_RUNS && Number(ENV_RUNS) > HEAP_PIN_ITERS
+    ? `FC_NUM_RUNS=${ENV_RUNS} exceeds HEAP_PIN_ITERS=${HEAP_PIN_ITERS} — ` +
+      "this is a soak-scale run; the fixed-iteration heap pin is redundant " +
+      "with the static .clone() gate there and would only add flake"
+    : undefined)
+  : "gc() is not exposed — run via `deno task test`/`test:soak` " +
+    "(--v8-flags=--expose-gc) to exercise this pin";
+
+const HEAP_PIN_NAME =
+  "heap pin: sync-planning-rules bulk partition keeps heap growth under 5MB over 6,000 in-process iterations (forced GC)";
+
+Deno.test({
+  name: heapPinSkipReason
+    ? `${HEAP_PIN_NAME} [SKIPPED: ${heapPinSkipReason}]`
+    : HEAP_PIN_NAME,
+  ignore: heapPinSkipReason !== undefined,
+  fn: async () => {
+    const gc = exposedGc!;
+    const entries = Array.from({ length: 15 }, (_, i) => ({
+      id: 9_000_000 + i,
+      status: "RELEASING",
+      title: { romaji: `Heap Pin Anime ${i}` },
+    }));
+    const collection = collectionOf(entries);
+    // Positive control (see HIGH-1 finding): a plain number, incremented
+    // once per stubbed fetch call. Deliberately NOT an array/object
+    // accumulator — this counter must stay allocation-light itself so it
+    // cannot distort the heap-delta measurement below.
+    let totalFetchCalls = 0;
+    const routes: Route[] = [(req) => {
+      totalFetchCalls++;
+      const url = new URL(req.url);
+      if (url.pathname === "/api/v1/anilist/collection") {
+        return json(collection);
+      }
+      if (url.pathname === "/api/v1/auto-downloader/rules") {
+        return json({ data: [] });
+      }
+      return json({ data: { success: true } });
+    }];
+
+    // Force GC before the baseline sample too — a warm/cold heap from
+    // whatever ran earlier in this process shifts the "before" reading just
+    // as much as it shifts "after" if left unforced.
+    gc();
+    const before = Deno.memoryUsage().heapUsed;
+    for (let i = 0; i < HEAP_PIN_ITERS; i++) {
+      const { ctx } = makeCtx();
+      await withFetchStub(routes, async () => {
+        await run("sync-planning-rules", { includeFinished: true }, ctx);
+      });
+    }
+    gc();
+    const after = Deno.memoryUsage().heapUsed;
+
+    // Positive control: prove the intended workload actually ran BEFORE
+    // trusting the heap-delta assertion below. Every iteration drives 2
+    // baseline reads (GET collection, GET rules) + 15 rule-creation POSTs
+    // (all 15 fixed entries above are truthy-mediaId, unique, RELEASING,
+    // and never pre-existing in the empty `rules` response, so all 15
+    // always land in `created`) = 17 fetch calls, fixed and deterministic
+    // across every iteration. Without this, a future change that silently
+    // shrank the entry list, gutted the loop body, or changed the
+    // created/skipped/failed routing would still pass the heap-delta
+    // assertion below — measuring nothing.
+    const expectedFetchCalls = HEAP_PIN_ITERS * 17;
+    assertEquals(
+      totalFetchCalls,
+      expectedFetchCalls,
+      `expected exactly ${expectedFetchCalls} fetch calls (${HEAP_PIN_ITERS} ` +
+        "iterations x 17 calls/iteration: 2 baseline reads + 15 rule-" +
+        `creation POSTs), got ${totalFetchCalls} — the pin's workload did ` +
+        "not run as intended, so the heap-delta assertion below would be " +
+        "measuring nothing",
+    );
+
+    const deltaMB = (after - before) / (1024 * 1024);
+    assert(
+      deltaMB < HEAP_PIN_BOUND_MB,
+      `heap grew by ${
+        deltaMB.toFixed(1)
+      }MB over ${HEAP_PIN_ITERS} iterations (bound ${HEAP_PIN_BOUND_MB}MB) — ` +
+        "withFetchStub's req.clone() leaks per stubbed call (see " +
+        "fix/soak-property-harness-heap-leak)",
+    );
+  },
 });

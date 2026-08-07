@@ -1,8 +1,8 @@
 {
   "tasks": {
     "check": "deno check extensions/models/seadex.ts extensions/reports/seadex_upgrades.ts extensions/reports/seadex_upgrades_test.ts",
-    "test": "deno test --allow-env=FC_NUM_RUNS extensions/models/ extensions/reports/ --permit-no-files",
-    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/seadex_property_test.ts",
+    "test": "deno test --v8-flags=--expose-gc --allow-env=FC_NUM_RUNS extensions/models/ extensions/reports/ --permit-no-files",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --v8-flags=--expose-gc --allow-env=FC_NUM_RUNS extensions/models/seadex_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

@@ -17,15 +17,34 @@ const asArr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const asStr = (v: unknown): string => (v == null ? "" : String(v));
 const asNum = (v: unknown): number =>
   typeof v === "number" ? v : Number(v) || 0;
+const isPlainObject = (v: unknown): v is J =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+// Human-readable name for a value's JSON shape, for error messages only.
+const describeJsonShape = (v: unknown): string =>
+  v === null ? "null" : Array.isArray(v) ? "an array" : typeof v;
 
 const artDir = Deno.args[0] ?? "artifacts";
 const runUrl = Deno.env.get("RUN_URL") ?? "";
 const runLine = runUrl ? ` · [run](${runUrl})` : "";
 
 // Strip any non-JSON preamble (tessl prints "Downloading …" before the JSON).
-function parseLoose(raw: string): J {
+function stripJsonPreamble(raw: string): string {
   const i = raw.indexOf("{");
-  return asObj(JSON.parse(i >= 0 ? raw.slice(i) : raw));
+  return i >= 0 ? raw.slice(i) : raw;
+}
+
+function parseLoose(raw: string): J {
+  return asObj(JSON.parse(stripJsonPreamble(raw)));
+}
+
+// Like parseLoose, but returns the RAW parsed value instead of silently
+// coercing it through asObj — buildCompliance's summary loop below needs to
+// tell "parsed to `{}` because the file legitimately contained `{}`" apart
+// from "parsed to `null`/an array/a primitive that asObj would have quietly
+// turned into `{}`", so it can validate the actual shape instead of trusting
+// a coercion that papers over the difference.
+function parseJsonRaw(raw: string): unknown {
+  return JSON.parse(stripJsonPreamble(raw));
 }
 
 async function readArtifact(dir: string): Promise<J | null> {
@@ -229,25 +248,73 @@ function complianceViolationLines(
   });
 }
 
-async function buildCompliance(): Promise<string> {
-  // check_compliance.ts / check_allowlist.ts / score_ratchet.ts each write
-  // their own small --json summary directly to the artifact dir (no
-  // per-tool subdirectory the way tessl/promptfoo use) — see the
-  // `compliance` job in .github/workflows/ci.yml.
-  const readJson = async (name: string): Promise<J | null> => {
-    try {
-      return parseLoose(await Deno.readTextFile(`${artDir}/${name}`));
-    } catch {
-      return null;
-    }
-  };
-  const compliance = await readJson(
-    "compliance-summary/compliance-summary.json",
-  );
-  const allowlist = await readJson("compliance-summary/allowlist-summary.json");
-  const ratchet = await readJson("compliance-summary/ratchet-summary.json");
+const RATCHET_SUMMARY_FILENAME = "ratchet-summary.json";
+const COMPLIANCE_SUMMARY_FILENAME = "compliance-summary.json";
+const ALLOWLIST_SUMMARY_FILENAME = "allowlist-summary.json";
 
-  if (!compliance && !allowlist && !ratchet) {
+/** Historical section order (Compliance, then Allowlist — the order these
+ * two sections rendered in before any generic multi-summary support
+ * existed). Any OTHER summary filename (a new validator, e.g.
+ * check_property_harness.ts's property-harness-summary.json) sorts after
+ * both, ordered alphabetically among itself so a repeat run is
+ * deterministic. Score ratchet is not in this table — it's handled
+ * separately and always rendered last, both before and after this file
+ * gained generic summary support. */
+const SECTION_ORDER = [COMPLIANCE_SUMMARY_FILENAME, ALLOWLIST_SUMMARY_FILENAME];
+
+function sectionOrderKey(filename: string): number {
+  const idx = SECTION_ORDER.indexOf(filename);
+  return idx === -1 ? SECTION_ORDER.length : idx;
+}
+
+/** List every `*-summary.json` file dropped into the compliance job's
+ * artifact directory, sorted for stable output. GENERIC by design: any
+ * validator that writes its own `<name>-summary.json` next to
+ * compliance-summary.json / allowlist-summary.json / ratchet-summary.json
+ * (e.g. check_property_harness.ts's property-harness-summary.json) is
+ * picked up automatically — buildCompliance() never hardcodes the count or
+ * names of summary files. */
+async function listComplianceSummaryFiles(): Promise<string[]> {
+  const dir = `${artDir}/compliance-summary`;
+  const out: string[] = [];
+  try {
+    for await (const e of Deno.readDir(dir)) {
+      if (e.isFile && e.name.endsWith("-summary.json")) out.push(e.name);
+    }
+  } catch {
+    // artifact dir missing (job skipped/failed before upload)
+  }
+  return out.sort();
+}
+
+/** Human title for a summary's section heading, derived from its filename
+ * (`property-harness-summary.json` -> "Property harness violations") so a
+ * newly-added validator needs no code change here to get a labeled section. */
+function summaryTitle(filename: string): string {
+  const base = filename.replace(/-summary\.json$/, "").replace(/-/g, " ");
+  const capitalized = base.charAt(0).toUpperCase() + base.slice(1);
+  return `${capitalized} violations`;
+}
+
+/** Which key on each violation identifies its scope (the file/extension it
+ * belongs to), so the rendered line can prefix it — check_compliance.ts
+ * violations carry `extension`, check_property_harness.ts violations carry
+ * `file`, check_allowlist.ts violations carry neither (repo-wide). */
+function violationScopeField(violations: J[]): string {
+  if (violations.some((v) => "extension" in v)) return "extension";
+  if (violations.some((v) => "file" in v)) return "file";
+  return "";
+}
+
+async function buildCompliance(): Promise<string> {
+  // check_compliance.ts / check_allowlist.ts / score_ratchet.ts / (any
+  // future validator, e.g. check_property_harness.ts) each write their own
+  // small --json summary directly to the artifact dir (no per-tool
+  // subdirectory the way tessl/promptfoo use) — see the `compliance` job in
+  // .github/workflows/ci.yml.
+  const summaryFiles = await listComplianceSummaryFiles();
+
+  if (summaryFiles.length === 0) {
     return [
       "<!-- ci-report:compliance -->",
       "## extension quality — compliance report",
@@ -257,9 +324,74 @@ async function buildCompliance(): Promise<string> {
     ].join("\n");
   }
 
-  const complianceViolations = asArr(compliance?.violations).map(asObj);
-  const allowlistViolations = asArr(allowlist?.violations).map(asObj);
-  const reports = asArr(ratchet?.reports).map(asObj);
+  const summaries: Array<{ filename: string; data: J }> = [];
+  // Filenames that existed but failed to parse, OR parsed fine as JSON but
+  // not to the expected shape — kept SEPARATE from "no artifact found"
+  // (summaryFiles.length === 0, handled above) and from "parsed with zero
+  // violations" (a genuinely clean summary). Either kind of failure means
+  // we have NO IDEA what that check found — it must never silently
+  // collapse into the same 0-violation state a real pass produces (via
+  // asObj/asArr quietly coercing `null`/an array/a missing field into
+  // `{}`/`[]`), or a corrupted upload / a validator bug that omits
+  // `violations` from its own output renders as a false green "all clear"
+  // instead of the problem it actually is.
+  const unparseableFiles: string[] = [];
+  for (const filename of summaryFiles) {
+    try {
+      const raw = parseJsonRaw(
+        await Deno.readTextFile(`${artDir}/compliance-summary/${filename}`),
+      );
+      if (!isPlainObject(raw)) {
+        unparseableFiles.push(
+          `${filename} — expected a JSON object, got ${describeJsonShape(raw)}`,
+        );
+        continue;
+      }
+      // ratchet-summary.json alone has the distinct {reports: [...]} shape
+      // (see the comment on `reports` below); every other summary is
+      // expected to be {violations: [...]}. An EMPTY array is a fine,
+      // genuinely-clean result — only a missing, null, or non-array field
+      // is a shape failure.
+      const key = filename === RATCHET_SUMMARY_FILENAME
+        ? "reports"
+        : "violations";
+      if (!Array.isArray(raw[key])) {
+        unparseableFiles.push(
+          `${filename} — missing or non-array \`${key}\` field`,
+        );
+        continue;
+      }
+      summaries.push({ filename, data: raw });
+    } catch (err) {
+      unparseableFiles.push(
+        `${filename} — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  const complianceSummary = summaries.find((s) =>
+    s.filename === COMPLIANCE_SUMMARY_FILENAME
+  );
+  const ratchetSummary = summaries.find((s) =>
+    s.filename === RATCHET_SUMMARY_FILENAME
+  );
+  // Every summary EXCEPT ratchet is treated as a {violations: [...]} list —
+  // ratchet alone has the different {reports: [...]} shape. Rendered in
+  // SECTION_ORDER (historical Compliance-then-Allowlist order, any new
+  // gate appended after, alphabetically among themselves) rather than
+  // filename order, so a newly-added validator can't reshuffle the two
+  // existing sections.
+  const violationSummaries = summaries
+    .filter((s) => s.filename !== RATCHET_SUMMARY_FILENAME)
+    .sort((a, b) => {
+      const ka = sectionOrderKey(a.filename);
+      const kb = sectionOrderKey(b.filename);
+      return ka !== kb ? ka - kb : a.filename.localeCompare(b.filename);
+    });
+
+  const checkedCount = asArr(complianceSummary?.data.checked).length;
+
+  const reports = asArr(ratchetSummary?.data.reports).map(asObj);
   const ratchetFailures = reports.filter((r) =>
     asStr(asObj(r.outcome).status) === "fail"
   );
@@ -267,13 +399,35 @@ async function buildCompliance(): Promise<string> {
     asStr(asObj(r.outcome).status) === "rebaseline"
   );
 
-  const totalBlocking = complianceViolations.length +
-    allowlistViolations.length + ratchetFailures.length;
-  const header = totalBlocking > 0
+  let totalViolations = 0;
+  const violationSections: string[] = [];
+  for (const { filename, data } of violationSummaries) {
+    const violations = asArr(data.violations).map(asObj);
+    totalViolations += violations.length;
+    violationSections.push(
+      `### ${summaryTitle(filename)} (${violations.length})`,
+      "",
+      ...complianceViolationLines(violations, violationScopeField(violations)),
+      "",
+    );
+  }
+
+  const unreadableLines = unparseableFiles.length
+    ? unparseableFiles.map((f) => `- \`${f}\``)
+    : ["_none_"];
+
+  const totalBlocking = totalViolations + ratchetFailures.length;
+  const header = unparseableFiles.length > 0
+    ? `❌ ${unparseableFiles.length} summary artifact(s) present but unreadable — ` +
+      "this run is UNVERIFIED for those checks, do not trust a green result " +
+      'below — see STANDARD.md "Running the compliance check locally" to ' +
+      "reproduce the failing check and see its actual error" +
+      (totalBlocking > 0
+        ? ` (plus ${totalBlocking} blocking finding(s) from the checks that did parse)`
+        : "")
+    : totalBlocking > 0
     ? `❌ ${totalBlocking} blocking finding(s) — see STANDARD.md for the fix pattern`
-    : `✅ all ${
-      asArr(compliance?.checked).length
-    } extensions compliant, allowlist consistent, no score regressions`;
+    : `✅ all ${checkedCount} extensions compliant across ${violationSummaries.length} check(s), no score regressions`;
 
   const ratchetFailLines = ratchetFailures.length
     ? ratchetFailures.map((r) =>
@@ -294,14 +448,11 @@ async function buildCompliance(): Promise<string> {
     "",
     header,
     "",
-    `### Compliance violations (${complianceViolations.length})`,
+    `### Unreadable summary artifacts (${unparseableFiles.length})`,
     "",
-    ...complianceViolationLines(complianceViolations, "extension"),
+    ...unreadableLines,
     "",
-    `### Allowlist violations (${allowlistViolations.length})`,
-    "",
-    ...complianceViolationLines(allowlistViolations, ""),
-    "",
+    ...violationSections,
     `### Score ratchet failures (${ratchetFailures.length})`,
     "",
     ...ratchetFailLines,

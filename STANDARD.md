@@ -249,6 +249,7 @@ deno task quality:check              # check_compliance.ts, every extension
 deno task quality:check -- widget    # scope to one extension
 deno task quality:allowlist          # check_allowlist.ts
 deno task quality:ratchet            # score_ratchet.ts (shells out to swamp)
+deno task quality:harness            # check_property_harness.ts
 deno task test                       # the validators' own unit tests
 ```
 

@@ -9,6 +9,7 @@
     "quality:check": "deno run --allow-read --allow-write --allow-env=QUALITY_REPO_ROOT quality/check_compliance.ts",
     "quality:allowlist": "deno run --allow-read --allow-write --allow-run=git --allow-env=QUALITY_REPO_ROOT quality/check_allowlist.ts",
     "quality:ratchet": "deno run --allow-read --allow-write --allow-run=swamp --allow-env=QUALITY_REPO_ROOT quality/score_ratchet.ts",
+    "quality:harness": "deno run --allow-read --allow-write --allow-env=QUALITY_REPO_ROOT quality/check_property_harness.ts",
     "quality:scaffold": "deno run --allow-read --allow-write quality/scaffold.ts"
   },
   "imports": { "zod": "npm:zod@4" },

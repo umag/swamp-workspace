@@ -86,17 +86,45 @@ function run(name: string, args: Record<string, unknown>, ctx: unknown) {
 
 type Route = (req: Request) => Response | undefined;
 
+// Eager plain-object snapshot instead of `.clone()` — cloning a body-bearing
+// Request tees its body into a ReadableStream that is never consumed or
+// cancelled, leaking ~6KB per stubbed fetch call (see
+// fix/soak-property-harness-heap-leak). The body is read ONCE via
+// `await req.text()`; routes get a freshly reconstructed Request built from
+// the captured text so existing route logic (which may itself read the
+// body) keeps working.
+type CapturedRequest = {
+  method: string;
+  url: string;
+  headers: Headers;
+  body: string;
+};
+
 async function withFetchStub(
   routes: Route[],
-  fn: (calls: Request[]) => Promise<void>,
+  fn: (calls: CapturedRequest[]) => Promise<void>,
 ) {
   const original = globalThis.fetch;
-  const calls: Request[] = [];
-  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
+  const calls: CapturedRequest[] = [];
+  globalThis.fetch = (async (
+    input: Request | URL | string,
+    init?: RequestInit,
+  ) => {
     const req = input instanceof Request ? input : new Request(input, init);
-    calls.push(req.clone());
+    const body = await req.text();
+    calls.push({
+      method: req.method,
+      url: req.url,
+      headers: req.headers,
+      body,
+    });
+    const routable = new Request(req.url, {
+      method: req.method,
+      headers: req.headers,
+      body: ["GET", "HEAD"].includes(req.method) ? undefined : body,
+    });
     for (const r of routes) {
-      const res = r(req);
+      const res = r(routable);
       if (res) return Promise.resolve(res);
     }
     return Promise.reject(new Error(`unrouted ${req.url}`));
@@ -117,7 +145,7 @@ function json(body: unknown, status = 200) {
 
 function withOneResponse(
   body: unknown,
-  fn: (calls: Request[]) => Promise<void>,
+  fn: (calls: CapturedRequest[]) => Promise<void>,
 ) {
   return withFetchStub([() => json(body)], fn);
 }

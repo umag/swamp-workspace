@@ -268,6 +268,11 @@ jobs:
         working-directory: scripts
         run: deno task quality:ratchet --json ../ratchet-summary.json
 
+      - name: Check property-test harness (no .clone() in *_property_test.ts)
+        if: ${{ !cancelled() }}
+        working-directory: scripts
+        run: deno task quality:harness --json ../property-harness-summary.json
+
       - name: Upload compliance summary
         if: always()
         uses: actions/upload-artifact@v7
@@ -277,6 +282,7 @@ jobs:
             compliance-summary.json
             allowlist-summary.json
             ratchet-summary.json
+            property-harness-summary.json
 
   skill-review:
     name: skill-review (tessl)
