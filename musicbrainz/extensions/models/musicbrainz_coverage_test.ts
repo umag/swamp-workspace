@@ -1101,6 +1101,11 @@ Deno.test("NEW SURFACE: search-artists-batch writes instance name 'artist-search
   const res = written.find((w) => w.spec === "artistSearchBatch")!;
   assert(res, "must have written the artistSearchBatch spec");
   assertEquals(res.name, "artist-search-batch");
+  assertEquals(
+    written.length,
+    1,
+    "search-artists-batch must write exactly one resource — never any other method's resource instance (e.g. no search-artist deprecation alias)",
+  );
 });
 
 Deno.test("NEW SURFACE (payload budget regression): a full MusicBrainz artist object with area/begin-area/life-span/aliases/tags writes a row whose artist objects contain NONE of those keys", async () => {
