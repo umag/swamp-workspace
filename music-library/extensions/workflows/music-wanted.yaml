@@ -1,0 +1,463 @@
+name: "@magistr/music-wanted-sequence"
+description: >-
+  Wires the three-step wanted sequence (resolve-artists -> sync-artist-
+  discographies -> wanted) into one gated run. Canonical invocation: `swamp
+  workflow run music-wanted` — deliberately with NO `--fail-on`. The default
+  fails the run on ANY assert, including the two medium-severity bands below;
+  `--fail-on high` would downgrade them to warnings, silently reproducing the
+  exact failure shape this workflow exists to catch.
+
+  Jobs, in order, each gated on the previous job succeeding: preflight (checks
+  the library cube is populated, plus a low informational read of the
+  persisted musicbrainz discography-sync-cursor before the expensive step
+  commits) -> resolve (runs music/resolve-artists) -> sync (runs
+  musicbrainz/sync-artist-discographies over THIS run's resolved artist list)
+  -> derive (runs music/wanted). A cold pass through sync is the expensive
+  step: ~775 MusicBrainz requests, ~35 minutes, holding the musicbrainz model
+  lock for that whole time.
+
+  Eight gates, by name, every one `allowFailure: false` — presence without a
+  pinned value is not a gate: (1) preflight-dimensions (high) — the artist and
+  album dimensions are populated before anything else runs; (2)
+  resolve-produced-something (high) — resolve-artists resolved at least one
+  artist this run; (3) artist-map-floor (medium) — resolved artists are at
+  least 20% of the library's artist dimension, catching a truncated map that
+  would otherwise sail through gate 2; (4) sync-coverage (high) — the sync
+  made a complete pass this run (startOffset 0 and remaining 0); (5)
+  sync-handoff (high) — the sync was actually handed THIS run's full resolved
+  list, not a stale or empty one; (6) catalog-completeness (high) — every
+  requested artist now has a cached discography; (7) derive-existence (high)
+  — the wanted step actually wrote a wanted resource this run, catching a
+  step that reported success but produced nothing; (8) want-total-band
+  (medium) — the derived want total is not implausibly large against the
+  owned album count, catching an empty/partial owned cube.
+
+  Idempotency: re-running is safe and cheap once warm. resolve-artists reuses
+  its cache under the sibling's `checkedAt`/`ttlMs` (zero MusicBrainz requests
+  on a converged re-run); sync-artist-discographies TTL-skips every
+  already-cached artist; wanted is a pure re-derivation. A run that fails
+  gate 4 (sync-coverage) after resuming a partial pass is expected to pass on
+  the NEXT run — the end-of-list reset restarts the cursor at 0 and that pass
+  TTL-skips almost everything.
+
+  Dry-run probe: `--input dryRun:json=true` sets the sync step's batchSize to
+  0, so it makes NO new MusicBrainz requests (a slice of width 0) while still
+  exercising every gate and the CEL array hand-off — gate 4 (sync-coverage) is
+  EXPECTED to fail on a dry run — nothing is covered, so remaining is
+  non-zero — which is what proves the gates gate rather than merely evaluate:
+  the sync job fails and the derive job must show SKIPPED in the run history,
+  never executed. Gate 5 (sync-handoff) passes on a dry run by design, since
+  requestedRaw is recorded before batching; gate 6 (catalog-completeness)
+  fails only on a cold catalog and passes once the catalog is warm.
+
+  Documented procedure, REQUIRED after any edit to this workflow definition:
+  run `swamp workflow run music-wanted --input dryRun=true` before trusting
+  the edit. Nothing else proves the gate chain still gates — this repo has no
+  test harness that can read this file, and `swamp workflow validate` only
+  checks schema and DAG shape, never CEL semantics. This is an accepted,
+  documented, manual control, not an automated one; the evidence it works is
+  on record: the dry run of 2026-08-06 failed at the preflight job (an
+  expression bug in the informational cursor read, since fixed) and, exactly
+  as this fail-closed dependency chain is designed to do, correctly skipped
+  resolve, sync and derive rather than running any of them against unproven
+  state.
+
+  Operating rule, unconditional for a cold-cache run: DO NOT START this
+  workflow BETWEEN 02:30 AND 03:15 — `ext-canary-nightly` probes the
+  `musicbrainz` instance directly at 03:00 (cron `0 3 * * *`) and a cold sync
+  holds that instance's model lock for the whole ~35-minute pass. The
+  collision is bounded (the nightly's own musicbrainz assert is
+  `allowFailure: true`, so a blocked probe costs one false-positive alert, not
+  a failed nightly run) and is accepted ONLY because this workflow has no
+  schedule trigger of its own — this adequacy holds exclusively while
+  `music-wanted` stays manually invoked.
+
+  Use the direct `sync-artist-discographies` method (not this workflow) for a
+  deliberate partial batch, a re-sync of specific artists, or any run that
+  isn't the full three-step sequence.
+
+  Liveness: `swamp workflow run` blocks until the run completes and has no
+  detached/async mode — the sync step prints nothing while it runs. Pass
+  `--log-level debug` to watch it progress rather than guessing whether it has
+  hung.
+tags: {}
+version: 1
+inputs:
+  properties:
+    dryRun:
+      type: boolean
+      default: false
+      description: >-
+        When true, the sync step's batchSize is forced to 0 — no new
+        MusicBrainz requests are made, but every gate and the CEL hand-off
+        still run. Gate 4 (sync-coverage) is expected to fail on a dry run;
+        gate 5 (sync-handoff) passes by design and gate 6
+        (catalog-completeness) fails only on a cold catalog. Use this to
+        prove the workflow's wiring without paying the ~35-minute cost.
+    refresh:
+      type: boolean
+      default: false
+      description: >-
+        Passed straight through to resolve-artists' own `refresh` argument —
+        force-recheck every seed-unresolved artist this run, ignoring its
+        reuse-cache TTL entirely.
+    targetQuality:
+      type: string
+      default: lossless
+      description: >-
+        Passed straight through to wanted's own `targetQuality` argument —
+        the minimum quality bucket before an owned album counts as an
+        upgrade want.
+    ttlMs:
+      type: number
+      default: 604800000
+      description: >-
+        Passed straight through to sync-artist-discographies' own `ttlMs`
+        argument (default 7 days, mirroring that method's own default) —
+        cache TTL before a populated/empty discography is re-fetched. Pass
+        a larger value (e.g. 2592000000 for 30 days) to make a warm-path run
+        date-independent.
+jobs:
+  - name: preflight
+    description: >-
+      Read state before acting: confirm the library cube is populated before
+      committing to the ~35-minute sync, and read the persisted discography
+      sync cursor for visibility (informational only — does not gate).
+    dependsOn: []
+    weight: 0
+    steps:
+      - name: assert-artist-dimension-present
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: >-
+            size(data.query('modelName == "music" && specName == "artist" && isLatest')) > 0
+          message: >-
+            preflight-dimensions: the library's artist dimension is empty on
+            instance "music", so resolve-artists would have nothing to seed
+            from and this run would silently produce an empty want set. Run:
+            swamp model method run music scan
+          severity: high
+      - name: assert-album-dimension-present
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: >-
+            size(data.query('modelName == "music" && specName == "album" && isLatest')) > 0
+          message: >-
+            preflight-dimensions: the library's album dimension is empty on
+            instance "music" — wanted reads it to build the owned set, and an
+            empty owned set makes every cached release group look missing.
+            Run: swamp model method run music scan
+          severity: high
+      - name: read-discography-sync-cursor
+        dependsOn: []
+        weight: 0
+        allowFailure: true
+        task:
+          type: assert
+          expr: >-
+            data.latest("musicbrainz", "discography-sync-cursor") == null || data.latest("musicbrainz", "discography-sync-cursor").attributes.cursor != null
+          message: >-
+            Preflight (informational — does not gate): read the persisted
+            musicbrainz discography-sync-cursor state before this run starts
+            the ~35-minute sync. ${{ data.latest("musicbrainz",
+            "discography-sync-cursor") == null ? "No prior state — this will
+            be a cold pass from offset 0." : "Prior cursor offset " +
+            string(data.latest("musicbrainz",
+            "discography-sync-cursor").attributes.cursor.offset) + "." }} Full state:
+            swamp data get musicbrainz discography-sync-cursor --json
+          severity: low
+
+  - name: resolve
+    description: >-
+      Run resolve-artists (no guard — the sibling's own refresh/ttlMs make it
+      idempotent at the model layer), then gate 2 (resolve-produced-something)
+      and gate 3 (artist-map-floor).
+    dependsOn:
+      - job: preflight
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: resolve-artists
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: music
+          methodName: resolve-artists
+          inputs:
+            refresh: ${{ inputs.refresh }}
+      - name: assert-resolve-produced-something
+        dependsOn:
+          - step: resolve-artists
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: >-
+            data.query('modelName == "music" && specName == "artistMap" && tags.workflowRunId == "' + run.id + '"', 'attributes')[0].resolved > 0
+          message: >-
+            resolve-produced-something: music-wanted stopped BEFORE the
+            ~35-minute discography sync: resolve-artists ran in this workflow
+            run and produced an artist-map with 0 resolved artists on
+            instance "music", so there is nothing to sync and no want set can
+            be derived. This run: resolved=${{ data.query('modelName ==
+            "music" && specName == "artistMap" && tags.workflowRunId == "' +
+            run.id + '"', 'attributes')[0].resolved }} ambiguous=${{
+            data.query('modelName == "music" && specName == "artistMap" &&
+            tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].ambiguous }} unresolved=${{ data.query('modelName
+            == "music" && specName == "artistMap" && tags.workflowRunId ==
+            "' + run.id + '"', 'attributes')[0].unresolved }}. Re-running the
+            workflow will not help until the map resolves something. Check in
+            order: (1) the artist dimension is populated — swamp data query
+            'modelName == "music" && specName == "artist" && isLatest'; (2)
+            the headphones seed instance is reachable and its artists are
+            MusicBrainz-keyed; (3) MusicBrainz search is answering — swamp
+            model method run musicbrainz search-artist --input
+            query="Boards of Canada". Inspect the map: swamp data get music
+            artist-map --json
+          severity: high
+      - name: assert-artist-map-floor
+        dependsOn:
+          - step: resolve-artists
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: >-
+            data.query('modelName == "music" && specName == "artistMap" && tags.workflowRunId == "' + run.id + '"', 'attributes')[0].resolved >= 0.2 * size(data.query('modelName == "music" && specName == "artist" && isLatest'))
+          message: >-
+            artist-map-floor: the artist map collapsed: resolve-artists
+            resolved ${{ data.query('modelName == "music" && specName ==
+            "artistMap" && tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].resolved }} artists against ${{
+            size(data.query('modelName == "music" && specName == "artist" &&
+            isLatest')) }} rows in the library's artist dimension, below the
+            20% floor this workflow treats as a healthy map — the last full
+            run resolved 775 of 2258, about 34%. The want set below would be
+            built from a fraction of the library and would understate the
+            gap. This is the resolve step, not the sync: check that the
+            headphones seed instance is reachable and that MusicBrainz search
+            is not rate-limiting. Inspect: swamp data get music artist-map
+            --json
+          severity: medium
+
+  - name: sync
+    description: >-
+      Run sync-artist-discographies over THIS run's resolved artist list,
+      then gate 4 (sync-coverage), gate 5 (sync-handoff) and gate 6
+      (catalog-completeness) — each depending ONLY on the sync step, never on
+      each other, so a failing gate can never skip an unproven one.
+    dependsOn:
+      - job: resolve
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: sync-artist-discographies
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: musicbrainz
+          methodName: sync-artist-discographies
+          inputs:
+            artistMbids: >-
+              ${{ data.query('modelName == "music" && specName == "artistMap"
+              && tags.workflowRunId == "' + run.id + '"',
+              'attributes')[0].entries.filter(e, e.status ==
+              "resolved").map(e, e.mbid) }}
+            batchSize: "${{ inputs.dryRun ? 0 : 1000000 }}"
+            ttlMs: ${{ inputs.ttlMs }}
+      - name: assert-sync-coverage
+        dependsOn:
+          - step: sync-artist-discographies
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: >-
+            data.query('modelName == "musicbrainz" && specName == "discographySyncState" && tags.workflowRunId == "' + run.id + '"', 'attributes')[0].startOffset == 0 && data.query('modelName == "musicbrainz" && specName == "discographySyncState" && tags.workflowRunId == "' + run.id + '"', 'attributes')[0].remaining == 0
+          message: >-
+            sync-coverage: the discography sync did not walk the whole artist
+            list in this run, so this run cannot vouch for the catalog's
+            coverage and the want set was not derived. It covered ${{
+            data.query('modelName == "musicbrainz" && specName ==
+            "discographySyncState" && tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].covered }} of ${{ data.query('modelName ==
+            "musicbrainz" && specName == "discographySyncState" &&
+            tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].requested }} distinct artists and started at
+            cursor offset ${{ data.query('modelName == "musicbrainz" &&
+            specName == "discographySyncState" && tags.workflowRunId == "' +
+            run.id + '"', 'attributes')[0].startOffset }}; ${{
+            data.query('modelName == "musicbrainz" && specName ==
+            "discographySyncState" && tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].remaining }} requested artists were never
+            attempted. This workflow always makes a single full pass, so a
+            non-zero start offset or a non-zero remainder means the pass was
+            cut short. Check in order: (1) this run used dryRun=${{
+            inputs.dryRun }} — omit it to sync the whole list; (2) a PREVIOUS
+            run threw part-way or was a deliberate partial, and this run
+            covered only the remainder — that is why the start offset is
+            non-zero. The cursor is now at the end of the list, so re-run
+            ONCE MORE: the end-of-list reset restarts it at 0, every
+            already-cached artist TTL-skips at almost no request cost, and
+            this gate passes on that run. Recovery from a crash takes two
+            runs at which this gate actually evaluates: it fails ONCE — on
+            the run that resumes and finishes the remainder, since its start
+            offset is non-zero — then passes on the following run once the
+            cursor has reset to 0. (The run that crashed mid-sync never
+            reaches this assert at all: the sync step itself failed, so this
+            gate was SKIPPED there, not failed.) (3) if the
+            assert-catalog-completeness gate PASSED, the
+            catalog is in fact complete — this run simply resumed mid-list
+            rather than making the full pass this gate requires. Full state:
+            swamp data get musicbrainz discography-sync-cursor --json.
+            Coverage report: swamp report get
+            @magistr/musicbrainz-discography-sync --model musicbrainz
+            --markdown
+          severity: high
+      - name: assert-sync-handoff
+        dependsOn:
+          - step: sync-artist-discographies
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: >-
+            data.query('modelName == "musicbrainz" && specName == "discographySyncState" && tags.workflowRunId == "' + run.id + '"', 'attributes')[0].requestedRaw == size(data.query('modelName == "music" && specName == "artistMap" && tags.workflowRunId == "' + run.id + '"', 'attributes')[0].entries.filter(e, e.status == "resolved"))
+          message: >-
+            sync-handoff: the artist list never reached the sync intact, so
+            the want set would be derived from the wrong artists and was not
+            derived. resolve-artists wrote ${{ size(data.query('modelName ==
+            "music" && specName == "artistMap" && tags.workflowRunId == "' +
+            run.id + '"', 'attributes')[0].entries.filter(e, e.status ==
+            "resolved")) }} resolved artists in this run, but
+            sync-artist-discographies was handed ${{ data.query('modelName ==
+            "musicbrainz" && specName == "discographySyncState" &&
+            tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].requestedRaw }}. This is the hand-off between
+            the two model instances, not the sync itself: check the
+            artistMbids expression on the sync step — it must read THIS run's
+            artist-map (tags.workflowRunId == run.id), and a handed count of
+            0 means the query returned no row for this run at all. Inspect
+            both: swamp data query 'modelName == "music" && name ==
+            "artist-map" && isLatest' --select 'attributes.resolved' --json
+            and swamp data get musicbrainz discography-sync-cursor --json
+          severity: high
+      - name: assert-catalog-completeness
+        dependsOn:
+          - step: sync-artist-discographies
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: >-
+            data.query('modelName == "musicbrainz" && specName == "discographySyncState" && tags.workflowRunId == "' + run.id + '"', 'attributes')[0].uncoveredCount == 0
+          message: >-
+            catalog-completeness: the MusicBrainz catalog is incomplete, so
+            the want set would understate the gap and was not derived: ${{
+            data.query('modelName == "musicbrainz" && specName ==
+            "discographySyncState" && tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].uncoveredCount }} of the ${{ data.query('modelName
+            == "musicbrainz" && specName == "discographySyncState" &&
+            tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].requested }} artists this run resolved have no
+            cached discography at all. Missing (first 50): ${{
+            data.query('modelName == "musicbrainz" && specName ==
+            "discographySyncState" && tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].uncovered }}. Re-run this workflow — every
+            artist already cached TTL-skips, so a re-run costs only the
+            missing ones. If it fails again with the same MBIDs, sync them
+            directly: swamp model method run musicbrainz
+            sync-artist-discographies --input
+            'artistMbids:json=["<the MBIDs above>"]'
+          severity: high
+
+  - name: derive
+    description: >-
+      Run wanted (depends on the sync JOB succeeding, so a failed gate SKIPS
+      this job entirely), then the existence gate and the want-total band.
+    dependsOn:
+      - job: sync
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: wanted
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: music
+          methodName: wanted
+          inputs:
+            targetQuality: ${{ inputs.targetQuality }}
+      - name: assert-derive-existence
+        dependsOn:
+          - step: wanted
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: >-
+            size(data.query('modelName == "music" && specName == "wanted" && tags.workflowRunId == "' + run.id + '"')) > 0
+          message: >-
+            derive-existence: music-wanted completed the sync but the
+            wanted step wrote no wanted resource in this run, so there is
+            no gap report to read. The discography cache is intact — the
+            wanted step itself reported success, it simply produced no
+            resource for this run. Re-run just the last step: swamp model
+            method run music wanted --input targetQuality=${{
+            inputs.targetQuality }}
+          severity: high
+      - name: assert-want-total-band
+        dependsOn:
+          - step: wanted
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: >-
+            data.query('modelName == "music" && specName == "wanted" && tags.workflowRunId == "' + run.id + '"', 'attributes')[0].total <= 10 * size(data.query('modelName == "music" && specName == "album" && isLatest'))
+          message: >-
+            want-total-band: the want set looks structurally wrong: ${{
+            data.query('modelName == "music" && specName == "wanted" &&
+            tags.workflowRunId == "' + run.id + '"',
+            'attributes')[0].total }} wants against ${{ size(data.query(
+            'modelName == "music" && specName == "album" && isLatest')) }}
+            owned albums in the library cube, more than ten times the owned
+            count. The usual cause is an empty or partial owned set, which
+            makes every release group in every cached discography look
+            missing — the same silent wrongness this workflow exists to
+            prevent. The wanted resource WAS written; do not trust its
+            totals until you have checked the album dimension: swamp data
+            query 'modelName == "music" && specName == "album" &&
+            isLatest'. If it is empty or short, rebuild the cube first:
+            swamp model method run music scan
+          severity: medium
