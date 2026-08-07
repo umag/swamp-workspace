@@ -554,6 +554,47 @@ Deno.test("search-label: failure path — non-ok throws", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// INSTANCE NAME pins (musicbrainz-search-resource-collision) — each typed
+// search method writes its OWN resource instance now (named for itself),
+// never the shared "search" instance all five collided on before this fix.
+// Four of these five had NO instance-name assertion at all before this
+// change — a single-site revert of exactly one call site back to the
+// literal "search" was invisible to every existing test in this file, since
+// each test above only ever selected its write by SPEC. Selection here is
+// on the INSTANCE NAME, which stays unique per method even once
+// search-artist ALSO writes a deprecated alias under the same spec
+// "artists" (see the DEPRECATION ALIAS pin below) — selecting by spec alone
+// would become order-dependent at that point.
+// ---------------------------------------------------------------------------
+
+const INSTANCE_NAME_PINS: Array<
+  [method: string, wireKey: string, spec: string]
+> = [
+  ["search-artist", "artists", "artists"],
+  ["search-release-group", "release-groups", "releaseGroups"],
+  ["search-release", "releases", "releases"],
+  ["search-recording", "recordings", "recordings"],
+  ["search-label", "labels", "labels"],
+];
+
+for (const [method, wireKey, spec] of INSTANCE_NAME_PINS) {
+  Deno.test(`${method}: writes instance "${method}" under spec "${spec}"`, async () => {
+    using time = new FakeTime();
+    const { ctx, written } = makeCtx();
+    await withMbFixture(
+      { [wireKey]: [], count: 0 },
+      () => drainAndAwait(time, run(method, { query: "x" }, ctx)),
+    );
+    const res = written.find((w) => w.name === method);
+    assert(
+      res,
+      `${method} must write to an instance literally named "${method}"`,
+    );
+    assertEquals(res!.spec, spec);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // lookup-artist / lookup-release-group / lookup-release / lookup-recording /
 // lookup-label
 // ---------------------------------------------------------------------------
