@@ -1,6 +1,34 @@
 # Changelog
 
+## 2026.08.07.1
+
+Release of the NL sovereign-cloud overlay, with two defects closed that the
+pre-publish adversarial review found in `2026.08.06.1`. **`2026.08.06.1` was
+never published** — the registry moves `2026.08.02.1` → `2026.08.07.1` directly.
+See the `2026.08.06.1` section below for the overlay itself.
+
+- **`computeSovereigntyScore`'s fail-closed guard was one-sided.** It rejected a
+  missing objective but silently accepted a **duplicate** id — a repeated
+  `SOV-1` changed the computed score from 50 to 57.5, the later entry winning
+  via the `new Map(...)` construction — and silently ignored an **unrecognized**
+  id. The objective set is now validated closed and exact (SOV-1..SOV-8, each
+  exactly once) before scoring, naming the offending id.
+- **`MigrationSchema.ladder` was required with no default**, so a
+  `classificationMigration` record written before the field existed failed to
+  parse. That resource is `lifetime: "infinite"`, so such records persist and
+  can be restored from the datastore. It now defaults to `"uae"` — the only
+  ladder that ever existed — matching the `.default([])` precedent set for
+  `skipped`/`unmappedFiles`. `MigrationSchema` is exported so a test pins it.
+
+Both passed a fully green 244-test suite: the tests only exercised the
+missing-objective direction and never parsed a legacy record. Suite is now 248.
+`quality.yaml` gains its entry and lists `arckit_workspace_nl_test.ts` under the
+`coverage` role.
+
 ## 2026.08.06.1
+
+Never published — superseded by `2026.08.07.1`, which contains this plus the two
+fixes above.
 
 NL sovereign-cloud jurisdiction overlay. Adds an `nl-gov` governance profile,
 six new NL/EU artifact types with bundled templates, a generalized

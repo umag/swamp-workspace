@@ -1513,7 +1513,7 @@ const TEMPLATES_DIR = "templates";
  */
 export const model = {
   type: "@magistr/arckit/workspace",
-  version: "2026.08.06.1",
+  version: "2026.08.07.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1534,6 +1534,13 @@ export const model = {
       toVersion: "2026.08.06.1",
       description:
         'NL/EU sovereign-cloud overlay (arckit-nl-sovereign-cloud): nl-gov profile (risk +nl-tbb, design +nl-cloud, assurance +nl-bio/+nl-exit/+eu-sovereignty) widens the PROFILES enum; six new NL/EU doc codes + bundled templates (nl-tbb, nl-cloud, eu-sovereignty, nl-bio, nl-exit, nl-dtia); migrateClassification gains a `ladder` argument (default "uae", adds "nl" — the NL rubricering/VIRBI 2025 ladder) and MigrationSchema records which ladder ran; two new derived resources, sovereigntyAssessment (EU Cloud Sovereignty Framework v1.2.1 score) and cloudEligibility (Herziening rijksbreed cloudbeleid 2026 verdict). PROFILES widening is backward-compatible for reads and the new resource fields are additive — no data transformation needed.',
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.06.1",
+      toVersion: "2026.08.07.1",
+      description:
+        'Closes two defects found by the pre-publish adversarial review of 2026.08.06.1, which was never published (the registry went 2026.08.02.1 -> 2026.08.07.1 directly): computeSovereigntyScore now rejects a duplicate or unrecognized objective id, not only a missing one — the guard was one-sided, so a repeated SOV-1 silently changed the computed score; and MigrationSchema.ladder gains a "uae" default so a classificationMigration record written before the ladder field existed still parses (that resource is lifetime "infinite", so such records persist and can be restored). Defaulting a previously-required field only widens what parses — no data transformation needed.',
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

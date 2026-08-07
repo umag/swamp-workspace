@@ -58,6 +58,14 @@
 # `classificationMigration` record (inconsistent with `skipped`/`unmappedFiles`,
 # defaulted one version earlier for exactly that reason).
 #
+# 2026.08.07.1: release version for the NL overlay. 2026.08.06.1 was never
+# published — the registry moves 2026.08.02.1 -> 2026.08.07.1 directly — so the
+# two pre-publish adversarial-review defects (one-sided computeSovereigntyScore
+# guard; required MigrationSchema.ladder) are folded in here rather than shipped
+# and patched. manifest.yaml and model.version bumped in lockstep with a fourth
+# identity `upgrades[]` entry; defaulting a previously-required field only
+# widens what parses, so no data transformation is needed.
+#
 # Role map (each file assigned to exactly ONE honest role):
 #   contract-fixture        -> arckit_workspace_test.ts (unchanged — pins
 #                               behavior against the REAL bundled templates/
