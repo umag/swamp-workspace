@@ -5,6 +5,23 @@ All notable changes to `@magistr/reading-list`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions are CalVer (`YYYY.0M.0D.N`), matching the swamp registry.
 
+## Unreleased
+
+Test-only; the published artifact (`reading_list.ts`, `README.md`, `LICENSE.md`)
+is unchanged, so no version bump.
+
+### Added
+
+- A guard test asserting no source file under `extensions/models/` contains a
+  raw control byte. 2026.08.07.1 shipped with literal `0x00 0x01` bytes in the
+  adversarial suite, written where escape sequences were intended; fmt, lint,
+  check, 109 tests and CI were all green, and git silently recorded the file as
+  binary — losing its diff and blame permanently. No behavioural test can catch
+  that, so the suite now reads its own directory. Verified to fail by planting a
+  NUL, which it reported as `reading_list_test.ts: 0x00 at byte offset 500`.
+  Costs one `--allow-read=extensions/models` on the test task, which does not
+  weaken the network-less gate.
+
 ## 2026.08.07.1
 
 ### Security
