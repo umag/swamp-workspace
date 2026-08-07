@@ -1,0 +1,14 @@
+client:
+  version: 0.8.0
+  channel: stable
+  protocol: 19
+
+server:
+  status: running
+  version: 0.8.0
+  protocol: 19
+  compatible: yes
+  socket: /home/dev/.config/herdr/herdr.sock
+
+update:
+  restart_needed: no
