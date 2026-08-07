@@ -187,13 +187,18 @@ file's own `description:` block and each assert step's `message`.
 REQUIRED after any edit to the workflow: run it with `--input dryRun=true`
 before trusting the edit. This forces the sync step's `batchSize` to 0 (no new
 MusicBrainz requests) while still exercising every gate and the CEL hand-off.
-Because the resolve job has no `dryRun` guard, a dry run against a library with
-anything still unresolved fails BOTH gate 4 (sync-coverage — nothing was
-covered) AND gate 6 (catalog-completeness — the newly-resolved artist has no
-cached discography yet); that two-gate failure, `derive` SKIPPED, is the
-expected shape on a growing library, not a bug. `swamp workflow validate` checks
-schema and DAG shape only, never CEL semantics, so this dry run is the only
-control over the gate chain.
+The expected shape is an INVARIANT, not a fixed pass/fail tally — the tally
+depends on how warm the catalog already is when you run it: gate 4
+(sync-coverage) ALWAYS fails on a dry run, because `batchSize 0` covers nothing
+and so can never vouch for coverage, regardless of catalog state; `derive` is
+therefore ALWAYS SKIPPED and nothing is written. Gate 6 (catalog-completeness)
+is NOT pinned to the same outcome: because the resolve job has no `dryRun`
+guard, it resolves artists for real, and gate 6 passes or fails according to
+whether the catalog already holds a cached discography for every artist resolved
+this run — it PASSES against an already-warm catalog and FAILS alongside gate 4
+only when this run resolved an artist the catalog does not yet cover.
+`swamp workflow validate` checks schema and DAG shape only, never CEL semantics,
+so this dry run is the only control over the gate chain.
 
 Two copies of this workflow exist: the shipped one described here, and (in the
 author's own homelab, not part of this package) a live copy registered under the

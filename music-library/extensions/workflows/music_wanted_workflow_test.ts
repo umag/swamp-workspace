@@ -45,8 +45,14 @@ interface WorkflowStep {
   task: AssertTask | ModelMethodTask;
 }
 
+interface JobDependency {
+  job: string;
+  condition: { type: string };
+}
+
 interface WorkflowJob {
   name: string;
+  dependsOn: JobDependency[];
   steps: WorkflowStep[];
 }
 
@@ -146,14 +152,17 @@ Deno.test("music-wanted workflow: the eight gate names appear as the leading tok
   }
 });
 
-Deno.test("music-wanted workflow: every assert step is allowFailure: false except read-discography-sync-cursor, which is true -- nine false, one true", async () => {
+Deno.test("music-wanted workflow: every step is allowFailure: false except read-discography-sync-cursor, which is true -- pinned across EVERY task.type, not just assert, twelve false one true", async () => {
   const doc = await loadWorkflow();
-  const assertSteps = allSteps(doc).filter((step) =>
-    step.task.type === "assert"
-  );
+  // Deliberately NOT filtered to task.type === "assert": a model_method step
+  // (e.g. sync-artist-discographies) flipped to allowFailure: true opens the
+  // fail-closed gate chain exactly as silently as an unpinned assert would,
+  // and swamp treats a failed-but-allowed step as non-fatal to its job
+  // regardless of task type.
+  const steps = allSteps(doc);
   let falseCount = 0;
   let trueCount = 0;
-  for (const step of assertSteps) {
+  for (const step of steps) {
     if (step.name === "read-discography-sync-cursor") {
       assertEquals(
         step.allowFailure,
@@ -165,13 +174,53 @@ Deno.test("music-wanted workflow: every assert step is allowFailure: false excep
       assertEquals(
         step.allowFailure,
         false,
-        `${step.name} is a real gate and must not allow failure`,
+        `${step.name} (task.type=${step.task.type}) must not allow failure`,
       );
       falseCount++;
     }
   }
-  assertEquals(falseCount, 9);
+  assertEquals(falseCount, 12);
   assertEquals(trueCount, 1);
+});
+
+Deno.test("music-wanted workflow: job dependency edges are preflight <- resolve <- sync <- derive, each non-preflight edge gated on {type: succeeded} -- severing any of these lets a downstream job run after an upstream failure", async () => {
+  const doc = await loadWorkflow();
+  const jobsByName = new Map(doc.jobs.map((job) => [job.name, job]));
+
+  const preflight = jobsByName.get("preflight");
+  assert(preflight, 'job "preflight" not found');
+  assertEquals(
+    preflight!.dependsOn,
+    [],
+    "preflight is the entry job and must have no upstream dependency",
+  );
+
+  const expectedUpstream: Record<string, string> = {
+    resolve: "preflight",
+    sync: "resolve",
+    derive: "sync",
+  };
+  for (const [jobName, upstream] of Object.entries(expectedUpstream)) {
+    const job = jobsByName.get(jobName);
+    assert(job, `job "${jobName}" not found`);
+    assertEquals(
+      job!.dependsOn.length,
+      1,
+      `job "${jobName}" must depend on exactly one upstream job`,
+    );
+    assertEquals(
+      job!.dependsOn[0].job,
+      upstream,
+      `job "${jobName}" must depend on job "${upstream}"`,
+    );
+    assertEquals(
+      job!.dependsOn[0].condition.type,
+      "succeeded",
+      `job "${jobName}"'s dependency on "${upstream}" must be gated on ` +
+        "{type: succeeded} -- a present-but-unconditioned or severed " +
+        "dependsOn lets that job run even after its upstream job failed",
+    );
+  }
 });
 
 Deno.test("music-wanted workflow: the three model_method steps target the plain scalars music, musicbrainz, music -- never a dynamic expression", async () => {
