@@ -353,3 +353,49 @@ Deno.test("critical path steps are all producible commands", () => {
     assert(producible.has(step), `critical path step ${step} unproducible`);
   }
 });
+
+// ---------- NL overlay prep: regression pins (arckit-nl-sovereign-cloud) -----
+//
+// proposeClassification is about to gain an optional second `ladder`
+// argument (defaulting to "uae") backed by a CLASSIFICATION_LADDERS registry
+// (see arckit_workspace_nl_test.ts). Per the approved plan's dddAnalysis, the
+// refactor keeps ONE shared CLASSIFICATION_LINE regex bound to the fixed UK
+// SOURCE vocabulary and varies only the TARGET table per ladder — so calling
+// with no ladder argument at all must remain byte-identical to today, and a
+// value outside the UK source vocabulary must continue to produce no entry
+// at all (never an identity {from,to} pair). These two tests pin that
+// contract BEFORE the refactor lands, per this round's REGRESSION-FIRST
+// requirement. Both currently pass against the byte-frozen implementation —
+// that's intentional; they exist to catch a future ladder refactor regressing
+// either seam, not to fail this round.
+
+Deno.test("regression (nl overlay prep): proposeClassification with no ladder argument maps every recognized UK value exactly as today, including TOP SECRET (not covered by the two existing contract tests)", () => {
+  const doc = [
+    "| **Classification** | PUBLIC |",
+    "| **Classification** | OFFICIAL |",
+    "| **Classification** | OFFICIAL-SENSITIVE |",
+    "| **Classification** | SECRET |",
+    "| **Classification** | TOP SECRET |",
+  ].join("\n");
+  const { newText, changes } = proposeClassification(doc);
+  assertEquals(changes, [
+    { from: "PUBLIC", to: "Open" },
+    { from: "OFFICIAL", to: "Shared" },
+    { from: "OFFICIAL-SENSITIVE", to: "Confidential" },
+    { from: "SECRET", to: "Secret" },
+    { from: "TOP SECRET", to: "Top Secret" },
+  ]);
+  assert(newText.includes("| **Classification** | Open |"));
+  assert(newText.includes("| **Classification** | Top Secret |"));
+});
+
+Deno.test("regression (nl overlay prep): proposeClassification produces NO entry — not an identity entry — for a Classification value outside the UK source vocabulary", () => {
+  const doc = [
+    "| **Classification** | UNCLASSIFIED |",
+    "| **Classification** | Stg. CONFIDENTIEEL |",
+    "| **Classification** | Ongerubriceerd |",
+  ].join("\n");
+  const { newText, changes } = proposeClassification(doc);
+  assertEquals(changes, []);
+  assertEquals(newText, doc);
+});

@@ -92,6 +92,14 @@ export const DOC_CODES: Record<string, string> = {
   "WDOC": "wardley.doctrine",
   "WGAM": "wardley.gameplay",
   "WVCH": "wardley.value-chain",
+
+  // ---- NL/EU sovereign-cloud overlay (arckit-nl-sovereign-cloud) ----------
+  "NLTBB": "nl-tbb",
+  "NLCLD": "nl-cloud",
+  "EUSOV": "eu-sovereignty",
+  "NLBIO": "nl-bio",
+  "NLEXIT": "nl-exit",
+  "NLDTIA": "nl-dtia",
 };
 
 const CODES_BY_LENGTH = Object.keys(DOC_CODES).sort(
@@ -145,6 +153,14 @@ export const MANDATORY_DEPS: Record<string, string[]> = {
   "mod-secure": ["requirements", "principles"],
   "jsp-936": ["requirements", "principles"],
   "story": ["principles"],
+
+  // ---- NL/EU sovereign-cloud overlay (arckit-nl-sovereign-cloud) ----------
+  "nl-tbb": ["stakeholders"],
+  "nl-cloud": ["requirements", "nl-tbb"],
+  "eu-sovereignty": ["requirements"],
+  "nl-bio": ["requirements", "principles"],
+  "nl-exit": ["nl-cloud"],
+  "nl-dtia": ["data-model", "requirements"],
 };
 
 /** Standard (non-AI, non-government) project path from the dependency matrix. */
@@ -236,6 +252,14 @@ export const TEMPLATE_MAP: Record<string, string> = {
   "wardley.doctrine": "wardley-doctrine-template.md",
   "wardley.gameplay": "wardley-gameplay-template.md",
   "wardley.value-chain": "wardley-value-chain-template.md",
+
+  // ---- NL/EU sovereign-cloud overlay (arckit-nl-sovereign-cloud) ----------
+  "nl-tbb": "nl-tbb-classification-template.md",
+  "nl-cloud": "nl-cloud-assessment-template.md",
+  "eu-sovereignty": "eu-sovereignty-assessment-template.md",
+  "nl-bio": "nl-bio-conformance-template.md",
+  "nl-exit": "nl-exit-plan-template.md",
+  "nl-dtia": "nl-dtia-template.md",
 };
 
 /** command → ARC document type code (inverse of DOC_CODES). */
@@ -245,7 +269,7 @@ export const COMMAND_TO_CODE: Record<string, string> = Object.fromEntries(
 
 // ---------- Governance state machine (phases from the DSM tier structure) ----
 
-export const PROFILES = ["standard", "uk-gov", "mod", "ai"] as const;
+export const PROFILES = ["standard", "uk-gov", "mod", "ai", "nl-gov"] as const;
 
 export const PHASES = [
   "foundation",
@@ -322,6 +346,15 @@ export const PROFILE_EXTRAS: Record<string, Record<string, string[][]>> = {
     "design": [["data-model"]],
     "assurance": [["ai-playbook"], ["atrs"]],
   },
+  // NL sovereign-cloud overlay (Herziening rijksbreed cloudbeleid 2026, EU
+  // Cloud Sovereignty Framework v1.2.1). nl-dtia is deliberately absent here
+  // — it is a mandatory INPUT for other artifacts (see MANDATORY_DEPS) but is
+  // never itself gate-required.
+  "nl-gov": {
+    "risk": [["nl-tbb"]],
+    "design": [["nl-cloud"]],
+    "assurance": [["nl-bio"], ["nl-exit"], ["eu-sovereignty"]],
+  },
 };
 
 // ---------- Classification migration (port of arckit migrate-classification) -
@@ -337,6 +370,154 @@ export const CLASSIFICATION_MAPPING: Record<string, string> = {
 
 const CLASSIFICATION_LINE =
   /^(\|\s*\*\*Classification\*\*\s*\|\s*)(PUBLIC|OFFICIAL|OFFICIAL-SENSITIVE|SECRET|TOP SECRET)(\s*\|)$/gm;
+
+/**
+ * UK classification ladder → NL rubricering ladder (VIRBI 2025,
+ * BWBR0051482). "Stg." = staatsgeheim. Deliberately NARROW — only the rows
+ * that are actually defensible:
+ *
+ *  - SECRET -> Stg. GEHEIM and TOP SECRET -> Stg. ZEER GEHEIM are SOURCED:
+ *    the German BMI's official NATO-equivalence table
+ *    (verwaltungsvorschriften-im-internet.de, BMI-IS-20060329-KF01-A004.1)
+ *    aligns NATO SECRET / COSMIC TOP SECRET with both NL GEHEIM STG /
+ *    ZEER GEHEIM STG and UK SECRET / TOP SECRET, so the UK and NL columns of
+ *    that table transit through the same NATO row for these two levels.
+ *  - PUBLIC -> Ongerubriceerd is NOT sourced from that table (or any other
+ *    citation) — it is REASONED, floor-to-floor: both terms denote "no
+ *    classification", and Ongerubriceerd is the lowest NL level, so mapping
+ *    PUBLIC to it can never under-protect a document.
+ *  - Stg. CONFIDENTIEEL is unreachable from this ladder: its UK counterpart
+ *    was CONFIDENTIAL, which the UK ABOLISHED in April 2014 (Government
+ *    Security Classifications Policy) — there is no current UK source level
+ *    for it, so no UK document can ever migrate to it.
+ *  - OFFICIAL and OFFICIAL-SENSITIVE are DELIBERATELY ABSENT. The BMI
+ *    table's UK column is the pre-2014 scheme (RESTRICTED / CONFIDENTIAL /
+ *    SECRET / TOP SECRET) and its own footnote 5 warns member-state levels
+ *    may have changed since publication — it does not cover the post-2014
+ *    OFFICIAL / OFFICIAL-SENSITIVE tier that arc-kit's templates actually
+ *    carry. No other published UK->NL equivalence for these two exists.
+ *    Guessing one would misstate a classification decision, so
+ *    proposeClassification refuses to guess: see NL_REQUIRES_EXPLICIT_DECISION.
+ *
+ * Separately: UK Cabinet Office guidance (International Classified
+ * Exchanges v1.5, Annex B) is that internationally-shared classified
+ * information is NOT re-marked with another nation's classification — the
+ * norm is protect-at-equivalent-level, not relabelling. This ladder is
+ * therefore for ArcKit GOVERNANCE-DOCUMENT markings only (Document Control
+ * table rows in artifacts this model manages), never a claim about how
+ * classified material itself should be marked or exchanged.
+ */
+const NL_CLASSIFICATION_MAPPING: Record<string, string> = {
+  "PUBLIC": "Ongerubriceerd",
+  "SECRET": "Stg. GEHEIM",
+  "TOP SECRET": "Stg. ZEER GEHEIM",
+};
+
+/**
+ * UK classification values with NO published post-2014 UK->NL rubricering
+ * equivalence (see NL_CLASSIFICATION_MAPPING's doc comment). proposeClassification
+ * refuses to guess a target for these under ladder="nl": it leaves the line
+ * byte-unchanged and reports the value via `requiresDecision` instead of
+ * silently passing it through or inventing a mapping.
+ */
+export const NL_REQUIRES_EXPLICIT_DECISION = [
+  "OFFICIAL",
+  "OFFICIAL-SENSITIVE",
+] as const;
+
+/** Registered classification-ladder names (migrateClassification's `ladder` argument). */
+export const CLASSIFICATION_LADDER_NAMES = ["uae", "nl"] as const;
+
+/**
+ * Registry of classification ladders: ONE shared UK SOURCE vocabulary (the
+ * CLASSIFICATION_LINE regex above), varying only the TARGET table per
+ * ladder. Both ladders answer the same domain question — "what does a
+ * UK-labelled document migrate to". Generalizes (and is structurally
+ * identical to, for "uae") the pre-existing CLASSIFICATION_MAPPING.
+ */
+export const CLASSIFICATION_LADDERS: Record<
+  typeof CLASSIFICATION_LADDER_NAMES[number],
+  Record<string, string>
+> = {
+  "uae": CLASSIFICATION_MAPPING,
+  "nl": NL_CLASSIFICATION_MAPPING,
+};
+
+// ---------- EU Cloud Sovereignty Framework v1.2.1 (Sovereignty Objectives) --
+
+/** SOV-1..SOV-8 weights (EU Cloud Sovereignty Framework v1.2.1) — sum to 100. */
+const SOV_WEIGHTS: Record<string, number> = {
+  "SOV-1": 15,
+  "SOV-2": 10,
+  "SOV-3": 10,
+  "SOV-4": 15,
+  "SOV-5": 20,
+  "SOV-6": 15,
+  "SOV-7": 10,
+  "SOV-8": 5,
+};
+
+const SOV_IDS = Object.keys(SOV_WEIGHTS);
+
+/** SEAL0..SEAL4 rank, for comparing an achieved SEAL against a caller-supplied floor. */
+const SEAL_RANK: Record<string, number> = {
+  "SEAL0": 0,
+  "SEAL1": 1,
+  "SEAL2": 2,
+  "SEAL3": 3,
+  "SEAL4": 4,
+};
+
+/**
+ * SEAL0..SEAL4 English + official Dutch labels (NDS Cloudprogramma notitie,
+ * "Verkenning Overheidsbrede Soevereine Clouddiensten", 11 juni 2026).
+ */
+export const SEAL_LABELS: Record<string, { en: string; nl: string }> = {
+  "SEAL0": { en: "No sovereignty", nl: "Geen soevereiniteit" },
+  "SEAL1": {
+    en: "Jurisdictional sovereignty",
+    nl: "Jurisdictionele soevereiniteit",
+  },
+  "SEAL2": { en: "Data sovereignty", nl: "Data-soevereiniteit" },
+  "SEAL3": { en: "Digital resilience", nl: "Digitale veerkracht" },
+  "SEAL4": {
+    en: "Full digital sovereignty",
+    nl: "Volledige digitale soevereiniteit",
+  },
+};
+
+// ---------- Herziening rijksbreed cloudbeleid 2026 (cloud eligibility) ------
+
+/** NL rubricering ladder values (VIRBI 2025) accepted by evaluateCloudEligibility. */
+const RUBRICERING_VALUES = [
+  "Ongerubriceerd",
+  "Dep. VERTROUWELIJK",
+  "Stg. CONFIDENTIEEL",
+  "Stg. GEHEIM",
+  "Stg. ZEER GEHEIM",
+] as const;
+
+/** Te Beschermen Belang categories (TBB systematiek, Gereedschap v1.0, 2026-06-06). */
+const TBB_VALUES = ["TBB 1", "TBB 2", "TBB 3", "TBB 4"] as const;
+
+const STAATSGEHEIM_RUBRICERING = new Set<string>([
+  "Stg. CONFIDENTIEEL",
+  "Stg. GEHEIM",
+  "Stg. ZEER GEHEIM",
+]);
+
+const PROHIBITED_TBB = new Set<string>(["TBB 1", "TBB 2", "TBB 3"]);
+
+/** Regions treated as satisfying the cloud policy's EEA+Switzerland residency requirement. */
+function isEeaOrSwitzerlandRegion(region: string): boolean {
+  return region === "EEA" || region === "Switzerland";
+}
+
+/** Supplier jurisdictions treated as EU/EEA-compliant for clause 4.3. */
+function isEuEeaSupplierJurisdiction(jurisdiction: string): boolean {
+  return jurisdiction === "EU" || jurisdiction === "EEA" ||
+    jurisdiction === "Switzerland";
+}
 
 // ---------- Resource schemas -------------------------------------------------
 
@@ -503,6 +684,7 @@ const ProvisionResultSchema = z.object({
 const MigrationSchema = z.object({
   path: z.string(),
   apply: z.boolean(),
+  ladder: z.enum(CLASSIFICATION_LADDER_NAMES),
   scannedFiles: z.number(),
   files: z.array(z.object({
     relPath: z.string(),
@@ -512,6 +694,42 @@ const MigrationSchema = z.object({
   skipped: z.array(z.object({ relPath: z.string(), reason: z.string() }))
     .default([]),
   ranAt: z.string(),
+});
+
+const SovereigntyBreakdownEntrySchema = z.object({
+  id: z.string(),
+  weight: z.number(),
+  contribution: z.number(),
+  seal: z.string().optional(),
+  evidence: z.string().optional(),
+});
+
+const SovereigntyAssessmentSchema = z.object({
+  subject: z.string(),
+  project: z.string().optional(),
+  score: z.number(),
+  breakdown: z.array(SovereigntyBreakdownEntrySchema),
+  floorsEvaluated: z.boolean(),
+  floorsPassed: z.boolean(),
+  objectivesBelowFloor: z.array(z.string()),
+  assessedAt: z.string(),
+});
+
+const Clause45Schema = z.object({
+  continuityEstablishedIndependently: z.boolean(),
+  riskAnalysisAndExitPlanTested: z.boolean(),
+  ministerialApprovalObtained: z.boolean(),
+  allMet: z.boolean(),
+});
+
+const CloudEligibilitySchema = z.object({
+  subject: z.string(),
+  project: z.string().optional(),
+  verdict: z.enum(["allowed", "conditional", "discouraged", "prohibited"]),
+  clauses: z.array(z.string()),
+  reason: z.string(),
+  clause45: Clause45Schema.optional(),
+  evaluatedAt: z.string(),
 });
 
 // ---------- Pure logic (exported for tests) -----------------------------------
@@ -696,21 +914,342 @@ export function nextPhase(current: string): string {
 
 /**
  * Port of arc-kit's migrate_classification.py: rewrite Document Control
- * `| **Classification** | <UK value> |` lines to the UAE Smart Data ladder.
+ * `| **Classification** | <UK value> |` lines to the target ladder (default
+ * "uae", the UAE Smart Data ladder; "nl" is the NL rubricering ladder). The
+ * source vocabulary (the CLASSIFICATION_LINE regex) is shared across every
+ * ladder — only the target table varies — so a value outside the fixed UK
+ * source vocabulary never matches and produces no entry, under any ladder.
+ *
+ * A source value with NO target in the selected ladder's table (today: only
+ * OFFICIAL / OFFICIAL-SENSITIVE under ladder="nl" — see
+ * NL_CLASSIFICATION_MAPPING's doc comment) is never guessed: the line is
+ * left byte-unchanged, contributes no `changes` entry, and is reported in
+ * `requiresDecision` instead. Under ladder="uae" every source value has a
+ * target, so `requiresDecision` is always empty — behavior is unchanged.
  */
-export function proposeClassification(
-  text: string,
-): { newText: string; changes: Array<{ from: string; to: string }> } {
+export function proposeClassification(text: string, ladder: string = "uae"): {
+  newText: string;
+  changes: Array<{ from: string; to: string }>;
+  requiresDecision: Array<{ value: string }>;
+} {
+  const table = CLASSIFICATION_LADDERS[ladder];
+  if (!table) {
+    throw new Error(
+      `Unknown classification ladder "${ladder}". Registered ladders: ${
+        Object.keys(CLASSIFICATION_LADDERS).sort().join(", ")
+      }`,
+    );
+  }
   const changes: Array<{ from: string; to: string }> = [];
+  const requiresDecision: Array<{ value: string }> = [];
   const newText = text.replace(
     CLASSIFICATION_LINE,
-    (_m, pre, value, post) => {
-      const mapped = CLASSIFICATION_MAPPING[value] ?? value;
+    (m, pre, value, post) => {
+      const mapped = table[value];
+      if (mapped === undefined) {
+        if (
+          (NL_REQUIRES_EXPLICIT_DECISION as readonly string[]).includes(
+            value,
+          )
+        ) {
+          requiresDecision.push({ value });
+        }
+        // No table entry and not a known requires-decision value: never
+        // invent a mapping — leave byte-unchanged, no changes entry either.
+        return m;
+      }
       changes.push({ from: value, to: mapped });
       return `${pre}${mapped}${post}`;
     },
   );
-  return { newText, changes };
+  return { newText, changes, requiresDecision };
+}
+
+/**
+ * EU Cloud Sovereignty Framework v1.2.1: score eight weighted Sovereignty
+ * Objectives (SOV-1..SOV-8, weights 15/10/10/15/20/15/10/5, summing to 100).
+ * Score = sum((score/maxScore) * weight), rounded to 2dp. FAIL-CLOSED:
+ * rejects a missing objective, a negative score, a score exceeding its
+ * maxScore, or maxScore <= 0. Per-objective SEAL floors are CALLER-SUPPLIED
+ * (never hardcoded — the framework states the tender specification defines
+ * the minimum SEAL per objective); when supplied, every objective whose
+ * achieved SEAL falls below its floor is named in `objectivesBelowFloor`.
+ */
+export function computeSovereigntyScore(input: {
+  objectives: Array<
+    {
+      id: string;
+      score: number;
+      maxScore: number;
+      seal?: string;
+      evidence?: string;
+    }
+  >;
+  sealFloors?: Record<string, string>;
+}): {
+  score: number;
+  breakdown: Array<
+    {
+      id: string;
+      weight: number;
+      contribution: number;
+      seal?: string;
+      evidence?: string;
+    }
+  >;
+  floorsEvaluated: boolean;
+  floorsPassed: boolean;
+  objectivesBelowFloor: string[];
+} {
+  const byId = new Map(input.objectives.map((o) => [o.id, o]));
+  for (const id of SOV_IDS) {
+    const o = byId.get(id);
+    if (!o) {
+      throw new Error(
+        `computeSovereigntyScore: missing objective "${id}" — objectives must be exactly ${
+          SOV_IDS.join(", ")
+        }`,
+      );
+    }
+    if (o.score < 0) {
+      throw new Error(
+        `computeSovereigntyScore: objective "${id}" has a negative score (${o.score})`,
+      );
+    }
+    if (o.maxScore <= 0) {
+      throw new Error(
+        `computeSovereigntyScore: objective "${id}" has maxScore <= 0 (${o.maxScore})`,
+      );
+    }
+    if (o.score > o.maxScore) {
+      throw new Error(
+        `computeSovereigntyScore: objective "${id}" score (${o.score}) exceeds maxScore (${o.maxScore})`,
+      );
+    }
+    if (o.seal !== undefined && !(o.seal in SEAL_RANK)) {
+      throw new Error(
+        `computeSovereigntyScore: objective "${id}" has an unrecognized SEAL "${o.seal}". Valid: ${
+          Object.keys(SEAL_RANK).join(", ")
+        }`,
+      );
+    }
+  }
+
+  const breakdown = SOV_IDS.map((id) => {
+    const o = byId.get(id)!;
+    const weight = SOV_WEIGHTS[id];
+    const contribution = Math.round((o.score / o.maxScore) * weight * 100) /
+      100;
+    return { id, weight, contribution, seal: o.seal, evidence: o.evidence };
+  });
+  const score = Math.round(
+    breakdown.reduce((sum, b) => sum + b.contribution, 0) * 100,
+  ) / 100;
+
+  const floorsEvaluated = input.sealFloors !== undefined;
+  const objectivesBelowFloor: string[] = [];
+  if (floorsEvaluated) {
+    for (const [id, floor] of Object.entries(input.sealFloors!)) {
+      const floorRank = SEAL_RANK[floor];
+      if (floorRank === undefined) {
+        throw new Error(
+          `computeSovereigntyScore: unrecognized SEAL floor "${floor}" for objective "${id}". Valid: ${
+            Object.keys(SEAL_RANK).join(", ")
+          }`,
+        );
+      }
+      const o = byId.get(id);
+      const achievedRank = o?.seal !== undefined ? SEAL_RANK[o.seal] : -1;
+      if (achievedRank < floorRank) objectivesBelowFloor.push(id);
+    }
+  }
+
+  return {
+    score,
+    breakdown,
+    floorsEvaluated,
+    floorsPassed: !floorsEvaluated || objectivesBelowFloor.length === 0,
+    objectivesBelowFloor,
+  };
+}
+
+const CLOUD_ELIGIBILITY_REQUIRED_KEYS = [
+  "processingRegion",
+  "supplierJurisdiction",
+  "isPrimaryProcess",
+  "isBasisregistratie",
+  "isEmailOrWorkplace",
+  "continuityEstablishedIndependently",
+  "riskAnalysisAndExitPlanTested",
+  "ministerialApprovalObtained",
+  "isVitaleAanbieder",
+  "isWwkeEntity",
+  "isCbwEssentialEntity",
+] as const;
+
+const CLOUD_ELIGIBILITY_VERDICT_RANK: Record<string, number> = {
+  "allowed": 0,
+  "discouraged": 1,
+  "conditional": 2,
+  "prohibited": 3,
+};
+
+/**
+ * Herziening rijksbreed cloudbeleid 2026: evaluate whether public-cloud use
+ * is allowed | conditional | discouraged | prohibited. STRICT TOTAL ORDER —
+ * prohibited > conditional > discouraged > allowed — resolved as the maximum
+ * over EVERY fired rule (never first-match), with every fired clause
+ * returned. FAIL-CLOSED: every governance input is required with no
+ * permissive default; rubricering/tbbCategory (at least one required) are
+ * rejected when unrecognized, listing the valid set.
+ */
+export function evaluateCloudEligibility(input: {
+  rubricering?: string;
+  tbbCategory?: string;
+  processingRegion: string;
+  supplierJurisdiction: string;
+  isPrimaryProcess: boolean;
+  isBasisregistratie: boolean;
+  isEmailOrWorkplace: boolean;
+  continuityEstablishedIndependently: boolean;
+  riskAnalysisAndExitPlanTested: boolean;
+  ministerialApprovalObtained: boolean;
+  isVitaleAanbieder: boolean;
+  isWwkeEntity: boolean;
+  isCbwEssentialEntity: boolean;
+}): {
+  verdict: "allowed" | "conditional" | "discouraged" | "prohibited";
+  clauses: string[];
+  reason: string;
+  clause45?: {
+    continuityEstablishedIndependently: boolean;
+    riskAnalysisAndExitPlanTested: boolean;
+    ministerialApprovalObtained: boolean;
+    allMet: boolean;
+  };
+} {
+  if (input.rubricering === undefined && input.tbbCategory === undefined) {
+    throw new Error(
+      "evaluateCloudEligibility: at least one of rubricering or tbbCategory is required",
+    );
+  }
+  const raw = input as unknown as Record<string, unknown>;
+  for (const key of CLOUD_ELIGIBILITY_REQUIRED_KEYS) {
+    if (raw[key] === undefined) {
+      throw new Error(
+        `evaluateCloudEligibility: required argument "${key}" is missing`,
+      );
+    }
+  }
+  if (
+    input.rubricering !== undefined &&
+    !(RUBRICERING_VALUES as readonly string[]).includes(input.rubricering)
+  ) {
+    throw new Error(
+      `evaluateCloudEligibility: unrecognized rubricering "${input.rubricering}". Valid values: ${
+        RUBRICERING_VALUES.join(", ")
+      }`,
+    );
+  }
+  if (
+    input.tbbCategory !== undefined &&
+    !(TBB_VALUES as readonly string[]).includes(input.tbbCategory)
+  ) {
+    throw new Error(
+      `evaluateCloudEligibility: unrecognized tbbCategory "${input.tbbCategory}". Valid values: ${
+        TBB_VALUES.join(", ")
+      }`,
+    );
+  }
+
+  const fired: Array<
+    { verdict: "conditional" | "discouraged" | "prohibited"; clause: string }
+  > = [];
+
+  if (input.rubricering && STAATSGEHEIM_RUBRICERING.has(input.rubricering)) {
+    fired.push({
+      verdict: "prohibited",
+      clause:
+        `Rijksbreed cloudbeleid 2026 §5.2 — staatsgeheim rubricering (${input.rubricering}) forbids public cloud`,
+    });
+  }
+  if (input.tbbCategory && PROHIBITED_TBB.has(input.tbbCategory)) {
+    fired.push({
+      verdict: "prohibited",
+      clause:
+        `Rijksbreed cloudbeleid 2026 §5.2 — ${input.tbbCategory} forbids public cloud`,
+    });
+  }
+  if (input.isBasisregistratie) {
+    fired.push({
+      verdict: "prohibited",
+      clause:
+        "Rijksbreed cloudbeleid 2026 §5.4 — basisregistratie source data may not be hosted on public cloud",
+    });
+  }
+  if (!isEeaOrSwitzerlandRegion(input.processingRegion)) {
+    fired.push({
+      verdict: "prohibited",
+      clause:
+        `Rijksbreed cloudbeleid 2026 §4.6 — processing outside the EEA/Switzerland residency requirement (region: ${input.processingRegion})`,
+    });
+  }
+  const entityFlagged = input.isVitaleAanbieder || input.isWwkeEntity ||
+    input.isCbwEssentialEntity;
+  if (
+    entityFlagged && input.isPrimaryProcess &&
+    !isEuEeaSupplierJurisdiction(input.supplierJurisdiction)
+  ) {
+    fired.push({
+      verdict: "discouraged",
+      clause:
+        `Rijksbreed cloudbeleid 2026 §4.3 — vitale aanbieder / Wwke entity / Cbw essential entity using a non-EU/EEA supplier (${input.supplierJurisdiction}) for its primary process is advisory-discouraged`,
+    });
+  }
+
+  let clause45: {
+    continuityEstablishedIndependently: boolean;
+    riskAnalysisAndExitPlanTested: boolean;
+    ministerialApprovalObtained: boolean;
+    allMet: boolean;
+  } | undefined;
+  if (input.isEmailOrWorkplace) {
+    const allMet = input.continuityEstablishedIndependently &&
+      input.riskAnalysisAndExitPlanTested && input.ministerialApprovalObtained;
+    clause45 = {
+      continuityEstablishedIndependently:
+        input.continuityEstablishedIndependently,
+      riskAnalysisAndExitPlanTested: input.riskAnalysisAndExitPlanTested,
+      ministerialApprovalObtained: input.ministerialApprovalObtained,
+      allMet,
+    };
+    if (!allMet) {
+      fired.push({
+        verdict: "conditional",
+        clause:
+          "Rijksbreed cloudbeleid 2026 §4.5 — email/workplace storage on public cloud requires all three conditions (continuity established independently, risk analysis + exit plan tested, ministerial approval obtained)",
+      });
+    }
+  }
+
+  let verdict: "allowed" | "conditional" | "discouraged" | "prohibited" =
+    "allowed";
+  for (const f of fired) {
+    if (
+      CLOUD_ELIGIBILITY_VERDICT_RANK[f.verdict] >
+        CLOUD_ELIGIBILITY_VERDICT_RANK[verdict]
+    ) {
+      verdict = f.verdict;
+    }
+  }
+
+  const clauses = fired.map((f) => f.clause);
+  const verdictLabel = verdict[0].toUpperCase() + verdict.slice(1);
+  const reason = clauses.length
+    ? `${verdictLabel}: ${clauses.join(" ")}`
+    : "Allowed: no Rijksbreed cloudbeleid 2026 restriction is triggered by the supplied governance facts.";
+
+  return { verdict, clauses, reason, clause45 };
 }
 
 // ---------- Filesystem helpers -------------------------------------------------
@@ -941,7 +1480,7 @@ const TEMPLATES_DIR = "templates";
  */
 export const model = {
   type: "@magistr/arckit/workspace",
-  version: "2026.08.02.1",
+  version: "2026.08.06.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -955,6 +1494,13 @@ export const model = {
       toVersion: "2026.08.02.1",
       description:
         "LB2 atomic write + backup; LB3 defaulted maxFileBytes size cap; LB4 projectState.state enum; LB5 >999 id width; LB6 templates/provisionTemplates reconciliation (unmappedFiles); LB7 surface + write-guard symlinked artifacts. Defaulted global arg + defaulted resource-schema additions only; no data transformation.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.06.1",
+      description:
+        'NL/EU sovereign-cloud overlay (arckit-nl-sovereign-cloud): nl-gov profile (risk +nl-tbb, design +nl-cloud, assurance +nl-bio/+nl-exit/+eu-sovereignty) widens the PROFILES enum; six new NL/EU doc codes + bundled templates (nl-tbb, nl-cloud, eu-sovereignty, nl-bio, nl-exit, nl-dtia); migrateClassification gains a `ladder` argument (default "uae", adds "nl" — the NL rubricering/VIRBI 2025 ladder) and MigrationSchema records which ladder ran; two new derived resources, sovereigntyAssessment (EU Cloud Sovereignty Framework v1.2.1 score) and cloudEligibility (Herziening rijksbreed cloudbeleid 2026 verdict). PROFILES widening is backward-compatible for reads and the new resource fields are additive — no data transformation needed.',
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1018,10 +1564,24 @@ export const model = {
     },
     classificationMigration: {
       description:
-        "Report (or applied result) of the UK→UAE Smart Data classification ladder migration across all ARC-* artifacts.",
+        "Report (or applied result) of a classification ladder migration (uae or nl) across all ARC-* artifacts.",
       schema: MigrationSchema,
       lifetime: "infinite",
       garbageCollection: 5,
+    },
+    sovereigntyAssessment: {
+      description:
+        "EU Cloud Sovereignty Framework v1.2.1 score for one subject (service or provider): per-objective (SOV-1..SOV-8) weighted contribution, total score, and — when caller-supplied SEAL floors were given — pass/fail per objective. An assessment record, not a certification.",
+      schema: SovereigntyAssessmentSchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
+    cloudEligibility: {
+      description:
+        "Herziening rijksbreed cloudbeleid 2026 public-cloud eligibility verdict for one subject: allowed | conditional | discouraged | prohibited, every fired clause, and a human-readable reason.",
+      schema: CloudEligibilitySchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
     },
   },
   methods: {
@@ -1544,10 +2104,13 @@ export const model = {
 
     migrateClassification: {
       description:
-        "Port of `arckit migrate-classification`: walk every ARC-* markdown artifact and map Document Control Classification values from the UK ladder to the UAE Smart Data ladder (PUBLIC→Open, OFFICIAL→Shared, OFFICIAL-SENSITIVE→Confidential). Report-only by default; pass apply=true to write.",
+        "Port of `arckit migrate-classification`: walk every ARC-* markdown artifact and map Document Control Classification values from the UK ladder to the target classification ladder — uae (default, UAE Smart Data: PUBLIC→Open, OFFICIAL→Shared, OFFICIAL-SENSITIVE→Confidential) or nl (NL rubricering/VIRBI 2025: PUBLIC→Ongerubriceerd, SECRET→Stg. GEHEIM, TOP SECRET→Stg. ZEER GEHEIM — SECRET/TOP SECRET sourced from the German BMI's NATO-equivalence table, PUBLIC reasoned floor-to-floor; OFFICIAL and OFFICIAL-SENSITIVE have no published post-2014 UK→NL equivalence and are left byte-unchanged, recorded in `skipped` with a reason naming the value for a human to decide by hand). Never aborts on an undecidable value — one such document is skipped, not the whole run. Report-only by default; pass apply=true to write.",
       arguments: z.object({
         apply: z.boolean().default(false).describe(
           "Write the proposed changes (default: report only)",
+        ),
+        ladder: z.enum(CLASSIFICATION_LADDER_NAMES).default("uae").describe(
+          "Target classification ladder — uae (UAE Smart Data, default) or nl (NL rubricering, VIRBI 2025)",
         ),
       }),
       execute: async (args, context) => {
@@ -1575,8 +2138,20 @@ export const model = {
               continue;
             }
             const text = await Deno.readTextFile(full);
-            const { newText, changes } = proposeClassification(text);
-            if (!changes.length) continue;
+            const { newText, changes, requiresDecision } =
+              proposeClassification(text, args.ladder);
+            // A value with no defensible ladder target (today: OFFICIAL /
+            // OFFICIAL-SENSITIVE under ladder="nl") is surfaced, never
+            // guessed — and never aborts the run. A file can carry BOTH
+            // requiresDecision entries and real changes; both are handled,
+            // neither suppresses the other.
+            for (const rd of requiresDecision) {
+              skipped.push({
+                relPath,
+                reason:
+                  `requires explicit rubricering decision: no published UK→NL equivalence for ${rd.value} (UK abolished CONFIDENTIAL/RESTRICTED in 2014); set the rubricering by hand`,
+              });
+            }
             const real = changes.filter((c) => c.from !== c.to);
             if (!real.length) continue;
             if (args.apply) {
@@ -1603,8 +2178,9 @@ export const model = {
           }
         }
         context.logger.info(
-          "Classification migration: {n} changes in {f} files, {s} skipped (apply={apply})",
+          "Classification migration ({ladder}): {n} changes in {f} files, {s} skipped (apply={apply})",
           {
+            ladder: args.ladder,
             n: totalChanges,
             f: files.length,
             s: skipped.length,
@@ -1617,11 +2193,159 @@ export const model = {
           {
             path: root,
             apply: args.apply,
+            ladder: args.ladder,
             scannedFiles,
             files,
             totalChanges,
             skipped,
             ranAt: new Date().toISOString(),
+          },
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    euSovereigntyScore: {
+      description:
+        "EU Cloud Sovereignty Framework v1.2.1: score a subject (service or provider) against the eight weighted Sovereignty Objectives (SOV-1..SOV-8) and, when caller-supplied SEAL floors are given, report pass/fail per objective. Computes an assessment — it does not certify.",
+      arguments: z.object({
+        subject: z.string().describe(
+          "The service or provider being assessed",
+        ),
+        project: z.string().optional().describe(
+          "Project dir, e.g. 001-payments — prefixes the written resource name",
+        ),
+        objectives: z.array(z.object({
+          id: z.string().describe(
+            "Sovereignty Objective id — SOV-1..SOV-8 (EU Cloud Sovereignty Framework v1.2.1), any order",
+          ),
+          score: z.number().describe("Achieved score for this objective"),
+          maxScore: z.number().describe(
+            "Maximum possible score for this objective",
+          ),
+          seal: z.string().optional().describe(
+            "Achieved SEAL level for this objective (SEAL0..SEAL4), if assessed",
+          ),
+          evidence: z.string().optional().describe(
+            "Evidence/basis recorded for this objective's score — e.g. who holds decisive authority over the service, which legal system governs the contract, cryptographic access, support-staff jurisdiction, hardware/firmware/software provenance, API/licence exit rights",
+          ),
+        })).describe(
+          "Exactly the eight EU CSF v1.2.1 Sovereignty Objectives SOV-1..SOV-8, any order",
+        ),
+        sealFloors: z.record(z.string(), z.string()).optional().describe(
+          "Caller-supplied minimum SEAL per objective id — never hardcoded; the tender specification defines these, per the EU CSF",
+        ),
+      }),
+      execute: async (args, context) => {
+        const result = computeSovereigntyScore({
+          objectives: args.objectives,
+          sealFloors: args.sealFloors,
+        });
+        const slug = slugify(args.subject);
+        const name = args.project
+          ? `${args.project}-sovereignty-${slug}`
+          : `sovereignty-${slug}`;
+        context.logger.info(
+          "Sovereignty score for {subject}: {score}",
+          { subject: args.subject, score: result.score },
+        );
+        const handle = await context.writeResource(
+          "sovereigntyAssessment",
+          name,
+          {
+            subject: args.subject,
+            project: args.project,
+            ...result,
+            assessedAt: new Date().toISOString(),
+          },
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    nlCloudEligibility: {
+      description:
+        "Herziening rijksbreed cloudbeleid 2026: evaluate whether a subject's public-cloud use is allowed | conditional | discouraged | prohibited, from rubricering/TBB classification, processing region, supplier jurisdiction, and the entity/clause-4.5/clause-4.3 governance facts. Every governance input is required (fail-closed); rubricering and tbbCategory are validated against the NL rubricering and TBB enums at the argument boundary.",
+      arguments: z.object({
+        subject: z.string().describe(
+          "The service or provider being assessed",
+        ),
+        project: z.string().optional().describe(
+          "Project dir, e.g. 001-payments — prefixes the written resource name",
+        ),
+        rubricering: z.enum(RUBRICERING_VALUES).optional().describe(
+          "NL VIRBI 2025 rubricering level (at least one of rubricering/tbbCategory required; Stg. = staatsgeheim)",
+        ),
+        tbbCategory: z.enum(TBB_VALUES).optional().describe(
+          "Te Beschermen Belang category, TBB 1 (highest) .. TBB 4 (lowest) — TBB systematiek, Gereedschap v1.0",
+        ),
+        processingRegion: z.string().describe(
+          "Where the data is stored and processed (e.g. EEA, Switzerland, United States)",
+        ),
+        supplierJurisdiction: z.string().describe(
+          "Jurisdiction(s) the supplier and its sub-processors fall under — distinct from processingRegion",
+        ),
+        isPrimaryProcess: z.boolean().describe(
+          "Whether the service supports the entity's primary process",
+        ),
+        isBasisregistratie: z.boolean().describe(
+          "Whether the service holds basisregistratie source data",
+        ),
+        isEmailOrWorkplace: z.boolean().describe(
+          "Whether the service is email/workplace storage (clause 4.5)",
+        ),
+        continuityEstablishedIndependently: z.boolean().describe(
+          "Clause 4.5 condition: continuity established independently of the supplier",
+        ),
+        riskAnalysisAndExitPlanTested: z.boolean().describe(
+          "Clause 4.5 condition: risk analysis and exit plan tested",
+        ),
+        ministerialApprovalObtained: z.boolean().describe(
+          "Clause 4.5 condition: ministerial approval obtained",
+        ),
+        isVitaleAanbieder: z.boolean().describe(
+          "Whether the entity is a vitale aanbieder",
+        ),
+        isWwkeEntity: z.boolean().describe(
+          "Whether the entity is a Wwke (Cyberbeveiligingswet) entity",
+        ),
+        isCbwEssentialEntity: z.boolean().describe(
+          "Whether the entity is a Cbw (NIS2) essential entity",
+        ),
+      }),
+      execute: async (args, context) => {
+        const result = evaluateCloudEligibility({
+          rubricering: args.rubricering,
+          tbbCategory: args.tbbCategory,
+          processingRegion: args.processingRegion,
+          supplierJurisdiction: args.supplierJurisdiction,
+          isPrimaryProcess: args.isPrimaryProcess,
+          isBasisregistratie: args.isBasisregistratie,
+          isEmailOrWorkplace: args.isEmailOrWorkplace,
+          continuityEstablishedIndependently:
+            args.continuityEstablishedIndependently,
+          riskAnalysisAndExitPlanTested: args.riskAnalysisAndExitPlanTested,
+          ministerialApprovalObtained: args.ministerialApprovalObtained,
+          isVitaleAanbieder: args.isVitaleAanbieder,
+          isWwkeEntity: args.isWwkeEntity,
+          isCbwEssentialEntity: args.isCbwEssentialEntity,
+        });
+        const slug = slugify(args.subject);
+        const name = args.project
+          ? `${args.project}-cloud-eligibility-${slug}`
+          : `cloud-eligibility-${slug}`;
+        context.logger.info(
+          "Cloud eligibility for {subject}: {verdict}",
+          { subject: args.subject, verdict: result.verdict },
+        );
+        const handle = await context.writeResource(
+          "cloudEligibility",
+          name,
+          {
+            subject: args.subject,
+            project: args.project,
+            ...result,
+            evaluatedAt: new Date().toISOString(),
           },
         );
         return { dataHandles: [handle] };

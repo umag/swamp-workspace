@@ -25,8 +25,10 @@ Phases:
 `foundation → context → risk → business-case → requirements → design
 → procurement → design-review → delivery → operations → assurance → story →
 complete`.
-Profiles (`standard | uk-gov | mod | ai`) add gate groups — e.g. `uk-gov`
-requires TCoP and Secure-by-Design assessments in assurance.
+Profiles (`standard | uk-gov | mod | ai | nl-gov`) add gate groups — e.g.
+`uk-gov` requires TCoP and Secure-by-Design assessments in assurance; `nl-gov`
+(NL sovereign-cloud overlay) requires nl-tbb in risk, nl-cloud in design, and
+nl-bio + nl-exit + eu-sovereignty in assurance.
 
 - **`startProject`** `{title, profile?, dir?}` — allocate the next
   `projects/NNN-slug/` directory and enter `foundation`.
@@ -59,9 +61,33 @@ requires TCoP and Secure-by-Design assessments in assurance.
   while a mandatory upstream input is missing) plus the next step on the
   standard critical path. `projects/000-global/` artifacts satisfy dependencies
   workspace-wide.
-- **`migrateClassification`** `{apply?}` — port of
-  `arckit migrate-classification`: UK ladder → UAE Smart Data ladder over every
+- **`migrateClassification`** `{apply?, ladder?}` — port of
+  `arckit migrate-classification`: UK ladder → target ladder (`uae` UK → UAE
+  Smart Data, default; `nl` UK → NL rubricering, VIRBI 2025 — a pragmatic
+  working equivalence, not an officially published mapping) over every
   artifact's Document Control table. Report-only unless `apply=true`.
+
+### NL sovereign-cloud overlay (`nl-gov` profile)
+
+- **`euSovereigntyScore`** `{subject, objectives, project?, sealFloors?}` —
+  scores a service/provider against the EU Cloud Sovereignty Framework v1.2.1's
+  eight weighted Sovereignty Objectives (SOV-1..SOV-8); reports pass/fail
+  against caller-supplied SEAL floors when given. Computes an assessment, not a
+  certification.
+- **`nlCloudEligibility`**
+  `{subject, rubricering?, tbbCategory?,
+  processingRegion, supplierJurisdiction, ...}`
+  — evaluates public-cloud eligibility under the Herziening rijksbreed
+  cloudbeleid 2026 (3 juli 2026):
+  `allowed | conditional | discouraged | prohibited`, fail-closed on every
+  governance input.
+
+See `templates/nl-tbb-classification-template.md`,
+`nl-cloud-assessment-template.md`, `eu-sovereignty-assessment-template.md`,
+`nl-bio-conformance-template.md`, `nl-exit-plan-template.md`, and
+`nl-dtia-template.md` for the grounding instruments and citation-by-clause
+detail — every one carries a community-overlay banner and is not officially
+validated.
 
 ### Example
 

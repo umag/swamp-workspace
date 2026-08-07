@@ -41,29 +41,32 @@ and only works on skippable phases. Artifacts in `projects/000-global/`
 
 ## Profile extras (added gate groups)
 
-| Profile  | Extra requirements                                     |
-| -------- | ------------------------------------------------------ |
-| standard | —                                                      |
-| uk-gov   | assurance: + tcop, + secure                            |
-| mod      | assurance: + mod-secure                                |
-| ai       | design: + data-model; assurance: + ai-playbook, + atrs |
+| Profile  | Extra requirements                                                                   |
+| -------- | ------------------------------------------------------------------------------------ |
+| standard | —                                                                                    |
+| uk-gov   | assurance: + tcop, + secure                                                          |
+| mod      | assurance: + mod-secure                                                              |
+| ai       | design: + data-model; assurance: + ai-playbook, + atrs                               |
+| nl-gov   | risk: + nl-tbb; design: + nl-cloud; assurance: + nl-bio, + nl-exit, + eu-sovereignty |
 
 ## Method reference
 
-| Method                  | Arguments                   | Effect                                                                   |
-| ----------------------- | --------------------------- | ------------------------------------------------------------------------ |
-| `startProject`          | `title`, `profile?`, `dir?` | Allocate `projects/NNN-slug/`, state → foundation                        |
-| `status`                | `project`                   | Gate evaluation + nextAction → `<dir>-status` data                       |
-| `advance`               | `project`, `note?`          | Gate-checked move to next phase (last phase → complete)                  |
-| `skipPhase`             | `project`, `reason`         | Record skip, move on (skippable phases only)                             |
-| `abandon`               | `project`, `reason`         | State → abandoned from anywhere                                          |
-| `template`              | `command`, `project?`       | Bundled template content + doc code + target filename + mandatory inputs |
-| `templates`             | —                           | Catalog of all 60+ bundled templates                                     |
-| `init`                  | —                           | Idempotent workspace skeleton                                            |
-| `provisionTemplates`    | —                           | Copy bundled templates → `.arckit/templates/`                            |
-| `scan`                  | —                           | Full artifact inventory → `workspace` data                               |
-| `gaps`                  | —                           | Mandatory-dependency violations → `gaps` data                            |
-| `migrateClassification` | `apply?`                    | UK→UAE classification ladder migration (report-only by default)          |
+| Method                  | Arguments                                                                                                                                                                                                                  | Effect                                                                                                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `startProject`          | `title`, `profile?`, `dir?`                                                                                                                                                                                                | Allocate `projects/NNN-slug/`, state → foundation                                                                                                            |
+| `status`                | `project`                                                                                                                                                                                                                  | Gate evaluation + nextAction → `<dir>-status` data                                                                                                           |
+| `advance`               | `project`, `note?`                                                                                                                                                                                                         | Gate-checked move to next phase (last phase → complete)                                                                                                      |
+| `skipPhase`             | `project`, `reason`                                                                                                                                                                                                        | Record skip, move on (skippable phases only)                                                                                                                 |
+| `abandon`               | `project`, `reason`                                                                                                                                                                                                        | State → abandoned from anywhere                                                                                                                              |
+| `template`              | `command`, `project?`                                                                                                                                                                                                      | Bundled template content + doc code + target filename + mandatory inputs                                                                                     |
+| `templates`             | —                                                                                                                                                                                                                          | Catalog of all 60+ bundled templates                                                                                                                         |
+| `init`                  | —                                                                                                                                                                                                                          | Idempotent workspace skeleton                                                                                                                                |
+| `provisionTemplates`    | —                                                                                                                                                                                                                          | Copy bundled templates → `.arckit/templates/`                                                                                                                |
+| `scan`                  | —                                                                                                                                                                                                                          | Full artifact inventory → `workspace` data                                                                                                                   |
+| `gaps`                  | —                                                                                                                                                                                                                          | Mandatory-dependency violations → `gaps` data                                                                                                                |
+| `migrateClassification` | `apply?`, `ladder?` (default `uae`)                                                                                                                                                                                        | Classification ladder migration — `uae` (UK→UAE Smart Data) or `nl` (UK→NL rubricering, VIRBI 2025); report-only by default; `ladder` recorded on the result |
+| `euSovereigntyScore`    | `subject`, `objectives` (SOV-1..SOV-8), `project?`, `sealFloors?`                                                                                                                                                          | EU Cloud Sovereignty Framework v1.2.1 score → `sovereigntyAssessment` data; computes an assessment, not a certification                                      |
+| `nlCloudEligibility`    | `subject`, `processingRegion`, `supplierJurisdiction`, `isPrimaryProcess`, `isBasisregistratie`, `isEmailOrWorkplace`, 3 clause-4.5 booleans, 3 entity-type flags, `rubricering?`/`tbbCategory?` (≥1 required), `project?` | Rijksbreed cloudbeleid 2026 verdict (allowed\|conditional\|discouraged\|prohibited) → `cloudEligibility` data; fail-closed on every argument                 |
 
 ## Error contract
 

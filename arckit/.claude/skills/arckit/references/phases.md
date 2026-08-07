@@ -26,6 +26,7 @@ actual people/roles; do not invent names. Include RACI and engagement level.
 
 HM Treasury Orange Book style: cause → event → impact, inherent/residual
 scoring, owners, mitigations. Seed from stakeholder concerns and principles.
+[nl-gov profile also mandates nl-tbb — TBB/rubricering classification.]
 
 ## business-case — SOBC (skippable for internal/small work)
 
@@ -41,7 +42,8 @@ to a stakeholder goal; MoSCoW priorities; acceptance criteria.
 
 ## design — one or more of research / data-model / wardley / adr / diagram / dfd / platform-design
 
-Pick by project shape (`ai` profile also mandates data-model):
+Pick by project shape (`ai` profile also mandates data-model; [nl-gov profile
+also mandates nl-cloud — sovereign-cloud eligibility]):
 
 - market/vendor choice pending → research
 - data-heavy or GDPR-relevant → data-model (then consider dpia — its mandatory
@@ -71,11 +73,13 @@ FR/NFR lands in ≥1 story), sprint-organized.
 operationalize for runbooks/DR/on-call, servicenow for ITSM design, devops for
 CI/CD + IaC, traceability for the requirements→design→test matrix.
 
-## assurance — analyze (+ tcop & secure on uk-gov, mod-secure on mod, ai-playbook & atrs on ai)
+## assurance — analyze (+ tcop & secure on uk-gov, mod-secure on mod, ai-playbook & atrs on ai, nl-bio & nl-exit & eu-sovereignty on nl-gov)
 
 analyze is the cross-artifact governance quality report: coverage, consistency,
 traceability breaks, gaps — cite artifact IDs as evidence. Compliance
 assessments score each principle/control with evidence and remediation.
+[nl-gov's three are separate mandatory groups, any order; nl-exit requires
+nl-cloud first.]
 
 ## story — story (skippable)
 
