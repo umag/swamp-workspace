@@ -2,11 +2,15 @@
 
 ## 2026.08.07.1
 
-Fixes `musicbrainz-search-resource-collision`. `model.version` and `manifest.yaml` move `2026.08.05.2` -> `2026.08.07.1`.
+Fixes `musicbrainz-search-resource-collision`. `model.version` and
+`manifest.yaml` move `2026.08.05.2` -> `2026.08.07.1`.
 
 ### Breaking change: each typed search method now writes its own resource instance
 
-Five sibling methods (`search-artist`, `search-release-group`, `search-release`, `search-recording`, `search-label`) all wrote the shared instance `search` under five different specs, so whichever ran last silently won. Each now writes its own instance via a new `SEARCH_INSTANCE_NAMES` registry:
+Five sibling methods (`search-artist`, `search-release-group`, `search-release`,
+`search-recording`, `search-label`) all wrote the shared instance `search` under
+five different specs, so whichever ran last silently won. Each now writes its
+own instance via a new `SEARCH_INSTANCE_NAMES` registry:
 
 ```
 # before
@@ -15,15 +19,27 @@ data.latest("musicbrainz", "search").attributes.artists
 data.latest("musicbrainz", "search-artist").attributes.artists
 ```
 
-(same for the other four). No resource spec changed — only the instance argument was wrong.
+(same for the other four). No resource spec changed — only the instance argument
+was wrong.
 
 ### Deprecated: instance `search`
 
-`search-artist` also writes the historical `search` instance (spec `artists`, unchanged shape) as a time-bounded alias, marked `deprecated: true` / `supersededBy: "search-artist"` — present ONLY on the `search` row, never on `search-artist`'s own. Removed no earlier than **2026-09-07** (tracked as `musicbrainz-search-alias-removal`), never "this version only" — five versions shipped in the eight days before this one. Detect: `swamp data query 'modelName == "musicbrainz" && name == "search" && isLatest' --select 'attributes.timestamp' --json`.
+`search-artist` also writes the historical `search` instance (spec `artists`,
+unchanged shape) as a time-bounded alias, marked `deprecated: true` /
+`supersededBy: "search-artist"` — present ONLY on the `search` row, never on
+`search-artist`'s own. Removed no earlier than **2026-09-07** (tracked as
+`musicbrainz-search-alias-removal`), never "this version only" — five versions
+shipped in the eight days before this one. Detect:
+`swamp data query 'modelName == "musicbrainz" && name == "search" && isLatest' --select 'attributes.timestamp' --json`.
 
-A second, unrelated collision (`find-missing`'s `missingReleases` / `seed-all-missing`'s `seedUrls`, both keyed on `artistMbid`) is OUT OF SCOPE and tracked as `musicbrainz-missing-seed-instance-collision`; pre-existing `search` rows are left in place.
+A second, unrelated collision (`find-missing`'s `missingReleases` /
+`seed-all-missing`'s `seedUrls`, both keyed on `artistMbid`) is OUT OF SCOPE and
+tracked as `musicbrainz-missing-seed-instance-collision`; pre-existing `search`
+rows are left in place.
 
-Folded below: this pass's `model.version` bump and schema/instance-name changes belong to the fix above, not to the review-fix content that follows — that covers only report wording and test-suite hardening.
+Folded below: this pass's `model.version` bump and schema/instance-name changes
+belong to the fix above, not to the review-fix content that follows — that
+covers only report wording and test-suite hardening.
 
 ### `@magistr/musicbrainz-discography-sync` report: coverage wording is now conditional on which run the state belongs to
 
@@ -62,7 +78,12 @@ they target and confirming the suite fails, then reverting.
 
 ### Operating-procedure documentation for `music-wanted` (main-repo workflow)
 
-Unrelated to this package's own code: re-run `swamp workflow run music-wanted --input dryRun=true` after any edit to that workflow — the only thing that exercises its CEL gate semantics. Lesson: this CEL engine (`@marcbachmann/cel-js`) rejects `has()` when its receiver is a function-call result; rewrite `has(data.latest(...).attributes.cursor)` as `data.latest(...) == null || data.latest(...).attributes.cursor != null`.
+Unrelated to this package's own code: re-run
+`swamp workflow run music-wanted --input dryRun=true` after any edit to that
+workflow — the only thing that exercises its CEL gate semantics. Lesson: this
+CEL engine (`@marcbachmann/cel-js`) rejects `has()` when its receiver is a
+function-call result; rewrite `has(data.latest(...).attributes.cursor)` as
+`data.latest(...) == null || data.latest(...).attributes.cursor != null`.
 
 ## 2026.08.05.2
 
