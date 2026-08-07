@@ -296,3 +296,50 @@ Deno.test("coverage: digestMessage will not compose from zero working sources", 
     );
   }, 500);
 });
+
+// --- guard: the source files themselves stay plain text --------------------
+
+/**
+ * Raw control bytes in a source file are invisible to every normal tool and
+ * survive every behavioural test.
+ *
+ * This is not hypothetical: v2026.08.07.1 shipped with literal 0x00 0x01 bytes
+ * inside a string in the adversarial suite, written where escape sequences were
+ * intended. `deno fmt`, `lint`, `check` and all 109 tests were green; CI was
+ * green; it was reviewed and merged. Git silently recorded the file as BINARY
+ * (`Bin 0 -> 8298 bytes`), which costs the file its diff, its blame and any
+ * future reviewability — and `grep` resolves to ripgrep on some machines, which
+ * SKIPS binary files, so searching for the offending byte reports "no matches"
+ * and reads like a clean bill of health.
+ *
+ * No behavioural test can catch this, so the suite reads its own directory.
+ * The forbidden characters are built with String.fromCharCode at runtime and
+ * never written as literals, so this test cannot reintroduce the very bug it
+ * exists to prevent.
+ */
+Deno.test("guard: no source file contains a raw control byte", async () => {
+  const dir = new URL(".", import.meta.url).pathname;
+  const offenders: string[] = [];
+
+  for await (const entry of Deno.readDir(dir)) {
+    if (!entry.isFile || !entry.name.endsWith(".ts")) continue;
+    const bytes = await Deno.readFile(`${dir}${entry.name}`);
+    for (let i = 0; i < bytes.length; i++) {
+      const c = bytes[i];
+      // Tab, LF and CR are the only control bytes legitimately in source.
+      if (c === 9 || c === 10 || c === 13) continue;
+      if (c < 0x20 || c === 0x7f) {
+        const hex = c.toString(16).padStart(2, "0");
+        offenders.push(`${entry.name}: 0x${hex} at byte offset ${i}`);
+        break; // one report per file is enough to fail and locate it
+      }
+    }
+  }
+
+  assertEquals(
+    offenders,
+    [],
+    "write the character as an escape sequence (backslash-u) so the FILE " +
+      "stays plain text while the STRING still holds the character",
+  );
+});
