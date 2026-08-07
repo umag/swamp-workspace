@@ -1,5 +1,5 @@
 // Deno tests for @magistr/swamp-go-brr/gobrr — the PURE orchestrator core.
-// Run: /home/zeroclaw/.swamp/deno/deno test extensions/models/gobrr.test.ts
+// Run: ~/.swamp/deno/deno test extensions/models/gobrr.test.ts
 // These cover the load-bearing logic; live FC/jj/Docker is integration-only.
 import {
   assert,

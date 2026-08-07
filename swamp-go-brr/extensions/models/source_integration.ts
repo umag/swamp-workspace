@@ -658,13 +658,20 @@ export type AppliedTaskResult = z.infer<typeof AppliedTaskResultSchema>;
 /** @internal — the source-integration model definition; invoke its methods via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/source-integration",
-  version: "2026.08.02.1",
+  version: "2026.08.07.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
       toVersion: "2026.08.02.1",
       description:
         "Real-fix B6 (jjRun now carries --no-pager + a client-side timeout via the new jjTimeoutMs global arg), B7 (parseGitDiffPaths symmetric ' b/' split, no longer mis-splitting a path containing a literal ' b/' substring), and B8 (apply()'s write loop now goes through lib/acl's safeWriteWithinRepo: refuses an existing symlink at the final path component and re-confines the written path post-write, closing the TOCTOU window's blast radius). jjTimeoutMs is additive-defaulted (120000ms); no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.07.1",
+      description:
+        "Version-aligned with the other four swamp-go-brr models for the preflight privacy fix (real homelab sshUser/jjPath/fcHost defaults replaced with neutral placeholders — source-integration's OWN jjPath default was already the neutral 'jj' and is unchanged). source_integration.ts itself is unchanged, no resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

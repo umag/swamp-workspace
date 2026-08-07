@@ -5,7 +5,7 @@
 // envelope parse (the SINGLE claude_error site for text + json), extract .result
 // for the unchanged @@EDIT parse, and validate + return declared usage. Text mode
 // is unchanged (graceful degrade for an old fabric).
-// Run: /home/zeroclaw/.swamp/deno/deno test extensions/models/source_integration_leaf_json.test.ts
+// Run: ~/.swamp/deno/deno test extensions/models/source_integration_leaf_json.test.ts
 import { extractLeafJson, MAX_ENVELOPE_BYTES } from "./source_integration.ts";
 
 function assert(cond: boolean, msg: string): void {

@@ -2,7 +2,7 @@
 // SYNTHETIC, hand-authored wire-shape fixtures under pihole/fixtures/ (no
 // real host, no real credentials, RFC-5737 documentation IPs only). These
 // are a stand-in for a real sanitized capture via the ext-canary-fixtures
-// workflow, which must run on the WG-connected box (zeroclaw/DO) against
+// workflow, which must run on the WG-connected box against
 // aopab-local-dns — NOT from this machine (see pihole/fixtures/README.md).
 //
 // Every test here SKIPS CLEANLY if pihole/fixtures/ is absent, so a

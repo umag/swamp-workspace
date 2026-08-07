@@ -21,11 +21,13 @@ import {
 // ---------------------------------------------------------------------------
 
 Deno.test("normalizeBaseUrl: bare host + http reproduces the legacy base exactly", () => {
-  // Back-compat guard: the existing instance has only host/password and the
-  // old code did `http://${host}` — this must be byte-identical.
+  // Back-compat guard: an instance with only host/password and the old code
+  // did `http://${host}` — this must be byte-identical. The address itself is
+  // an RFC 5737 documentation IP (not a real homelab host); any bare host
+  // proves the same regression guard.
   assertEquals(
-    normalizeBaseUrl("192.168.88.53", "http"),
-    "http://192.168.88.53",
+    normalizeBaseUrl("192.0.2.53", "http"),
+    "http://192.0.2.53",
   );
 });
 

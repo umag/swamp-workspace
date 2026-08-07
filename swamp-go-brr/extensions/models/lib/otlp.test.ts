@@ -2,7 +2,7 @@
 // helpers + the authoritative attribute scrub. lib/otlp.ts imports ONLY stdlib +
 // lib/scrub.ts (cycle-free); it is the unconditional last-line scrub site for
 // every span/metric string attribute. Issue gobrr-observability.
-// Run: /home/zeroclaw/.swamp/deno/deno test extensions/models/lib/otlp.test.ts
+// Run: ~/.swamp/deno/deno test extensions/models/lib/otlp.test.ts
 import {
   assert,
   assertEquals,

@@ -4,7 +4,7 @@
 // stderr-merge and WITHOUT the ERROR-prefix (which would corrupt the JSON), and
 // surfaces the exit code out-of-band. The DEFAULT (text) path is unchanged so an
 // older consumer / pre-feature run behaves byte-identically.
-// Run: /home/zeroclaw/.swamp/deno/deno test extensions/models/firecracker_outputformat.test.ts
+// Run: ~/.swamp/deno/deno test extensions/models/firecracker_outputformat.test.ts
 import { AGENT_SCRIPT, buildQueuePayload } from "./firecracker.ts";
 
 function assert(cond: boolean, msg: string): void {

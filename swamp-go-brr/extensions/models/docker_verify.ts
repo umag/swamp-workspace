@@ -134,13 +134,20 @@ type Ctx = {
 /** @internal — call via the CLI / driver loop. */
 export const model = {
   type: "@magistr/swamp-go-brr/docker-verify",
-  version: "2026.08.02.1",
+  version: "2026.08.07.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
       toVersion: "2026.08.02.1",
       description:
         'Real-fix B1 (the ssh transport now enforces a client-side timeout — new verifyTimeoutMs global arg, default 1800000ms — wrapping the whole handshake+remote-command runtime; on expiry the child is killed and exitCode=124 is recorded, fail-closed) and B3 (ssh host-key verification is secure-by-default: StrictHostKeyChecking=accept-new + a real known_hosts file, replacing the hardcoded no + /dev/null; new sshStrictHostKeyChecking [accept-new|yes|no] + sshKnownHostsFile global args, "no" is a documented insecure opt-out). All new global args are additive-defaulted; no resource schema change.',
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.07.1",
+      description:
+        "Version-aligned with the other four swamp-go-brr models for the preflight privacy fix (real homelab sshUser/jjPath/fcHost defaults replaced with neutral placeholders). docker_verify.ts itself is unchanged, no resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

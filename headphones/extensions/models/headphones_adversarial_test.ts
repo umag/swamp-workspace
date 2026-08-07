@@ -546,10 +546,12 @@ Deno.test("pin: dbPath is interpolated into sshExecSql's `sqlite3 -json` invocat
 // Fixtures-secret-scan — mechanical backstop over the committed corpus
 // ---------------------------------------------------------------------------
 
-// The real live Headphones host in this homelab (see
-// reference_headphones_extension.md) — denylisted explicitly, mirroring
-// telegram-send's real-chat-id denylist.
-const REAL_HEADPHONES_HOST = "headphones.aopab.art";
+// A neutral placeholder host — NOT the real live Headphones host in this
+// homelab. The scanner below only needs a string of the *.aopab.art SHAPE to
+// prove it fires (mirrors telegram-send's real-chat-id denylist precedent);
+// it does not need the actual real hostname. Do not "restore" a real value
+// here.
+const REAL_HEADPHONES_HOST = "example-host.aopab.art";
 
 const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   {

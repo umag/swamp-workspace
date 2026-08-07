@@ -1,5 +1,5 @@
 // Env-gated LIVE suite for @magistr/pihole — NEVER runs by default. Exists
-// so a human on the WireGuard-connected box (zeroclaw/DO) can point this at
+// so a human on the WireGuard-connected box can point this at
 // the REAL aopab-local-dns instance later. Gated by LIVE_PIHOLE=1 plus
 // PIHOLE_LIVE_HOST / PIHOLE_LIVE_PASSWORD in the environment (read from a
 // vault by the OPERATOR at run time — never inlined here).

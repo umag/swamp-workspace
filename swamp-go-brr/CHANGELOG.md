@@ -3,6 +3,44 @@
 All notable changes to `@magistr/swamp-go-brr`. Versions are CalVer
 (`YYYY.MM.DD.MICRO`).
 
+## 2026.08.07.1 — privacy: neutral defaults for sshUser/jjPath/fcHost
+
+`preflight`'s `GlobalArgs` defaulted three fields to this homelab's REAL
+infrastructure: `sshUser` to the operator's actual local unix username, `jjPath`
+to that user's actual home-directory path, and `fcHost` to the operator's actual
+Firecracker fabric hostname. Any installer who created a `preflight` instance
+without overriding these globals inherited that disclosure verbatim (surfaced in
+`instanceCommands`' generated `swamp model create` strings). All five models
+bump to `2026.08.07.1` (lockstep, single manifest version); only `preflight`
+changes functionally.
+
+### Fixed
+
+- `preflight`'s `GlobalArgs.sshUser` default (the operator's real local unix
+  username) → `runner` (a generic agent/CI-style username, matches no real
+  account).
+- `preflight`'s `GlobalArgs.jjPath` default (an absolute path under that same
+  real user's home directory) → `jj` (PATH-relative — matches
+  `source-integration`'s own `jjPath` default, which was already neutral).
+- `preflight`'s `GlobalArgs.fcHost` default (the operator's real Firecracker
+  fabric hostname) → `firecracker.example.com` (RFC 2606 reserved example
+  domain).
+- Behavior-preserving for every instance that already sets these globals
+  explicitly (the overwhelming majority — the defaults only matter for a
+  brand-new instance created with no `--global-arg` overrides). No resource
+  schema change; `upgradeAttributes` is identity on all five models.
+
+### Changed
+
+- `preflight.test.ts`'s `SUB` fixture and the `instanceCommands` expected
+  command strings updated to the new neutral defaults.
+- Five `// Run: …` dev-comment header lines across the test suite
+  (`gobrr.test.ts`, `gobrr_observability.test.ts`, `lib/otlp.test.ts`,
+  `otlp_export.test.ts`, `source_integration_leaf_json.test.ts`) that hardcoded
+  the same real absolute home-directory path in an example `deno test`
+  invocation now use `~/.swamp/deno/deno` (matches the convention already used
+  by `reading-list/README.md`). Comment-only, no behavior change.
+
 ## 2026.08.02.1 — security: real-fix B1–B8 + five-suite quality (Grade A)
 
 All eight latent bugs tracked in the LOCAL `swamp-go-brr-latent-bugs`
