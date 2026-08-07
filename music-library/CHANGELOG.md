@@ -1,27 +1,88 @@
 # Changelog
 
-## Unreleased
+## 2026.08.07.1
 
-Review-fix pass over the `music-wanted-sequence-not-wired` change above — no
-`model.version` bump, no schema or method-contract change; test-suite hardening
-only.
+Fixes `music-wanted-workflow-packaging`, then hardens it against four
+code-review findings. `model.version`/`manifest.yaml` move `2026.08.05.2` ->
+`2026.08.07.1`.
 
-### Test-suite hardening (mutation-testing finding)
+### Ship the `music-wanted` workflow body as part of this package
 
-The negative assertion guarding against `wanted`'s missing-browse-cache throw
-regressing back to suggesting the nonexistent `browse` method had a stray
-trailing double-quote in its needle
-(`'swamp model method run musicbrainz browse"'`), which never matched the defect
-it names (the old broken message had nothing after `browse`). Fixed by dropping
-the stray quote. Verified by re-applying the append-the-old-text mutation this
-needle exists to catch and confirming the test now fails, then reverting.
+Adds `extensions/workflows/music-wanted.yaml` (`@magistr/music-wanted-sequence`)
+under a new manifest `workflows:` key, so a 464-line artefact that previously
+existed in one copy only — in a homelab-repo tree with neither `.git` nor `.jj`
+— gets version control and diffability. **Installing this does NOT make the
+workflow runnable**: neither `swamp extension pull` nor `extension source add`
+registers a workflow file, so nothing exists under this name until you create it
+with `swamp workflow create` and paste the body in — stated in the manifest's
+Workflows section, the file's own first paragraph, and this README.
 
-### Operating-procedure documentation for `music-wanted` (main-repo workflow)
+The packaged copy also corrects claims the repo-local body carried, fixed in the
+homelab copy too (outside this package): gate 6 (catalog-completeness) falsely
+claimed "fails only on a cold catalog, passes once warm" — the only recorded dry
+run (`dc413fca`, 2026-08-06) failed gates 4 AND 6, since resolve has no `dryRun`
+guard and resolves for real while `batchSize: 0` caches nothing; the stale
+`~775` / `775 of 2258` figures understated the last real run's cost (1165
+resolved) by ~50%; and the unconditional `ext-canary-nightly` 02:30-03:15 rule
+is replaced by the mechanism it was a special case of — a cold sync holds the
+`musicbrainz` lock for the whole pass, and `swamp model method run` waits only
+`DEFAULT_LOCK_TIMEOUT_MS` (60s) — dropped WITH THIS NOTE: `ext-canary-nightly`
+hasn't run since 2026-07-27 (absent from five days of scheduler logs), so the
+window guards nothing today, though the lock-contention hazard remains real. See
+the `musicbrainz` package's own CHANGELOG for the dry-run control's original
+documentation; it's now identical on both copies, not "repo-local" only.
 
-Unrelated to this package's own code, but recorded here since this package's
-`wanted` method is one leg of the gated sequence: see the `musicbrainz`
-package's CHANGELOG (Unreleased) for the required-dry-run control now documented
-on the repo-local `music-wanted` workflow.
+### `wanted`'s missing-browse-cache throw no longer says "Repo-local"
+
+The throw's last line named a "private homelab repo" that no longer holds the
+only copy. It now names the shipped file and create-and-paste procedure, keeping
+the substring `swamp workflow run music-wanted` (so
+`music_library_methods_test.ts:1982` keeps passing) plus a new
+`!includes("Repo-local")` negative.
+
+### README and structural test
+
+README: the "lives in that private repo" claim is replaced with the
+shipped-but-not-runnable statement, the eight gates, the dry run's true expected
+outcome (an INVARIANT, not a fixed tally — depends on how warm the catalog
+already is), the two literal instance names and how to retarget them, and the
+two-copy drift comparison. Gains
+`extensions/workflows/music_wanted_workflow_test.ts` — the only automated
+coverage for the packaged file (`swamp workflow validate` can't target a
+workflow with no `id:`; `extension push --dry-run` validates no workflow at
+all). Asserts the name, absence of a top-level `id`, all ten assert-step names
+and gate-leading messages, `allowFailure` pinned across EVERY step not just
+asserts (twelve false, one true), the job dependency edges
+(derive<-sync<-resolve<-preflight, each `{type: succeeded}`), the three
+`model_method` steps' literal targets, the corrected gate-6 sentence, and the
+absence of `775` / `2026-08-06` / `ext-canary-nightly`.
+
+### Test-suite hardening (two mutation-testing rounds)
+
+A stray trailing quote in the browse-throw regression needle never matched the
+defect it names — fixed, verified against the mutation it exists to catch. A
+code-review pass then found the structural test's `allowFailure` check filtered
+to asserts only and never read job `dependsOn`, so flipping
+`sync-artist-discographies` to `allowFailure: true` or severing `derive`'s
+dependency on `sync` both passed 9/0 uncaught (and both pass
+`swamp
+workflow validate`, DAG-shape-only). Fixed per the assertions above; both
+mutations verified RED, then reverted.
+
+### Deferred
+
+Two follow-ups, both filed: `music-wanted-stale-shared-strings` (the stale
+`~775` figure at its remaining SIX sites — `music-library/README.md:131` (this
+package's own README), `musicbrainz/README.md:134`,
+`musicbrainz.ts:1761`/`:1773`/`:1819`, `music_library.ts:3894` — plus
+`musicbrainz/README.md:139`'s own stale "private homelab repo" pointer) and
+`music-wanted-headphones-instance-implicit` (`resolve` passes only `refresh` to
+`resolve-artists`, relying on its `headphonesInstance` default).
+
+Recorded but NOT filed: `musicbrainz/README.md:138-140` still says "do not start
+a cold pass between 02:30 and 03:15" — the `ext-canary-nightly` window this
+package's docs replaced with the lock-contention mechanism. A sibling package's
+README outside this diff; neither issue tracks it, noted here so it isn't lost.
 
 ## 2026.08.05.2
 

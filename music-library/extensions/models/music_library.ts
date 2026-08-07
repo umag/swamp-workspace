@@ -2329,7 +2329,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.08.05.2",
+  version: "2026.08.07.1",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2357,6 +2357,13 @@ export const model = {
       toVersion: "2026.08.05.2",
       description:
         "Fixes music-wanted-sequence-not-wired: wanted's missing-browse-cache throw named a nonexistent 'browse' method (browse-release-groups/browse-releases/browse-recordings exist; 'browse' is a resource spec name, not a method), so an operator who skipped the discography sync got unknown_method instead of an actionable fix. The throw now names the real runnable command — swamp model method run <mbInstance> sync-artist-discographies --input 'artistMbids:json=[...]' — plus the swamp data query extraction command (with its envelope shape) to build that artist list from this instance's own artistMap, and the repo-local music-wanted workflow line. No schema or resource shape change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.05.2",
+      toVersion: "2026.08.07.1",
+      description:
+        "Fixes music-wanted-workflow-packaging: ships the music-wanted workflow body as extensions/workflows/music-wanted.yaml (registered under the new manifest workflows: key as @magistr/music-wanted-sequence), so a 464-line artefact that previously existed in exactly one copy, in a tree with neither .git nor .jj, gets version control, review and diffability. wanted's missing-browse-cache throw no longer says 'Repo-local: the homelab repo wires the whole sequence as a workflow' — it names the shipped file and the create-and-paste procedure, while keeping the substring 'swamp workflow run music-wanted' for the author's own homelab copy. No schema or resource shape change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -3893,7 +3900,7 @@ export const model = {
             `No MusicBrainz browse cache found for instance "${args.musicbrainzInstance}" — nothing has been synced yet, so no want set can be derived.\n` +
               `Run: swamp model method run ${args.musicbrainzInstance} sync-artist-discographies --input 'artistMbids:json=["<mbid>","<mbid>"]' (about 1 request/sec — a cold pass over ~775 artists is ~35 minutes and prints nothing until it finishes)\n` +
               `Get the list from this instance's own artistMap: swamp data query 'modelName == "${context.definition.name}" && name == "${args.artistMapName}" && isLatest' --select 'attributes.entries.filter(e, e.status == "resolved").map(e, e.mbid)' --json — that prints a query envelope, {"results": [[...the MBIDs...]], "total": 1}; pass the single element of "results" as the artistMbids array, not the whole document\n` +
-              `Repo-local: the homelab repo wires the whole sequence as a workflow — swamp workflow run music-wanted`,
+              `Shipped as extensions/workflows/music-wanted.yaml (@magistr/music-wanted-sequence) — create it with swamp workflow create, paste the body in, and invoke it under the name you gave it; the author's own copy runs swamp workflow run music-wanted`,
           );
         }
 

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/music-library"
-version: "2026.08.05.2"
+version: "2026.08.07.1"
 description: |
   Multidimensional music library catalog built WITHOUT touching the
   filesystem: the inventory and raw tags come from an existing gonic scan
@@ -41,6 +41,16 @@ description: |
   track can look metronomic while having no pulse you could follow. Results
   carry over between runs, so a whole-library pass can be resumed.
 
+  Workflows: ships `@magistr/music-wanted-sequence`, the gated resolve ->
+  sync -> derive sequence behind the "wanted" derivation. Installing this
+  extension does NOT make it runnable: `swamp extension pull` /
+  `extension source add` do not register a workflow file, so nothing under
+  this name exists until you create it yourself with `swamp workflow
+  create` and paste the body in from
+  `extensions/workflows/music-wanted.yaml`. See that file's own
+  description for the eight gates, the required dry run, and the portable
+  three-command form.
+
 repository: "https://github.com/umag/swamp-workspace"
 paths:
   base: manifest
@@ -52,6 +62,9 @@ reports:
   - extensions/reports/verify_triage.ts
   - extensions/reports/bpm_running.ts
   - extensions/reports/wanted.ts
+
+workflows:
+  - extensions/workflows/music-wanted.yaml
 
 additionalFiles:
   - README.md

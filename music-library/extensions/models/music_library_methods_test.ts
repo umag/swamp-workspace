@@ -1982,4 +1982,8 @@ Deno.test("wanted: missing MusicBrainz browse cache fails with an actionable err
     err.message.includes("swamp workflow run music-wanted"),
     "must name the repo-local workflow that wires the whole sequence",
   );
+  assert(
+    !err.message.includes("Repo-local"),
+    "must not still frame the shipped workflow as repo-local-only -- it ships in this package now",
+  );
 });

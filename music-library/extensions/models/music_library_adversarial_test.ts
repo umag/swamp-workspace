@@ -1469,7 +1469,9 @@ Deno.test("fixtures-secret-scan: no string leaf in any committed fixture matches
 });
 
 Deno.test("fixtures-secret-scan: sanity — the scanner actually flags an injected real-LAN address, real host, PEM marker, and high-entropy shape (anti-vacuity)", () => {
-  assert(RFC1918_RE.test("192.168.88.242"), "must flag a real-LAN-shaped IP");
+  // Deliberately NOT this homelab's real host address — the scanner only needs
+  // an RFC1918-SHAPED string to prove it fires, so use a neutral one.
+  assert(RFC1918_RE.test("192.168.1.100"), "must flag a real-LAN-shaped IP");
   assert(
     REAL_HOST_RE.test("mk.aopab.art"),
     "must flag a real *.aopab.art host",
