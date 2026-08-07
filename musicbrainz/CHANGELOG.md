@@ -19,8 +19,10 @@ data.latest("musicbrainz", "search").attributes.artists
 data.latest("musicbrainz", "search-artist").attributes.artists
 ```
 
-(same for the other four). No resource spec changed — only the instance argument
-was wrong.
+(same for the other four). **The deprecation window below covers `search-artist`
+ONLY** — the other four move immediately, so read them at their new instance
+names from this version on. No spec was reshaped; only the instance argument was
+wrong. The `artists` spec does gain two optional marker fields, described next.
 
 ### Deprecated: instance `search`
 
