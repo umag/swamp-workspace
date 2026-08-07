@@ -1063,7 +1063,7 @@ Deno.test("NEW SURFACE: search-artists-batch is a registered method with its own
   );
 });
 
-Deno.test("NEW SURFACE: search-artists-batch writes instance name 'artist-search-batch' — explicitly NOT 'search' (the colliding instance every other search-* method writes to)", async () => {
+Deno.test("NEW SURFACE: search-artists-batch writes instance name 'artist-search-batch' — never any other method's resource instance", async () => {
   using time = new FakeTime();
   const store: SyncStore = new Map();
   const { written, ctx } = makeSyncCtx(store);
@@ -1082,10 +1082,6 @@ Deno.test("NEW SURFACE: search-artists-batch writes instance name 'artist-search
   const res = written.find((w) => w.spec === "artistSearchBatch")!;
   assert(res, "must have written the artistSearchBatch spec");
   assertEquals(res.name, "artist-search-batch");
-  assert(
-    res.name !== "search",
-    "must never collide with the shared 'search' instance",
-  );
 });
 
 Deno.test("NEW SURFACE (payload budget regression): a full MusicBrainz artist object with area/begin-area/life-span/aliases/tags writes a row whose artist objects contain NONE of those keys", async () => {

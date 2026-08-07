@@ -1344,9 +1344,9 @@ Deno.test("sync-artist-discographies: happy path — explicit artistMbids caches
   );
 });
 
-Deno.test("sync-artist-discographies: a POPULATED search resource is NOT consulted — with no artistMbids arg the run rejects rather than silently syncing whatever 'search' holds", async () => {
+Deno.test("sync-artist-discographies: a POPULATED search-artist resource is NOT consulted — with no artistMbids arg the run rejects rather than silently syncing whatever 'search-artist' holds", async () => {
   const store: SyncStore = new Map();
-  store.set("search", {
+  store.set("search-artist", {
     artists: [
       { id: SYNC_TEST_MBIDS[0], name: "Fixture Artist One" },
       { id: SYNC_TEST_MBIDS[1], name: "Fixture Artist Two" },
@@ -1363,7 +1363,7 @@ Deno.test("sync-artist-discographies: a POPULATED search resource is NOT consult
   assertEquals(
     written.find((w) => w.spec === "discographySyncState"),
     undefined,
-    "a rejected run with a populated 'search' resource must not have synced anything, and must not have written state",
+    "a rejected run with a populated 'search-artist' resource must not have synced anything, and must not have written state",
   );
 });
 

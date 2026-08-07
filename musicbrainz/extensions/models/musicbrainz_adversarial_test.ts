@@ -1300,16 +1300,17 @@ Deno.test("musicbrainz-discography-sync: a FRESH cached count:0 discography is s
   assertEquals(state.payload.skipped, [artistMbid]);
 });
 
-Deno.test("musicbrainz-discography-sync LIVE FAILURE, verbatim: a 'search' resource holding exactly ONE artist must raise, never complete with processed of length 1", async () => {
+Deno.test("musicbrainz-discography-sync LIVE FAILURE, verbatim: a 'search-artist' resource holding exactly ONE artist must raise, never complete with processed of length 1", async () => {
   // The regression this whole issue is about, reproduced with synthetic
   // MBIDs (never a real artist name or MBID — both PROVENANCE.md files'
   // standing prohibition). Before this change, an operator who ran
   // sync-artist-discographies with no artistMbids arg on an instance whose
-  // 'search' resource held one lone cached artist got a silent, "successful"
-  // one-artist sync instead of the actionable rejection this test pins.
+  // 'search-artist' resource held one lone cached artist got a silent,
+  // "successful" one-artist sync instead of the actionable rejection this
+  // test pins.
   const artistMbid = "aaaaaaaa-0000-4000-8000-000000000501";
   const store: SyncStore = new Map();
-  store.set("search", {
+  store.set("search-artist", {
     artists: [{ id: artistMbid, name: "Fixture Solitary Artist" }],
     count: 1,
     timestamp: new Date().toISOString(),
