@@ -1,11 +1,17 @@
 name: "@magistr/music-wanted-sequence"
 description: >-
+  Not runnable on install: neither `swamp extension pull` nor `swamp
+  extension source add` registers a workflow file, so nothing under this
+  name exists until you create it yourself. Create it with `swamp workflow
+  create`, paste this file's body in, and invoke it under whatever name you
+  gave it.
+
   Wires the three-step wanted sequence (resolve-artists -> sync-artist-
-  discographies -> wanted) into one gated run. Canonical invocation: `swamp
-  workflow run music-wanted` — deliberately with NO `--fail-on`. The default
-  fails the run on ANY assert, including the two medium-severity bands below;
-  `--fail-on high` would downgrade them to warnings, silently reproducing the
-  exact failure shape this workflow exists to catch.
+  discographies -> wanted) into one gated run, deliberately with NO
+  `--fail-on`. The default fails the run on ANY assert, including the two
+  medium-severity bands below; `--fail-on high` would downgrade them to
+  warnings, silently reproducing the exact failure shape this workflow
+  exists to catch.
 
   Jobs, in order, each gated on the previous job succeeding: preflight (checks
   the library cube is populated, plus a low informational read of the
@@ -13,8 +19,7 @@ description: >-
   commits) -> resolve (runs music/resolve-artists) -> sync (runs
   musicbrainz/sync-artist-discographies over THIS run's resolved artist list)
   -> derive (runs music/wanted). A cold pass through sync is the expensive
-  step: ~775 MusicBrainz requests, ~35 minutes, holding the musicbrainz model
-  lock for that whole time.
+  step: ~35 minutes, holding the musicbrainz model lock for that whole time.
 
   Eight gates, by name, every one `allowFailure: false` — presence without a
   pinned value is not a gate: (1) preflight-dimensions (high) — the artist and
@@ -40,7 +45,7 @@ description: >-
   the NEXT run — the end-of-list reset restarts the cursor at 0 and that pass
   TTL-skips almost everything.
 
-  Dry-run probe: `--input dryRun:json=true` sets the sync step's batchSize to
+  Dry-run probe: `--input dryRun=true` sets the sync step's batchSize to
   0, so it makes NO new MusicBrainz requests (a slice of width 0) while still
   exercising every gate and the CEL array hand-off — gate 4 (sync-coverage) is
   EXPECTED to fail on a dry run — nothing is covered, so remaining is
@@ -48,29 +53,22 @@ description: >-
   the sync job fails and the derive job must show SKIPPED in the run history,
   never executed. Gate 5 (sync-handoff) passes on a dry run by design, since
   requestedRaw is recorded before batching; gate 6 (catalog-completeness)
-  fails only on a cold catalog and passes once the catalog is warm.
+  fails on any dry run in which resolve-artists resolved an artist absent
+  from the discography cache, because the resolve job has no dryRun guard
+  while batchSize 0 caches nothing.
 
   Documented procedure, REQUIRED after any edit to this workflow definition:
-  run `swamp workflow run music-wanted --input dryRun=true` before trusting
-  the edit. Nothing else proves the gate chain still gates — this repo has no
-  test harness that can read this file, and `swamp workflow validate` only
-  checks schema and DAG shape, never CEL semantics. This is an accepted,
-  documented, manual control, not an automated one; the evidence it works is
-  on record: the dry run of 2026-08-06 failed at the preflight job (an
-  expression bug in the informational cursor read, since fixed) and, exactly
-  as this fail-closed dependency chain is designed to do, correctly skipped
-  resolve, sync and derive rather than running any of them against unproven
-  state.
+  run this workflow — `swamp workflow run <the name you created it under>
+  --input dryRun=true` — before trusting the edit. Nothing else proves the
+  gate chain still gates — `swamp workflow validate` only checks schema and
+  DAG shape, never CEL semantics. This is an accepted, documented, manual
+  control, not an automated one.
 
-  Operating rule, unconditional for a cold-cache run: DO NOT START this
-  workflow BETWEEN 02:30 AND 03:15 — `ext-canary-nightly` probes the
-  `musicbrainz` instance directly at 03:00 (cron `0 3 * * *`) and a cold sync
-  holds that instance's model lock for the whole ~35-minute pass. The
-  collision is bounded (the nightly's own musicbrainz assert is
-  `allowFailure: true`, so a blocked probe costs one false-positive alert, not
-  a failed nightly run) and is accepted ONLY because this workflow has no
-  schedule trigger of its own — this adequacy holds exclusively while
-  `music-wanted` stays manually invoked.
+  Operating rule, unconditional for a cold-cache run: a cold sync holds the
+  `musicbrainz` model lock for the whole ~35-minute pass, and `swamp model
+  method run` only waits up to 60 seconds (`DEFAULT_LOCK_TIMEOUT_MS`) for a
+  contended model lock before timing out — avoid starting this workflow
+  while anything else needs that instance's lock.
 
   Use the direct `sync-artist-discographies` method (not this workflow) for a
   deliberate partial batch, a re-sync of specific artists, or any run that
@@ -92,8 +90,11 @@ inputs:
         MusicBrainz requests are made, but every gate and the CEL hand-off
         still run. Gate 4 (sync-coverage) is expected to fail on a dry run;
         gate 5 (sync-handoff) passes by design and gate 6
-        (catalog-completeness) fails only on a cold catalog. Use this to
-        prove the workflow's wiring without paying the ~35-minute cost.
+        (catalog-completeness) fails on any dry run in which resolve-artists
+        resolved an artist absent from the discography cache, since the
+        resolve job has no dryRun guard while batchSize 0 caches nothing.
+        Use this to prove the workflow's wiring without paying the
+        ~35-minute cost.
     refresh:
       type: boolean
       default: false
@@ -245,9 +246,9 @@ jobs:
             'attributes')[0].resolved }} artists against ${{
             size(data.query('modelName == "music" && specName == "artist" &&
             isLatest')) }} rows in the library's artist dimension, below the
-            20% floor this workflow treats as a healthy map — the last full
-            run resolved 775 of 2258, about 34%. The want set below would be
-            built from a fraction of the library and would understate the
+            20% floor this workflow treats as a healthy map. The want set
+            below would be built from a fraction of the library and would
+            understate the
             gap. This is the resolve step, not the sync: check that the
             headphones seed instance is reachable and that MusicBrainz search
             is not rate-limiting. Inspect: swamp data get music artist-map
@@ -325,7 +326,7 @@ jobs:
             cursor has reset to 0. (The run that crashed mid-sync never
             reaches this assert at all: the sync step itself failed, so this
             gate was SKIPPED there, not failed.) (3) if the
-            assert-catalog-completeness gate PASSED, the
+            catalog-completeness gate PASSED, the
             catalog is in fact complete — this run simply resumed mid-list
             rather than making the full pass this gate requires. Full state:
             swamp data get musicbrainz discography-sync-cursor --json.
