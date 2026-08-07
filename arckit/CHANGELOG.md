@@ -145,16 +145,33 @@ governance in current Dutch/EU law and policy. Tracked on the LOCAL
 - The installed skill copy at `swamp/.claude/skills/arckit/` was resynced from
   this workspace source and diff-verified identical, avoiding the known
   workspace-vs-installed drift failure mode documented in project memory.
-- `extensions/models/arckit_workspace_nl_test.ts` (new, 115 tests) covers the
+- `extensions/models/arckit_workspace_nl_test.ts` (new, 135 tests) covers the
   ladder registry, cross-ladder idempotence, table wiring (doc codes, template
   map, profile extras, mandatory deps, phase-ordering), the two pure functions'
   fail-closed boundaries (every required argument asserted individually rejected
   when omitted, not silently defaulted), the verdict total order across every
   co-firing pair, and the two new methods' resource
-  naming/logging/argument-schema behavior. All 228 tests
+  naming/logging/argument-schema behavior. All 248 tests
   (`deno test
   --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/`)
   pass, including the pre-existing 5 suites unmodified.
+- **Two defects found by the pre-publish adversarial review were fixed before
+  publishing**, rather than recorded and shipped:
+  - `computeSovereigntyScore`'s fail-closed guard was **one-sided**. It rejected
+    a missing objective but silently accepted a DUPLICATE id — a repeated
+    `SOV-1` changed the computed score from 50 to 57.5 with no error, the later
+    entry winning via the `new Map(...)` construction — and silently ignored an
+    UNRECOGNIZED id. The objective set is now validated as closed and exact
+    (each of SOV-1..SOV-8 exactly once) before scoring, with the offending id
+    named in the error.
+  - `MigrationSchema.ladder` was a **required** `z.enum` with no default, so any
+    `classificationMigration` record written before this version — that resource
+    is `lifetime: "infinite"`, so such records persist and can be restored from
+    the datastore — would fail to parse. It now defaults to `"uae"`, which is
+    correct because that was the only ladder that ever existed, and consistent
+    with `skipped`/`unmappedFiles`, defaulted one version earlier for exactly
+    this reason. `MigrationSchema` is now exported so the guarantee is pinned by
+    a test that parses an old-shaped record with no `ladder` key.
 
 ## 2026.08.02.1
 

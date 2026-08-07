@@ -39,6 +39,25 @@
 # are now `fix regression (arckit-latent-bugs LBN, ...)`-titled POST-fix
 # assertions, plus new positive/negative coverage per bug.
 #
+# 2026.08.06.1: NL sovereign-cloud overlay (`nl-gov` profile, six NL/EU doc
+# codes + templates, classification-ladder registry with a `ladder` argument on
+# migrateClassification, and the euSovereigntyScore / nlCloudEligibility
+# methods over the computeSovereigntyScore / evaluateCloudEligibility pure
+# functions). Tracked in the LOCAL `arckit-nl-sovereign-cloud` issue-lifecycle
+# model — never a swamp.club Lab issue. manifest.yaml and model.version bumped
+# in lockstep with a new identity `upgrades[]` entry. A SIXTH suite file joins
+# the role map below (`arckit_workspace_nl_test.ts`), carried under the
+# `coverage` role: it is feature coverage for the new overlay surface, not a
+# second contract-fixture — the real bundled-corpus pins stay in
+# arckit_workspace_test.ts. Two defects found by the PRE-PUBLISH adversarial
+# review were fixed before publishing rather than recorded and shipped:
+# computeSovereigntyScore's fail-closed guard was one-sided (it rejected a
+# missing objective but silently accepted a DUPLICATE id — changing the score —
+# or an UNRECOGNISED id), and `MigrationSchema.ladder` was a required enum with
+# no default, which would have failed to parse any pre-2026.08.06.1
+# `classificationMigration` record (inconsistent with `skipped`/`unmappedFiles`,
+# defaulted one version earlier for exactly that reason).
+#
 # Role map (each file assigned to exactly ONE honest role):
 #   contract-fixture        -> arckit_workspace_test.ts (unchanged — pins
 #                               behavior against the REAL bundled templates/
@@ -50,6 +69,11 @@
 #   coverage                 -> arckit_workspace_coverage_test.ts
 #                               (profile-extra gates, terminal states, LB4/
 #                               LB5/LB6 fix reinforcement)
+#                            +  arckit_workspace_nl_test.ts (nl-gov overlay:
+#                               ladder registry + refusal path, sovereignty
+#                               scoring bounds, cloud-eligibility total order
+#                               and fail-closed inputs, clause-citation pins,
+#                               and the two new methods' resource naming)
 #   property-invariant-flow -> arckit_workspace_property_test.ts
 #                               (fast-check@4.8.0, restricted arbitraries)
 schemaVersion: 1
@@ -71,6 +95,7 @@ tests:
     state: present
     files:
       - extensions/models/arckit_workspace_coverage_test.ts
+      - extensions/models/arckit_workspace_nl_test.ts
   property-invariant-flow:
     state: present
     files:
