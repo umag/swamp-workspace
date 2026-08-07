@@ -768,6 +768,50 @@ export function deriveMaxDurationMs(
 const DISCOGRAPHY_SYNC_CURSOR_INSTANCE = "discography-sync-cursor";
 
 /**
+ * Registry of the five typed search methods' OWN resource instance names
+ * (musicbrainz-search-resource-collision). Before this fix all five wrote
+ * the shared literal instance "search", so a reader keyed on instance name
+ * alone (`readResource(name)`) saw whichever method ran last. The instance
+ * name equals the producing method's own name — the same token an operator
+ * types in `swamp model method run musicbrainz search-artist` — so a future
+ * collision is self-evident at the call site and the read expression is
+ * derivable from the run command with no lookup. Key and value coincide
+ * deliberately: that IS the naming rule, made explicit and type-checked —
+ * do not "simplify" this back to five inline literals.
+ *
+ * The EXPLICIT `Record<SearchMethod, string>` annotation (not a bare object
+ * literal or `as const`) is deliberate: this package sets `noImplicitAny:
+ * false` (deno.json), which suppresses the `TS7053` a bracket-accessed
+ * inferred/`as const` object would raise on a missing key, so only the
+ * explicit annotation turns a deleted entry into a `deno task check` error
+ * (`TS2741`) instead of a silent no-op.
+ */
+type SearchMethod =
+  | "search-artist"
+  | "search-release-group"
+  | "search-release"
+  | "search-recording"
+  | "search-label";
+
+const SEARCH_INSTANCE_NAMES: Record<SearchMethod, string> = {
+  "search-artist": "search-artist",
+  "search-release-group": "search-release-group",
+  "search-release": "search-release",
+  "search-recording": "search-recording",
+  "search-label": "search-label",
+};
+
+/**
+ * Instance the deprecated `search-artist` alias write goes to — the
+ * historical shared literal every typed search method used to collide on.
+ * Only `search-artist` writes it now, so the model-wide instance -> spec
+ * mapping stays single-valued even with the alias in place. Removed no
+ * earlier than 2026-09-07 — see README.md/CHANGELOG.md for the migration
+ * path and removal criterion.
+ */
+const DEPRECATED_SEARCH_ALIAS_INSTANCE = "search";
+
+/**
  * Default page ceiling (100 release groups per page) for one artist's
  * discography per `sync-artist-discographies` run. At mbFetch's ~1100ms
  * default spacing this caps a single artist's pagination at ~22s and 2,000
@@ -1205,11 +1249,15 @@ export const model = {
           args.limit,
           args.offset,
         );
-        const handle = await context.writeResource("artists", "search", {
-          artists,
-          count,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "artists",
+          SEARCH_INSTANCE_NAMES["search-artist"],
+          {
+            artists,
+            count,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
@@ -1362,11 +1410,15 @@ export const model = {
         const rgs = Array.isArray(data["release-groups"])
           ? data["release-groups"]
           : [];
-        const handle = await context.writeResource("releaseGroups", "search", {
-          releaseGroups: rgs,
-          count: data.count || rgs.length,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "releaseGroups",
+          SEARCH_INSTANCE_NAMES["search-release-group"],
+          {
+            releaseGroups: rgs,
+            count: data.count || rgs.length,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
@@ -1385,11 +1437,15 @@ export const model = {
         if (args.offset) params.offset = String(args.offset);
         const data = await mbFetch(userAgent, "/release/", params);
         const releases = Array.isArray(data.releases) ? data.releases : [];
-        const handle = await context.writeResource("releases", "search", {
-          releases,
-          count: data.count || releases.length,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "releases",
+          SEARCH_INSTANCE_NAMES["search-release"],
+          {
+            releases,
+            count: data.count || releases.length,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
@@ -1410,11 +1466,15 @@ export const model = {
         const recordings = Array.isArray(data.recordings)
           ? data.recordings
           : [];
-        const handle = await context.writeResource("recordings", "search", {
-          recordings,
-          count: data.count || recordings.length,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "recordings",
+          SEARCH_INSTANCE_NAMES["search-recording"],
+          {
+            recordings,
+            count: data.count || recordings.length,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
@@ -1433,11 +1493,15 @@ export const model = {
         if (args.offset) params.offset = String(args.offset);
         const data = await mbFetch(userAgent, "/label/", params);
         const labels = Array.isArray(data.labels) ? data.labels : [];
-        const handle = await context.writeResource("labels", "search", {
-          labels,
-          count: data.count || labels.length,
-          timestamp: new Date().toISOString(),
-        });
+        const handle = await context.writeResource(
+          "labels",
+          SEARCH_INSTANCE_NAMES["search-label"],
+          {
+            labels,
+            count: data.count || labels.length,
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },

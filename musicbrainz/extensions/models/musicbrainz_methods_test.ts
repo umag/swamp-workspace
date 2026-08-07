@@ -260,8 +260,7 @@ Deno.test("search-artist: happy path — GET /ws/2/artist/, writes {artists,coun
     assertEquals(calls[0].headers.get("Accept"), "application/json");
     assertEquals(calls[0].headers.get("User-Agent"), GLOBAL_ARGS.userAgent);
   });
-  const res = written.find((w) => w.spec === "artists")!;
-  assertEquals(res.name, "search");
+  const res = written.find((w) => w.name === "search-artist")!;
   assertEquals(res.payload.artists, artists);
   assertEquals(res.payload.count, 1);
   assertEquals(typeof res.payload.timestamp, "string");
