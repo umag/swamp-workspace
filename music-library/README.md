@@ -307,7 +307,7 @@ which is precisely what incremental replication is not.
 ```bash
 swamp extension source add <path-to>/music-library
 swamp model create @magistr/music-library music \
-  --global-arg host=192.168.88.242
+  --global-arg host=gonic.example.internal
 # optional overrides: sshUser, dbPath, container, containerMusicRoot, hostMusicRoot
 
 swamp model @magistr/music-library method run scan music
