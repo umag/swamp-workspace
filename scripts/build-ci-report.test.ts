@@ -327,3 +327,91 @@ Deno.test("build-ci-report.ts's compliance report keeps Compliance before Allowl
     await Deno.remove(workDir, { recursive: true });
   }
 });
+
+// --- score_ratchet.ts's "unscorable" outcome must render as blocking ------
+//
+// The defect: score_ratchet.ts's ratchet-summary.json can now carry a
+// report whose outcome.status is "unscorable" (an extension whose live
+// score could not be obtained at all — see score_ratchet.ts's
+// RatchetReportOutcome). Before this fix, buildCompliance() only ever
+// looked for "fail" and "rebaseline" statuses in ratchet reports, so an
+// "unscorable" entry contributed to neither totalBlocking nor any rendered
+// section — a run score_ratchet.ts itself exited 1 on could still render
+// a green "✅ all N extensions compliant... no score regressions" header
+// here, exactly the fail-open shape PR B's ratchet fix exists to close.
+
+Deno.test("build-ci-report.ts's compliance report renders an 'unscorable' ratchet report as a named, blocking finding — never a silent green pass", async () => {
+  const workDir = await Deno.makeTempDir({ prefix: "build-ci-report-" });
+  try {
+    await writeComplianceSummaries(workDir, {
+      "compliance-summary.json": JSON.stringify({
+        checked: ["seanime"],
+        violations: [],
+      }),
+      "allowlist-summary.json": JSON.stringify({ violations: [] }),
+      "ratchet-summary.json": JSON.stringify({
+        reports: [{
+          extension: "seanime",
+          outcome: {
+            status: "unscorable",
+            reason:
+              "score read failed: Error: swamp extension quality seanime/manifest.yaml --json failed: " +
+              "Extension has model upgrade chain errors that must be resolved before pushing.",
+          },
+        }],
+      }),
+    });
+    await runBuildCiReport(workDir);
+    const report = await Deno.readTextFile(
+      join(workDir, "compliance-report.md"),
+    );
+    assert(
+      !report.includes("✅"),
+      `an unscorable ratchet report must never render a green marker ` +
+        `anywhere in the header. Report:\n${report}`,
+    );
+    assert(
+      report.includes("### Score ratchet unscorable (1)"),
+      `expected a dedicated, non-empty "Score ratchet unscorable" section. Report:\n${report}`,
+    );
+    assert(
+      report.includes("seanime") &&
+        report.includes("model upgrade chain errors"),
+      `the unscorable section must name the extension and the underlying ` +
+        `error, not just a count. Report:\n${report}`,
+    );
+  } finally {
+    await Deno.remove(workDir, { recursive: true });
+  }
+});
+
+Deno.test("build-ci-report.ts's compliance report renders a clean 'Score ratchet unscorable (0)' section and stays green when every ratchet report passes", async () => {
+  const workDir = await Deno.makeTempDir({ prefix: "build-ci-report-" });
+  try {
+    await writeComplianceSummaries(workDir, {
+      "compliance-summary.json": JSON.stringify({
+        checked: ["seanime"],
+        violations: [],
+      }),
+      "allowlist-summary.json": JSON.stringify({ violations: [] }),
+      "ratchet-summary.json": JSON.stringify({
+        reports: [{ extension: "seanime", outcome: { status: "pass" } }],
+      }),
+    });
+    await runBuildCiReport(workDir);
+    const report = await Deno.readTextFile(
+      join(workDir, "compliance-report.md"),
+    );
+    assert(
+      report.includes("✅"),
+      `an all-pass run with zero unscorable reports must still render ` +
+        `green. Report:\n${report}`,
+    );
+    assert(
+      report.includes("### Score ratchet unscorable (0)"),
+      `expected the section to render even when empty. Report:\n${report}`,
+    );
+  } finally {
+    await Deno.remove(workDir, { recursive: true });
+  }
+});

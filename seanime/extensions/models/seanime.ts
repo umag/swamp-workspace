@@ -149,6 +149,32 @@ export const model = {
       description: "Add sync-planning-rules method and ruleSyncResult resource",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      fromVersion: "2026.04.05.2",
+      toVersion: "2026.05.25.1",
+      description:
+        "Lineage-repair bridge (no globalArguments/resource schema change): " +
+        "seanime.ts was brought into the swamp-workspace repo for the first " +
+        "time as a packaged extension in commit a82ecae ('extensions: add " +
+        "15 more @magistr extensions + auto-discover CI matrix'), which set " +
+        "model.version to 2026.05.25.1 to match that packaging release -- " +
+        "the upgrade chain never covered this hop. GlobalArgsSchema " +
+        "(baseUrl/token) is unchanged; this closes a packaging-only version " +
+        "gap, not a data migration.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.05.25.1",
+      toVersion: "2026.07.16.2",
+      description:
+        "Lineage-repair bridge (no globalArguments/resource schema change): " +
+        "commit 7eb5eec ('Release 2026.07.16.2 -- align model versions with " +
+        "manifests') edited only model.version, bringing it back in line " +
+        "with manifest.yaml's package version after it had drifted; " +
+        "seanime.ts's schemas are byte-identical before and after that " +
+        "commit. Version-alignment-only bump, not a data migration.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   globalArguments: GlobalArgsSchema,
   resources: {

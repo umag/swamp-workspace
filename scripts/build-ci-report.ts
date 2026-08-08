@@ -398,6 +398,16 @@ async function buildCompliance(): Promise<string> {
   const ratchetRebaselines = reports.filter((r) =>
     asStr(asObj(r.outcome).status) === "rebaseline"
   );
+  // "unscorable" (score_ratchet.ts's hard-failure outcome for an extension
+  // whose live score could not be obtained at all — the quality tool
+  // errored, or printed a score of the wrong shape) is DISTINCT from a
+  // benign "skipped" (out of the ratchet's scope) and must count toward
+  // totalBlocking below exactly like a "fail" — otherwise this report would
+  // render a green header for a run score_ratchet.ts itself exited 1 on,
+  // which is precisely the fail-open shape this outcome exists to close.
+  const ratchetUnscorable = reports.filter((r) =>
+    asStr(asObj(r.outcome).status) === "unscorable"
+  );
 
   let totalViolations = 0;
   const violationSections: string[] = [];
@@ -416,7 +426,8 @@ async function buildCompliance(): Promise<string> {
     ? unparseableFiles.map((f) => `- \`${f}\``)
     : ["_none_"];
 
-  const totalBlocking = totalViolations + ratchetFailures.length;
+  const totalBlocking = totalViolations + ratchetFailures.length +
+    ratchetUnscorable.length;
   const header = unparseableFiles.length > 0
     ? `❌ ${unparseableFiles.length} summary artifact(s) present but unreadable — ` +
       "this run is UNVERIFIED for those checks, do not trust a green result " +
@@ -439,6 +450,13 @@ async function buildCompliance(): Promise<string> {
       `- \`${asStr(r.extension)}\`: ${asStr(asObj(r.outcome).message)}`
     )
     : ["_none_"];
+  // "reason" (not "message") is unscorable's field name — see
+  // RatchetReportOutcome in score_ratchet.ts.
+  const unscorableLines = ratchetUnscorable.length
+    ? ratchetUnscorable.map((r) =>
+      `- \`${asStr(r.extension)}\`: ${asStr(asObj(r.outcome).reason)}`
+    )
+    : ["_none_"];
 
   return [
     "<!-- ci-report:compliance -->",
@@ -453,6 +471,10 @@ async function buildCompliance(): Promise<string> {
     ...unreadableLines,
     "",
     ...violationSections,
+    `### Score ratchet unscorable (${ratchetUnscorable.length})`,
+    "",
+    ...unscorableLines,
+    "",
     `### Score ratchet failures (${ratchetFailures.length})`,
     "",
     ...ratchetFailLines,
