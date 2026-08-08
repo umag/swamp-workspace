@@ -1,0 +1,53 @@
+{
+  "capturedAt": "2026-08-09",
+  "capturedWith": "swamp model type describe <type> --json",
+  "why": [
+    "@magistr/distress never speaks a wire protocol of its own — its outside",
+    "world is the ARGUMENT SCHEMA of whichever swamp model instance a channel",
+    "points at. If a callee renames `text` to `message`, or starts rejecting",
+    "an argument a preset sends, every distress call through that channel",
+    "silently stops delivering. These are the three callee contracts the",
+    "shipped presets are built against; the contract suite asserts each",
+    "preset still produces arguments those schemas accept."
+  ],
+  "callees": [
+    {
+      "type": "@magistr/telegram/send",
+      "typeVersion": "2026.05.13.1",
+      "method": "sendMessage",
+      "preset": "text",
+      "required": ["text"],
+      "accepts": [
+        "chatId",
+        "text",
+        "parseMode",
+        "disableWebPagePreview",
+        "disableNotification",
+        "replyToMessageId"
+      ],
+      "additionalProperties": false,
+      "proofSpec": "sentMessage",
+      "maxTextChars": 4096
+    },
+    {
+      "type": "@magistr/herdr",
+      "typeVersion": "2026.08.08.1",
+      "method": "notify",
+      "preset": "title-body",
+      "required": ["title"],
+      "accepts": ["title", "body", "position", "sound"],
+      "additionalProperties": false,
+      "proofSpec": "action"
+    },
+    {
+      "type": "@keeb/discord/webhook",
+      "typeVersion": "2026.02.14.2",
+      "method": "send",
+      "preset": "content",
+      "required": ["content"],
+      "accepts": ["content", "username"],
+      "additionalProperties": false,
+      "proofSpec": "result"
+    }
+  ]
+}
