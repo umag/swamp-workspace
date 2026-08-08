@@ -15,7 +15,13 @@
  *      …) stays orphaned regardless, since discovery is anchored
  *      specifically to extensions/models/.
  *
- *   2. Every scripts/lib/soak_permissions.ts violation class: unsafe
+ *   2. Every scripts/lib/soak_permissions.ts violation class: an unrecognized
+ *      "--"-prefixed token in the test task — neither a permission flag, a
+ *      recognized runtime flag (--v8-flags/--unstable-*), nor an
+ *      explicitly-listed deliberately-dropped flag — that resolveDenoArgs's
+ *      derivation would otherwise silently discard (the defect that dropped
+ *      --v8-flags=--expose-gc from seanime's/seadex's derived soak argv and
+ *      silently skipped their heap-pin regression tests every night), unsafe
  *      tokens/paths (checked on BOTH the quality.yaml `soak:` override, when
  *      present, AND the argv derived straight from the test task — the
  *      48/51-extension default path), a `soak:` override that EXCEEDS its
@@ -34,11 +40,12 @@ import { listExtensions } from "./extensions.ts";
 import { discoverPropertyTestFiles } from "../soak_schedule.ts";
 import {
   checkSoakAuthority,
+  deriveSoakArgsFromTestTask,
   isBroadGrant,
   parsePermissionSet,
-  permissionSetToArgs,
   validateNoAllowAllWithOtherAllowFlags,
   validateNoDuplicateHardRejectFlags,
+  validateNoUnknownFlags,
   validatePropertyFilePath,
   validateSoakAdequacy,
   validateTokenSafety,
@@ -188,15 +195,34 @@ export async function checkSoak(root: string): Promise<CheckSoakResult> {
     if (testTask === null) continue; // no deno.json/test task — not this gate's problem
     const testPermissions = parsePermissionSet(testTask);
 
+    // The --v8-flags-dropping defect's PR-time gate: a "--"-prefixed token
+    // in the test task that resolveDenoArgs's derivation (soak_schedule.ts)
+    // would neither carry as a permission flag, carry as a recognized
+    // runtime flag, nor knowingly drop is a VIOLATION rather than a silent
+    // no-op — see validateNoUnknownFlags's docblock for the seanime/seadex
+    // --v8-flags=--expose-gc coverage hole this makes impossible to repeat.
+    // Checked against the RAW test task string, independent of whether this
+    // extension also has a quality.yaml soak: override (a present override
+    // is used verbatim by soak_schedule.ts's resolveDenoArgs, never
+    // round-tripped through this derivation, so it has nothing to silently
+    // drop).
+    for (const v of validateNoUnknownFlags(testTask)) {
+      violations.push({ extension, ...v });
+    }
+
     // Token safety applies to the DERIVED path too, not only a hand-authored
     // override: parsePermissionSet's scope capture is unconstrained, so an
     // unsafe deno.json test-task token round-trips through
-    // permissionSetToArgs into the argv soak_schedule.ts derives by default
-    // (the 48/51-extension common case) with its unsafe characters intact.
-    // Checked for EVERY extension with an anchored property file, whether or
-    // not it also has a quality.yaml soak: override.
+    // deriveSoakArgsFromTestTask into the argv soak_schedule.ts derives by
+    // default (the 48/51-extension common case) with its unsafe characters
+    // intact. Validated against the FULL derived argv (runtime flags AND
+    // permission flags), not just permissionSetToArgs(testPermissions)
+    // alone — a --v8-flags/--unstable-* value now reaches the soaked child's
+    // argv too, so it must clear the same charset discipline. Checked for
+    // EVERY extension with an anchored property file, whether or not it
+    // also has a quality.yaml soak: override.
     for (
-      const v of validateTokenSafety(permissionSetToArgs(testPermissions))
+      const v of validateTokenSafety(deriveSoakArgsFromTestTask(testTask))
     ) {
       violations.push({ extension, ...v });
     }
@@ -318,6 +344,11 @@ Usage:
 Checks, in one pass, across every extension:
   - orphaned property files (a *_property_test.ts file that structurally
     escapes soak_schedule.ts's anchored extensions/models/ discovery)
+  - an unrecognized "--"-prefixed flag on the test task — neither a
+    permission flag, a recognized runtime flag (--v8-flags/--unstable-*),
+    nor an explicitly-listed deliberately-dropped flag (--permit-no-files,
+    --ignore) — that the derivation would otherwise silently drop instead of
+    carrying into the soaked child's argv or reporting
   - unsafe tokens/paths (shell metacharacters, non-ASCII, etc.) — on BOTH the
     quality.yaml soak: override (when present) AND the derived-from-test-task
     argv (always, the 48/51-extension default path)

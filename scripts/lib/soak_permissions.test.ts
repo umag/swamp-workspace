@@ -41,12 +41,16 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 import {
   checkSoakAuthority,
+  deriveSoakArgsFromTestTask,
   expandHomeTokens,
   isBroadGrant,
+  isRuntimeFlag,
   type ParsedPermissionSet,
   parsePermissionSet,
+  parseRuntimeFlags,
   validateNoAllowAllWithOtherAllowFlags,
   validateNoDuplicateHardRejectFlags,
+  validateNoUnknownFlags,
   validatePropertyFilePath,
   validateSoakAdequacy,
   validateTokenSafety,
@@ -948,6 +952,169 @@ Deno.test("validateSoakAdequacy: OK — --allow-all trivially covers env access"
 });
 
 // ============================================================================
+// RuntimeFlagSet — --v8-flags/--unstable-* are RUNTIME flags, not a
+// PermissionSet concept, but must still be carried through the derivation.
+//
+// The defect this fixes: `deno run --allow-read --allow-env
+// scripts/soak_schedule.ts --all` emitted no "v8-flags" anywhere in its
+// output, even though seanime/deno.json and seadex/deno.json both declare
+// `--v8-flags=--expose-gc` on their `test` task. Root cause:
+// parsePermissionSet/permissionSetToArgs only ever round-trip --allow-*/
+// --deny-* tokens (by design — see parsePermissionSet's own docblock:
+// "Everything else ... is dropped by construction"), so
+// soak_schedule.ts's resolveDenoArgs fallback silently dropped --v8-flags
+// on the floor. seanime_property_test.ts's heap-pin regression tests (the
+// req.clone() leak PR #182 fixed) declare `ignore: heapPinSkipReason !==
+// undefined`, set when `gc()` is not exposed — so those tests were SILENTLY
+// SKIPPED in every nightly soak run, never actually exercising the leak
+// they exist to catch. Same for seadex.
+// ============================================================================
+
+Deno.test("isRuntimeFlag: recognizes --v8-flags=... as a runtime flag", () => {
+  assert(isRuntimeFlag("--v8-flags=--expose-gc"));
+});
+
+Deno.test("isRuntimeFlag: recognizes --unstable-kv (and other --unstable-* variants) as a runtime flag", () => {
+  assert(isRuntimeFlag("--unstable-kv"));
+  assert(isRuntimeFlag("--unstable-broadcast-channel"));
+  assert(isRuntimeFlag("--unstable"));
+});
+
+Deno.test("isRuntimeFlag: does NOT recognize a permission flag as a runtime flag", () => {
+  assert(!isRuntimeFlag("--allow-env=FC_NUM_RUNS"));
+  assert(!isRuntimeFlag("--allow-all"));
+});
+
+Deno.test("parseRuntimeFlags: extracts --v8-flags=... verbatim from a raw test task string, leaving the surrounding permission flags alone", () => {
+  const flags = parseRuntimeFlags(
+    "deno test --v8-flags=--expose-gc --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+  );
+  assertEquals(flags, ["--v8-flags=--expose-gc"]);
+});
+
+Deno.test("parseRuntimeFlags: extracts an --unstable-kv token verbatim", () => {
+  const flags = parseRuntimeFlags(
+    "deno test --unstable-kv --allow-env=FC_NUM_RUNS extensions/models/",
+  );
+  assertEquals(flags, ["--unstable-kv"]);
+});
+
+Deno.test("parseRuntimeFlags: no runtime flags in the task -> empty array", () => {
+  assertEquals(
+    parseRuntimeFlags("deno test --allow-env=FC_NUM_RUNS extensions/models/"),
+    [],
+  );
+});
+
+Deno.test("deriveSoakArgsFromTestTask: seanime's REAL test task carries --v8-flags=--expose-gc through, ordered BEFORE the permission flags", async () => {
+  const task = await readTestTask("seanime");
+  const args = deriveSoakArgsFromTestTask(task);
+  assertEquals(args, ["--v8-flags=--expose-gc", "--allow-env=FC_NUM_RUNS"]);
+});
+
+Deno.test("deriveSoakArgsFromTestTask: seadex's REAL test task carries --v8-flags=--expose-gc through, ordered BEFORE the permission flags", async () => {
+  const task = await readTestTask("seadex");
+  const args = deriveSoakArgsFromTestTask(task);
+  assertEquals(args, ["--v8-flags=--expose-gc", "--allow-env=FC_NUM_RUNS"]);
+});
+
+Deno.test("deriveSoakArgsFromTestTask: an --unstable-kv token is carried through as a runtime flag", () => {
+  const args = deriveSoakArgsFromTestTask(
+    "deno test --unstable-kv --allow-env=FC_NUM_RUNS extensions/models/",
+  );
+  assertEquals(args, ["--unstable-kv", "--allow-env=FC_NUM_RUNS"]);
+});
+
+Deno.test("deriveSoakArgsFromTestTask: a task with no runtime flags derives exactly what permissionSetToArgs(parsePermissionSet(...)) would have — no regression for the other 49 extensions", () => {
+  const task = "deno test --allow-env=FC_NUM_RUNS extensions/models/";
+  assertEquals(deriveSoakArgsFromTestTask(task), ["--allow-env=FC_NUM_RUNS"]);
+});
+
+// ============================================================================
+// validateNoUnknownFlags — makes the --v8-flags-dropping CLASS of defect
+// impossible to repeat: a "--"-prefixed token in a `test` task that is
+// neither a recognized permission flag, a recognized runtime flag, nor an
+// explicitly-listed deliberately-dropped flag is a VIOLATION, never a
+// silent drop.
+// ============================================================================
+
+Deno.test("validateNoUnknownFlags: OK — --permit-no-files is a known, deliberately-dropped flag (deno test's zero-files-matched guard; irrelevant once run_soak.ts narrows to one explicit file)", () => {
+  assertEquals(
+    validateNoUnknownFlags(
+      "deno test --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    ),
+    [],
+  );
+});
+
+Deno.test("validateNoUnknownFlags: OK — --ignore=... (anilist-chart's real shape, embedded commas and all) is a known, deliberately-dropped flag", () => {
+  assertEquals(
+    validateNoUnknownFlags(
+      "deno test --ignore=extensions/models/lib/clickhouse.test.ts,extensions/models/lib/css_parity.test.ts --allow-read --allow-env=FC_NUM_RUNS extensions/models/",
+    ),
+    [],
+  );
+});
+
+Deno.test("validateNoUnknownFlags: OK — recognized permission flags (--allow-*/--deny-*/--allow-all) never violate", () => {
+  assertEquals(
+    validateNoUnknownFlags(
+      "deno test --allow-read --allow-write --deny-write=/tmp --allow-all extensions/models/",
+    ),
+    [],
+  );
+});
+
+Deno.test("validateNoUnknownFlags: OK — recognized runtime flags (--v8-flags/--unstable-*) never violate", () => {
+  assertEquals(
+    validateNoUnknownFlags(
+      "deno test --v8-flags=--expose-gc --unstable-kv --allow-env=FC_NUM_RUNS extensions/models/",
+    ),
+    [],
+  );
+});
+
+Deno.test("validateNoUnknownFlags: VIOLATION — an invented --totally-new-flag is neither a permission flag, a runtime flag, nor deliberately-dropped", () => {
+  const violations = validateNoUnknownFlags(
+    "deno test --totally-new-flag --allow-env=FC_NUM_RUNS extensions/models/",
+  );
+  assertEquals(violations.length, 1, JSON.stringify(violations));
+  assert(violations[0].what.includes("--totally-new-flag"));
+  assert(
+    typeof violations[0].rule === "string" && violations[0].rule.length > 0,
+  );
+  assert(typeof violations[0].why === "string" && violations[0].why.length > 0);
+  assert(typeof violations[0].fix === "string" && violations[0].fix.length > 0);
+});
+
+Deno.test("validateNoUnknownFlags: an unrecognized flag repeated multiple times still produces exactly ONE violation, not one per occurrence", () => {
+  const violations = validateNoUnknownFlags(
+    "deno test --totally-new-flag=a --totally-new-flag=b extensions/models/",
+  );
+  assertEquals(violations.length, 1, JSON.stringify(violations));
+});
+
+Deno.test("validateNoUnknownFlags: every REAL extension's currently-live test task passes with zero violations (the gate is green on current master)", async () => {
+  for await (const entry of Deno.readDir(REPO_ROOT)) {
+    if (!entry.isDirectory || entry.name.startsWith(".")) continue;
+    if (entry.name === "scripts") continue;
+    let task: string;
+    try {
+      task = await readTestTask(entry.name);
+    } catch {
+      continue; // no deno.json / no test task — not this validator's problem
+    }
+    const violations = validateNoUnknownFlags(task);
+    assertEquals(
+      violations,
+      [],
+      `${entry.name}'s real test task ("${task}") produced unexpected ` +
+        `violation(s): ${JSON.stringify(violations)}`,
+    );
+  }
+});
+
+// ============================================================================
 // Return-type discipline: every validator RETURNS Violation[], never throws
 // ============================================================================
 
@@ -960,6 +1127,7 @@ Deno.test("every validator returns an array (never throws) across a battery of m
     expandHomeTokens(["$UNRESOLVED/x"], undefined).violations,
     validateNoDuplicateHardRejectFlags(["--allow-net=a", "--allow-net=b"]),
     validateNoAllowAllWithOtherAllowFlags(["--allow-all", "--allow-env=X"]),
+    validateNoUnknownFlags("deno test --totally-new-flag extensions/models/"),
   ];
   for (const result of results) {
     assert(

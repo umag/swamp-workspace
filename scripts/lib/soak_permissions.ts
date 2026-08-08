@@ -32,6 +32,19 @@
  * kind set is net/env/run/sys (read/write/ffi union instead — see that
  * validator's docblock); validateNoAllowAllWithOtherAllowFlags catches the
  * separate --allow-all-plus-any-other-allow-X hard-reject class.
+ *
+ * A SEPARATE, second defect this module fixes: parsePermissionSet only ever
+ * keeps --allow-X/--deny-X tokens — every other "--"-prefixed token used to
+ * be dropped by construction, including RUNTIME flags like
+ * --v8-flags=--expose-gc that a `test` task needs for correctness (seanime's
+ * and seadex's heap-pin regression tests silently skipped every nightly soak
+ * run as a result). deriveSoakArgsFromTestTask carries recognized runtime
+ * flags (--v8-flags/--unstable-*) through ahead of the permission flags, and
+ * validateNoUnknownFlags makes the underlying "unrecognized token silently
+ * vanishes" failure mode impossible to repeat: any "--"-prefixed token that
+ * is neither a permission flag, a recognized runtime flag, nor on the
+ * explicitly-reviewed DELIBERATELY_DROPPED_FLAG_KINDS list is a VIOLATION,
+ * never a silent drop. See the RuntimeFlagSet section below.
  */
 
 export interface ParsedPermissionSet {
@@ -166,6 +179,154 @@ export function permissionSetToArgs(
     );
   }
   return args;
+}
+
+// ============================================================================
+// RuntimeFlagSet — --v8-flags/--unstable-* are RUNTIME flags, deliberately
+// kept OUT of the PermissionSet vocabulary above (they configure the deno/V8
+// runtime itself, they grant/deny no authority at all) but must still reach
+// the soaked child process.
+//
+// The defect this fixes: `deno run --allow-read --allow-env
+// scripts/soak_schedule.ts --all` used to emit no "v8-flags" anywhere in its
+// output, even though seanime/deno.json and seadex/deno.json both declare
+// `--v8-flags=--expose-gc` on their `test` task. Root cause:
+// parsePermissionSet/permissionSetToArgs above only ever round-trip
+// --allow-*/--deny-* tokens by design (see parsePermissionSet's own
+// docblock: "Everything else ... is dropped by construction"), so
+// soak_schedule.ts's resolveDenoArgs fallback silently dropped --v8-flags on
+// the floor for every extension that isn't hand-overridden via
+// quality.yaml. seanime_property_test.ts's heap-pin regression tests (the
+// guard for the req.clone() leak PR #182 fixed) declare `ignore:
+// heapPinSkipReason !== undefined`, where the skip reason is set when
+// `gc()` is not exposed to the running process — so those tests were
+// SILENTLY SKIPPED in every nightly soak run, never actually exercising the
+// leak they exist to catch. Same for seadex.
+// ============================================================================
+
+const V8_FLAGS = /^--v8-flags(?:=.*)?$/;
+const UNSTABLE_FLAG = /^--unstable(?:-[a-zA-Z0-9-]+)?(?:=.*)?$/;
+
+/** TRUE iff `token` is a recognized RUNTIME flag — carried through the
+ * derivation verbatim, never treated as a PermissionSet member. */
+export function isRuntimeFlag(token: string): boolean {
+  return V8_FLAGS.test(token) || UNSTABLE_FLAG.test(token);
+}
+
+/** Extract every recognized runtime flag token from a raw `test` task
+ * string, verbatim and in encounter order. Unlike mergeScope's union
+ * semantics for permission scopes, duplicates (if a test task ever repeated
+ * one) are preserved as-is — deno's own runtime-flag handling, not this
+ * derivation's, owns what a repeated occurrence means. */
+export function parseRuntimeFlags(task: string): string[] {
+  return task.split(/\s+/).filter((t) => t.length > 0 && isRuntimeFlag(t));
+}
+
+/** Derive the full soak argv from a raw `test` task string: recognized
+ * runtime flags FIRST, verbatim, in encounter order, THEN the permission
+ * flags parsePermissionSet/permissionSetToArgs derive. Runtime flags are
+ * ordered before permission flags because they configure how the deno
+ * process itself starts up (V8 flags, unstable API surface) rather than
+ * what it's authorized to touch — the natural "how to run" -> "what it may
+ * do" reading order. This is what soak_schedule.ts's resolveDenoArgs calls
+ * for the common (no quality.yaml `soak:` override) derivation path — see
+ * that module for the rare, human-reviewed narrowing exception. */
+export function deriveSoakArgsFromTestTask(task: string): string[] {
+  return [
+    ...parseRuntimeFlags(task),
+    ...permissionSetToArgs(parsePermissionSet(task)),
+  ];
+}
+
+// Flags this module KNOWS about and deliberately drops from the derived
+// soak argv — matched by KIND (the token up to its first "="), never by
+// full token, since some of these carry an extension-specific value. Each
+// entry documents WHY it's safe to drop, not merely THAT it is, so a future
+// reader can tell a deliberate omission from an oversight:
+//
+//   --permit-no-files  a `deno test` reporter/discovery flag ("don't fail
+//     when the glob matches zero files"). The soak always targets exactly
+//     ONE specific file (run_soak.ts's --file positional), so "zero files
+//     matched" can never happen at soak time — the flag has nothing to do.
+//   --ignore            `deno test`'s test-discovery exclude-glob
+//     (anilist-chart's real test task uses it to skip two non-property
+//     test files during the extension's OWN full-suite `deno task test`
+//     run). Irrelevant once run_soak.ts has already narrowed the
+//     invocation to one explicit file — there is nothing left to exclude.
+//
+// This is the SAME list validateNoUnknownFlags below checks a task's
+// "--"-prefixed tokens against — see that validator's docblock for the
+// defect this pair of lists (recognize-and-carry vs. recognize-and-drop)
+// exists to make impossible to repeat.
+const DELIBERATELY_DROPPED_FLAG_KINDS = new Set([
+  "--permit-no-files",
+  "--ignore",
+]);
+
+function flagKind(token: string): string {
+  const eq = token.indexOf("=");
+  return eq === -1 ? token : token.slice(0, eq);
+}
+
+/** TRUE iff `token` (a "--"-prefixed CLI token from a `test` task) is
+ * recognized as EITHER a permission flag (--allow-X/--deny-X/--allow-all)
+ * OR a carried runtime flag (--v8-flags/--unstable-*). */
+function isRecognizedFlag(token: string): boolean {
+  return token === "--allow-all" || ALLOW_FLAG.test(token) ||
+    DENY_FLAG.test(token) || isRuntimeFlag(token);
+}
+
+/**
+ * PR-time guard for the root cause of the --v8-flags-dropping defect: the
+ * derivation used to silently DISCARD any "--"-prefixed token it didn't
+ * recognize (see parsePermissionSet's docblock — "Everything else ... is
+ * dropped by construction"). That silence is exactly how
+ * --v8-flags=--expose-gc vanished from seanime's and seadex's derived soak
+ * argv for as long as it did: nothing ever complained, so nobody noticed
+ * until the heap-pin regression tests it gates turned out to have been
+ * skipping silently in every nightly run.
+ *
+ * This validator makes the CLASS of defect impossible to repeat, not just
+ * the one instance: any "--"-prefixed token in `task` that is
+ *   (i)   not a recognized permission flag (parsePermissionSet's own
+ *         ALLOW_FLAG/DENY_FLAG shape, or bare --allow-all),
+ *   (ii)  not a recognized carried runtime flag (isRuntimeFlag), and
+ *   (iii) not on the explicitly-reviewed DELIBERATELY_DROPPED_FLAG_KINDS
+ *         list above (with a documented reason for each entry)
+ * is reported as a VIOLATION rather than silently dropped. Never throws.
+ * Checked once per unique flag KIND (not once per occurrence), matching
+ * validateNoDuplicateHardRejectFlags's own dedup discipline above — a
+ * flag repeated three times in one task is one finding, not three.
+ */
+export function validateNoUnknownFlags(task: string): Violation[] {
+  const violations: Violation[] = [];
+  const reported = new Set<string>();
+  const tokens = task.split(/\s+/).filter((t) => t.length > 0);
+  for (const token of tokens) {
+    if (!token.startsWith("--")) continue;
+    if (isRecognizedFlag(token)) continue;
+    const kind = flagKind(token);
+    if (DELIBERATELY_DROPPED_FLAG_KINDS.has(kind)) continue;
+    if (reported.has(kind)) continue;
+    reported.add(kind);
+    violations.push({
+      rule: "soak-unrecognized-flag-silently-dropped",
+      what: `test task contains "${token}", which is neither a recognized ` +
+        "permission flag, a recognized runtime flag (--v8-flags/" +
+        "--unstable-*), nor an explicitly-listed deliberately-dropped flag",
+      why: "the derivation used to silently discard any --prefixed token " +
+        "it didn't recognize by construction — the exact mechanism that " +
+        "dropped --v8-flags=--expose-gc from seanime's and seadex's " +
+        "derived soak argv and silently skipped their heap-pin regression " +
+        "tests in every nightly soak run until someone happened to notice",
+      fix: `either extend scripts/lib/soak_permissions.ts to carry ${kind} ` +
+        "through the derivation (if the soak legitimately needs it, the " +
+        "way --v8-flags/--unstable-* are carried), or add it to " +
+        "DELIBERATELY_DROPPED_FLAG_KINDS there with a documented reason " +
+        "why it's safe to drop",
+    });
+  }
+  return violations;
 }
 
 // ============================================================================
