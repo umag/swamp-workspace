@@ -1,9 +1,10 @@
 manifestVersion: 1
 name: "@magistr/anime-cron"
-version: "2026.07.16.2"
+version: "2026.08.08.1"
 description: |
   Anime automation pipeline: fetch airing episodes from Nyaa, sync watch
-  progress back to AniList, and queue Blu-ray upgrades via SeaDex.
+  progress back to AniList, queue Blu-ray upgrades via SeaDex, and archive
+  preservation-group releases with unlimited seeding.
 
   Methods:
   - `fetch-airing` — check AniList CURRENT list → search Nyaa for the next
@@ -15,6 +16,13 @@ description: |
   - `upgrade-bd` — check AniList COMPLETED list against SeaDex → queue BD
     release downloads for shows that have a recommended release not yet on
     disk. Idempotent (Transmission deduplicates).
+  - `fetch-archive` — sweep Nyaa for every release credited to a set of
+    preservation groups (default Kineko Video + LonelyChaser), queue them
+    into `archiveContainerDir`, and switch them to unlimited ratio/idle
+    seeding so an archive never stops seeding. Matches on the leading `[..]`
+    credit, so collabs and suffixed aliases are caught but a title that only
+    mentions the group is not. Idempotent via infoHash dedup against live
+    Transmission state.
   - `disk-stats` — query Transmission for all anime torrents and return
     total/downloaded/remaining disk usage grouped by status.
 

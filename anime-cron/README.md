@@ -6,12 +6,13 @@ without touching Seanime or any other media server GUI.
 
 ## Methods
 
-| Method         | What it does                                     |
-| -------------- | ------------------------------------------------ |
-| `fetch-airing` | AniList CURRENT → Nyaa → Transmission            |
-| `mark-watched` | Transmission completed → AniList progress update |
-| `upgrade-bd`   | AniList COMPLETED → SeaDex → Transmission        |
-| `disk-stats`   | Transmission torrent usage by status             |
+| Method          | What it does                                         |
+| --------------- | ---------------------------------------------------- |
+| `fetch-airing`  | AniList CURRENT → Nyaa → Transmission                |
+| `mark-watched`  | Transmission completed → AniList progress update     |
+| `upgrade-bd`    | AniList COMPLETED → SeaDex → Transmission            |
+| `fetch-archive` | Release groups → Nyaa → Transmission, seeded forever |
+| `disk-stats`    | Transmission torrent usage by status                 |
 
 ## Setup
 
@@ -74,6 +75,37 @@ swamp model method run anime-cron mark-watched
 swamp model method run anime-cron upgrade-bd \
   --input 'libraryEntries=${{ data.latest("anime-library","current").attributes.entries }}'
 ```
+
+### Archive a preservation group's catalogue
+
+Sweep every Nyaa release credited to a set of groups into `archiveContainerDir`
+and pin it to seed forever. Cost the sweep first:
+
+```bash
+swamp model method run anime-cron fetch-archive --arg dryRun=true
+# → found / queued / queuedGB / catalogGB, nothing touched
+swamp model method run anime-cron fetch-archive
+```
+
+Defaults to `Kineko Video` + `LonelyChaser`; override for any other group:
+
+```bash
+swamp model method run anime-cron fetch-archive \
+  --arg 'groups=["Kineko Video"]' --arg category=1_0 --arg minSeeders=2
+```
+
+Matching is on the leading `[..]` credit, so `[Kineko Video] …`,
+`[LonelyChaser & Kineko Video] …` and the `[LonelyChaser-Raws] …` alias all
+match, while `Kineko video presents …` (no credit bracket) does not.
+
+Re-runs are safe: releases already in Transmission come back as duplicates, and
+`seedForeverExisting` (default true) re-applies unlimited ratio/idle seeding to
+everything already sitting in the archive dir — so a re-run also repairs
+torrents added before this method existed.
+
+`category` defaults to `0_0` (all categories) because these groups also post
+live-action scans outside the anime categories. Narrow it to `1_0` if you only
+want anime.
 
 ### Check disk usage
 

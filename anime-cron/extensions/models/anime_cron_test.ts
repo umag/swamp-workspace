@@ -8,11 +8,17 @@ import {
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   baseTitle,
+  bracketGroups,
   buildMagnet,
+  creditsGroup,
+  decodeEntities,
+  escapeHtml,
   extractShowTitle,
   groupScore,
+  normGroup,
   type NyaaHit,
   parseEpisode,
+  parseNyaaSize,
   parseResolution,
   pickBest,
   toFolderName,
@@ -195,6 +201,7 @@ function makeHit(
     infoHash: "abc",
     seeders: 10,
     resolution: 1080,
+    sizeBytes: 1024 ** 3,
     ...partial,
   };
 }
@@ -238,4 +245,109 @@ Deno.test("pickBest: prefers matching resolution over more seeders", () => {
     resolution: 720,
   });
   assertEquals(pickBest([wrongRes, correct], 1, 1080), correct);
+});
+
+// ─── parseNyaaSize ────────────────────────────────────────────────────────────
+
+Deno.test("parseNyaaSize: parses the GiB/MiB units nyaa actually emits", () => {
+  assertStrictEquals(parseNyaaSize("1 GiB"), 1024 ** 3);
+  assertStrictEquals(parseNyaaSize("2.5 GiB"), Math.round(2.5 * 1024 ** 3));
+  assertStrictEquals(parseNyaaSize("512 MiB"), 512 * 1024 ** 2);
+  assertStrictEquals(parseNyaaSize("1.0 TiB"), 1024 ** 4);
+});
+
+Deno.test("parseNyaaSize: treats the non-`i` spelling as the same power-of-two unit", () => {
+  assertStrictEquals(parseNyaaSize("1 GB"), parseNyaaSize("1 GiB"));
+});
+
+Deno.test("parseNyaaSize: returns 0 for anything unparseable so a missing size never NaNs a running total", () => {
+  for (const bad of ["", "   ", "unknown", "1.4 PiB", "GiB", "-3 GiB"]) {
+    assertStrictEquals(parseNyaaSize(bad), 0, bad);
+  }
+});
+
+// ─── decodeEntities / escapeHtml ──────────────────────────────────────────────
+
+Deno.test("decodeEntities: decodes &amp; LAST so an escaped entity is not double-decoded", () => {
+  assertStrictEquals(decodeEntities("A &amp; B"), "A & B");
+  // If &amp; were decoded first, this would collapse to "<b>".
+  assertStrictEquals(decodeEntities("&amp;lt;b&amp;gt;"), "&lt;b&gt;");
+});
+
+Deno.test("decodeEntities: handles the apostrophe spellings nyaa emits", () => {
+  assertStrictEquals(decodeEntities("Let&#39;s Go"), "Let's Go");
+  assertStrictEquals(decodeEntities("Let&apos;s Go"), "Let's Go");
+});
+
+Deno.test("escapeHtml: escapes & before < and > so the result is stable under re-parse", () => {
+  assertStrictEquals(
+    escapeHtml("[LonelyChaser & Kineko Video]"),
+    "[LonelyChaser &amp; Kineko Video]",
+  );
+  assertStrictEquals(escapeHtml("<b>x</b>"), "&lt;b&gt;x&lt;/b&gt;");
+});
+
+// ─── bracketGroups / normGroup / creditsGroup ─────────────────────────────────
+
+Deno.test("bracketGroups: splits a collab credit on every separator nyaa uses", () => {
+  assertEquals(bracketGroups("[LonelyChaser & Kineko Video] Foo"), [
+    "LonelyChaser",
+    "Kineko Video",
+  ]);
+  assertEquals(bracketGroups("[A + B] Foo"), ["A", "B"]);
+  assertEquals(bracketGroups("[A, B] Foo"), ["A", "B"]);
+  assertEquals(bracketGroups("[A / B] Foo"), ["A", "B"]);
+});
+
+Deno.test("bracketGroups: decodes entities before splitting so an encoded collab still splits", () => {
+  assertEquals(bracketGroups("[LonelyChaser &amp; Kineko Video] Foo"), [
+    "LonelyChaser",
+    "Kineko Video",
+  ]);
+});
+
+Deno.test("bracketGroups: returns empty for a title with no leading bracket", () => {
+  assertEquals(bracketGroups("Kineko video presents something"), []);
+});
+
+Deno.test("normGroup: strips punctuation and case", () => {
+  assertStrictEquals(normGroup("LonelyChaser-Raws"), "lonelychaserraws");
+  assertStrictEquals(normGroup("Kineko Video"), "kinekovideo");
+});
+
+Deno.test("creditsGroup: matches the exact credit, a suffixed alias, and a collab member", () => {
+  const want = ["Kineko Video", "LonelyChaser"];
+  assertStrictEquals(
+    creditsGroup("[Kineko Video] Foo", want),
+    "Kineko Video",
+  );
+  assertStrictEquals(
+    creditsGroup("[LonelyChaser-Raws] Foo", want),
+    "LonelyChaser-Raws",
+  );
+  assertStrictEquals(
+    creditsGroup("[LonelyChaser & Kineko Video] Foo", want),
+    "LonelyChaser",
+  );
+  // Bare "Kineko" is the shorter side of the wanted "Kineko Video".
+  assertStrictEquals(creditsGroup("[Kineko] Foo", want), "Kineko");
+});
+
+Deno.test("creditsGroup: does NOT match a title that merely mentions the group outside the credit bracket", () => {
+  const want = ["Kineko Video", "LonelyChaser"];
+  assertStrictEquals(
+    creditsGroup("Kineko video presents pokemon the first movie", want),
+    null,
+  );
+  assertStrictEquals(
+    creditsGroup("[SomeoneElse] A tribute to Kineko Video", want),
+    null,
+  );
+});
+
+Deno.test("creditsGroup: a below-MIN_STEM token cannot wildcard onto every group", () => {
+  // "K" normalizes to 1 char — under the 5-char stem floor on BOTH sides, so
+  // it must neither match as a wanted term nor as a credited group.
+  assertStrictEquals(creditsGroup("[Kineko Video] Foo", ["K"]), null);
+  assertStrictEquals(creditsGroup("[K] Foo", ["Kineko Video"]), null);
 });

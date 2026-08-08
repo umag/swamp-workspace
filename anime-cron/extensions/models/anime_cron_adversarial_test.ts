@@ -51,6 +51,7 @@ const GLOBAL_ARGS = {
   transmissionUser: "fixture-tx-user",
   transmissionPass: "adv-fixture-tx-pass",
   animeContainerDir: "/anime/tv",
+  archiveContainerDir: "/anime/kineko",
   preferredResolution: 1080,
   telegramModel: "",
 };
@@ -224,6 +225,7 @@ function nyaaRawRoute(byQuery: Record<string, string>): Route {
 interface TxHandlers {
   torrentGet?: () => unknown[];
   torrentAdd?: (args: Record<string, unknown>) => unknown;
+  torrentSet?: (args: Record<string, unknown>) => unknown;
   sid?: string;
 }
 
@@ -252,6 +254,14 @@ function txRoute(handlers: TxHandlers): Route {
         arguments: handlers.torrentAdd(
           body.arguments as Record<string, unknown>,
         ),
+      });
+    }
+    if (body.method === "torrent-set" && handlers.torrentSet) {
+      return json({
+        result: "success",
+        arguments: handlers.torrentSet(
+          body.arguments as Record<string, unknown>,
+        ) ?? {},
       });
     }
     return undefined;
@@ -317,6 +327,7 @@ function installSpawnCmdStub(
   };
   return {
     invocations,
+    stdin: stdinChunks,
     // deno-lint-ignore no-explicit-any
     restore: () => ((Deno as any).Command = original),
   };
@@ -1185,4 +1196,110 @@ Deno.test("fixtures-secret-scan: sanity — each of the four patterns is indepen
       `pattern "${name}" failed to flag its own tailored poison value "${poison}"`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// fetch-archive — hostile release titles
+// ---------------------------------------------------------------------------
+
+Deno.test("fetch-archive: a release title carrying HTML is escaped before it reaches the Telegram subprocess", async () => {
+  const { ctx } = makeCtx({ ...GLOBAL_ARGS, telegramModel: "tg-bot" });
+  const cmd = installSpawnCmdStub();
+  const hostile =
+    "[Kineko Video] <script>alert(1)</script> & <b>bold</b> [1080p]";
+  try {
+    await withFetchStub([
+      nyaaRoute({
+        "Kineko Video": [{ title: hostile, infoHash: "d".repeat(40) }],
+        "LonelyChaser": [],
+      }),
+      txRoute({
+        torrentGet: () => [],
+        torrentAdd: () => ({ "torrent-added": { id: 7, name: "x" } }),
+        torrentSet: () => ({}),
+      }),
+    ], async () => {
+      await run("fetch-archive", {}, ctx);
+    });
+  } finally {
+    cmd.restore();
+  }
+
+  assertEquals(cmd.invocations.length, 1);
+  const payload = JSON.parse(
+    new TextDecoder().decode(cmd.stdin[0]),
+  ) as { text: string; parseMode: string };
+  assertEquals(payload.parseMode, "HTML");
+  // The title's own markup must arrive inert...
+  assert(
+    payload.text.includes("&lt;script&gt;alert(1)&lt;/script&gt;"),
+    payload.text,
+  );
+  assert(payload.text.includes("&amp;"), payload.text);
+  // ...while the message's OWN formatting tags survive.
+  assert(payload.text.includes("<b>Archive sweep queued"), payload.text);
+  // No raw <script> anywhere — an unescaped title would break the send with a
+  // 400 from Telegram's HTML parser at best, and inject markup at worst.
+  assert(!payload.text.includes("<script>"), payload.text);
+});
+
+Deno.test("fetch-archive: a title impersonating the group outside its credit bracket is NOT swept", async () => {
+  const { ctx, written } = makeCtx();
+  let addCalls = 0;
+
+  await withFetchStub([
+    nyaaRoute({
+      "Kineko Video": [
+        // Mentions the group only in prose, and credits someone else.
+        {
+          title: "[TotallyNotUs] A Kineko Video tribute reupload",
+          infoHash: "e".repeat(40),
+        },
+        // No credit bracket at all.
+        {
+          title: "Kineko video presents a bootleg",
+          infoHash: "f".repeat(40),
+        },
+      ],
+      "LonelyChaser": [],
+    }),
+    txRoute({
+      torrentGet: () => [],
+      torrentAdd: () => {
+        addCalls++;
+        return { "torrent-added": { id: 1, name: "x" } };
+      },
+      torrentSet: () => ({}),
+    }),
+  ], async () => {
+    await run("fetch-archive", {}, ctx);
+  });
+
+  const r = written.find((w) => w.spec === "archiveResult")!.payload;
+  assertEquals(r.found, 0);
+  assertEquals(r.queued, 0);
+  assertEquals(addCalls, 0);
+});
+
+Deno.test("fetch-archive: credentials never reach the written resource", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([
+    nyaaRoute({
+      "Kineko Video": [{
+        title: "[Kineko Video] Foo",
+        infoHash: "a".repeat(40),
+      }],
+      "LonelyChaser": [],
+    }),
+    txRoute({
+      torrentGet: () => [],
+      torrentAdd: () => ({ "torrent-added": { id: 1, name: "x" } }),
+      torrentSet: () => ({}),
+    }),
+  ], async () => {
+    await run("fetch-archive", {}, ctx);
+  });
+  const blob = JSON.stringify(written);
+  assert(!blob.includes("adv-fixture-tx-pass"), "transmissionPass leaked");
+  assert(!blob.includes("adv-fixture-anilist-token"), "anilistToken leaked");
 });

@@ -183,6 +183,23 @@ export interface NyaaHit {
   seeders: number;
   episode: number | null;
   resolution: number;
+  sizeBytes: number;
+}
+
+/** Parse nyaa's human-readable `<nyaa:size>` ("1.4 GiB") into bytes.
+ *  Returns 0 for anything unparseable so a missing size never NaNs a total. */
+export function parseNyaaSize(raw: string): number {
+  const m = raw.trim().match(/^([\d.]+)\s*([KMGT]i?B)$/i);
+  if (!m) return 0;
+  const unit = m[2].toUpperCase().replace("IB", "B");
+  const scale: Record<string, number> = {
+    B: 1,
+    KB: 1024,
+    MB: 1024 ** 2,
+    GB: 1024 ** 3,
+    TB: 1024 ** 4,
+  };
+  return Math.round(parseFloat(m[1]) * (scale[unit] ?? 0));
 }
 
 function parseRSS(xml: string): NyaaHit[] {
@@ -210,6 +227,9 @@ function parseRSS(xml: string): NyaaHit[] {
       seeders,
       episode: parseEpisode(title),
       resolution: parseResolution(title),
+      sizeBytes: parseNyaaSize(
+        (block.match(/<nyaa:size>(.*?)<\/nyaa:size>/) ?? [])[1] ?? "",
+      ),
     });
   }
   return hits;
@@ -227,6 +247,85 @@ async function nyaaSearch(
   });
   if (!resp.ok) throw new Error(`Nyaa ${resp.status}: ${query}`);
   return parseRSS(await resp.text());
+}
+
+/** Nyaa RSS caps a page at 75 items — walk pages until a short/empty one. */
+async function nyaaSearchPaged(
+  query: string,
+  category: string,
+  maxPages: number,
+): Promise<NyaaHit[]> {
+  const RSS_PAGE_SIZE = 75;
+  const out: NyaaHit[] = [];
+  for (let p = 1; p <= maxPages; p++) {
+    const url = `${NYAA_BASE}/?page=rss&q=${
+      encodeURIComponent(query)
+    }&c=${category}&f=0&p=${p}`;
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "swamp-anime/1.0" },
+    });
+    if (!resp.ok) throw new Error(`Nyaa ${resp.status}: ${query} p${p}`);
+    const hits = parseRSS(await resp.text());
+    out.push(...hits);
+    if (hits.length < RSS_PAGE_SIZE) break;
+  }
+  return out;
+}
+
+// ─── release-group helpers ────────────────────────────────────────────────────
+
+/** Decode the XML entities nyaa emits inside `<title>`.
+ *  `&amp;` must be decoded LAST or `&amp;lt;` would collapse to `<`. */
+export function decodeEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&(?:apos|#0?39);/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/** Escape for Telegram `parseMode=HTML`. Release titles routinely contain a
+ *  bare `&` ("[LonelyChaser & Kineko Video]"), which breaks the message. */
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Groups credited in a title's leading bracket.
+ *  "[LonelyChaser & Kineko Video] Foo" → ["LonelyChaser", "Kineko Video"] */
+export function bracketGroups(title: string): string[] {
+  const m = decodeEntities(title).match(/^\s*\[([^\]]+)\]/);
+  if (!m) return [];
+  return m[1].split(/\s*[&+,/]\s*/).map((g) => g.trim()).filter(Boolean);
+}
+
+/** Lowercase alnum-only form: "LonelyChaser-Raws" → "lonelychaserraws". */
+export function normGroup(g: string): string {
+  return g.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** The wanted group credited by this title, or null.
+ *  Prefix-matches in both directions so a wanted "LonelyChaser" catches the
+ *  "LonelyChaser-Raws" alias and a wanted "Kineko Video" catches bare
+ *  "Kineko". Both sides must be >= MIN_STEM chars so a short token like "a"
+ *  cannot wildcard onto every group. */
+export function creditsGroup(
+  title: string,
+  wanted: string[],
+): string | null {
+  const MIN_STEM = 5;
+  const want = wanted.map(normGroup).filter((w) => w.length >= MIN_STEM);
+  for (const credited of bracketGroups(title)) {
+    const n = normGroup(credited);
+    if (n.length < MIN_STEM) continue;
+    for (const w of want) {
+      if (n.startsWith(w) || w.startsWith(n)) return credited;
+    }
+  }
+  return null;
 }
 
 /** Strip subtitle and season indicators to get a base title for fallback search.
@@ -375,6 +474,23 @@ async function txAdd(
   return { added: false, duplicate: false, id: null, name: null };
 }
 
+/** Seed without end: mode 2 is "unlimited", overriding the global ratio/idle
+ *  limits per torrent, so an archive keeps seeding regardless of what the
+ *  session defaults are set to later. Idempotent — re-setting is a no-op. */
+async function txSeedForever(
+  url: string,
+  user: string,
+  pass: string,
+  ids: number[],
+): Promise<void> {
+  if (!ids.length) return;
+  await txRpc(url, user, pass, "torrent-set", {
+    ids,
+    seedRatioMode: 2,
+    seedIdleMode: 2,
+  });
+}
+
 // ─── SeaDex helpers ───────────────────────────────────────────────────────────
 
 interface SeadexTorrent {
@@ -477,6 +593,33 @@ const UpgradeBdSchema = z.object({
   timestamp: z.string(),
 });
 
+const ArchiveResultSchema = z.object({
+  groups: z.array(z.string()).describe("Release groups swept this run"),
+  downloadDir: z.string().describe("Container path everything was queued into"),
+  found: z.number().describe(
+    "Distinct releases credited to the groups on Nyaa",
+  ),
+  queued: z.number().describe("Torrents added to Transmission"),
+  duplicates: z.number().describe("Already present in Transmission"),
+  skipped: z.number().describe("Below the seeder floor"),
+  seedForeverApplied: z.number().describe(
+    "Torrents switched to unlimited ratio + idle seeding",
+  ),
+  queuedGB: z.number().describe("Disk the queued releases will occupy"),
+  catalogGB: z.number().describe("Disk the groups' whole catalogue occupies"),
+  searchErrors: z.array(z.string()),
+  outcomes: z.array(z.object({
+    title: z.string(),
+    group: z.string(),
+    infoHash: z.string(),
+    seeders: z.number(),
+    sizeGB: z.number(),
+    status: z.enum(["queued", "duplicate", "skipped", "error"]),
+    reason: z.string().optional(),
+  })),
+  timestamp: z.string(),
+});
+
 const DiskStatsSchema = z.object({
   totalBytes: z.number(),
   downloadedBytes: z.number(),
@@ -519,6 +662,9 @@ const GlobalArgsSchema = z.object({
   transmissionPass: z.string().meta({ sensitive: true }).describe(
     "Transmission RPC password",
   ),
+  archiveContainerDir: z.string().default("/anime/kineko").describe(
+    "Download dir for fetch-archive preservation rips, as the Transmission CONTAINER sees it (e.g. /anime/kineko) — not the host path it is bind-mounted from",
+  ),
   animeContainerDir: z.string().default("/anime/tv").describe(
     "Download dir prefix INSIDE the Transmission container for anime (e.g. /anime/tv)",
   ),
@@ -554,7 +700,7 @@ async function sendTg(modelName: string, text: string): Promise<void> {
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.07.16.2",
+  version: "2026.08.08.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     fetchResult: {
@@ -573,6 +719,13 @@ export const model = {
     upgradeResult: {
       description: "Outcome of upgrade-bd: which BD releases were queued",
       schema: UpgradeBdSchema,
+      lifetime: "7d",
+      garbageCollection: 10,
+    },
+    archiveResult: {
+      description:
+        "Outcome of fetch-archive: which preservation-group releases were queued and set to seed forever",
+      schema: ArchiveResultSchema,
       lifetime: "7d",
       garbageCollection: 10,
     },
@@ -1196,6 +1349,223 @@ export const model = {
           queued,
           skippedOnDisk,
           notInSeadex,
+          outcomes,
+          timestamp: new Date().toISOString(),
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    "fetch-archive": {
+      description:
+        "Sweep Nyaa for every release credited to a set of preservation groups (default Kineko Video + LonelyChaser), queue them into the archive dir, and switch them to unlimited ratio/idle seeding so they seed forever. Idempotent: releases already in Transmission are reported as duplicates, and the seed-forever setting is re-applied to everything already in the archive dir.",
+      arguments: z.object({
+        groups: z.array(z.string()).default(["Kineko Video", "LonelyChaser"])
+          .describe(
+            "Release-group names matched against the leading [..] credit in each torrent title. Suffixed aliases (LonelyChaser-Raws) and collabs ([LonelyChaser & Kineko Video]) both match.",
+          ),
+        category: z.string().default("0_0").describe(
+          "Nyaa category filter. Default 0_0 (all) — these groups also post live-action scans outside the anime categories.",
+        ),
+        maxPages: z.number().default(10).describe(
+          "Max Nyaa RSS pages per group (75 releases per page)",
+        ),
+        minSeeders: z.number().default(1).describe(
+          "Skip releases with fewer seeders than this (0 = take dead torrents too)",
+        ),
+        seedForeverExisting: z.boolean().default(true).describe(
+          "Also apply unlimited seeding to torrents already in the archive dir",
+        ),
+        dryRun: z.boolean().default(false).describe(
+          "Resolve what would be queued but do not touch Transmission",
+        ),
+      }),
+      execute: async (
+        args: {
+          groups: string[];
+          category: string;
+          maxPages: number;
+          minSeeders: number;
+          seedForeverExisting: boolean;
+          dryRun: boolean;
+        },
+        context: {
+          globalArgs: z.infer<typeof GlobalArgsSchema>;
+          writeResource: (n: string, k: string, v: unknown) => Promise<unknown>;
+        },
+      ) => {
+        const {
+          transmissionRpcUrl,
+          transmissionUser,
+          transmissionPass,
+          archiveContainerDir,
+          telegramModel,
+        } = context.globalArgs;
+
+        const downloadDir = archiveContainerDir.replace(/\/$/, "");
+        const groups = args.groups.filter((g) => g.trim().length > 0);
+        if (!groups.length) {
+          throw new Error("fetch-archive needs at least one group");
+        }
+
+        // Discover: one paged search per group, then keep only titles that
+        // actually credit a wanted group — a plain text search also matches
+        // releases that merely mention the name in the description.
+        const byHash = new Map<string, { hit: NyaaHit; group: string }>();
+        const searchErrors: string[] = [];
+        for (const g of groups) {
+          let hits: NyaaHit[];
+          try {
+            hits = await nyaaSearchPaged(g, args.category, args.maxPages);
+          } catch (e) {
+            searchErrors.push(`${g}: ${(e as Error).message.slice(0, 120)}`);
+            continue;
+          }
+          for (const hit of hits) {
+            const credited = creditsGroup(hit.title, groups);
+            // Collabs surface under both group searches — first hash wins.
+            if (credited && !byHash.has(hit.infoHash)) {
+              byHash.set(hit.infoHash, { hit, group: credited });
+            }
+          }
+        }
+
+        // Read Transmission state before mutating anything.
+        const existing = await txListTorrents(
+          transmissionRpcUrl,
+          transmissionUser,
+          transmissionPass,
+        );
+        const existingHashes = new Set(
+          existing.map((t) => t.hashString.toLowerCase()),
+        );
+        const inArchiveDir = existing.filter(
+          (t) => t.downloadDir.replace(/\/$/, "") === downloadDir,
+        );
+
+        const outcomes: z.infer<typeof ArchiveResultSchema>["outcomes"] = [];
+        const touchedIds = new Set<number>();
+        let queued = 0, duplicates = 0, skipped = 0;
+        let queuedBytes = 0, catalogBytes = 0;
+        const gb = (b: number) => Math.round((b / 1024 ** 3) * 100) / 100;
+
+        for (const { hit, group } of byHash.values()) {
+          catalogBytes += hit.sizeBytes;
+          const base = {
+            title: decodeEntities(hit.title),
+            group,
+            infoHash: hit.infoHash,
+            seeders: hit.seeders,
+            sizeGB: gb(hit.sizeBytes),
+          };
+
+          if (hit.seeders < args.minSeeders) {
+            skipped++;
+            outcomes.push({
+              ...base,
+              status: "skipped",
+              reason: `seeders-${hit.seeders}`,
+            });
+            continue;
+          }
+          if (existingHashes.has(hit.infoHash)) {
+            duplicates++;
+            outcomes.push({ ...base, status: "duplicate" });
+            continue;
+          }
+          if (args.dryRun) {
+            queued++;
+            queuedBytes += hit.sizeBytes;
+            outcomes.push({ ...base, status: "queued", reason: "dry-run" });
+            continue;
+          }
+
+          try {
+            const result = await txAdd(
+              transmissionRpcUrl,
+              transmissionUser,
+              transmissionPass,
+              hit.viewUrl,
+              downloadDir,
+            );
+            if (result.id != null) touchedIds.add(result.id);
+            if (result.duplicate) {
+              duplicates++;
+              outcomes.push({ ...base, status: "duplicate" });
+            } else if (result.added) {
+              queued++;
+              queuedBytes += hit.sizeBytes;
+              existingHashes.add(hit.infoHash);
+              outcomes.push({ ...base, status: "queued" });
+            } else {
+              outcomes.push({
+                ...base,
+                status: "error",
+                reason: "transmission-add-failed",
+              });
+            }
+          } catch (e) {
+            outcomes.push({
+              ...base,
+              status: "error",
+              reason: (e as Error).message.slice(0, 100),
+            });
+          }
+        }
+
+        // Seed forever: everything just added, plus (by default) everything
+        // already parked in the archive dir from earlier runs.
+        let seedForeverApplied = 0;
+        if (!args.dryRun) {
+          if (args.seedForeverExisting) {
+            for (const t of inArchiveDir) touchedIds.add(t.id);
+          }
+          if (touchedIds.size) {
+            await txSeedForever(
+              transmissionRpcUrl,
+              transmissionUser,
+              transmissionPass,
+              [...touchedIds],
+            );
+            seedForeverApplied = touchedIds.size;
+          }
+        }
+
+        if (telegramModel && !args.dryRun && queued > 0) {
+          // Telegram caps a message at 4096 chars — list what was snatched but
+          // keep the tail bounded so a large first sweep still delivers.
+          const LIST_CAP = 20;
+          const snatched = outcomes.filter((o) => o.status === "queued");
+          const listed = snatched.slice(0, LIST_CAP).map((o) =>
+            `• <code>${
+              escapeHtml(o.title).slice(0, 110)
+            }</code> — ${o.sizeGB} GB`
+          );
+          const overflow = snatched.length - listed.length;
+          await sendTg(
+            telegramModel,
+            `<b>Archive sweep queued ${queued} release${
+              queued === 1 ? "" : "s"
+            }</b>\n` +
+              `${groups.join(", ")} → <code>${downloadDir}</code>\n` +
+              `${gb(queuedBytes)} GB incoming, ${duplicates} already held, ` +
+              `${seedForeverApplied} seeding unlimited\n\n` +
+              listed.join("\n") +
+              (overflow > 0 ? `\n… and ${overflow} more` : ""),
+          );
+        }
+
+        const handle = await context.writeResource("archiveResult", "current", {
+          groups,
+          downloadDir,
+          found: byHash.size,
+          queued,
+          duplicates,
+          skipped,
+          seedForeverApplied,
+          queuedGB: gb(queuedBytes),
+          catalogGB: gb(catalogBytes),
+          searchErrors,
           outcomes,
           timestamp: new Date().toISOString(),
         });

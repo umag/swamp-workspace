@@ -62,6 +62,7 @@ const GLOBAL_ARGS = {
   transmissionUser: "fixture-tx-user",
   transmissionPass: SENTINEL_TX_PASS,
   animeContainerDir: "/anime/tv",
+  archiveContainerDir: "/anime/kineko",
   preferredResolution: 1080,
   telegramModel: "",
 };
@@ -197,6 +198,7 @@ interface RssHitSpec {
   infoHash: string;
   seeders?: number;
   link?: string;
+  size?: string;
 }
 
 function rss(hits: RssHitSpec[]): string {
@@ -204,6 +206,7 @@ function rss(hits: RssHitSpec[]): string {
     const link = h.link ?? `https://nyaa.si/view/${900000 + i}`;
     return `<item><title><![CDATA[${h.title}]]></title><link>${link}</link>` +
       `<nyaa:seeders>${h.seeders ?? 10}</nyaa:seeders>` +
+      `<nyaa:size>${h.size ?? "1.0 GiB"}</nyaa:size>` +
       `<nyaa:infoHash>${h.infoHash}</nyaa:infoHash></item>`;
   }).join("");
   return `<?xml version="1.0"?><rss version="2.0"><channel>${items}</channel></rss>`;
@@ -232,6 +235,7 @@ function nyaaRoute(byQuery: Record<string, RssHitSpec[]>): Route {
 interface TxHandlers {
   torrentGet?: () => unknown[];
   torrentAdd?: (args: Record<string, unknown>) => unknown;
+  torrentSet?: (args: Record<string, unknown>) => unknown;
   sid?: string;
 }
 
@@ -260,6 +264,14 @@ function txRoute(handlers: TxHandlers): Route {
         arguments: handlers.torrentAdd(
           body.arguments as Record<string, unknown>,
         ),
+      });
+    }
+    if (body.method === "torrent-set" && handlers.torrentSet) {
+      return json({
+        result: "success",
+        arguments: handlers.torrentSet(
+          body.arguments as Record<string, unknown>,
+        ) ?? {},
       });
     }
     return undefined;
@@ -873,11 +885,211 @@ Deno.test("no method calls the logger at all today (pin — a future change that
 // Sanity
 // ---------------------------------------------------------------------------
 
-Deno.test("sanity: model exposes exactly the 4 documented methods", () => {
+// ---------------------------------------------------------------------------
+// fetch-archive
+// ---------------------------------------------------------------------------
+
+/** The two default preservation groups, plus the alias and collab spellings
+ * they actually ship under on nyaa. */
+const ARCHIVE_RSS: RssHitSpec[] = [
+  {
+    title: "[Kineko Video] Dragon Ball - Goku &amp; Traffic Safety (16mm)",
+    infoHash: "aaaa0000000000000000000000000000000000a1",
+    size: "4.0 GiB",
+  },
+  {
+    title: "[LonelyChaser &amp; Kineko Video] Future War 198X (35mm) [4K]",
+    infoHash: "bbbb0000000000000000000000000000000000b2",
+    size: "2.0 GiB",
+  },
+  {
+    title: "[LonelyChaser-Raws] Godzilla 1984 (4K Remaster Box)",
+    infoHash: "cccc0000000000000000000000000000000000c3",
+    size: "1.0 GiB",
+  },
+];
+
+Deno.test("fetch-archive: queues every credited release into the archive dir and switches it to unlimited seeding", async () => {
+  const { ctx, written } = makeCtx();
+  const addedDirs: string[] = [];
+  const setArgs: Record<string, unknown>[] = [];
+  let nextId = 500;
+
+  await withFetchStub([
+    nyaaRoute({ "Kineko Video": ARCHIVE_RSS, "LonelyChaser": ARCHIVE_RSS }),
+    txRoute({
+      torrentGet: () => [],
+      torrentAdd: (a) => {
+        addedDirs.push(String(a["download-dir"]));
+        return { "torrent-added": { id: nextId++, name: "added.mkv" } };
+      },
+      torrentSet: (a) => {
+        setArgs.push(a);
+        return {};
+      },
+    }),
+  ], async () => {
+    await run("fetch-archive", {}, ctx);
+  });
+
+  const r = written[0].payload;
+  assertEquals(written[0].spec, "archiveResult");
+  assertEquals(r.found, 3);
+  assertEquals(r.queued, 3);
+  assertEquals(r.duplicates, 0);
+  // Every add lands flat in the archive dir — no per-title subfolder, so the
+  // data stays exactly where it seeds from.
+  assertEquals(addedDirs, ["/anime/kineko", "/anime/kineko", "/anime/kineko"]);
+  // 4 + 2 + 1 GiB
+  assertEquals(r.queuedGB, 7);
+  assertEquals(r.catalogGB, 7);
+  // One batched torrent-set carrying BOTH unlimited modes.
+  assertEquals(setArgs.length, 1);
+  assertEquals(setArgs[0].seedRatioMode, 2);
+  assertEquals(setArgs[0].seedIdleMode, 2);
+  assertEquals((setArgs[0].ids as number[]).sort(), [500, 501, 502]);
+  assertEquals(r.seedForeverApplied, 3);
+});
+
+Deno.test("fetch-archive: is idempotent — a release already in Transmission is a duplicate, never re-added", async () => {
+  const { ctx, written } = makeCtx();
+  let addCalls = 0;
+  let nextId = 900;
+
+  await withFetchStub([
+    nyaaRoute({ "Kineko Video": ARCHIVE_RSS, "LonelyChaser": ARCHIVE_RSS }),
+    txRoute({
+      // Hash casing differs from the RSS body on purpose: dedup must be
+      // case-insensitive on infoHash.
+      torrentGet: () => [
+        {
+          id: 1,
+          name: "held.mkv",
+          status: 6,
+          percentDone: 1,
+          isFinished: true,
+          doneDate: 0,
+          downloadDir: "/anime/kineko",
+          totalSize: 1,
+          hashString: "AAAA0000000000000000000000000000000000A1",
+        },
+      ],
+      torrentAdd: () => {
+        addCalls++;
+        return { "torrent-added": { id: nextId++, name: "added.mkv" } };
+      },
+      torrentSet: () => ({}),
+    }),
+  ], async () => {
+    await run("fetch-archive", {}, ctx);
+  });
+
+  const r = written[0].payload;
+  assertEquals(r.duplicates, 1);
+  assertEquals(r.queued, 2);
+  assertEquals(addCalls, 2);
+  // The already-held torrent is in the archive dir, so seed-forever covers it
+  // alongside the two new ids.
+  assertEquals(r.seedForeverApplied, 3);
+});
+
+Deno.test("fetch-archive: dryRun resolves the sweep but never mutates Transmission", async () => {
+  const { ctx, written } = makeCtx();
+  let mutations = 0;
+
+  await withFetchStub([
+    nyaaRoute({ "Kineko Video": ARCHIVE_RSS, "LonelyChaser": ARCHIVE_RSS }),
+    txRoute({
+      torrentGet: () => [],
+      torrentAdd: () => {
+        mutations++;
+        return { "torrent-added": { id: 1, name: "x" } };
+      },
+      torrentSet: () => {
+        mutations++;
+        return {};
+      },
+    }),
+  ], async () => {
+    await run("fetch-archive", { dryRun: true }, ctx);
+  });
+
+  const r = written[0].payload;
+  assertEquals(mutations, 0);
+  assertEquals(r.queued, 3);
+  assertEquals(r.seedForeverApplied, 0);
+});
+
+Deno.test("fetch-archive: a per-group Nyaa failure is captured in searchErrors — the other group still sweeps", async () => {
+  const { ctx, written } = makeCtx();
+
+  await withFetchStub([
+    (req) => {
+      const url = new URL(req.url);
+      if (url.hostname !== "nyaa.si") return undefined;
+      if (url.searchParams.get("q") === "Kineko Video") {
+        return new Response("boom", { status: 503 });
+      }
+      return new Response(rss(ARCHIVE_RSS), { status: 200 });
+    },
+    txRoute({
+      torrentGet: () => [],
+      torrentAdd: () => ({ "torrent-added": { id: 1, name: "x" } }),
+      torrentSet: () => ({}),
+    }),
+  ], async () => {
+    await run("fetch-archive", {}, ctx);
+  });
+
+  const r = written[0].payload;
+  const errs = r.searchErrors as string[];
+  assertEquals(errs.length, 1);
+  assert(errs[0].startsWith("Kineko Video: "), errs[0]);
+  assert(errs[0].includes("503"), errs[0]);
+  // LonelyChaser's own search still ran and its hits still queued.
+  assertEquals(r.found, 3);
+});
+
+Deno.test("fetch-archive: releases below the seeder floor are skipped, not queued", async () => {
+  const { ctx, written } = makeCtx();
+
+  await withFetchStub([
+    nyaaRoute({
+      "Kineko Video": [{ ...ARCHIVE_RSS[0], seeders: 0 }],
+      "LonelyChaser": [],
+    }),
+    txRoute({
+      torrentGet: () => [],
+      torrentAdd: () => ({ "torrent-added": { id: 1, name: "x" } }),
+      torrentSet: () => ({}),
+    }),
+  ], async () => {
+    await run("fetch-archive", {}, ctx);
+  });
+
+  const r = written[0].payload;
+  assertEquals(r.skipped, 1);
+  assertEquals(r.queued, 0);
+  const outcomes = r.outcomes as Array<Record<string, unknown>>;
+  assertEquals(outcomes[0].status, "skipped");
+  assertEquals(outcomes[0].reason, "seeders-0");
+});
+
+Deno.test("fetch-archive: an empty group list is rejected rather than sweeping all of nyaa", async () => {
+  const { ctx } = makeCtx();
+  await assertRejects(
+    () => run("fetch-archive", { groups: ["", "  "] }, ctx),
+    Error,
+    "at least one group",
+  );
+});
+
+Deno.test("sanity: model exposes exactly the 5 documented methods", () => {
   const methodNames = Object.keys(model.methods).sort();
   assertEquals(methodNames, [
     "disk-stats",
     "fetch-airing",
+    "fetch-archive",
     "mark-watched",
     "upgrade-bd",
   ]);
