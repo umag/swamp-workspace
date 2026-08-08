@@ -283,7 +283,7 @@ Deno.test("search: a unicode query is percent-encoded in the URL and the unicode
     async (calls) => {
       await run("search", { query: "アーカイブ 🎬" }, ctx);
       const url = new URL(calls[0].url);
-      assertEquals(url.searchParams.get("q"), "アーカイブ 🎬");
+      assertEquals(url.searchParams.get("query"), "アーカイブ 🎬");
       assert(
         url.search.includes("%"),
         "the raw query string must be percent-encoded on the wire",
