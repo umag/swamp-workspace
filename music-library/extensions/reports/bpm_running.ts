@@ -161,6 +161,19 @@ function renderMarkdown(
   return lines.join("\n");
 }
 
+/**
+ * The `@magistr/music-bpm-running` model-scope report.
+ *
+ * Turns the newest `bpm` resource into a ready-to-run playlist at the
+ * library's default cadence: tracks whose beat essentia actually locked
+ * onto, matched at 1x, 2x or half-x against the fixed cadence window (the
+ * matching logic lives in ../lib/running.ts, shared with the `running`
+ * method), bucketed by the cadence that matched and ranked by beat
+ * confidence, plus the most metronomic albums and a breakdown of what got
+ * excluded and why. Takes no arguments by design — run the `running`
+ * method directly when the cadence window or confidence floor needs
+ * tuning for a particular session.
+ */
 export const report = {
   name: "@magistr/music-bpm-running",
   description:
