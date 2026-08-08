@@ -88,11 +88,13 @@ canary:
 # reads) per scripts/lib/soak_permissions.ts's checkSoakAuthority — an
 # unattended nightly soak must never silently inherit --allow-all. Tracked
 # in ext-quality-release-watch-soak (Phase B, property-soak-permission-
-# source-of-truth).
+# source-of-truth). `runs: 5000` declares swamp-go-brr's local test:soak has
+# always run at 5000, not the 10000 default.
 soak:
   state: present
   denoArgs:
     - "--allow-env=FC_NUM_RUNS"
+  runs: 5000
 docs:
   readme:
     state: present

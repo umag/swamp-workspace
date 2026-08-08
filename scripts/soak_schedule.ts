@@ -149,8 +149,13 @@ export interface BuildBucketOpts {
  * Never throws: a missing/unreadable/malformed deno.json (or one with no
  * `test` task) resolves to "" — parsePermissionSet("") is the empty
  * permission set, and downstream check_soak.ts (not this scheduler) is the
- * gate that reports the resulting adequacy violation. */
-async function readTestTaskLenient(
+ * gate that reports the resulting adequacy violation.
+ *
+ * Exported so scripts/quality/generate_soak_task.ts can share this exact
+ * lenient read instead of re-deriving it — see resolveDenoArgs's own
+ * export note for why a SECOND copy of this reasoning is exactly the drift
+ * this PR exists to eliminate. */
+export async function readTestTaskLenient(
   root: string,
   extension: string,
 ): Promise<string> {
@@ -169,8 +174,19 @@ async function readTestTaskLenient(
  * verifies it's a legitimate narrowing, not this scheduler); otherwise fall
  * back to deriving argv directly from the extension's own `test` task — the
  * common-case path that closes the permission gap for every extension that
- * doesn't need a hand-authored override at all. Never throws. */
-async function resolveDenoArgs(
+ * doesn't need a hand-authored override at all. Never throws.
+ *
+ * Exported so scripts/quality/generate_soak_task.ts (the local `deno task
+ * test:soak` generator) resolves the EXACT SAME permission argv the nightly
+ * bucket resolves, for the EXACT SAME reason this scheduler exists: the
+ * override-vs-derive precedence rule is the property-soak permission
+ * pipeline's single source of truth, and every consumer (nightly scheduler,
+ * PR-time check_soak.ts gate, and now the local test:soak generator) must
+ * import it, never re-derive it. A second, subtly different implementation
+ * of "does a narrowed override apply" is the exact class of drift this
+ * whole PR (and the property-soak-permission-source-of-truth PR before it)
+ * exists to make structurally impossible. */
+export async function resolveDenoArgs(
   root: string,
   extension: string,
   testTask: string,

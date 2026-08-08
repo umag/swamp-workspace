@@ -2,7 +2,7 @@
   "tasks": {
     "check": "deno check extensions/models/gobrr.ts extensions/models/docker_verify.ts extensions/models/source_integration.ts extensions/models/preflight.ts extensions/models/preflight.test.ts extensions/models/otlp_export.ts extensions/models/lib/otlp.ts",
     "test": "deno test --permit-no-files --allow-all extensions/models/",
-    "test:soak": "FC_NUM_RUNS=5000 deno test --permit-no-files --allow-all extensions/models/swamp_go_brr_property_test.ts",
+    "test:soak": "FC_NUM_RUNS=5000 deno test --allow-env=FC_NUM_RUNS extensions/models/swamp_go_brr_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

@@ -40,6 +40,17 @@ canary:
   method: status
   args: {}
   assert: "data.latest('herd', 'status').attributes.clientVersion != ''"
+# soak: herdr's test task authority is not broad (--allow-run is scoped to
+# `sh`, not unscoped) — no permission-narrowing override is needed. This
+# block exists ONLY to declare `runs`: herdr's local test:soak has always run
+# at 2000, not the 10000 default (see scripts/quality/generate_soak_task.ts
+# and STANDARD.md's "soak:" block section — `runs` is DECLARED config, never
+# parsed back out of a previously generated string). Tracked in
+# ext-quality-release-watch-soak (Phase B).
+soak:
+  state: na
+  justification: herdr's test task authority is not broad — no permission narrowing needed; this block exists only to declare a non-default local run count
+  runs: 2000
 docs:
   readme:
     state: present
