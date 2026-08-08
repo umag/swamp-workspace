@@ -1,0 +1,68 @@
+# See STANDARD.md. Authored by hand at first release, not scaffolded: a new
+# extension cannot use `backlog` states (backlog eligibility == membership of
+# quality-allowlist.txt, and that list may only shrink), so all five suites
+# and all three docs items ship `present` on day one.
+schemaVersion: 1
+extension: distress
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/distress_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/distress_methods_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/distress_adversarial_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/distress_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/distress_property_test.ts
+watch:
+  state: na
+  justification: >-
+    nothing external to watch — this model wraps no npm package, container
+    image or upstream release; its only outside dependency is the argument
+    schema of whichever swamp model a channel points at, which the
+    contract-fixture suite pins against fixtures/channel_contracts.json
+canary:
+  state: present
+  instance: distress
+  method: list
+  args: { status: all }
+  assert: "data.latest('distress', 'recent').attributes.count >= 0"
+  fixture:
+    method: list
+    redact: ["$.calls[*].summary", "$.calls[*].ackNote"]
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: present
+    files:
+      - .claude/skills/distress/SKILL.md
+soak:
+  state: na
+  justification: >-
+    the `test` task grants only --allow-read=fixtures and
+    --allow-env=FC_NUM_RUNS, neither of which is a broad grant, so the
+    nightly soak inherits it unchanged; this block exists solely to declare
+    the run count
+  runs: 10000
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"
