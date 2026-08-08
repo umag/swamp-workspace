@@ -1,7 +1,9 @@
 name: Setup swamp
 description: >
-  Download a pinned swamp release and add it to $PATH. Used by the
-  extension-publish job in CI.
+  Download a swamp release and add it to $PATH. Every call site in this repo
+  (compliance + both extension-publish jobs) takes the "latest" default; the
+  `version` input remains available to pin a specific release when a run has
+  to be reproduced against an older binary.
 
 inputs:
   version:
