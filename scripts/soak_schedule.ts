@@ -26,10 +26,7 @@
  */
 import { join, relative } from "jsr:@std/path@1";
 import { parse as parseYaml } from "jsr:@std/yaml@1.0.10";
-import {
-  parsePermissionSet,
-  permissionSetToArgs,
-} from "./lib/soak_permissions.ts";
+import { deriveSoakArgsFromTestTask } from "./lib/soak_permissions.ts";
 
 export interface DiscoveredFile {
   readonly extension: string;
@@ -200,7 +197,12 @@ async function resolveDenoArgs(
   } catch {
     // no quality.yaml, or unreadable/malformed — fall back to the test task
   }
-  return permissionSetToArgs(parsePermissionSet(testTask));
+  // deriveSoakArgsFromTestTask carries runtime flags (--v8-flags=...,
+  // --unstable-*) through ahead of the permission flags — see its docblock
+  // for the seanime/seadex --v8-flags=--expose-gc coverage hole this fixes
+  // (the heap-pin regression tests those extensions gate behind an exposed
+  // gc() were silently skipped in every nightly soak run until this).
+  return deriveSoakArgsFromTestTask(testTask);
 }
 
 async function enrichWithDenoArgs(

@@ -184,33 +184,72 @@ function hasDiagnosticLine(text: string, className: string): boolean {
 }
 
 /**
+ * TRUE iff `text` contains fast-check's own top-level diagnostic line for a
+ * FALSIFIED property — a fast-check counterexample, the single most
+ * valuable soak outcome there is. fast-check reports this by throwing a
+ * bare `Error` whose message begins with the literal text "Property failed
+ * after <N> tests" (verified live against a real `deno test` subprocess —
+ * see run_soak.test.ts's real-subprocess fast-check tests); deno's
+ * uncaught-error handler renders it the same shape hasDiagnosticLine's own
+ * doc describes for a named error class: "error: <optional parenthetical
+ * annotation>Error: Property failed after <N> tests". Reusing that same
+ * "error: ...Error:" line-start anchor (never a bare substring search for
+ * "Property failed after") is what keeps a property test that merely
+ * ASSERTS on the literal string "Property failed after 1 tests" (a
+ * plausible shape — pinning fast-check's own error message in a
+ * golden-output test) from being misclassified: that text then shows up
+ * ONLY inside an AssertionError diff line (e.g. "+   Property failed after
+ * 1 tests" — indented/prefixed, never preceded by "error: ...Error:" on the
+ * same line) — see run_soak.test.ts's negative test for the live
+ * verification. `\d+` (not `[0-9]`) reads more naturally next to
+ * hasDiagnosticLine's `[^:\n]*` above; both stay on ANSI-stripped,
+ * single-line text.
+ */
+function hasPropertyFalsifiedLine(text: string): boolean {
+  return /error: [^:\n]*Error: Property failed after \d+ tests/.test(text);
+}
+
+/**
  * Classifies a non-zero `deno test` exit from the exit code plus its
  * COMBINED stdout+stderr output. `deno test` writes a failing test's actual
- * detail — the NotCapable permission trace, the AssertionError diff — to
- * STDOUT; only a generic "error: Test failed" summary line goes to stderr.
- * Verified live against a real `deno test` subprocess (see
- * run_soak.test.ts's real-subprocess classification tests): passing stderr
- * alone here misclassifies both a permission failure AND an assertion
- * failure as "unknown" — silently defeating this tool's whole purpose (a red
- * nightly that says why). `text` must therefore be stdout+stderr combined,
- * never stderr alone.
+ * detail — the NotCapable permission trace, the AssertionError diff, the
+ * fast-check counterexample — to STDOUT; only a generic "error: Test
+ * failed" summary line goes to stderr. Verified live against a real
+ * `deno test` subprocess (see run_soak.test.ts's real-subprocess
+ * classification tests): passing stderr alone here misclassifies a
+ * permission failure, an assertion failure, AND a falsified property all as
+ * "unknown" — silently defeating this tool's whole purpose (a red nightly
+ * that says why). `text` must therefore be stdout+stderr combined, never
+ * stderr alone.
  *
  * Exit code is checked FIRST (133 is an unambiguous OOM-kill signal,
- * independent of any text). Then AssertionError's diagnostic line is
- * checked BEFORE NotCapable's: if the combined output happens to contain
- * both (e.g. multiple failing tests in one file, or — the defect this
- * ordering + the hasDiagnosticLine narrowing together fix — an assertion
- * whose own diff text contains the bare word "NotCapable"), a genuine
- * test-logic failure wins the reported classification. The prior
- * implementation checked a bare `.includes("NotCapable")` FIRST, against
- * the ENTIRE combined output, which misclassified an ordinary
- * `assertEquals(actual, "NotCapable")` failure as a permission failure —
- * exactly the misdiagnosis this whole tool exists to prevent (verified
- * live).
+ * independent of any text). Then "property falsified" is checked BEFORE
+ * AssertionError's diagnostic line, which is checked BEFORE NotCapable's:
+ *
+ *   - property falsified before AssertionError: a fast-check property whose
+ *     predicate uses `assertEquals` internally (a common, idiomatic
+ *     property-test shape in this repo) fails with BOTH markers present in
+ *     the combined output — fast-check's own "Property failed after <N>
+ *     tests" top-line, plus the underlying AssertionError surfaced via
+ *     Deno's "Caused by:" cause-chain rendering. "property falsified" is
+ *     the more specific AND more actionable of the two: it is the exact
+ *     outcome the property soak exists to find (a counterexample), whereas
+ *     "assertion" alone would read like an ordinary broken test.
+ *   - AssertionError before NotCapable: if the combined output happens to
+ *     contain both (e.g. multiple failing tests in one file, or — the
+ *     defect this ordering + the hasDiagnosticLine narrowing together fix —
+ *     an assertion whose own diff text contains the bare word
+ *     "NotCapable"), a genuine test-logic failure wins the reported
+ *     classification. The prior implementation checked a bare
+ *     `.includes("NotCapable")` FIRST, against the ENTIRE combined output,
+ *     which misclassified an ordinary `assertEquals(actual, "NotCapable")`
+ *     failure as a permission failure — exactly the misdiagnosis this whole
+ *     tool exists to prevent (verified live).
  */
 export function classifyFailure(code: number, text: string): string {
   if (code === 133) return "out of memory";
   const stripped = text.replace(ANSI_ESCAPE, "");
+  if (hasPropertyFalsifiedLine(stripped)) return "property falsified";
   if (hasDiagnosticLine(stripped, "AssertionError")) return "assertion";
   if (hasDiagnosticLine(stripped, "NotCapable")) return "permission denied";
   return "unknown";
@@ -378,12 +417,16 @@ Flags:
 
 Prints the effective "cd <ext> && FC_NUM_RUNS=<n> deno test <argv...>"
 command before executing it. Classifies a non-zero exit from the exit code
-+ combined stdout/stderr (deno test writes a failing test's NotCapable/
-AssertionError detail to STDOUT, not stderr — 133 -> "out of memory", an
-AssertionError diagnostic line -> "assertion", a NotCapable diagnostic line
--> "permission denied" (checked in that order, so an assertion that merely
-asserts on the string "NotCapable" is never misclassified as a permission
-failure), else "unknown") and emits a matching
++ combined stdout/stderr (deno test writes a failing test's fast-check
+counterexample / NotCapable / AssertionError detail to STDOUT, not stderr —
+133 -> "out of memory", a fast-check "Property failed after <N> tests"
+diagnostic line -> "property falsified", an AssertionError diagnostic line
+-> "assertion", a NotCapable diagnostic line -> "permission denied" (checked
+in that order, so a property whose predicate uses assertEquals internally is
+reported as the falsified property it is rather than a bare assertion
+failure, and an assertion that merely asserts on the string "NotCapable" or
+"Property failed after 1 tests" is never misclassified as a permission
+failure or a falsified property), else "unknown") and emits a matching
 "::error title=soak-failure::<ext> <file>: <class>" annotation.
 
 Rejects an --extension/--file that escapes the repo root (Deno.cwd() at

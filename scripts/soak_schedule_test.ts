@@ -458,6 +458,37 @@ Deno.test("buildTonightsBucket: denoArgsJson round-trips through JSON.parse to t
   }
 });
 
+// A --v8-flags=... token on a `test` task (seanime's and seadex's real
+// shape — required by their heap-pin regression tests, the guard for the
+// req.clone() leak PR #182 fixed) used to vanish entirely from denoArgsJson:
+// parsePermissionSet/permissionSetToArgs only ever round-trip --allow-*/
+// --deny-* tokens, so `deno run --allow-read --allow-env
+// scripts/soak_schedule.ts --all` emitted no "v8-flags" anywhere in its
+// output. resolveDenoArgs now calls deriveSoakArgsFromTestTask, which
+// carries a recognized runtime flag through ahead of the permission flags.
+Deno.test("buildTonightsBucket: --v8-flags=--expose-gc on the test task (seanime/seadex's real shape) is carried into denoArgsJson, ordered BEFORE the permission flags", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await writeMinimalExtension(
+      root,
+      "ext-a",
+      "deno test --v8-flags=--expose-gc --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    );
+    const bucket = await buildTonightsBucket(root, {
+      all: true,
+      now: new Date(),
+    });
+    const entry = bucket[0] as unknown as { denoArgsJson: string };
+    const parsedArgs = JSON.parse(entry.denoArgsJson);
+    assertEquals(parsedArgs, [
+      "--v8-flags=--expose-gc",
+      "--allow-env=FC_NUM_RUNS",
+    ]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // CLI summary line — surfaces each entry's resolved permissions (the MEDIUM
 // finding this pins): the human-readable summary used to list only

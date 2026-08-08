@@ -440,6 +440,97 @@ Deno.test("checkSoak: surfaces an UNSAFE TOKEN on the DERIVED path — no qualit
   }
 });
 
+// ---------------------------------------------------------------------------
+// Unrecognized flags on the test task — the --v8-flags-dropping defect's
+// PR-time gate. resolveDenoArgs's derivation (soak_schedule.ts) used to
+// silently DISCARD any "--"-prefixed test-task token it didn't recognize as
+// a permission flag — the exact mechanism that dropped
+// --v8-flags=--expose-gc from seanime's/seadex's derived soak argv and
+// silently skipped their heap-pin regression tests every nightly run.
+// ---------------------------------------------------------------------------
+
+Deno.test("checkSoak: surfaces an UNRECOGNIZED FLAG on the test task (an invented --totally-new-flag) as a violation, never silently dropped", async () => {
+  const root = await Deno.makeTempDir({
+    prefix: "check-soak-unknown-flag-",
+  });
+  try {
+    await writeExtension(root, "widget", {
+      testTask:
+        "deno test --totally-new-flag --allow-env=FC_NUM_RUNS extensions/models/",
+      // deliberately NO quality.yaml at all — the DERIVED path.
+    });
+    const result = await checkSoak(root);
+    assert(
+      result.violations.some((v: Violation) =>
+        v.extension === "widget" &&
+        v.rule === "soak-unrecognized-flag-silently-dropped" &&
+        v.what.includes("--totally-new-flag")
+      ),
+      JSON.stringify(result.violations),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("checkSoak: does NOT flag --v8-flags=--expose-gc (seanime's/seadex's real shape) — a recognized runtime flag, never a violation", async () => {
+  const root = await Deno.makeTempDir({
+    prefix: "check-soak-v8flags-ok-",
+  });
+  try {
+    await writeExtension(root, "widget", {
+      testTask:
+        "deno test --v8-flags=--expose-gc --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    });
+    const result = await checkSoak(root);
+    assert(
+      !result.violations.some((v: Violation) =>
+        v.rule === "soak-unrecognized-flag-silently-dropped"
+      ),
+      JSON.stringify(result.violations),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("checkSoak: does NOT flag --permit-no-files or --ignore=... — both are explicitly-listed, deliberately-dropped flags, never a violation", async () => {
+  const root = await Deno.makeTempDir({
+    prefix: "check-soak-dropped-flags-ok-",
+  });
+  try {
+    await writeExtension(root, "widget", {
+      testTask:
+        "deno test --ignore=extensions/models/lib/skip.test.ts --allow-read " +
+        "--allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    });
+    const result = await checkSoak(root);
+    assert(
+      !result.violations.some((v: Violation) =>
+        v.rule === "soak-unrecognized-flag-silently-dropped"
+      ),
+      JSON.stringify(result.violations),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("checkSoak: the REAL repo (this checkout) has zero soak-unrecognized-flag-silently-dropped violations — the gate is green on current master apart from what this PR fixes", async () => {
+  const repoRoot = join(dirname(new URL(import.meta.url).pathname), "..", "..");
+  const result = await checkSoak(repoRoot);
+  const unknownFlagViolations = result.violations.filter((v: Violation) =>
+    v.rule === "soak-unrecognized-flag-silently-dropped"
+  );
+  assertEquals(
+    unknownFlagViolations,
+    [],
+    `expected every real extension's test task to be fully accounted for ` +
+      `(recognized permission flag, recognized runtime flag, or ` +
+      `deliberately-dropped), got: ${JSON.stringify(unknownFlagViolations)}`,
+  );
+});
+
 Deno.test("checkSoak: an orphaned-property-file violation's ::error annotation points at the REAL offending file, not quality.yaml", async () => {
   const root = await Deno.makeTempDir({
     prefix: "check-soak-annotation-file-",
