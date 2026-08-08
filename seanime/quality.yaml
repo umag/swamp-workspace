@@ -3,9 +3,13 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-seanime, wave-2a
-# full-build child of the Phase D extension-quality backfill). seanime.ts is
-# unmodified — every suite drives model.methods.<m>.execute() against a
-# stubbed fetch + fake context, characterizing already-shipped behavior.
+# full-build child of the Phase D extension-quality backfill). Every suite
+# drives model.methods.<m>.execute() against a stubbed fetch + fake context,
+# characterizing already-shipped behavior — no method or schema in
+# seanime.ts changed. seanime.ts's upgrades[] array WAS later repaired (see
+# CHANGELOG.md "Unreleased" -- Upgrade-chain repair) to close the chain gap
+# this file's ratchet label used to document as UNSCORABLE; see ratchet
+# below for the current, real score.
 schemaVersion: 1
 extension: seanime
 tests:
@@ -49,11 +53,14 @@ docs:
     justification: seanime bundles no Claude skill — a bare REST/AniList wrapper model, nothing to document as a skill
 ratchet:
   rubricVersion: 3
-  baselinePercentage: 0
+  baselinePercentage: 100
   label: >-
-    UNSCORABLE — swamp extension quality errors on seanime.ts's broken model
-    upgrade chain (2026.04.05.1 -> 2026.04.05.2 declared against a
-    2026.07.16.2 model version); this predates the backfill and seanime.ts is
-    byte-frozen here so it cannot be repaired in this change. score_ratchet.ts
-    reports an unscorable extension as SKIPPED, not a CI failure. Tracked in
-    workspace-ratchet-scorer-blockers; do not attempt to fix the chain here.
+    Grade A (14/14, 100%) — the broken model upgrade chain that made `swamp
+    extension quality` error (upgrades[] terminated at 2026.04.05.2 against
+    model version 2026.07.16.2) is fixed: seanime.ts now carries lineage-
+    repair bridge entries for 2026.04.05.2 -> 2026.05.25.1 -> 2026.07.16.2
+    (identity upgradeAttributes, no globalArguments/resource schema change
+    across either hop — see the entries' descriptions for the exact commits).
+    Un-blocks workspace-ratchet-scorer-blockers; `swamp extension push
+    seanime/manifest.yaml --dry-run -y` and `swamp extension quality` both
+    succeed from a cold cache.
