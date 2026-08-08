@@ -457,28 +457,34 @@ Deno.test("refresh: an EMPTY array argument is still truthy — `if (args.video)
   });
 });
 
-// --- Security-review finding: token is NOT marked sensitive ---------------
+// --- Security-review finding: token IS marked sensitive -------------------
 
-Deno.test("pin: `token` is NOT marked `.meta({ sensitive: true })` today — documented security-hardening gap", () => {
-  // The plan v2 security-review HIGH finding: token is a Token-auth
-  // credential but GlobalArgsSchema never calls `.meta({ sensitive: true })`
-  // on it, so swamp CLI/log surfaces can render it in cleartext. This is a
-  // real gap surfaced during the test-backfill security review, but
-  // tubearchivist.ts is deliberately BYTE-FROZEN by this change (no manifest
-  // version bump; test-authoring only) — fixing it belongs to a follow-up
-  // hardening issue. This test pins the CURRENT (regrettable) state so a
-  // future fix flips it from failing to passing, rather than silently
-  // slipping by unnoticed. Mirrors porkbun_coverage_test.ts's
-  // apiKey/secretApiKey sensitive-meta pin.
+Deno.test("regression: `token` is marked `.meta({ sensitive: true })` so swamp redacts it", () => {
+  // Was the plan v2 security-review HIGH finding, pinned as a KNOWN GAP while
+  // tubearchivist.ts was byte-frozen: token is a Token-auth credential, but
+  // GlobalArgsSchema never marked it sensitive, so swamp rendered it in
+  // cleartext. Not theoretical — a real API token was found in cleartext in
+  // stored @swamp/method-summary report data (markdown AND json payload),
+  // written on every method run including failures.
+  //
+  // 2026.08.08.1 added the annotation, so this flips from pinning the gap to
+  // asserting the fix, exactly as the old pin's own message instructed.
+  // Mirrors porkbun_coverage_test.ts's apiKey/secretApiKey sensitive-meta pin.
   const shape = (model.globalArguments as z.ZodObject<z.ZodRawShape>).shape;
   const meta = z.globalRegistry.get(shape.token) as
     | { sensitive?: boolean }
     | undefined;
+  assertEquals(meta?.sensitive, true, "token must be marked sensitive");
+
+  // host is NOT a credential — marking everything sensitive would make the
+  // reports useless for debugging, so pin the negative too.
+  const hostMeta = z.globalRegistry.get(shape.host) as
+    | { sensitive?: boolean }
+    | undefined;
   assertEquals(
-    meta?.sensitive,
+    hostMeta?.sensitive,
     undefined,
-    "token is not yet marked sensitive — if this starts failing, " +
-      "tubearchivist.ts added the annotation; update this pin to assert true",
+    "host must stay unredacted",
   );
 });
 

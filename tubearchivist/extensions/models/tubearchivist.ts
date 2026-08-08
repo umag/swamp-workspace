@@ -6,6 +6,7 @@ const GlobalArgsSchema = z.object({
     .describe("TubeArchivist URL (e.g., https://tubearchivist.example.com)"),
   token: z
     .string()
+    .meta({ sensitive: true })
     .describe(
       "API token - use vault: ${{ vault.get(my-vault, TA_TOKEN) }}",
     ),
@@ -125,7 +126,7 @@ const BackupSchema = z.object({
 /** TubeArchivist model: manage videos, channels, downloads, and search via the API. */
 export const model = {
   type: "@magistr/tubearchivist",
-  version: "2026.07.16.2",
+  version: "2026.08.08.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     videos: {
@@ -490,7 +491,9 @@ export const model = {
       }),
       execute: async (args, context) => {
         const { host, token } = context.globalArgs;
-        const params = new URLSearchParams({ q: args.query });
+        // TubeArchivist's /api/search/ reads `query`, not `q` — a `q=`
+        // request is answered 400 {"message":"no search query specified"}.
+        const params = new URLSearchParams({ query: args.query });
         const data = await apiGet(host, token, `/api/search/?${params}`);
         const results = data.results || data.data || [];
         await context.writeResource("search", "search", {
