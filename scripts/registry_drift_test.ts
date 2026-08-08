@@ -59,6 +59,20 @@ Deno.test("parseManifest returns null when a key is missing", () => {
   assertEquals(parseManifest('version: "2026.01.01.1"\n'), null);
 });
 
+Deno.test("parseManifest returns null for a version line carrying a trailing comment (mutation: restore the loose unquote -> reddens; a loose unquote returns the whole string, quotes and comment included, which then selects a manifest nobody bumped and asks the extractor for a heading nothing declares)", () => {
+  const got = parseManifest(
+    'name: "@magistr/x"\nversion: "2026.08.08.1"  # bumped for the chain repair\n',
+  );
+  assertEquals(got, null);
+});
+
+Deno.test("parseManifest reads a single-quoted version (mutation: leave unquote double-quote-only -> reddens; a pure requoting of a scalar is a no-op in YAML but would make the two ends of the selector disagree about the value)", () => {
+  const got = parseManifest(
+    "name: \"@magistr/x\"\nversion: '2026.08.02.1'\n",
+  );
+  assertEquals(got?.version, "2026.08.02.1");
+});
+
 Deno.test("resolveChannel defaults to stable when the file is absent", () => {
   assertEquals(resolveChannel(null), "stable");
 });

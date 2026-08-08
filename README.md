@@ -104,6 +104,17 @@ PR checks:
   `quality.yaml` (five suites + docs), the shrink-only allowlist, and a
   never-regress registry score. Runs GLOBAL (every extension, every PR),
   tokenless. See `STANDARD.md` for how to run it locally and fix a failure.
+- `release-notes-cap` — fail-closed: every manifest this PR is about to
+  publish (see below) must have a present, non-blank, singly-declared
+  `## <version>` CHANGELOG.md section that fits the registry's byte cap.
+  Registry release notes are IMMUTABLE per version, so this is checked
+  before merge, not after. A hard dependency of `extension-publish` — a red
+  `release-notes-cap` blocks the push job outright. Selection is by the
+  manifest's registry COORDINATE, its `name` AND its `version` together, not
+  by a diff line: a rename or reformat that changes NEITHER publishes
+  nothing, but changing `name:` alone (an in-place re-scope) does publish,
+  even with `version:` untouched. Fix a red run by trimming the new section
+  — never by editing an already-published one.
 - `skill-review` — tessl quality review (per skill, threshold 90%)
 - `skill-trigger-eval` — promptfoo routing eval on Sonnet (≥90% pass). A new
   skill must also be added to the routing prompt list in
@@ -111,7 +122,15 @@ PR checks:
 
 Push to `master`:
 
-- `extension-publish` — auto-publishes when a `manifest.yaml` version bumps
+- `extension-publish` — auto-publishes when a `manifest.yaml`'s declared
+  `name`/`version` coordinate changes vs the push's diff base; gated on
+  `deno-check` and `release-notes-cap` both passing first, and re-validates
+  every release note immediately before pushing (the same check
+  `release-notes-cap` already ran at PR time).
+- `registry-drift` — `always()`, after publish: compares every extension's
+  declared manifest version against what the registry actually has on its
+  channel, so a publish that silently failed or got cancelled mid-run
+  (dropping a version permanently) is caught rather than discovered later.
 
 ## Development
 

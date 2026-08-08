@@ -54,6 +54,17 @@ the frozen source:
   `ext-quality-test-backfill`); `ratchet` 100%, "Grade A".
 - Removed from the repo-root `quality-allowlist.txt`.
 
+## 2026.07.16.2 — version alignment
+
+### Changed
+
+- No functional change. `extensions/models/fc_task_server.ts`'s `version:`
+  field is brought back in line with the manifest version (part of a
+  repo-wide maintenance release across the `@magistr` extensions, commit
+  `7eb5eec`), so the published model type version and the package version no
+  longer drift — the "Check model version matches manifest" CI gate enforces
+  this equality and this package had drifted from it.
+
 ## 2026.06.12.1 — publish docs
 
 ### Changed

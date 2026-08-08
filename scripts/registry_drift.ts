@@ -71,8 +71,8 @@ const CHANNELS: readonly Channel[] = ["stable", "beta", "rc"];
 export function parseManifest(
   text: string,
 ): { name: string; version: string } | null {
-  let name: string | undefined;
-  let version: string | undefined;
+  let name: string | null | undefined;
+  let version: string | null | undefined;
   for (const line of text.split("\n")) {
     if (name === undefined && line.startsWith("name:")) {
       name = unquote(line.slice("name:".length));
@@ -84,10 +84,31 @@ export function parseManifest(
   return { name, version };
 }
 
-function unquote(raw: string): string {
+/**
+ * Un-quotes a YAML scalar, tightened to reject anything after the closing
+ * quote. The loose version this replaced stripped a leading/trailing `"`
+ * whenever BOTH were present anywhere in the trimmed text, so a legal line
+ * like `version: "2026.08.08.1"  # bumped for the chain repair` came back as
+ * the whole string `"2026.08.08.1"  # bumped for the chain repair` — quotes,
+ * trailing comment and all — because the text merely STARTS with `"` and
+ * ENDS with `"` (the comment's own closing character never appears, but the
+ * check only looked at the outermost characters). Returns null rather than a
+ * garbage string in that case, matching the failure shape `parseManifest`
+ * already handles (a missing key), rather than a new silent-corruption shape.
+ *
+ * Also accepts a single-quoted scalar (`version: '2026.08.02.1'`) — the same
+ * YAML value as a double-quoted one, so the two must parse identically or a
+ * pure requoting of a scalar (a no-op in YAML) would make the two ends of
+ * `release_notes_gate.ts`'s selector disagree about the value.
+ */
+function unquote(raw: string): string | null {
   const t = raw.trim();
-  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
-    return t.slice(1, -1);
+  if (t.startsWith('"') || t.startsWith("'")) {
+    const q = t[0];
+    if (t.length >= 2 && t.endsWith(q)) {
+      return t.slice(1, -1);
+    }
+    return null;
   }
   return t;
 }

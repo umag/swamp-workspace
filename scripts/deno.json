@@ -1,8 +1,9 @@
 {
   "tasks": {
     "build-promptfoo": "deno run --allow-read --allow-write build-promptfoo-tests.ts",
-    "check": "deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts lib/watch_schema.ts lib/soak_permissions.ts release_watch.ts soak_schedule.ts run_soak.ts registry_drift.ts",
+    "check": "deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts lib/watch_schema.ts lib/soak_permissions.ts release_watch.ts soak_schedule.ts run_soak.ts registry_drift.ts release_notes_gate.ts",
     "registry-drift": "deno run --allow-read --allow-run=swamp registry_drift.ts --root ..",
+    "release-notes-gate": "deno run --allow-read --allow-run=git,bash --allow-env=EVENT,PR_BASE_SHA,PUSH_BEFORE release_notes_gate.ts",
     "test": "deno test --allow-read --allow-write --allow-run --allow-env=FC_NUM_RUNS,QUALITY_REPO_ROOT,PATH .",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
