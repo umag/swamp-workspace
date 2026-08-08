@@ -2,7 +2,7 @@
   "tasks": {
     "check": "deno check extensions/models/flipper_zero.ts",
     "test": "deno test --allow-env=FC_NUM_RUNS,HOME,SWAMP_DENO_PATH --allow-read=bots/snake_bot.ts extensions/models/",
-    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/flipper_zero_property_test.ts",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS,HOME,SWAMP_DENO_PATH --allow-read=bots/snake_bot.ts extensions/models/flipper_zero_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

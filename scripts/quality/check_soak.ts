@@ -73,8 +73,14 @@ export interface CheckSoakResult {
 /** Best-effort read of `<ext>/deno.json`'s `tasks.test` string. `null` when
  * missing/unreadable/no test task — this gate has nothing to check for such
  * an extension (deno-check itself already enforces every extension has a
- * working test task). */
-async function readTestTask(
+ * working test task).
+ *
+ * Exported so scripts/quality/generate_soak_task.ts (and
+ * check_soak_parity.ts, which imports generate_soak_task.ts's own
+ * generation function rather than re-deriving anything) share this exact
+ * `string | null` read instead of authoring a second, subtly different
+ * "what does deno.json's test task say" reader. */
+export async function readTestTask(
   root: string,
   extension: string,
 ): Promise<string | null> {

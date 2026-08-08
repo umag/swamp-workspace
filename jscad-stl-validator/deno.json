@@ -2,6 +2,7 @@
   "tasks": {
     "check": "deno check extensions/models/jscad_stl_validator.ts extensions/models/jscad/stl_validator.ts extensions/models/jscad/safe_path.ts extensions/models/jscad/safe_path_test.ts extensions/models/jscad_stl_validator_methods_test.ts extensions/models/jscad_stl_validator_adversarial_test.ts extensions/models/jscad_stl_validator_coverage_test.ts extensions/models/jscad_stl_validator_property_test.ts extensions/models/fixtures/stl_builders.ts",
     "test": "deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/jscad_stl_validator_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

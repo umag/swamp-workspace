@@ -2,7 +2,7 @@
   "tasks": {
     "check": "deno check extensions/models/talm_cluster.ts",
     "test": "deno test --allow-read --allow-write --deny-write=$HOME/.talos,$HOME/.config/swamp --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
-    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --deny-write=$HOME/.talos,$HOME/.config/swamp --allow-env=FC_NUM_RUNS extensions/models/talm_cluster_property_test.ts",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS --deny-write=$HOME/.talos,$HOME/.config/swamp extensions/models/talm_cluster_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

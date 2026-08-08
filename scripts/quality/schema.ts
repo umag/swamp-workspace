@@ -199,20 +199,51 @@ const RatchetSchema = z.object({
  * here, only an authority comparison against the extension's own `test`
  * task (scripts/lib/soak_permissions.ts's checkSoakAuthority, enforced by
  * scripts/quality/check_soak.ts, not by this schema).
+ *
+ * `runs` (optional, every state) — the fast-check iteration count
+ * scripts/quality/generate_soak_task.ts bakes into the LOCAL `deno task
+ * test:soak` entrypoint's `FC_NUM_RUNS=<runs>` prefix. Defaults to
+ * DEFAULT_SOAK_RUNS (10000, generate_soak_task.ts's own constant) when
+ * omitted. This is DECLARED config, not something the generator parses back
+ * out of its own previous output (which would make a hand-tuned "this
+ * extension's suite is slow, use a lower nightly-equivalent count" fact
+ * unrecoverable the moment the generated string itself changed for any
+ * other reason) — see STANDARD.md's `soak:` block section for why only four
+ * extensions need it today (herdr/jabber at 2000, jscad-stl-slicer/
+ * swamp-go-brr at 5000). Available on `present`, `na`, AND `backlog` alike
+ * — unlike `denoArgs`, a custom run count is orthogonal to whether this
+ * extension also needs a narrowed permission override: three of the four
+ * extensions above (herdr, jabber, jscad-stl-slicer) have no broad test-task
+ * grant at all, so their `soak:` block exists ONLY to declare `runs`, with
+ * `state: na` (no permission narrowing needed) carrying it. This is why
+ * `runs` is declared on soak-SPECIFIC `na`/`backlog` variants below rather
+ * than reusing the generic, shared `naState`/`backlogState` — reusing those
+ * would leak a soak-only concept onto every OTHER na/backlog block in this
+ * file (tests.*, docs.*, watch, canary), none of which has any use for it.
+ * Purely additive (like the rest of this `soak:` block — see its own
+ * "OPTIONAL" note above): SCHEMA_VERSION is not bumped.
  */
 const soakPresentState = z.object({
   state: z.literal("present"),
   denoArgs: z.array(z.string().min(1)).min(1),
+  runs: z.number().int().positive().optional(),
+}).strict();
+
+const soakNaState = z.object({
+  state: z.literal("na"),
+  justification: justificationSchema(),
+  runs: z.number().int().positive().optional(),
 }).strict();
 
 const soakBacklogState = z.object({
   state: z.literal("backlog"),
   justification: justificationSchema(SOAK_TRACKING_ISSUE),
+  runs: z.number().int().positive().optional(),
 }).strict();
 
 const SoakSchema = z.discriminatedUnion("state", [
   soakPresentState,
-  naState,
+  soakNaState,
   soakBacklogState,
 ]);
 

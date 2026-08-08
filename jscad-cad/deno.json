@@ -2,6 +2,7 @@
   "tasks": {
     "check": "deno check extensions/models/jscad_cad.ts",
     "test": "deno test extensions/models/ --permit-no-files --allow-read --allow-write --allow-run --allow-env --allow-net",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/jscad/jscad_cad_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

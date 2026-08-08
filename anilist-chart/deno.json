@@ -4,7 +4,7 @@
     "test": "deno test --ignore=extensions/models/lib/clickhouse.test.ts,extensions/models/lib/css_parity.test.ts --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/",
     "test:css": "deno test --allow-read extensions/models/lib/css_parity.test.ts",
     "test:live": "deno test --allow-net --allow-env extensions/models/lib/clickhouse.test.ts",
-    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/anilist_chart_property_test.ts",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/anilist_chart_property_test.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint"

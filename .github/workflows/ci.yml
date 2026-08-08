@@ -376,6 +376,11 @@ jobs:
         working-directory: scripts
         run: deno task quality:soak --json ../soak-summary.json
 
+      - name: Check soak-task parity (generated vs hand-authored test:soak)
+        if: ${{ !cancelled() }}
+        working-directory: scripts
+        run: deno task quality:soak-parity --json ../soak-parity-summary.json
+
       - name: Upload compliance summary
         if: always()
         uses: actions/upload-artifact@v7
@@ -387,6 +392,7 @@ jobs:
             ratchet-summary.json
             property-harness-summary.json
             soak-summary.json
+            soak-parity-summary.json
 
   skill-review:
     name: skill-review (tessl)
