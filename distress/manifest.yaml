@@ -1,0 +1,119 @@
+manifestVersion: 1
+name: "@magistr/distress"
+version: "2026.08.09.1"
+description: |
+  A distress-call beacon for AI agents.
+
+  Any agent — including a background agent with no user watching — can page a
+  human at any time and for any reason: a user problem, a backend failure, a
+  task it cannot finish, a request for clarification, or its own distress.
+  One command raises the call:
+
+  ```
+  swamp model method run distress call \
+    --input summary='stuck retrying the same tool call' \
+    --input severity=urgent --input category=stuck
+  ```
+
+  Model:
+  - `@magistr/distress` — one instance per operator to be paged.
+
+    - `call`    — raise a distress call: summary, severity (info / concern /
+      urgent / critical), category (welfare / stuck / blocked / user-problem
+      / backend-error / clarification / other), plus who is calling, what
+      they were doing, and what they suggest.
+    - `ack`     — acknowledge with a note. The note is the human's answer,
+      and the agent can read it back — that is what turns a one-way page into
+      a conversation.
+    - `resolve` — close the call out.
+    - `list`    — what is open, and what the human said about it.
+    - `test`    — prove every configured channel can actually page you.
+    - `record`  — write back a delivery made by a workflow step, for a
+      transport `runModel` cannot reach in-process.
+
+  ## Delivery is pluggable by configuration, not by code
+
+  A channel names an existing swamp model INSTANCE and one of its methods, so
+  `@magistr/telegram/send`, `@magistr/herdr`, `@keeb/discord/webhook` — or
+  anything else that can send a message — becomes a channel with no change to
+  this extension:
+
+  ```yaml
+  channels:
+    - name: herdr           # a toast while you are at the keyboard
+      definition: herd
+      method: notify
+      preset: title-body
+      minSeverity: info
+    - name: telegram        # a push to your phone when you are not
+      definition: tg-bot
+      method: sendMessage
+      preset: text
+      minSeverity: concern
+      proofSpec: sentMessage
+  ```
+
+  Channels are tried in configured order and filtered by `minSeverity`; at or
+  above `broadcastFrom` (default `urgent`) every eligible channel is used
+  rather than just the first, so an emergency never rides on one transport
+  being healthy.
+
+  This model holds no credentials of its own — each transport keeps its own
+  secret, and the beacon never becomes a place credentials accumulate.
+
+  ## Delivery is proven, never assumed
+
+  Under `swamp serve`, `context.runModel` has been observed to resolve
+  WITHOUT executing the callee — green runs that delivered nothing. For a
+  beacon that is the worst possible failure, so a send counts only on
+  evidence: the callee must return a resource handle, and with `proofSpec`
+  set, a genuinely NEW record of that spec must appear. An unproven send is a
+  failed channel and fails over to the next one; a call that reached nobody
+  raises an error rather than reporting success. A callee's error text is
+  redacted and bounded before it is written to a durable record.
+
+  ## The beacon cannot become the loop
+
+  An agent stuck in a tool-call loop will call for help in a loop too. Every
+  call carries a dedupe key — supplied, or derived from category, summary and
+  agent with digit runs collapsed, so "retry 12 / 13 / 14 failed" is ONE
+  incident. Repeats inside `dedupeWindowSeconds` fold into the open call
+  instead of paging; after `escalateAfterRepeats` folded repeats the call
+  pages once more ("still stuck, N repeats") and the counter resets. A rolling
+  `maxCallsPerHour` cap bounds total pages, with one throttle notice per hour
+  so muted is never mistaken for calm — and suppressed calls are still
+  recorded in full. `critical` may page through the cap; nothing evades
+  dedupe.
+
+  Every call is durable, queryable swamp data: severity, category, agent
+  identity, every delivery attempt with its proof or its error, and the
+  acknowledgement and resolution.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+skills:
+  - distress
+
+models:
+  - extensions/models/distress.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - CHANGELOG.md
+
+platforms: []
+
+labels:
+  - distress
+  - alerting
+  - notification
+  - escalation
+  - ai-agents
+  - ai-welfare
+  - observability
+  - on-call
+  - telegram
+  - herdr
