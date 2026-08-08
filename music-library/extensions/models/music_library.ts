@@ -274,9 +274,20 @@ const CYRILLIC_SINGLE_BYTE = new Set([
   "iso-8859-5",
 ]);
 
-// Charsets the recovery is willing to re-decode by default. Anything else
-// jschardet suggests is ignored unless explicitly allowed via the
-// `legacyEncodings` global argument.
+/**
+ * Default value of the `legacyEncodings` global argument, and the fallback
+ * `allowed` set `fixEncoding` uses when a caller doesn't pass one: the
+ * single- and multi-byte charsets old taggers on this share are known to
+ * have mis-saved as latin1. windows-1251/koi8-r/ibm866 cover the Cyrillic
+ * mojibake noted at the top of this file ("Êëàóäèî Ìîíòåâåðäè"); shift_jis
+ * and gbk cover Japanese and simplified-Chinese collections mixed into the
+ * same share. Anything else jschardet suggests — in particular the
+ * Western-European windows-125x charsets — is ignored unless a caller
+ * widens `legacyEncodings` explicitly, because those are exactly what
+ * hasLegacyWordShape's structural gate exists to reject: jschardet's most
+ * frequent false positive is accented Western text (Icelandic "Blóð",
+ * French "Mémoire") misread as legacy Cyrillic.
+ */
 export const DEFAULT_LEGACY_ENCODINGS = [
   "windows-1251",
   "koi8-r",

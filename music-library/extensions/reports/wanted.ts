@@ -170,18 +170,43 @@ function asArtistMapEntry(raw: unknown): ArtistMapEntry | null {
   };
 }
 
+/**
+ * One row of the "missing by artist" table: how many of an artist's
+ * MusicBrainz release groups the library has zero copies of, and which
+ * titles those are. Built by grouping the `missing`-kind entries of a
+ * want-set by `artistName`; `titles` is sorted alphabetically so the
+ * rendered table is stable across runs even though the want-set's own
+ * ordering is not guaranteed.
+ */
 export interface MissingArtistGroup {
   artistName: string;
   count: number;
   titles: string[];
 }
 
+/**
+ * One row of the "upgrade candidates" table: how many owned albums sit at
+ * a given current quality bucket below the library's target quality, with
+ * a capped sample of artist/title pairs so the report doesn't have to
+ * enumerate every entry in a large bucket. Buckets are emitted only when
+ * non-empty, ordered worst-first by `QUALITY_RANK` — "200 albums at
+ * lossy-mid" and "3 at lossy-low" are deliberately kept as separate rows,
+ * never flattened into one "needs upgrade" total.
+ */
 export interface UpgradeQualityGroup {
   quality: QualityBucket;
   count: number;
   sample: Array<{ artistName: string; title: string }>;
 }
 
+/**
+ * The full gap analysis derived from one want-set, as returned by
+ * {@link buildWantedGap}: headline totals plus the two groupings the
+ * report renders as sections. `missingByArtist` and `upgradeByQuality` are
+ * empty arrays (never omitted) when there is nothing to show, and an
+ * all-zero `WantedGap` built from an empty `wants` array is the
+ * library-is-caught-up case, not an error.
+ */
 export interface WantedGap {
   total: number;
   missingCount: number;
@@ -244,6 +269,15 @@ export function buildWantedGap(wants: WantEntry[]): WantedGap {
   };
 }
 
+/**
+ * One row of the human-review worklist built by {@link buildReviewWorklist}:
+ * an artist `resolve-artists` could not cleanly match, kept visible here
+ * rather than silently dropped from the want-set — per the file-header
+ * contract, this is the one and only place parked work becomes visible.
+ * `candidates` holds the competing MusicBrainz artist names for an
+ * `ambiguous` entry (pick one) and is always empty for `unresolved` (there
+ * was no candidate to be ambiguous about, just no match).
+ */
 export interface ReviewEntry {
   artistName: string;
   status: "ambiguous" | "unresolved";
@@ -404,6 +438,21 @@ function renderMarkdown(
   return lines.join("\n");
 }
 
+/**
+ * The `@magistr/music-wanted` model-scope report.
+ *
+ * Turns the newest `wanted` resource (and, when one exists, the newest
+ * `artistMap` resource) into an actionable gap report: missing releases
+ * grouped by artist with the biggest gaps first, upgrade candidates
+ * grouped by current quality bucket worst-first (see
+ * {@link buildWantedGap} for why buckets are never merged), and the
+ * human-review worklist of artists `resolve-artists` parked as ambiguous
+ * or unresolved, with competing MusicBrainz candidates shown for the
+ * ambiguous ones. Never throws (mirrors verify_triage.ts's contract): a
+ * missing wanted resource, an empty want-set, or an all-unresolved
+ * artistMap all render a sane message instead of failing the method run
+ * that triggered the report.
+ */
 export const report = {
   name: "@magistr/music-wanted",
   description:
