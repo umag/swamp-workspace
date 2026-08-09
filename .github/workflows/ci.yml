@@ -26,10 +26,13 @@ concurrency:
     ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/main' }}
 
 env:
-  # swamp-registry per-version release notes are IMMUTABLE. `extension-publish`
-  # truncates the CHANGELOG section to this many bytes before pushing, so an
-  # over-cap section ships cut mid-line FOREVER. Defined once here because the
-  # `release-notes-cap` guard and the publisher must agree on the number.
+  # swamp-registry per-version release notes are IMMUTABLE. The cap is
+  # ENFORCED at PR time by `release-notes-cap` and re-checked immediately
+  # before the push in `extension-publish`'s pre-flight step — an over-cap
+  # section now FAILS the check instead of shipping truncated. Defined once
+  # here, and only here, because the guard and the publisher must be given
+  # the same number (both invoke `scripts/release_notes_gate.ts --cap
+  # "$REGISTRY_NOTES_CAP"`).
   REGISTRY_NOTES_CAP: 4900
 
 permissions:
@@ -186,6 +189,8 @@ jobs:
 
       - name: Check model version matches manifest
         working-directory: ${{ matrix.extension }}
+        env:
+          EXT: ${{ matrix.extension }}
         run: |
           set -eo pipefail
           manifest_ver=$(grep -m1 '^version:' manifest.yaml \
@@ -201,7 +206,7 @@ jobs:
             # package version never drift (swamp warns when they do).
             while IFS= read -r mv; do
               if [ "$mv" != "$manifest_ver" ]; then
-                echo "::error file=${{ matrix.extension }}/$f::model version \"$mv\" != manifest \"$manifest_ver\""
+                echo "::error file=$EXT/$f::model version \"$mv\" != manifest \"$manifest_ver\""
                 rc=1
               fi
             done < <(grep -oE '^[[:space:]]*version:[[:space:]]*"[0-9][^"]*"' "$f" \
@@ -219,10 +224,7 @@ jobs:
 
       - name: Type check (scripts)
         working-directory: scripts
-        run: >-
-          deno check build-promptfoo-tests.ts build-ci-report.ts quality/*.ts
-          lib/watch_schema.ts lib/soak_permissions.ts release_watch.ts
-          soak_schedule.ts run_soak.ts
+        run: deno task check
 
   release-notes-cap:
     name: release-notes (fits the immutable registry cap)
@@ -233,61 +235,16 @@ jobs:
           # Need the diff base to tell "this change bumps a version" from
           # "this version was already published long ago".
           fetch-depth: 0
-
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.3
       - name: Check the section that will ship fits the cap
+        working-directory: scripts
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
-        run: |
-          set -eo pipefail
-          # Only versions this change is ABOUT TO PUBLISH are checked. Sections
-          # for versions already on the registry are deliberately ignored: their
-          # notes are immutable, so editing the file cannot un-truncate them and
-          # failing here would only block unrelated work on that package.
-          zero="0000000000000000000000000000000000000000"
-          if [ "$EVENT" = "pull_request" ]; then
-            base="$PR_BASE_SHA"
-          elif [ "$EVENT" = "push" ] && [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$zero" ] \
-               && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
-            base="$PUSH_BEFORE"
-          else
-            base="HEAD~1"
-          fi
-          if ! git rev-parse "$base" >/dev/null 2>&1; then
-            echo "No usable diff base — nothing to check."; exit 0
-          fi
-
-          changed=$(git diff --name-only "$base" HEAD -- '*/manifest.yaml' || true)
-          if [ -z "$changed" ]; then
-            echo "No manifest touched vs ${base:0:12} — nothing to check."; exit 0
-          fi
-
-          rc=0
-          checked=0
-          while IFS= read -r manifest; do
-            [ -z "$manifest" ] && continue
-            git diff "$base" HEAD -- "$manifest" | grep -qE '^\+version:' || continue
-            dir="$(dirname "$manifest")"
-            ver="$(grep -m1 '^version:' "$manifest" \
-              | sed -E 's/^version:[[:space:]]*"?([^"]+)"?.*/\1/')"
-            checked=$((checked + 1))
-            notes="$(scripts/changelog-section.sh "$dir/CHANGELOG.md" "$ver")"
-            if [ -z "$notes" ]; then
-              echo "::warning file=$dir/CHANGELOG.md::no '## $ver' section; the registry will get the commit message as release notes instead"
-              continue
-            fi
-            bytes=$(printf '%s' "$notes" | wc -c | tr -d ' ')
-            if [ "$bytes" -gt "$REGISTRY_NOTES_CAP" ]; then
-              echo "::error file=$dir/CHANGELOG.md::'## $ver' section is $bytes bytes, over the ${REGISTRY_NOTES_CAP}-byte registry cap by $((bytes - REGISTRY_NOTES_CAP)). Per-version release notes are IMMUTABLE, so this would ship truncated mid-line forever. Trim the section, and put breaking-change and migration content FIRST so any future cut lands on the least important prose."
-              rc=1
-            else
-              echo "ok  $dir  $ver  $bytes/${REGISTRY_NOTES_CAP} bytes"
-            fi
-          done <<< "$changed"
-
-          [ "$checked" -eq 0 ] && echo "Manifest touched but no version line changed — nothing to publish."
-          exit $rc
+        run: deno task release-notes-gate --mode validate --cap "$REGISTRY_NOTES_CAP"
 
   compliance:
     name: compliance (extension quality standard)
@@ -429,7 +386,9 @@ jobs:
       # config (line width, etc.), matching the previous behavior exactly.
       - name: Format check skill markdown
         working-directory: ${{ matrix.pair.extension }}
-        run: deno fmt --check ".claude/skills/${{ matrix.pair.skill }}"
+        env:
+          SKILL: ${{ matrix.pair.skill }}
+        run: deno fmt --check ".claude/skills/$SKILL"
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -441,6 +400,8 @@ jobs:
           # tessl authenticates from the TESSL_TOKEN env var (an API key minted
           # via `tessl api-key create`); the repo secret is named TESSL_API_KEY.
           TESSL_TOKEN: ${{ secrets.TESSL_API_KEY }}
+          EXT: ${{ matrix.pair.extension }}
+          SKILL: ${{ matrix.pair.skill }}
         run: |
           set -eo pipefail
           # `--threshold 90` makes tessl exit non-zero when the skill scores
@@ -449,8 +410,8 @@ jobs:
           # piped to a file for the uploaded report; pipefail propagates the
           # tessl exit code through `tee`.
           npx --yes tessl@0.80.0 skill review \
-            "${{ matrix.pair.extension }}/.claude/skills/${{ matrix.pair.skill }}" \
-            --threshold 90 --json | tee "tessl-${{ matrix.pair.skill }}.json"
+            "$EXT/.claude/skills/$SKILL" \
+            --threshold 90 --json | tee "tessl-$SKILL.json"
 
       - name: Upload tessl report
         if: always()
@@ -589,34 +550,51 @@ jobs:
   extension-publish:
     name: extension-publish (on manifest version bump)
     runs-on: ubuntu-latest
-    needs: deno-check
+    needs: [deno-check, release-notes-cap]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 2
+          # The detect step below resolves its base from `github.event.before`,
+          # which is generally not present in a shallow (depth-2) clone — the
+          # guard and the publisher must compute the SAME base from the SAME
+          # history, so this must match release-notes-cap's fetch-depth: 0.
+          fetch-depth: 0
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.3
 
       - name: Detect manifest version changes
         id: manifest-changed
+        working-directory: scripts
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -eo pipefail
-          changed=$(git diff --name-only HEAD~1 HEAD -- '*/manifest.yaml' || true)
-          if [ -z "$changed" ]; then
+          manifests="$(deno task --quiet release-notes-gate --mode list)"
+          if [ -z "$manifests" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No manifest changes in this push."
-            exit 0
-          fi
-          version_diff=$(git diff HEAD~1 HEAD -- $changed | grep -E '^\+version:' || true)
-          if [ -z "$version_diff" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Manifest touched but version line unchanged."
+            echo "No manifest version bump in this push."
             exit 0
           fi
           echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "Changed manifests: $changed"
-          echo "manifests<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$changed" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          printf 'Publishing:\n%s\n' "$manifests"
+          { echo "manifests<<EOF"; echo "$manifests"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Validate release notes for every version being published
+        id: preflight
+        if: steps.manifest-changed.outputs.changed == 'true'
+        working-directory: scripts
+        env:
+          MANIFESTS: ${{ steps.manifest-changed.outputs.manifests }}
+        run: |
+          set -eo pipefail
+          out="$(printf '%s\n' "$MANIFESTS" | deno task --quiet release-notes-gate --manifests-from - --cap "$REGISTRY_NOTES_CAP")"
+          echo "$out"
+          echo "count=$(printf '%s' "$out" | sed -n '1{s/^validated \([0-9][0-9]*\) manifests$/\1/p;}')" >> "$GITHUB_OUTPUT"
 
       - name: Setup swamp
         if: steps.manifest-changed.outputs.changed == 'true'
@@ -652,32 +630,29 @@ jobs:
 
       - name: Publish changed extensions
         if: steps.manifest-changed.outputs.changed == 'true'
+        env:
+          MANIFESTS: ${{ steps.manifest-changed.outputs.manifests }}
+          EXPECTED_COUNT: ${{ steps.preflight.outputs.count }}
         run: |
           set -eo pipefail
-          # Per-version release notes are immutable on the swamp registry — if we
-          # don't pass --release-notes, the swamp.club entry for that version is
-          # empty forever. Prefer the extension's OWN CHANGELOG.md section for the
-          # version being published (so the registry notes match the repo
-          # changelog); fall back to the version-bump commit message. (The README
-          # ships automatically via each manifest's additionalFiles.)
-          commit_notes="$(git log -1 --format=%B HEAD | head -c "$REGISTRY_NOTES_CAP")"
-          [ -z "$commit_notes" ] && commit_notes="Release of $(git rev-parse --short HEAD)"
-          while IFS= read -r manifest; do
+          # The pre-flight step already proved every record in $MANIFESTS has a
+          # present, non-blank, singly-declared, in-cap CHANGELOG section — the
+          # version comes from the selector's TSV, not from a second read of the
+          # manifest, so the version whose notes were validated and the version
+          # whose notes ship are literally the same bytes.
+          n=0
+          while IFS=$'\t' read -r manifest ver; do
             [ -z "$manifest" ] && continue
             dir="$(dirname "$manifest")"
-            ver="$(grep -m1 '^version:' "$manifest" \
-              | sed -E 's/^version:[[:space:]]*"?([^"]+)"?.*/\1/')"
-            # Extract the `## <ver> …` section from the extension's CHANGELOG.
             # scripts/changelog-section.sh is the SINGLE SOURCE OF TRUTH for this
-            # extraction — the `release-notes-cap` job measures the very same
-            # bytes at PR time, so the guard cannot pass while this ships
-            # something different.
-            notes=""
-            if [ -n "$ver" ]; then
-              notes="$(scripts/changelog-section.sh "$dir/CHANGELOG.md" "$ver" \
-                | head -c "$REGISTRY_NOTES_CAP")"
+            # extraction — belt-and-braces only: the pre-flight step already
+            # proved this call succeeds for every record in $MANIFESTS.
+            rc=0
+            notes="$(scripts/changelog-section.sh "$dir/CHANGELOG.md" "$ver")" || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::error file=$dir/CHANGELOG.md::the release-notes extractor exited $rc for '$ver' after the pre-flight reported it valid — this should be unreachable" >&2
+              exit 1
             fi
-            [ -z "$notes" ] && notes="$commit_notes"
             # Per-extension release channel selector: an optional
             # `<ext>/.release-channel` file (contents: beta | rc | stable)
             # chooses the swamp registry channel. Absent → stable, so existing
@@ -690,7 +665,7 @@ jobs:
                 *) echo "::error::$dir/.release-channel must be beta|rc|stable (got '$channel')" >&2; exit 1 ;;
               esac
             fi
-            echo "Publishing $manifest @ ${ver:-?} to '$channel' channel"
+            echo "Publishing $manifest @ $ver to '$channel' channel"
             # -y is REQUIRED in CI: without it `extension push` prompts
             # "Push … to registry? [y/N]" and, with no TTY, defaults to No and
             # silently cancels (exit 0 → false-green). -y also accepts the
@@ -700,7 +675,12 @@ jobs:
             # `models:`/`reports:`/`additionalFiles:` resolve relative to the
             # manifest's own subdirectory.
             swamp extension push "$manifest" -y --channel "$channel" --release-notes "$notes"
-          done <<< "${{ steps.manifest-changed.outputs.manifests }}"
+            n=$((n + 1))
+          done <<< "$MANIFESTS"
+          # The pre-flight and the loop read the SAME $MANIFESTS bytes, so a
+          # count mismatch means the plumbing broke — a credentialed push over
+          # an unvalidated set is exactly what must not happen quietly.
+          [ "$n" -eq "$EXPECTED_COUNT" ] || { echo "::error::published $n manifest(s) but the pre-flight validated $EXPECTED_COUNT — refusing to report success"; exit 1; }
 
   registry-drift:
     name: registry-drift (repo vs registry)

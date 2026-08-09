@@ -18,9 +18,11 @@ runs:
   steps:
     - name: Download swamp (${{ inputs.version }})
       shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
       run: |
         set -eo pipefail
-        version="${{ inputs.version }}"
+        version="$VERSION"
         # systeminit/swamp ships raw per-platform binaries (no tarball):
         #   swamp-linux-x86_64, swamp-darwin-aarch64, swamp-windows-x86_64.exe …
         if [ "$version" = "latest" ]; then
