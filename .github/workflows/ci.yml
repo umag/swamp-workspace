@@ -338,6 +338,11 @@ jobs:
         working-directory: scripts
         run: deno task quality:soak-parity --json ../soak-parity-summary.json
 
+      - name: Check model upgrade chains (last upgrades[].toVersion == version)
+        if: ${{ !cancelled() }}
+        working-directory: scripts
+        run: deno task quality:upgrades --json ../upgrade-chain-summary.json
+
       - name: Upload compliance summary
         if: always()
         uses: actions/upload-artifact@v7
@@ -350,6 +355,7 @@ jobs:
             property-harness-summary.json
             soak-summary.json
             soak-parity-summary.json
+            upgrade-chain-summary.json
 
   skill-review:
     name: skill-review (tessl)

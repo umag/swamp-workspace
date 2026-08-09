@@ -14,6 +14,7 @@
     "quality:harness": "deno run --allow-read --allow-write --allow-env=QUALITY_REPO_ROOT quality/check_property_harness.ts",
     "quality:soak": "deno run --allow-read --allow-write --allow-env=QUALITY_REPO_ROOT quality/check_soak.ts",
     "quality:soak-parity": "deno run --allow-read --allow-write --allow-env=QUALITY_REPO_ROOT quality/check_soak_parity.ts",
+    "quality:upgrades": "deno run --allow-read --allow-write --allow-env=QUALITY_REPO_ROOT quality/check_upgrade_chain.ts",
     "quality:generate-soak": "deno run --allow-read --allow-write --allow-env=QUALITY_REPO_ROOT quality/generate_soak_task.ts",
     "quality:scaffold": "deno run --allow-read --allow-write quality/scaffold.ts"
   },
