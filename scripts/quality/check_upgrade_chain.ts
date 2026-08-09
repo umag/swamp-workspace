@@ -75,9 +75,12 @@ export interface Violation {
 }
 
 /** Aggregate counts across every scanned file — printed on the CLI summary
- * line and included in `--json` output (build-ci-report.ts's sticky PR
- * comment reads it) so a healthy run and a run that silently discovered
- * nothing are no longer indistinguishable at a glance. Never asserted on
+ * line and included in `--json` output, so a healthy run and a run that
+ * silently discovered nothing are no longer indistinguishable at a glance
+ * FOR SOMEONE READING THE RAW JOB LOG OR ARTIFACT DIRECTLY; the counts do
+ * NOT reach the sticky PR comment — build-ci-report.ts reads only
+ * `violations` (and `checked` from compliance-summary.json) from every
+ * `*-summary.json`, this file's `counts` field included. Never asserted on
  * in tests, per plan v4: `model-declaration-unreadable` (and friends) are
  * the structural alarm; these are instrumentation, not a pinned contract. */
 export interface Counts {
@@ -117,11 +120,18 @@ interface ManifestModels {
 }
 
 function manifestUnreadable(extension: string, why: string): ManifestModels {
-  const manifestRelPath = join(extension, "manifest.yaml");
+  // Sanitise the untrusted extension-directory name ONCE, at the point
+  // this violation is built, and use the sanitised form for every field —
+  // `extension`, `what`, `fix`, `file` alike — rather than trusting each
+  // interpolation site to remember. See sanitizeForAnnotation's docblock
+  // and this module's checkModelFile()/checkUpgradeChain() for the same
+  // rule applied at their own construction sites.
+  const safeExtension = sanitizeForAnnotation(extension);
+  const manifestRelPath = join(safeExtension, "manifest.yaml");
   return {
     paths: [],
     violation: {
-      extension,
+      extension: safeExtension,
       rule: "manifest-models-unreadable",
       what: `${manifestRelPath}: ${why}`,
       why: "discovery is the layer every fail-closed rule in " +
@@ -224,6 +234,19 @@ function checkModelFile(
 ): Violation[] {
   const violations: Violation[] = [];
   counts.modelFiles++;
+  // Sanitise the untrusted extension-directory name and manifest-derived
+  // relative path ONCE, here, rather than at each of this function's many
+  // Violation-construction sites below — `source` was already read using
+  // the original (unsanitised) `relPath` before this function was ever
+  // called, so shadowing the parameters now is safe: every remaining use
+  // of either is in a 'what'/'fix'/'file'/'extension' field of a
+  // Violation, never a filesystem path. Matches manifestUnreadable()'s and
+  // checkUpgradeChain()'s own construction-time sanitisation and
+  // release_notes_gate.ts's rule of escaping untrusted text where the
+  // Violation is built, not at print time — see sanitizeForAnnotation's
+  // docblock for the workflow-command-injection hole this closes.
+  extension = sanitizeForAnnotation(extension);
+  relPath = sanitizeForAnnotation(relPath);
   const fix = (file: string) =>
     `read ${file} — swamp's own push-time validator explains the exact ` +
     "shape it requires; fix the upgrades[] chain (or the version) there";
@@ -246,16 +269,27 @@ function checkModelFile(
     return violations;
   }
 
-  // Model identity is "carries a depth-1 `type` key" — the one thing every
-  // real model declaration has and an unrelated helper object (`export
-  // const schemaInfo = { version: 3, strict: true }`) does not. Filtering
-  // on "has a version key" alone (the previous test) treats ANY exported
-  // object literal with a `version` field as a model, which is both a
-  // global false positive (any such helper reddens the whole repo) and a
-  // false negative (a real model whose `version:` was accidentally
-  // stripped drops out of `versioned` instead of being flagged).
+  // Model identity is "carries a depth-1 `type` key whose value reads as
+  // `@vendor/name`" (`hasModelType`) — the one thing every real model
+  // declaration has and an unrelated helper object (`export const
+  // schemaInfo = { version: 3, strict: true }`, or even `export const
+  // inputSchema = { type: "object", … }`) does not. Filtering on "has a
+  // version key" alone (an earlier version of this test) treated ANY
+  // exported object literal with a `version` field as a model — a global
+  // false positive. Filtering on "has a `type` key" alone (a later, still
+  // broken version) is itself evadable: hiding `type` behind a depth-1
+  // spread, a computed key, or an accessor drops the declaration out of
+  // `versioned` and every rule inside the loop below along with it — a
+  // model whose identity the parser cannot read must fail CLOSED, not be
+  // treated as absent. So a declaration is included when it is KNOWN to be
+  // a model (`hasModelType`) OR its identity is UNREADABLE
+  // (`hasDepth1Spread`/`hasUnreadableProperty` — either could be hiding
+  // the real `type` key); only a declaration with none of the three is
+  // safely not a model.
   counts.declarations += declarations.length;
-  const versioned = declarations.filter((d) => d.hasTypeKey);
+  const versioned = declarations.filter((d) =>
+    d.hasModelType || d.hasDepth1Spread || d.hasUnreadableProperty
+  );
   counts.versioned += versioned.length;
   if (versioned.length === 0) {
     violations.push({
@@ -362,12 +396,13 @@ function checkModelFile(
           'mentioning "upgrades:", or a plain STRING value (e.g. a `note` ' +
           "or `description` field) that happens to contain the text " +
           '"upgrades:"',
-        fix: "this declaration has no real upgrades[] chain to fix — the " +
-          'cross-check fired on the text "upgrades:" appearing somewhere ' +
-          "in this declaration's raw source (an unrelated field, a " +
-          "comment, or prose inside a string value). Rename the field, " +
-          "reword the text, or add a real 'upgrades' property if one was " +
-          "intended",
+        fix: "either the parser missed a real upgrades property (file a " +
+          "bug against scripts/quality/model_declarations.ts) or the " +
+          'text is benign — the cross-check fired on "upgrades:" ' +
+          "appearing somewhere in this declaration's raw source (an " +
+          "unrelated field, a comment, or prose inside a string value). " +
+          "If benign, rename the field, reword the text, or add a real " +
+          "'upgrades' property if one was intended",
         file: relPath,
       });
       continue;
@@ -459,24 +494,80 @@ export async function checkUpgradeChain(
       continue;
     }
     const extDir = resolve(join(root, extension));
+    // `isContainedIn` below is purely lexical (per its own doc) and never
+    // follows a symlink, so it is re-checked against the REAL,
+    // symlink-resolved directory too — see the containment re-check
+    // inside the loop for why. A realPath failure here (the extension
+    // directory itself missing/unreadable) is not this gate's problem to
+    // diagnose — listExtensions() already found it on disk — so it just
+    // falls back to the lexical `extDir`, leaving today's behaviour
+    // unchanged in that edge case.
+    const realExtDir = await Deno.realPath(extDir).catch(() => extDir);
     for (const relModelPath of modelPaths) {
       const relPath = join(extension, relModelPath);
       const target = resolve(join(root, extension, relModelPath));
       if (!isContainedIn(extDir, target)) {
+        // Sanitise at construction, matching manifestUnreadable() and
+        // checkModelFile() — `extension` (a directory name) and `relPath`
+        // (built from a manifest `models:` entry) are both untrusted text,
+        // and are LOOP variables here (reused across iterations/
+        // extensions), so they are sanitised into fresh locals rather than
+        // reassigned in place.
+        const safeExtension = sanitizeForAnnotation(extension);
+        const safeRelPath = sanitizeForAnnotation(relPath);
         violations.push({
-          extension,
+          extension: safeExtension,
           rule: "manifest-models-unreadable",
           what:
-            `${relPath}: manifest 'models:' entry escapes the extension directory`,
+            `${safeRelPath}: manifest 'models:' entry escapes the extension directory`,
           why: "a manifest-listed model path is joined onto the extension " +
             "directory and read under this task's bare --allow-read — an " +
             "unresolved '..' segment can steer that read at any file on " +
             "the runner, so it must be rejected rather than silently " +
             "followed",
           fix: `fix the offending 'models:' entry in ${
-            join(extension, "manifest.yaml")
-          } so it names a path that stays inside ${extension}/`,
-          file: relPath,
+            sanitizeForAnnotation(join(extension, "manifest.yaml"))
+          } so it names a path that stays inside ${safeExtension}/`,
+          file: safeRelPath,
+        });
+        continue;
+      }
+      // `resolve()` is lexical, so a manifest entry that stays lexically
+      // under `extDir` can still, once every symlink component is
+      // followed, point OUTSIDE the repo entirely — either a symlinked
+      // INTERMEDIATE directory (`<ext>/escape -> <outside>`, entry
+      // `escape/sentinel.ts`) or the listed file itself being a symlink
+      // (an ordinary-looking entry whose target is a symlink to
+      // `<outside>/secret.ts`). Re-validate containment against the REAL
+      // path. A realPath failure (broken link, ENOENT, permission) is NOT
+      // pushed as this violation — it falls through to the ordinary
+      // Deno.readTextFile() attempt below, which raises the existing
+      // 'manifest-listed model file could not be read' violation, so
+      // fail-closed coverage is unchanged either way.
+      let realTarget: string | null;
+      try {
+        realTarget = await Deno.realPath(target);
+      } catch {
+        realTarget = null;
+      }
+      if (realTarget !== null && !isContainedIn(realExtDir, realTarget)) {
+        const safeExtension = sanitizeForAnnotation(extension);
+        const safeRelPath = sanitizeForAnnotation(relPath);
+        violations.push({
+          extension: safeExtension,
+          rule: "manifest-models-unreadable",
+          what: `${safeRelPath}: manifest 'models:' entry resolves ` +
+            "(through a symlink) outside the extension directory",
+          why: "isContainedIn() is a lexical check and 'resolve()' never " +
+            "follows a symlink — a symlinked intermediate directory, or " +
+            "the listed file itself being a symlink, can steer this " +
+            "task's bare --allow-read at any file on the runner even " +
+            "though the unresolved path stays lexically inside the " +
+            "extension directory, so it must be rejected too rather than " +
+            "silently followed",
+          fix: `remove the symlink at (or beneath) ${safeRelPath}, or ` +
+            "replace it with a real file inside the extension directory",
+          file: safeRelPath,
         });
         continue;
       }
@@ -484,19 +575,25 @@ export async function checkUpgradeChain(
       try {
         source = await Deno.readTextFile(target);
       } catch {
+        // Same construction-time sanitisation as the containment-escape
+        // violation just above — `extension`/`relModelPath`/`relPath` are
+        // all loop variables reused by later iterations.
+        const safeExtension = sanitizeForAnnotation(extension);
+        const safeRelPath = sanitizeForAnnotation(relPath);
+        const safeRelModelPath = sanitizeForAnnotation(relModelPath);
         violations.push({
-          extension,
+          extension: safeExtension,
           rule: "manifest-models-unreadable",
-          what: `${relPath}: manifest-listed model file could not be read`,
+          what: `${safeRelPath}: manifest-listed model file could not be read`,
           why: "discovery must fail closed — a manifest entry naming a " +
             "file that does not exist (or cannot be read) must not " +
             "silently vanish from coverage",
           fix:
             `fix the 'models:' entry in ${
-              join(extension, "manifest.yaml")
+              sanitizeForAnnotation(join(extension, "manifest.yaml"))
             } so it names a real, readable file, or remove it if ` +
-            `${relModelPath} was renamed or deleted`,
-          file: relPath,
+            `${safeRelModelPath} was renamed or deleted`,
+          file: safeRelPath,
         });
         continue;
       }
@@ -525,9 +622,10 @@ existing gate owns that).
 Set QUALITY_REPO_ROOT to scan a tree other than this script's own repo
 (used by its tests; CI never needs it).
 
---json <path>  also write {checked, violations} as JSON to <path> (the
-               sticky PR-comment report reads this — see
-               scripts/build-ci-report.ts).
+--json <path>  also write {checked, violations, counts} as JSON to <path>
+               (the sticky PR-comment report reads 'violations' from this —
+               see scripts/build-ci-report.ts — 'counts' is instrumentation
+               for someone reading the artifact or job log directly).
 
 Exit codes:
   0  every manifest-listed model file's upgrade chain(s) are clean
@@ -558,11 +656,18 @@ if (import.meta.main) {
     console.log(
       `${v.extension}: [${v.rule}] ${v.what}\n  WHY: ${v.why}\n  FIX: ${v.fix}`,
     );
-    // sanitizeForAnnotation guards `v.file` — the one field in a Violation
-    // built from untrusted input (a manifest `models:` entry or extension
-    // directory name) rather than from this gate's own fixed strings; see
-    // scripts/lib/annotation.ts's docblock for the workflow-command-
-    // injection hole this closes.
+    // `v.extension`, `v.what`, `v.fix`, and `v.file` are ALL sanitised
+    // already, at the point each Violation was constructed (see
+    // manifestUnreadable(), checkModelFile(), and checkUpgradeChain()'s
+    // own two manifest-models-unreadable pushes) — every field of a
+    // Violation can carry untrusted text (a manifest `models:` entry or
+    // extension directory name), not just `file`, so the sanitisation
+    // rule lives at construction time and covers `what/fix` interpolated
+    // above in the human-readable line too. sanitizeForAnnotation is
+    // idempotent (it only rewrites raw control bytes, and its own output
+    // contains none), so re-wrapping `v.file` here is belt-and-braces, not
+    // load-bearing; see scripts/lib/annotation.ts's docblock for the
+    // workflow-command-injection hole this closes.
     console.log(
       `::error file=${sanitizeForAnnotation(v.file)}::${v.what} — ${v.fix}`,
     );

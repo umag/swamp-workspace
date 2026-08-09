@@ -566,19 +566,214 @@ Deno.test("scanModelDeclarations: a declaration with no 'upgrades' key at all ha
 });
 
 // ============================================================================
+// maskCode — regex-vs-division on postfix '++'/'--' and dot-keyword
+// property access (PR B review fix, LOW: these branches shipped with zero
+// tests; each is a silent-revert candidate — delete the branch and the
+// full suite stays green today).
+// ============================================================================
+
+const fx24Src = lines(
+  "const i = 10;",
+  "const o = { in: 4, of: 4, delete: 4 };",
+  "const r1 = i++ / 2;",
+  "const r2 = i-- / 2;",
+  "const r3 = o.in / 2;",
+  "const r4 = o?.in / 2;",
+  "const r5 = o.of / 2;",
+  "const r6 = o.delete / 2;",
+  "export const model = {",
+  '  type: "@fixture/x",',
+  '  version: "2026.01.01.1",',
+  "};",
+);
+fmtCleanFixtures.set("fx24", fx24Src);
+
+Deno.test("maskCode: a completed postfix '++'/'--' and a dot-keyword property ('o.in', 'o.of', 'o.delete' — a WORD in REGEX_ALLOWED_AFTER_WORD immediately after '.') both lex the following '/' as DIVISION, never a regex open (mutation: delete the '++'/'--' two-character consume, or the 'afterDot' backward lookback in maskCode -> a misclassified '/' opens a regex that swallows the rest of the file, including the 'export const model' declaration below, dropping scanModelDeclarations's result to 0)", () => {
+  const src = fx24Src;
+  const { error } = maskCode(src);
+  assertEquals(error, null, `expected no lex error, got: ${error}`);
+  const decls = scanModelDeclarations(src);
+  assertEquals(decls.length, 1, JSON.stringify(decls));
+  assertEquals(decls[0].name, "model");
+});
+
+const fx25Src = lines(
+  "function f() {",
+  "  return /re/;",
+  "}",
+  "const b = 10;",
+  "const c = 2;",
+  "const d = 5;",
+  "const r1 = b / c / d;",
+  "const r2 = 1 + +2 / 2;",
+  "const r3 = 1 - -2 / 2;",
+  "export const model = {",
+  '  type: "@fixture/x",',
+  '  version: "2026.01.01.1",',
+  "};",
+);
+fmtCleanFixtures.set("fx25", fx25Src);
+
+Deno.test("maskCode: negative controls for the '++'/'--' fix must NOT regress — 'return /re/' still opens a real regex (the keyword-after check), and unary '+'/'-' immediately before a division ('1 + +2 / 2', '1 - -2 / 2') still lexes '/' as division, not a class of postfix operator this fixture doesn't contain", () => {
+  const src = fx25Src;
+  const { error } = maskCode(src);
+  assertEquals(error, null, `expected no lex error, got: ${error}`);
+  const decls = scanModelDeclarations(src);
+  assertEquals(decls.length, 1, JSON.stringify(decls));
+  assertEquals(decls[0].name, "model");
+});
+
+// ============================================================================
+// scanModelDeclarations — a template literal's live interpolation brace
+// must never be mistaken for a real declaration's own object-literal '{'
+// (PR B review fix, LOW: shipped with zero tests at this level — only
+// exercised indirectly, inside an ALREADY-found declaration's own chain,
+// by fx02 above).
+// ============================================================================
+
+const fx26Src = lines(
+  "export const SQL = `a${b}c`;",
+  "export const model = {",
+  '  type: "@fixture/x",',
+  '  version: "2026.01.01.1",',
+  "};",
+);
+fmtCleanFixtures.set("fx26", fx26Src);
+
+Deno.test("scanModelDeclarations: 'export const SQL = `a${b}c`;' produces NO spurious declaration for SQL — the whitespace-skip after SQL's own '=' lands on the template's LIVE interpolation brace, which 'interpolationBraces' must reject (mutation: drop the 'interpolationBraces.has(b)' check at the declaration-body test -> SQL is wrongly treated as a declaration whose body is the interpolation's live '{b}', and the REAL model below is never reached because exportConstRe.lastIndex jumps to the interpolation's mismatched close)", () => {
+  const src = fx26Src;
+  const decls = scanModelDeclarations(src);
+  assertEquals(decls.length, 1, JSON.stringify(decls));
+  assertEquals(decls[0].name, "model");
+});
+
+// ============================================================================
+// classifyChain — the '.concat()'/type-assertion guard on the array VALUE
+// (PR B review fix, LOW: shipped with zero tests; `.concat()` had NO
+// coverage at all, and 'as'/'satisfies' had none at the parser level).
+// ============================================================================
+
+const fx27Src = lines(
+  "export const model = {",
+  '  type: "@fixture/x",',
+  '  version: "2026.01.01.1",',
+  "  upgrades: [OK].concat(X),",
+  "};",
+);
+fmtCleanFixtures.set("fx27", fx27Src);
+
+Deno.test("scanModelDeclarations: 'upgrades: [OK].concat(X)' is indirect — the array literal we can see is only PART of the value, and reading it alone would silently ignore whatever '.concat()' appends (mutation: drop the 'afterArray' trailing-expression check -> this fixture's chain reads as 'literal' from the visible '[OK]' alone, silently ignoring '.concat(X)')", () => {
+  const src = fx27Src;
+  const [decl] = scanModelDeclarations(src);
+  assertEquals(decl.chain.kind, "indirect");
+});
+
+const fx28Src = lines(
+  "export const model = {",
+  '  type: "@fixture/x",',
+  '  version: "2026.01.01.2",',
+  "  upgrades: [",
+  '    { fromVersion: "2026.01.01.1", toVersion: "0.0.0" },',
+  "  ] as const,",
+  "};",
+);
+fmtCleanFixtures.set("fx28", fx28Src);
+
+Deno.test("scanModelDeclarations: 'upgrades: [...] as const' still reads the array literal and still reports its (broken) terminus — a trailing type assertion is tolerated, not treated as an unrelated trailing expression (mutation: reject any non-empty text after the array close, including 'as'/'satisfies' -> this legal, deno-fmt-common annotation would misclassify every 'as const'-annotated chain as indirect)", () => {
+  const src = fx28Src;
+  const [decl] = scanModelDeclarations(src);
+  assertEquals(decl.chain.kind, "literal");
+  assertEquals(decl.chain.terminus, "0.0.0");
+});
+
+// ============================================================================
+// scanModelDeclarations — a run of `export const` statements with no
+// depth-0 '='/';' of their own (an `export const enum` block, fmt's OWN
+// canonical form: no trailing ';') must not adopt a LATER statement's '='
+// as if it belonged to the enum's own (mis-captured) identifier match (PR B
+// review fix, LOW: the measured DoS's own named shape had no correctness
+// test at all — only a perf claim).
+// ============================================================================
+
+const fx29Src = lines(
+  "export const enum Mode {",
+  "  Fast = 0,",
+  "  Slow = 1,",
+  "}",
+  "export const model = {",
+  '  type: "@fixture/x",',
+  '  version: "2026.01.01.1",',
+  "};",
+);
+fmtCleanFixtures.set("fx29", fx29Src);
+
+Deno.test("scanModelDeclarations: an 'export const enum' block (regex-matched as identifier 'enum', no type annotation, no depth-0 '=' of its own — its only '=' sits at depth 1 inside the enum body) is correctly SKIPPED, not adopted with the NEXT statement's '=' as its value — exactly 1 declaration is found, named 'model', not 'enum' (mutation: drop the 'open' boundary bail-out for a !hasType match -> this fixture finds 1 declaration named 'enum' instead of 'model', with the enum's own body swallowed as unrelated trailing text and the real model's own boundaries mis-consumed)", () => {
+  const src = fx29Src;
+  const decls = scanModelDeclarations(src);
+  assertEquals(decls.length, 1, JSON.stringify(decls));
+  assertEquals(decls[0].name, "model");
+  assertEquals(decls[0].version, "2026.01.01.1");
+});
+
+// ============================================================================
+// PERF REGRESSION PIN for the DoS bound (PR B review fix, MEDIUM: the
+// original bound only fired on a depth-0 ';', and 'deno fmt' DELETES the
+// trailing ';' after an 'export const enum' body — the fmt-canonical
+// spelling of the exact shape the bound's own comment names had NO
+// semicolon at all, leaving the scan quadratic on it (measured: 21.9s at
+// 60k lines). findDepth0Boundaries + the monotone pointer in
+// scanModelDeclarations replace the per-match rescan with a single linear
+// pass, independent of semicolon density.
+//
+// NOT a registered fmt-clean fixture (like fx09/fx10/fx11 above) — this is
+// a large GENERATED corpus, not a hand-written one, and running
+// `deno fmt --check` on it would be pure overhead with nothing to catch.
+// ============================================================================
+
+function fmtCanonicalEnumCorpus(count: number): string {
+  const parts: string[] = [];
+  for (let i = 0; i < count; i++) {
+    parts.push(`export const enum E${i} {\n  A = 0,\n}\n`);
+  }
+  return parts.join("");
+}
+
+Deno.test("scanModelDeclarations: a long run of fmt-canonical 'export const enum' blocks (NO trailing ';' — deno fmt's own output) scans in roughly LINEAR time, not quadratic (mutation: revert the boundary-pointer scan to a per-match rescan of the tail -> doubling the input roughly QUADRUPLES the time instead of roughly doubling it; measured on the pre-fix code, 20k such blocks — 60k lines — took 21.9s, this test's bound is generous specifically so it fails on quadratic behaviour without being a flaky wall-clock trip-wire on linear behaviour)", () => {
+  const small = fmtCanonicalEnumCorpus(2000);
+  const large = fmtCanonicalEnumCorpus(8000); // 4x the input
+  const t0 = performance.now();
+  scanModelDeclarations(small);
+  const smallMs = performance.now() - t0;
+  const t1 = performance.now();
+  scanModelDeclarations(large);
+  const largeMs = performance.now() - t1;
+  // Linear predicts ~4x; quadratic predicts ~16x. Assert well below the
+  // quadratic prediction (10x) with headroom for machine noise on the
+  // (very fast) small run, rather than asserting a fixed wall-clock cap.
+  assert(
+    largeMs < Math.max(smallMs * 10, 200),
+    `expected roughly linear scaling: 2000 blocks took ${
+      smallMs.toFixed(1)
+    }ms, 8000 blocks (4x input) took ${
+      largeMs.toFixed(1)
+    }ms — quadratic behaviour would take ~16x, not ~4x`,
+  );
+});
+
+// ============================================================================
 // testStrategy C: every registered fixture above is deno-fmt-clean, so no
 // future anchor change in maskCode/scanModelDeclarations can be justified by
-// an fmt claim nobody actually ran. Scoped to the 20 fixtures registered in
-// fmtCleanFixtures above (fx01-fx08, fx12-fx23); fx09/fx10/fx11 (the
+// an fmt claim nobody actually ran. Scoped to the 26 fixtures registered in
+// fmtCleanFixtures above (fx01-fx08, fx12-fx29); fx09/fx10/fx11 (the
 // deliberately UNTERMINATED string/template fixtures at the "maskCode:
 // unterminated" tests) are excluded by construction — they exist to feed
 // the LEXER ERROR PATH and are not valid, fmt-checkable TypeScript.
 //
 // BATCHED INTO ONE SUBPROCESS, not one `deno fmt --check` spawn per fixture.
 // Measured on this machine: 20 separate spawns cost ~14s of a ~1m47s suite;
-// one spawn covering all 20 files costs ~0.77s. `deno fmt --check` accepts
-// multiple file arguments and reports each non-conforming one by path, so
-// batching loses no diagnostic precision.
+// one spawn covering all fixtures costs well under 1s. `deno fmt --check`
+// accepts multiple file arguments and reports each non-conforming one by
+// path, so batching loses no diagnostic precision.
 // ============================================================================
 
 /** Matches this file's own fixture-definition idiom: a module-level
@@ -606,8 +801,8 @@ Deno.test("every registered fixture is actually deno-fmt-clean under scripts/den
   );
   assertEquals(
     fmtCleanFixtures.size,
-    20,
-    "expected exactly 20 registered fixtures (23 total minus fx09/fx10/fx11) — " +
+    26,
+    "expected exactly 26 registered fixtures (29 total minus fx09/fx10/fx11) — " +
       "a count drift here means a fixture was added or removed without " +
       "updating this test's own bookkeeping",
   );

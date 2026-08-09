@@ -93,6 +93,21 @@ export interface Declaration {
    * schemaInfo = { version: 3 }`) has no `type` key and must not be
    * mistaken for a model declaration. */
   hasTypeKey: boolean;
+  /** True when `hasTypeKey` is true, there is exactly one depth-1 `type`
+   * property, and its value is a plain double-quoted string starting with
+   * `"@"` — swamp's own type-name shape (`@vendor/name`), verified against
+   * all 59 real model declarations. `hasTypeKey` alone is not enough: a
+   * JSON-Schema-shaped helper (`export const inputSchema = { type:
+   * "object", properties: {…} }`) has a depth-1 `type` key too, and must
+   * NOT be mistaken for a model just because the key is present — only a
+   * `@vendor/name`-shaped VALUE identifies a real swamp model. Used
+   * together with `hasDepth1Spread`/`hasUnreadableProperty` as the
+   * model-identity test: a declaration is either KNOWN to be a model
+   * (`hasModelType`) or its identity is UNREADABLE (a depth-1 spread or an
+   * unreadable property key might be hiding the real `type`), and either
+   * case must be evaluated rather than silently treated as "not a
+   * model" — only a declaration with neither is safely ignored. */
+  hasModelType: boolean;
   /** True when the object literal contains a depth-1 property whose key
    * could not be read — numeric (`0: …`), computed (`[expr]: …`), or an
    * accessor/modifier shape (`get upgrades() {…}`, `set x(v) {…}`, `async
@@ -595,29 +610,39 @@ function skipTrivia(raw: string, start: number, end: number): number {
 }
 
 /** Reads a quoted key's text out of RAW source starting at its opening
- * quote, honouring backslash escapes. Returns the key and the index just
- * past the closing quote (or `raw.length` if never closed — malformed
- * input the caller's own maskCode pass would already have flagged as an
- * unterminated string, so this path is defensive only). */
+ * quote, honouring backslash escapes. Returns the key, the index just past
+ * the closing quote (or `raw.length` if never closed — malformed input the
+ * caller's own maskCode pass would already have flagged as an unterminated
+ * string, so this path is defensive only), and `hadEscape`: true when the
+ * raw text contained a backslash. This reader does not decode escapes to
+ * their real meaning (`u` is not turned into `u`) — it only consumes
+ * the character AFTER the backslash literally — so a caller must not treat
+ * `key` as the true property name when `hadEscape` is true. `"BSu0075pgrades"`
+ * (written here with BS standing for one literal backslash so this comment
+ * cannot be misread as decoded text) yields the plausible-but-wrong key
+ * "u0075pgrades" even though tsc and the JS runtime both resolve the real
+ * property to "upgrades". */
 function readQuotedKey(
   raw: string,
   start: number,
-): { key: string; end: number } {
+): { key: string; end: number; hadEscape: boolean } {
   const quote = raw[start];
   let j = start + 1;
   let key = "";
+  let hadEscape = false;
   while (j < raw.length) {
     const c = raw[j];
     if (c === "\\") {
+      hadEscape = true;
       key += raw[j + 1] ?? "";
       j += 2;
       continue;
     }
-    if (c === quote) return { key, end: j + 1 };
+    if (c === quote) return { key, end: j + 1, hadEscape };
     key += c;
     j++;
   }
-  return { key, end: j };
+  return { key, end: j, hadEscape };
 }
 
 interface PropEntry {
@@ -663,21 +688,13 @@ function scanObjectProperties(
     let afterKey: number;
     if (raw[keyPos] === '"' || raw[keyPos] === "'") {
       const q = readQuotedKey(raw, keyPos);
-      keyName = q.key;
-      afterKey = q.end;
-    } else if (isIdentStart(raw[keyPos])) {
-      let j = keyPos;
-      while (j < segEnd && isIdentChar(raw[j])) j++;
-      // A SECOND identifier immediately following the first (skipping
-      // trivia), before any `:`, is not a plain `key` shorthand or `key:
-      // value` pair — it is an accessor or modifier shape (`get upgrades()
-      // {…}`, `set upgrades(v) {…}`, `async upgrades() {…}`, `static
-      // upgrades = …`). The parser cannot know whether the property this
-      // introduces contributes an `upgrades`/`version` value, so it must
-      // fail closed exactly like a numeric/computed key rather than be
-      // silently read as a shorthand property literally named "get".
-      const afterFirstWord = skipTrivia(raw, j, segEnd);
-      if (afterFirstWord < segEnd && isIdentStart(raw[afterFirstWord])) {
+      if (q.hadEscape) {
+        // The reader above does not decode escapes, so a raw backslash
+        // means `q.key` may not be the true property name — see
+        // readQuotedKey's doc for the "upgrades" written with a
+        // backslash-escape example. Claiming a plausible-but-wrong key
+        // here would let it slip past both the structural scan and the
+        // raw cross-check, so fail closed instead.
         out.push({
           key: null,
           isSpread: false,
@@ -686,6 +703,11 @@ function scanObjectProperties(
         });
         continue;
       }
+      keyName = q.key;
+      afterKey = q.end;
+    } else if (isIdentStart(raw[keyPos])) {
+      let j = keyPos;
+      while (j < segEnd && isIdentChar(raw[j])) j++;
       keyName = raw.slice(keyPos, j);
       afterKey = j;
     } else {
@@ -700,9 +722,27 @@ function scanObjectProperties(
       });
       continue;
     }
-    let c = afterKey;
-    while (c < segEnd && mask[c] !== ":") c++;
-    if (c >= segEnd) {
+    // The text just read is only a KEY if the next significant character
+    // is `:` (an explicit `key: value` pair) or the segment simply ends
+    // there (a genuine shorthand, `{ version }`). Anything else — `[`,
+    // `(`, `<`, or a second identifier — means what was just read is a
+    // modifier (an accessor/method/generic shape: `get upgrades() {…}`,
+    // `get ["upgrades"]() {…}`, `async upgrades() {…}`, `static upgrades =
+    // …`), not the key, so the real key (if any) is unreadable and must
+    // fail closed. This single check subsumes the previous
+    // second-identifier-only heuristic, which missed `get ["upgrades"]()`
+    // (`[` is not a second identifier).
+    const sigPos = skipTrivia(raw, afterKey, segEnd);
+    if (sigPos < segEnd && mask[sigPos] !== ":") {
+      out.push({
+        key: null,
+        isSpread: false,
+        valueStart: segStart,
+        valueEnd: segEnd,
+      });
+      continue;
+    }
+    if (sigPos >= segEnd) {
       // Shorthand property (`{ version }`) or otherwise no explicit
       // value — record the key with an empty value region rather than
       // dropping it.
@@ -717,7 +757,7 @@ function scanObjectProperties(
     out.push({
       key: keyName,
       isSpread: false,
-      valueStart: c + 1,
+      valueStart: sigPos + 1,
       valueEnd: segEnd,
     });
   }
@@ -734,6 +774,23 @@ function parseQuotedValue(
   end: number,
 ): string | null {
   const m = QUOTED_VALUE_RE.exec(raw.slice(start, end));
+  return m ? m[1] : null;
+}
+
+// Same shape as QUOTED_VALUE_RE, but tolerates a trailing `as <Type>` /
+// `satisfies <Type>` assertion — the same tolerance classifyChain already
+// gives a `upgrades[]` array literal, needed because a real declaration
+// writes its type discriminator as `type: "@vendor/name" as const,`
+// (comfyui.ts:351).
+const QUOTED_VALUE_WITH_ASSERTION_RE =
+  /^\s*"([^"\\\n]*)"\s*(?:(?:as|satisfies)\b.*)?$/;
+
+function parseQuotedValueAllowingAssertion(
+  raw: string,
+  start: number,
+  end: number,
+): string | null {
+  const m = QUOTED_VALUE_WITH_ASSERTION_RE.exec(raw.slice(start, end));
   return m ? m[1] : null;
 }
 
@@ -832,6 +889,57 @@ function classifyChain(
   };
 }
 
+/** One depth-0 event a declaration's own `=` search can run into: a
+ * bracket OPEN (`{`/`[`/`(`), a genuine assignment `=` (excluding the
+ * compound operators `==`/`!=`/`<=`/`>=`/`=>`), or a statement-terminating
+ * `;`. */
+interface Boundary {
+  pos: number;
+  kind: "open" | "eq" | "semi";
+}
+
+/** Precomputes EVERY depth-0 boundary event in `mask`, in ONE linear pass,
+ * already sorted by position (a single left-to-right scan naturally
+ * yields them in order) — replaces scanModelDeclarations's previous
+ * per-match tail rescan, which was quadratic in the number of `export
+ * const` matches with no following depth-0 `=`/`;` of their own (`export
+ * const enum E { A = 0 }`, the exact shape whose `deno fmt`-canonical form
+ * — no trailing `;` — has no depth-0 terminator at all). Consumed by a
+ * single monotone pointer in scanModelDeclarations's own loop, since
+ * matches are found in non-decreasing position order: each boundary is
+ * visited a bounded number of times across the WHOLE scan, however many
+ * `export const` matches the file contains, making the combined scan O(n)
+ * regardless of how many (or how few) `=`/`;` characters punctuate it.
+ * `open` events are nested content's `{`/`[`/`(` — depth-1+ characters
+ * inside them are invisible here by construction (only depth-0 positions
+ * are ever recorded), so a long block contributes exactly ONE entry
+ * (its open), not one per character. */
+function findDepth0Boundaries(mask: string, depth: number[]): Boundary[] {
+  const n = mask.length;
+  const boundaries: Boundary[] = [];
+  for (let k = 0; k < n; k++) {
+    if (depth[k] !== 0) continue;
+    const c = mask[k];
+    if (c === "{" || c === "[" || c === "(") {
+      boundaries.push({ pos: k, kind: "open" });
+      continue;
+    }
+    if (c === ";") {
+      boundaries.push({ pos: k, kind: "semi" });
+      continue;
+    }
+    if (c !== "=") continue;
+    const prevC = k > 0 ? mask[k - 1] : "";
+    const nextC = k + 1 < n ? mask[k + 1] : "";
+    if (prevC === "=" || prevC === "!" || prevC === "<" || prevC === ">") {
+      continue;
+    }
+    if (nextC === "=" || nextC === ">") continue;
+    boundaries.push({ pos: k, kind: "eq" });
+  }
+  return boundaries;
+}
+
 /** Finds every `export const <ident>[: Type] = { ... }` declaration at
  * delimiter depth 0, over `maskCode(src)`'s mask, reading values back out
  * of the raw source at mask-derived offsets. Throws when `maskCode`
@@ -844,6 +952,15 @@ export function scanModelDeclarations(src: string): Declaration[] {
   }
   const n = src.length;
   const depth = computeDepth(mask);
+  const boundaries = findDepth0Boundaries(mask, depth);
+  // Shared, monotone cursor into `boundaries` — matches are found by
+  // `exportConstRe` in non-decreasing position order, and (once a
+  // declaration is parsed) `lastIndex` is jumped past its own body, so
+  // `afterIdent` across the whole while loop below is also non-decreasing.
+  // That lets every match's own `=`-search advance this ONE pointer
+  // forward instead of rescanning `mask` from its own `afterIdent` — see
+  // findDepth0Boundaries's doc for why this makes the whole scan O(n).
+  let boundaryIdx = 0;
   const declarations: Declaration[] = [];
   const exportConstRe = /\bexport\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)/g;
   let m: RegExpExecArray | null;
@@ -857,27 +974,38 @@ export function scanModelDeclarations(src: string): Declaration[] {
     while (q < n && /\s/.test(mask[q])) q++;
     const hasType = mask[q] === ":";
 
+    while (
+      boundaryIdx < boundaries.length &&
+      boundaries[boundaryIdx].pos < afterIdent
+    ) {
+      boundaryIdx++;
+    }
     let eq = -1;
-    for (let k = afterIdent; k < n; k++) {
-      if (depth[k] !== 0) continue;
-      // A declaration's own `=` (if any) must precede its statement
-      // terminator — bounding the search at the first depth-0 `;` makes it
-      // exact AND linear. Without this bound, `export const enum E { A = 0
-      // }` (a real, valid TypeScript shape whose only `=` sits at depth 1,
-      // inside the enum body) sends this loop all the way to EOF on every
-      // such match, making the whole scan O(N*n) in the number of
-      // `export const` matches with no following depth-0 `=`.
-      if (mask[k] === ";") break;
-      if (mask[k] !== "=") continue;
-      const prevC = k > 0 ? mask[k - 1] : "";
-      const nextC = k + 1 < n ? mask[k + 1] : "";
-      if (prevC === "=" || prevC === "!" || prevC === "<" || prevC === ">") {
+    let scanIdx = boundaryIdx;
+    while (scanIdx < boundaries.length) {
+      const boundary = boundaries[scanIdx];
+      if (boundary.kind === "open") {
+        // A depth-0 bracket with NO type annotation before it (`hasType`
+        // false) cannot legally belong to this declaration — a bare
+        // `const IDENT` allows nothing but `=` (modulo whitespace/
+        // comments) before its initializer, so this is an UNRELATED block
+        // (e.g. `export const enum E { A = 0 }`'s own body, once the
+        // regex has already — wrongly, see the LOW fix for that —
+        // captured "enum" as the identifier). Treat exactly like hitting
+        // a `;`: this match's own '=' search found nothing, so it must
+        // not adopt whatever comes after the block as its value. A `{`
+        // guarded by a real type annotation (`CONFIG: { a: number } =
+        // {...}`) is legitimate and transparent — skip over it and keep
+        // looking for this declaration's own '='.
+        if (!hasType) break;
+        scanIdx++;
         continue;
       }
-      if (nextC === "=" || nextC === ">") continue;
-      eq = k;
+      if (boundary.kind === "semi") break;
+      eq = boundary.pos;
       break;
     }
+    boundaryIdx = scanIdx;
     if (eq === -1) continue;
 
     let b = eq + 1;
@@ -902,8 +1030,21 @@ export function scanModelDeclarations(src: string): Declaration[] {
     );
     const versionProps = props.filter((p) => p.key === "version");
     const upgradesProps = props.filter((p) => p.key === "upgrades");
+    const typeProps = props.filter((p) => p.key === "type");
     const hasDepth1Spread = props.some((p) => p.isSpread);
-    const hasTypeKey = props.some((p) => p.key === "type");
+    const hasTypeKey = typeProps.length > 0;
+    // A `type` key alone is not enough — a JSON-Schema-shaped helper
+    // (`{ type: "object", … }`) has one too. Only a single, plainly
+    // quoted `"@vendor/name"`-shaped value identifies a real swamp model;
+    // see the Declaration interface's `hasModelType` doc.
+    const typeValue = typeProps.length === 1
+      ? parseQuotedValueAllowingAssertion(
+        src,
+        typeProps[0].valueStart,
+        typeProps[0].valueEnd,
+      )
+      : null;
+    const hasModelType = typeValue !== null && typeValue.startsWith("@");
     const hasUnreadableProperty = props.some((p) =>
       p.key === null && !p.isSpread
     );
@@ -936,6 +1077,7 @@ export function scanModelDeclarations(src: string): Declaration[] {
       name,
       hasType,
       hasTypeKey,
+      hasModelType,
       hasUnreadableProperty,
       hasDuplicateUpgrades,
       version,

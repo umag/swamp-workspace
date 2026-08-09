@@ -353,7 +353,7 @@ literal array, its LAST entry's `toVersion` must equal that declaration's own
 the gate exists to move that failure from a blocked/broken `master` push to a
 red PR, where it is cheap to fix.
 
-Three things this rule deliberately does **not** require:
+Four things this rule deliberately does **not** require:
 
 - **`upgrades[]` may be absent or empty.** Most declarations in this repo
   have no migration chain at all (28 of 59 today), and that is legal —

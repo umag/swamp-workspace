@@ -646,6 +646,75 @@ Deno.test("checkUpgradeChain: a manifest 'models:' entry that escapes the extens
 });
 
 // ============================================================================
+// The lexical containment check above is defeated by a symlink — resolve()
+// never follows one (PR B review fix, MEDIUM). Two variants: a symlinked
+// INTERMEDIATE directory, and the listed file itself being a symlink.
+// ============================================================================
+
+Deno.test("checkUpgradeChain: a symlinked INTERMEDIATE directory inside the extension, named by an ordinary 'models:' entry, is rejected once resolved — the entry stays LEXICALLY inside the extension directory, so only realPath-based containment catches it (mutation: drop the realPath containment re-check -> the file outside the repo is read and its EXFIL_MARKER leaks into a model-declaration-unreadable violation's 'what' text)", async () => {
+  await withTempRoot(async (root) => {
+    await Deno.mkdir(join(root, "outside"), { recursive: true });
+    await Deno.writeTextFile(
+      join(root, "outside", "sentinel.ts"),
+      "export const EXFIL_MARKER_7B2 = true;\n",
+    );
+    await writeManifestOnly(
+      root,
+      "widget",
+      'manifestVersion: 1\nname: "@fixture/widget"\nversion: "1.0.0"\n' +
+        "models:\n  - escape/sentinel.ts\n",
+      {},
+    );
+    await Deno.symlink(
+      join(root, "outside"),
+      join(root, "widget", "escape"),
+    );
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "manifest-models-unreadable");
+    assert(
+      !violations[0].what.includes("EXFIL_MARKER_7B2"),
+      `symlink target's content leaked into a violation: ${
+        JSON.stringify(violations)
+      }`,
+    );
+  });
+});
+
+Deno.test("checkUpgradeChain: an ORDINARY-LOOKING manifest entry whose listed file is itself a symlink to an external target is ALSO rejected once resolved (mutation: same as above)", async () => {
+  await withTempRoot(async (root) => {
+    await Deno.mkdir(join(root, "outside"), { recursive: true });
+    await Deno.writeTextFile(
+      join(root, "outside", "secret.ts"),
+      "export const EXFIL_MARKER_7B2 = true;\n",
+    );
+    await writeManifestOnly(
+      root,
+      "widget",
+      'manifestVersion: 1\nname: "@fixture/widget"\nversion: "1.0.0"\n' +
+        "models:\n  - extensions/models/m.ts\n",
+      {},
+    );
+    await Deno.mkdir(join(root, "widget", "extensions", "models"), {
+      recursive: true,
+    });
+    await Deno.symlink(
+      join(root, "outside", "secret.ts"),
+      join(root, "widget", "extensions", "models", "m.ts"),
+    );
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "manifest-models-unreadable");
+    assert(
+      !violations[0].what.includes("EXFIL_MARKER_7B2"),
+      `symlink target's content leaked into a violation: ${
+        JSON.stringify(violations)
+      }`,
+    );
+  });
+});
+
+// ============================================================================
 // Model identity is the 'type' key, not merely 'version' (PR B review fix,
 // HIGH: a false positive that stopped the whole repo, and a false negative
 // that hid a broken chain behind an unrelated helper's version key).
@@ -734,6 +803,90 @@ Deno.test("checkUpgradeChain: a 'get upgrades()' accessor hides a broken chain t
   });
 });
 
+// ============================================================================
+// The key-guard fix's OWN round-2 review found two MORE fail-open shapes
+// than the computed-key/accessor pair above: an ESCAPED quoted key
+// (tsc/the runtime both resolve it to a genuine 'upgrades', but the
+// reader here does not decode escapes) and 'get [computed]()' (no second
+// identifier for the old heuristic to catch, since '[' isn't one). Both
+// must ALSO report model-declaration-indirect (PR B review fix, HIGH).
+// ============================================================================
+
+Deno.test("checkUpgradeChain: a quoted 'upgrades' key with a UNICODE ESCAPE at its start is a genuine 'upgrades' to tsc and the runtime, but this reader does not decode escapes — must fail closed, not read a plausible-but-wrong key (mutation: drop the 'hadEscape' guard on readQuotedKey -> reddens to 0 violations; fmt/lint/tsc all pass this shape clean)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "2026.08.09.1",',
+        '  "\\u0075pgrades": [',
+        '    { fromVersion: "1.0.0", toVersion: "0.0.0" },',
+        "  ],",
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "model-declaration-indirect");
+  });
+});
+
+Deno.test("checkUpgradeChain: a quoted 'upgrades' key with a HEX ESCAPE at its start is the same hole, different escape syntax (mutation: same as above)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "2026.08.09.1",',
+        '  "\\x75pgrades": [',
+        '    { fromVersion: "1.0.0", toVersion: "0.0.0" },',
+        "  ],",
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "model-declaration-indirect");
+  });
+});
+
+Deno.test("checkUpgradeChain: an escape at the END of a quoted 'upgrades' key is the same hole again — the escape need not be the FIRST character (mutation: same as above)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "2026.08.09.1",',
+        '  "upgrade\\u0073": [',
+        '    { fromVersion: "1.0.0", toVersion: "0.0.0" },',
+        "  ],",
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "model-declaration-indirect");
+  });
+});
+
+Deno.test("checkUpgradeChain: 'get [\"upgrades\"]()' hides a broken chain the same way as 'get upgrades()' — the OLD second-identifier heuristic missed this because '[' is not a second identifier (mutation: drop the 'next significant char must be : or segment-end' guard, reverting to the second-identifier-only heuristic -> reddens to 0 violations)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        'const CHAIN = [{ fromVersion: "1.0.0", toVersion: "0.0.0" }];',
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "2026.08.09.1",',
+        '  get ["upgrades"]() { return CHAIN; },',
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "model-declaration-indirect");
+  });
+});
+
 Deno.test("checkUpgradeChain: a duplicate depth-1 'upgrades' key is reported rather than silently reading only the first (mutation: read upgradesProps[0] without checking hasDuplicateUpgrades -> reddens: the FIRST chain here is correct, so this fixture goes fully clean instead of reporting the ambiguity)", async () => {
   await withTempRoot(async (root) => {
     await writeExtension(root, "widget", {
@@ -749,6 +902,138 @@ Deno.test("checkUpgradeChain: a duplicate depth-1 'upgrades' key is reported rat
     const { violations } = await checkUpgradeChain(root);
     assertEquals(violations.length, 1, JSON.stringify(violations));
     assertEquals(violations[0].rule, "model-declaration-indirect");
+  });
+});
+
+// ============================================================================
+// 'hasTypeKey' alone (the model-identity test) was ITSELF evadable the
+// same way 'upgrades' was: hide 'type' behind a depth-1 spread/computed
+// key/accessor and the WHOLE declaration is silently dropped from
+// 'versioned', escaping every rule in the loop at once — including the
+// terminus check (PR B review fix, HIGH: a fail-open REGRESSION versus
+// HEAD~1, which reported BOTH model-declaration-indirect and
+// upgrade-chain-terminus for this exact shape). The mirror direction
+// (a depth-1 'type' key present, but with a non-'@vendor/name' value, on
+// an ordinary TypeScript helper) must NOT be mistaken for a model either
+// — 'hasModelType' requires the '@'-prefixed shape, not merely the key's
+// presence.
+// ============================================================================
+
+Deno.test("checkUpgradeChain: a model whose 'type' arrives via a depth-1 spread is STILL fully evaluated, even with an unrelated type-keyed sibling declaration in the same file (mutation: filter 'versioned' on hasModelType alone, dropping the hasDepth1Spread/hasUnreadableProperty union -> this fixture's declaration is dropped from 'versioned' entirely and reddens from 2 violations to 0; the sibling declaration keeps the file-level model-declaration-unreadable backstop from ever firing, so this is not merely the single-declaration case)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        'const MODEL_IDENTITY = { type: "@fixture/widget" };',
+        'export const errorShape = { type: "object", version: "1", fields: [] };',
+        "export const model = {",
+        "  ...MODEL_IDENTITY,",
+        '  version: "2026.08.09.1",',
+        "  upgrades: [",
+        '    { fromVersion: "1.0.0", toVersion: "9.9.9" },',
+        "  ],",
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 2, JSON.stringify(violations));
+    const rules = violations.map((v) => v.rule).sort();
+    assertEquals(
+      rules,
+      ["model-declaration-indirect", "upgrade-chain-terminus"],
+      JSON.stringify(violations),
+    );
+  });
+});
+
+Deno.test("checkUpgradeChain: an ordinary TypeScript helper with a depth-1 'type' key whose value is NOT '@vendor/name'-shaped (a JSON-Schema fragment, a discriminated-union default) is NOT a model and must not be flagged — the mirror of the fixture above (mutation: treat ANY depth-1 'type' key as model identity, without requiring an '@'-prefixed readable value -> this fixture reddens with a spurious model-version-unreadable on inputSchema/DEFAULT_EVENT, which are ordinary TypeScript, not models)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        "export const inputSchema = {",
+        '  type: "object",',
+        "  properties: {},",
+        "};",
+        "export const DEFAULT_EVENT = {",
+        '  type: "start",',
+        "  at: 0,",
+        "};",
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "1.0.0",',
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations, [], JSON.stringify(violations));
+  });
+});
+
+// ============================================================================
+// A run of 'export const' declarations with no depth-0 '='/';' of their
+// own must not have a LATER declaration's own body/name misattributed to
+// them — POLICY-level pin of the model_declarations.ts parser fix (PR B
+// review fix, LOW: the DoS bound's own named shape mis-scoped a violation
+// to a nonexistent identifier).
+// ============================================================================
+
+Deno.test("checkUpgradeChain: an 'export const enum' block directly above a broken model reports the violation against 'model', never 'enum' (mutation: revert the boundary-pointer '=' search to the old per-match tail rescan -> the violation names 'enum', which sends the author looking for something that does not exist)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        "export const enum Mode {",
+        "  Fast = 0,",
+        "  Slow = 1,",
+        "}",
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "2026.08.09.1",',
+        "  upgrades: [",
+        '    { fromVersion: "1.0.0", toVersion: "9.9.9" },',
+        "  ],",
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "upgrade-chain-terminus");
+    assert(
+      violations[0].what.includes("declaration 'model'"),
+      `expected the violation to name 'model', got: ${
+        JSON.stringify(violations)
+      }`,
+    );
+  });
+});
+
+// ============================================================================
+// Sanitise at construction, not at one use site (PR B review fix, HIGH):
+// EVERY field of a Violation built from a manifest-controlled path — not
+// merely 'file' — can carry a raw newline. Pin: no emitted line other than
+// the intended '::error' line may start with '::' (soak_schedule.ts has
+// this exact assertion shape already, per the review's own fix note).
+// ============================================================================
+
+Deno.test("checkUpgradeChain: a manifest 'models:' entry containing a raw newline does not smuggle a GitHub Actions workflow command onto its own line — 'what', 'fix', and the plain console line are ALL sanitised, not just 'file' (mutation: sanitise only v.file at print time, as the pre-fix code did -> 'fix the models: entry...' and 'was renamed or deleted' each start a NEW physical line at column 0 with a literal '::stop-commands::deadbeef', which GitHub Actions parses as a workflow command)", async () => {
+  await withTempRoot(async (root) => {
+    await writeManifestOnly(
+      root,
+      "widget",
+      'manifestVersion: 1\nname: "@fixture/widget"\nversion: "1.0.0"\n' +
+        'models:\n  - "a\\n::stop-commands::deadbeef"\n',
+      {},
+    );
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    const v = violations[0];
+    // The sanitiser escapes a raw LF to the two-character sequence
+    // backslash-n — assert the ESCAPED form survived (proves sanitisation
+    // ran) and that no field still carries a raw newline (proves it ran
+    // on every field, not only 'file').
+    for (const field of [v.extension, v.what, v.why, v.fix, v.file]) {
+      assert(!field.includes("\n"), `raw newline survived in: ${field}`);
+    }
+    assert(v.what.includes("\\n"), `expected an escaped \\n in: ${v.what}`);
+    assert(v.fix.includes("\\n"), `expected an escaped \\n in: ${v.fix}`);
   });
 });
 
