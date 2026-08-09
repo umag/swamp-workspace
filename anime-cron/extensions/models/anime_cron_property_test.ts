@@ -375,6 +375,7 @@ function makeHitFromSpec(spec: HitSpec, idx: number): NyaaHit {
     seeders: spec.seeders,
     episode: 1,
     resolution: spec.resolution,
+    sizeBytes: 1024 ** 3,
   };
 }
 

@@ -7,6 +7,23 @@
  * without shelling out to `swamp` or touching the network — the real CLI
  * subprocess call lives only in `readScoreViaSwamp` and the `main()` entry
  * point below.
+ *
+ * WHY "unscorable" is a HARD FAILURE, not a skip. This module used to
+ * collapse four distinct "could not produce a pass/fail verdict" situations
+ * into one undifferentiated "skipped" bucket, and a skip never failed the
+ * gate. Two of those four are genuinely benign — an extension can be
+ * legitimately outside this ratchet's scope (no quality.yaml at all, or one
+ * that check_compliance.ts's schema already rejects as a hard violation on
+ * its own — see runRatchet's docblock). The other two are NOT benign: the
+ * tool RAN (or a quality.yaml with a real ratchet baseline exists) and still
+ * could not produce a usable score, e.g. because `swamp extension quality`
+ * itself errored (a broken model upgrade chain, exactly the seanime defect
+ * this module failed to catch) or printed output that does not match the
+ * expected score shape. Reporting that as a benign skip is how a subject the
+ * tool cannot evaluate at all reads as a pass — seanime stayed invisible for
+ * weeks this way. Those two cases are now their own `"unscorable"` outcome,
+ * which `main()` treats exactly like `"fail"`: it increments the failure
+ * count, prints a `::error` annotation, and the process exits 1.
  */
 import { z } from "npm:zod@4";
 import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
@@ -28,6 +45,31 @@ export type RatchetOutcome =
   | { status: "pass" }
   | { status: "fail"; message: string }
   | { status: "rebaseline"; message: string };
+
+/**
+ * The two outcomes runRatchet can report OUTSIDE of evaluateRatchet's
+ * pass/fail/rebaseline comparison, because no comparison was ever reached:
+ *
+ *   - `"skipped"` — benign, out of this ratchet's scope. Either the
+ *     extension has no readable quality.yaml at all, or the one it has
+ *     fails schema validation. Both are independently caught as hard
+ *     check_compliance.ts violations (missing-quality-yaml /
+ *     quality-yaml-unreadable / schema-violation), so a skip here does not
+ *     let either case pass CI unnoticed — it just avoids a duplicate
+ *     finding from a second gate.
+ *   - `"unscorable"` — a defect, not a scope question. The extension DOES
+ *     have a valid quality.yaml with a real ratchet baseline, but the live
+ *     score could not be obtained: `swamp extension quality` itself failed
+ *     (nonzero exit / thrown error), or it exited cleanly but printed
+ *     output that does not match the expected {rubricVersion, percentage}
+ *     shape. Neither is caught by any other gate. Treated exactly like
+ *     `"fail"` by main(): counts toward the failure total and emits a
+ *     `::error` annotation.
+ */
+export type RatchetReportOutcome =
+  | RatchetOutcome
+  | { status: "skipped"; reason: string }
+  | { status: "unscorable"; reason: string };
 
 /**
  * Compare a live score snapshot against a recorded baseline. A rubric
@@ -123,15 +165,15 @@ export async function readScoreViaSwamp(
 
 export interface RatchetReport {
   extension: string;
-  outcome: RatchetOutcome | { status: "skipped"; reason: string };
+  outcome: RatchetReportOutcome;
 }
 
 /**
  * Run the ratchet across every extension with a quality.yaml, using
  * `reader` (defaults to the real `swamp` subprocess) to fetch each live
- * score. Extensions with no quality.yaml, or a ratchet block that fails to
- * parse, are reported as "skipped" (check_compliance.ts already reports
- * those as schema violations — this module only owns the score comparison).
+ * score. See RatchetReportOutcome's docblock for the skipped/unscorable
+ * split — this function is the only place that decides which of the two an
+ * extension gets.
  */
 export async function runRatchet(
   root: string,
@@ -167,7 +209,10 @@ export async function runRatchet(
     } catch (err) {
       reports.push({
         extension: ext,
-        outcome: { status: "skipped", reason: `score read failed: ${err}` },
+        outcome: {
+          status: "unscorable",
+          reason: `score read failed: ${err}`,
+        },
       });
       continue;
     }
@@ -176,7 +221,7 @@ export async function runRatchet(
       reports.push({
         extension: ext,
         outcome: {
-          status: "skipped",
+          status: "unscorable",
           reason: `bad score JSON: ${score.error}`,
         },
       });
@@ -203,15 +248,20 @@ Runs GLOBAL: every extension with a quality.yaml. For each, compares the
 LIVE \`swamp extension quality <manifest> --json\` percentage against the
 extension's recorded ratchet.baselinePercentage, within the same
 ratchet.rubricVersion. A rubric-version change is reported as "rebaseline"
-(informational), never a failure. Set QUALITY_REPO_ROOT to scan a tree
-other than this script's own repo (used by its tests; CI never needs it).
+(informational), never a failure. An extension whose live score could not be
+obtained at all (the quality tool errored, or printed a score of the wrong
+shape) is reported as "unscorable" and FAILS the gate — a subject the tool
+cannot evaluate must never read as a pass. Set QUALITY_REPO_ROOT to scan a
+tree other than this script's own repo (used by its tests; CI never needs
+it).
 
 --json <path>  also write {reports} as JSON to <path> (the sticky
                PR-comment report reads this — see scripts/build-ci-report.ts).
 
 Exit codes:
-  0  every extension passed or was skipped/rebaselined
-  1  one or more extensions regressed below their recorded baseline
+  0  every extension passed, was skipped (out of scope), or rebaselined
+  1  one or more extensions regressed below their recorded baseline, or
+     could not be scored at all
 `);
 }
 
@@ -234,6 +284,12 @@ if (import.meta.main) {
       console.log(`${r.extension}: rebaseline — ${r.outcome.message}`);
     } else if (r.outcome.status === "skipped") {
       console.log(`${r.extension}: skipped — ${r.outcome.reason}`);
+    } else if (r.outcome.status === "unscorable") {
+      failed++;
+      console.log(`${r.extension}: UNSCORABLE — ${r.outcome.reason}`);
+      console.log(
+        `::error file=${r.extension}/quality.yaml::${r.outcome.reason}`,
+      );
     } else {
       failed++;
       console.log(`${r.extension}: FAIL — ${r.outcome.message}`);
@@ -247,7 +303,7 @@ if (import.meta.main) {
   }
   if (failed > 0) {
     console.log(
-      `\n${failed} extension(s) regressed below their ratchet baseline.`,
+      `\n${failed} extension(s) regressed below their ratchet baseline or could not be scored.`,
     );
     Deno.exit(1);
   }

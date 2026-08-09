@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026.08.08.1
+
+Added `fetch-archive`: a preservation-archive sweep that pulls every Nyaa
+release credited to a set of release groups and pins it to seed forever.
+
+Motivation: groups like Kineko Video and LonelyChaser publish fresh 16mm/35mm
+film scans, LaserDisc Domesday captures and VHS restorations of material that
+never got a digital release. Keeping a complete, permanently-seeding copy is the
+point — but the existing `fetch-airing`/`upgrade-bd` methods are both driven off
+an AniList list, and none of this catalogue is on one.
+
+- **New method `fetch-archive`.** Pages Nyaa's RSS (75/page, `maxPages`
+  default 10) once per group, keeps only releases whose leading `[..]` credit
+  actually names a wanted group, dedups by infoHash across groups, queues the
+  rest flat into the archive dir, and issues one batched `torrent-set` with
+  `seedRatioMode: 2` + `seedIdleMode: 2` (Transmission's "unlimited", which
+  overrides the session defaults per torrent).
+  - Group matching splits collabs on `& + , /` and prefix-matches in both
+    directions behind a 5-character stem floor, so a wanted `LonelyChaser`
+    catches the `LonelyChaser-Raws` alias and a wanted `Kineko Video` catches a
+    bare `Kineko`, while a short token cannot wildcard onto every group. A title
+    that merely _mentions_ a group without crediting it in the bracket is not
+    swept.
+  - Idempotent: it reads live Transmission state first and reports already-held
+    releases as duplicates. `seedForeverExisting` (default true) re-applies
+    unlimited seeding to everything already in the archive dir, so a re-run
+    repairs torrents added before this method existed.
+  - `category` defaults to `0_0` (all) because these groups also post
+    live-action scans outside the anime categories.
+  - Reports `queuedGB`/`catalogGB` so a `dryRun` answers "how much disk will
+    this cost" before anything is queued.
+  - Optional Telegram summary lists what was snatched (capped at 20 titles + an
+    overflow count, to stay under Telegram's 4096-char limit).
+- **New global argument `archiveContainerDir`** (default `/anime/kineko`) — the
+  download dir inside the Transmission container for these rips.
+- **`NyaaHit` gains `sizeBytes`**, parsed from `<nyaa:size>` by the new
+  `parseNyaaSize` helper (returns 0 for anything unparseable, so a missing size
+  can never NaN a running total).
+- New exported pure helpers, all unit-tested: `parseNyaaSize`, `decodeEntities`,
+  `escapeHtml`, `bracketGroups`, `normGroup`, `creditsGroup`.
+
+Tests: 117 pass. Added `fetch-archive` cases across the contract-fixture (pure
+helpers), methods (happy path, idempotent re-run, dryRun-mutates-nothing,
+per-group search failure isolation, seeder floor, empty-group rejection) and
+adversarial (HTML-injection escaping at the Telegram subprocess boundary, group
+impersonation outside the credit bracket, credential-leak sweep) suites. The
+`sanity: model exposes exactly the N documented methods` pin moved 4 → 5, and
+the two `NyaaHit` literal builders in the existing suites gained `sizeBytes`.
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave 2c, full build,

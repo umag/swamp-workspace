@@ -185,6 +185,72 @@ Deno.test("classifyFailure: a real AssertionError diagnostic line in the combine
   );
 });
 
+// Text shaped exactly like a real fast-check-falsified-property's combined
+// output (verified live against the real fast-check@4.8.0 binary — see the
+// REAL-subprocess version further down): fast-check throws a bare `Error`
+// whose message starts "Property failed after <N> tests", followed by its
+// seed/path/Counterexample/Shrunk detail on subsequent lines. This is the
+// exact shape the 2026-08-08 nightly emitted for talm-cluster's "-e"
+// counterexample (Counterexample: ["-e"], after 87,042 cases) that used to
+// fall through classifyFailure to "unknown".
+Deno.test("classifyFailure: a real fast-check 'Property failed after N tests' diagnostic line in the combined output classifies as 'property falsified'", () => {
+  const text = `error: Error: Property failed after 87042 tests
+{ seed: -712593897, path: "87041:9", endOnFailure: true }
+Counterexample: ["-e"]
+Shrunk 1 time(s)
+`;
+  assertEquals(classifyFailure(1, text), "property falsified");
+});
+
+// The rationale documented on classifyFailure's docblock, pinned as a unit
+// test: a property whose predicate calls `assertEquals` internally (common
+// in this repo — the property test IS the assertion) fails with BOTH
+// fast-check's own "Property failed after <N> tests" top-line AND the
+// underlying AssertionError surfaced via Deno's "Caused by:" cause-chain
+// rendering (verified live — see fc.assert(fc.property(..., (n) => {
+// assertEquals(...) })), the real-subprocess version further down).
+// "property falsified" must win — it is the more specific and more
+// actionable of the two.
+Deno.test("classifyFailure: a falsified property whose predicate uses assertEquals internally (both markers present) still classifies as 'property falsified', never 'assertion'", () => {
+  const text = `error: Error: Property failed after 1 tests
+{ seed: 2081012751, path: "0:0", endOnFailure: true }
+Counterexample: [0]
+Shrunk 1 time(s)
+
+Caused by: AssertionError: Values are not equal.
+
+
+    [Diff] Actual / Expected
+
+
+-   0
++   1
+`;
+  assertEquals(classifyFailure(1, text), "property falsified");
+});
+
+// The negative case: a property test that legitimately ASSERTS on the
+// literal string "Property failed after 1 tests" (a plausible golden-output
+// test pinning fast-check's own error message) must NOT be misclassified as
+// a falsified property just because that text appears somewhere in the
+// combined output. It shows up only inside an ordinary AssertionError diff
+// line, never preceded by "error: ...Error:" on the same line (verified
+// live — see the REAL-subprocess version of this same scenario further
+// down: "run_soak.ts CLI: a REAL AssertionError failure whose diff contains
+// the literal string 'Property failed after 1 tests' ...").
+Deno.test("classifyFailure: an AssertionError diff containing the literal string 'Property failed after 1 tests' still classifies as 'assertion', never 'property falsified'", () => {
+  const text = `error: AssertionError: Values are not equal.
+
+
+    [Diff] Actual / Expected
+
+
+-   unrelated
++   Property failed after 1 tests
+`;
+  assertEquals(classifyFailure(1, text), "assertion");
+});
+
 Deno.test("classifyFailure: anything else classifies as 'unknown'", () => {
   assertEquals(
     classifyFailure(1, "some unrelated junk in the output"),
@@ -629,9 +695,10 @@ Deno.test("run_soak.ts CLI: a NotCapable child failure exits non-zero and emits 
 // ============================================================================
 // classifyFailure — REAL `deno test` subprocess classification (the HIGH
 // finding this pins). `deno test` writes a failing test's actual detail —
-// the NotCapable trace, the AssertionError diff — to STDOUT, not stderr;
-// only a generic "error: Test failed" line goes to stderr (verified live,
-// see the fixtures below). Every test ABOVE this section injects a stub
+// the NotCapable trace, the AssertionError diff, the fast-check
+// counterexample — to STDOUT, not stderr; only a generic "error: Test
+// failed" line goes to stderr (verified live, see the fixtures below).
+// Every test ABOVE this section injects a stub
 // CommandRunner or a shim that hand-places the classification string
 // directly into a `stderr` field/env var — none of them can catch a
 // regression in classifyFailure reading the wrong stream, because they never
@@ -783,6 +850,125 @@ Deno.test("asserts on the literal string NotCapable", () => {
       ),
       `must NOT misclassify an ordinary assertEquals(actual, "NotCapable") ` +
         `failure as a permission failure, got: ${stdout}`,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("run_soak.ts CLI: a REAL falsified fast-check property (genuine deno test subprocess, no shim) classifies as 'property falsified'", async () => {
+  // The exact defect the 2026-08-08 nightly hit: a genuine fast-check
+  // counterexample fell through to "unknown" (see
+  // "##[error]talm-cluster extensions/models/talm_cluster_property_test.ts:
+  // unknown" in GH run 31239877383). This fixture is the minimal shape that
+  // reproduces it — a property that always returns false, no assertEquals
+  // involved.
+  const root = await Deno.makeTempDir({ prefix: "run-soak-real-property-" });
+  try {
+    const file = await writeRealPropertyTestFixture(
+      root,
+      "widget",
+      "widget_property_test.ts",
+      `import fc from "npm:fast-check@4.8.0";
+Deno.test("property that always fails", () => {
+  fc.assert(fc.property(fc.integer(), () => false));
+});
+`,
+    );
+    const { code, stdout } = await runRealSoakCli(root, "widget", file, []);
+    assert(code !== 0, `expected a non-zero exit, got 0. stdout: ${stdout}`);
+    assert(
+      stdout.includes(
+        `::error title=soak-failure::widget ${file}: property falsified`,
+      ),
+      `expected a REAL property-falsified classification (fast-check's ` +
+        `counterexample lives on stdout, not stderr), got: ${stdout}`,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("run_soak.ts CLI: a REAL falsified fast-check property whose predicate uses assertEquals internally (genuine deno test subprocess, no shim) still classifies as 'property falsified', never 'assertion'", async () => {
+  // Real-subprocess version of the "both markers present" rationale in
+  // classifyFailure's docblock: the property's OWN failure mechanism is an
+  // internal assertEquals, so the combined output genuinely contains both
+  // fast-check's "Property failed after <N> tests" top-line and an
+  // underlying "Caused by: AssertionError: ..." line. "property falsified"
+  // must win.
+  const root = await Deno.makeTempDir({
+    prefix: "run-soak-real-property-assert-",
+  });
+  try {
+    const file = await writeRealPropertyTestFixture(
+      root,
+      "widget",
+      "widget_property_test.ts",
+      `import fc from "npm:fast-check@4.8.0";
+import { assertEquals } from "jsr:@std/assert@1";
+Deno.test("property with assertEquals inside", () => {
+  fc.assert(fc.property(fc.integer(), (n) => {
+    assertEquals(n, n + 1);
+  }));
+});
+`,
+    );
+    const { code, stdout } = await runRealSoakCli(root, "widget", file, []);
+    assert(code !== 0, `expected a non-zero exit, got 0. stdout: ${stdout}`);
+    assert(
+      stdout.includes(
+        `::error title=soak-failure::widget ${file}: property falsified`,
+      ),
+      `expected a REAL property-falsified classification even though the ` +
+        `property's own predicate throws via assertEquals, got: ${stdout}`,
+    );
+    assert(
+      !stdout.includes(
+        `::error title=soak-failure::widget ${file}: assertion`,
+      ),
+      `must NOT report the more generic 'assertion' when a more specific ` +
+        `'property falsified' classification applies, got: ${stdout}`,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("run_soak.ts CLI: a REAL AssertionError failure whose diff contains the literal string 'Property failed after 1 tests' (genuine deno test subprocess, no shim) classifies as 'assertion', never 'property falsified'", async () => {
+  // The negative case: an ordinary (non-property) test that legitimately
+  // asserts on fast-check's own error-message wording must not be
+  // misdiagnosed as a falsified property just because that text appears
+  // somewhere in the combined output.
+  const root = await Deno.makeTempDir({
+    prefix: "run-soak-real-assert-propstr-",
+  });
+  try {
+    const file = await writeRealPropertyTestFixture(
+      root,
+      "widget",
+      "widget_property_test.ts",
+      `import { assertEquals } from "jsr:@std/assert@1";
+Deno.test("asserts on the literal string 'Property failed after 1 tests'", () => {
+  const actual = "unrelated";
+  assertEquals(actual, "Property failed after 1 tests");
+});
+`,
+    );
+    const { code, stdout } = await runRealSoakCli(root, "widget", file, []);
+    assert(code !== 0, `expected a non-zero exit, got 0. stdout: ${stdout}`);
+    assert(
+      stdout.includes(
+        `::error title=soak-failure::widget ${file}: assertion`,
+      ),
+      `expected a REAL assertion classification even though the diff ` +
+        `contains the literal phrase "Property failed after 1 tests", got: ${stdout}`,
+    );
+    assert(
+      !stdout.includes(
+        `::error title=soak-failure::widget ${file}: property falsified`,
+      ),
+      `must NOT misclassify an ordinary assertEquals(actual, "Property ` +
+        `failed after 1 tests") failure as a falsified property, got: ${stdout}`,
     );
   } finally {
     await Deno.remove(root, { recursive: true });

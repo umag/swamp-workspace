@@ -568,19 +568,34 @@ Deno.test("update-subscribed: error path — non-ok HTTP status throws", async (
 // search
 // ---------------------------------------------------------------------------
 
-Deno.test("search: happy path — GETs /api/search/?q=<query>, writes results verbatim", async () => {
+Deno.test("search: happy path — GETs /api/search/?query=<query>, writes results verbatim", async () => {
   const { ctx, written } = makeCtx();
   const results = [{ youtube_id: "synVid00001", title: "T1" }];
   await withOneResponse({ results }, 200, async (calls) => {
     await run("search", { query: "keynote" }, ctx);
     assertEquals(new URL(calls[0].url).pathname, "/api/search/");
-    assertEquals(new URL(calls[0].url).searchParams.get("q"), "keynote");
+    assertEquals(new URL(calls[0].url).searchParams.get("query"), "keynote");
   });
   const res = written.find((w) => w.spec === "search");
   assert(res);
   assertEquals(res.payload.results, results);
   assertEquals(res.payload.total, 1);
   assertEquals(res.payload.query, "keynote");
+});
+
+Deno.test("search: regression — the param is named `query`, NOT `q`; TubeArchivist rejects `q` with 400 no-search-query-specified", async () => {
+  const { ctx } = makeCtx();
+  await withOneResponse({ results: [] }, 200, async (calls) => {
+    await run("search", { query: "keynote" }, ctx);
+    const params = new URL(calls[0].url).searchParams;
+    // The real API answers a `q=` request with
+    // 400 {"message":"no search query specified"} — every call 404s the
+    // caller's intent silently until they read the body. Assert the absence
+    // of the wrong param, not just the presence of the right one, so a
+    // future "send both to be safe" edit is also caught.
+    assertEquals(params.get("query"), "keynote");
+    assertEquals(params.get("q"), null);
+  });
 });
 
 Deno.test("search: error path — non-ok HTTP status throws", async () => {

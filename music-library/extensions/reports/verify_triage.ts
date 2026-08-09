@@ -287,6 +287,20 @@ function renderMarkdown(
   return lines.join("\n");
 }
 
+/**
+ * The `@magistr/music-verify-triage` model-scope report.
+ *
+ * Turns the newest `verify` resource into a worklist instead of a wall of
+ * per-file pass/fail rows: unreadable files (flagged as suspected non-audio
+ * junk when the path looks like a plugin/skin), truncated files split by
+ * cause (known-incomplete sources, suspiciously large VBR-estimate gaps,
+ * and real losses), decode-error files split into systematically damaged
+ * directories worth re-sourcing whole vs. isolated one-off glitches, and
+ * lossless-format corruption called out on its own as the bit-rot signal.
+ * When a `dupes` resource is also present, damaged directories that belong
+ * to a duplicate cluster get a "healthy copy may exist" pointer to the
+ * alternative path.
+ */
 export const report = {
   name: "@magistr/music-verify-triage",
   description:

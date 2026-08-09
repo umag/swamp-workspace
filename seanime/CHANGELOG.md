@@ -3,9 +3,10 @@
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-2a, full build,
-`ext-quality-bf-seanime`, child of `ext-quality-test-backfill`). No behavior
-change — `seanime.ts` and `manifest.yaml` are byte-for-byte unchanged and the
-model `version` stays `2026.07.16.2`.
+`ext-quality-bf-seanime`, child of `ext-quality-test-backfill`), plus a model
+upgrade-chain repair. No behavior change to any method — `manifest.yaml` and the
+model `version` (`2026.07.16.2`) are unchanged; `seanime.ts` only gains two
+metadata-only `upgrades[]` entries (see below), no method/schema edits.
 
 - Added `extensions/models/seanime_methods_test.ts` (methods — all 8 methods
   happy + error path, `X-Seanime-Token` header presence, credential-leak sweep,
@@ -35,17 +36,31 @@ model `version` stays `2026.07.16.2`.
   property soak. `imports` map is unchanged (`{ zod }` only); test deps
   (`jsr:@std/assert@1`, `npm:fast-check@4.8.0`) are pinned direct specifiers in
   the test files themselves.
+- **Upgrade-chain repair**: `model.upgrades[]` previously ended at
+  `2026.04.05.2` while `model.version` was already `2026.07.16.2` (the
+  registry's actual published lineage is `2026.05.25.1` -> `2026.07.16.2` — the
+  `2026.04.05.x` versions predate publication and were never on the registry),
+  so `swamp extension quality` errored on the broken chain instead of scoring
+  the extension. Added two identity lineage-repair bridge entries
+  (`2026.04.05.2 -> 2026.05.25.1 -> 2026.07.16.2`,
+  `upgradeAttributes: (old)
+  => old`) after diffing `GlobalArgsSchema`
+  (`baseUrl`/`token`) across the commit that first packaged `seanime.ts` into
+  this repo (`a82ecae`, model version `2026.05.25.1`) and the commit that last
+  bumped `model.version` (`7eb5eec`, version-alignment only) — the schema is
+  byte-identical across both hops, so identity is correct, not assumed. Both
+  entries' descriptions name the real reason for each version bump (packaging
+  into the workspace, then manifest-version alignment) instead of a bare "no
+  changes". The chain now terminates at `model.version`, so
+  `swamp extension push
+  seanime/manifest.yaml --dry-run -y` and
+  `swamp extension quality` both succeed from a cold cache.
 - `quality.yaml`: all five required suites plus `docs.readme`/ `docs.changelog`
   flip from `backlog` to `present`; `docs.skill` recorded `na` (seanime bundles
-  no Claude skill). `ratchet` stays `baselinePercentage: 0` with an honest label
-  — `swamp extension quality
-  seanime/manifest.yaml --json` errors on a broken
-  model-upgrade chain (`seanime.ts` declares an upgrade `2026.04.05.1` ->
-  `2026.04.05.2` against a `2026.07.16.2` model version) that predates this
-  change and is unfixable here since `seanime.ts` is byte-frozen; the extension
-  is therefore UNSCORABLE by the live registry scorer, tracked in
-  `workspace-ratchet-scorer-blockers`. `score_ratchet.ts` reports an unscorable
-  extension as SKIPPED, never a CI failure, so this stays green.
+  no Claude skill). `ratchet` is restamped from the now-real
+  `swamp extension quality seanime/manifest.yaml --json` output:
+  `baselinePercentage: 0` / UNSCORABLE -> `baselinePercentage: 100` / Grade A
+  (14/14). Un-blocks `workspace-ratchet-scorer-blockers`.
 - Removed from `quality-allowlist.txt` in the same change (shrink-only guard —
   `quality-offenders.baseline.txt` is untouched, write-once).
 

@@ -19,15 +19,18 @@
  *      arbitrary generated config body (built from a small vocabulary of
  *      disk-line / interface-block / filler shapes), feeding the
  *      post-processed output back through a second pass changes nothing.
- *  (d) nodeIP appears verbatim as exactly ONE argv element for ANY string,
- *      including ones with shell metacharacters — no shell is ever
- *      interpreting it (Deno.Command is invoked with array args).
+ *  (d) nodeIP reaches argv verbatim in its own slots (discovered positionally
+ *      against a sentinel reference run, not by naming flag literals) for
+ *      ANY string, including ones with shell metacharacters, and never
+ *      perturbs the rest of the scaffold — no shell is ever interpreting it
+ *      (Deno.Command is invoked with array args).
  *  (e) outputFile -> resource-name derivation is a stable, deterministic
  *      function: same input -> same name, every "/" and "." replaced with
  *      "-", nothing else changed.
  */
 import fc from "npm:fast-check@4.8.0";
 import { parse as parseYaml } from "jsr:@std/yaml@1.0.10";
+import { assertEquals } from "jsr:@std/assert@1";
 import { model } from "./talm_cluster.ts";
 
 // Property iteration count — overridable for the nightly soak via
@@ -326,45 +329,145 @@ Deno.test("property: templateNode post-processing is idempotent — reprocessing
 });
 
 // ---------------------------------------------------------------------------
-// (d) nodeIP appears verbatim as exactly ONE argv element, for ANY string
-// (including shell-metacharacter-shaped ones) — no-shell-injection, property
-// form of the contract-fixture suite's fixed example
+// (d) nodeIP reaches argv verbatim in its own slots and never perturbs the
+// scaffold, for arbitrary strings — no-shell-injection, property form of the
+// contract-fixture suite's fixed example
+//
+// PRIOR ORACLE (removed) counted GLOBAL occurrences of nodeIP in argv:
+//   argv.length === 8 && argv[2] === nodeIP && argv[4] === nodeIP &&
+//     argv.filter((a) => a === nodeIP).length === 2
+// The nightly soak falsified this after 87,042 cases with
+// `Counterexample: ["-e"]`. Root cause: templateNode's scaffold argv is
+// ["template", "-e", nodeIP, "-n", nodeIP, "-t", template, "-i"], and "-e" is
+// simultaneously a scaffold FLAG LITERAL and a value the `fc.string` arbitrary
+// can legitimately generate. When nodeIP === "-e", the global occurrence
+// count is 3 (the flag itself, plus nodeIP's two real slots), not 2, so the
+// filter().length === 2 clause fails even though nodeIP landed correctly,
+// verbatim, unsplit, in exactly its two slots — no injection occurred. THE
+// MODEL WAS CORRECT; the oracle's use of a global count (rather than
+// checking positions) was wrong.
+//
+// Fix: derive the expected argv SHAPE from the model itself instead of
+// hand-copying its flag literals into a second oracle (an oracle must not
+// share constants with the code under test — the old oracle didn't share
+// literals directly, but it shared the *same failure surface*: "-e" is both
+// a scaffold token and a member of the arbitrary's domain). Invoke
+// templateNode once with a sentinel nodeIP that cannot coincide with any
+// flag or the default template path, and record which argv POSITIONS it
+// landed in — those are nodeIP's slots, discovered rather than named. For
+// every arbitrary nodeIP the property then asserts POSITIONALLY: nodeIP
+// appears verbatim at exactly those slots, and every other position is
+// byte-identical to the reference run (i.e. the scaffold truly does not
+// depend on nodeIP's value). This is strictly STRONGER than the old
+// global-count oracle — it also catches a regression where nodeIP leaked
+// into or scrambled a scaffold slot — and it is immune to the "-e"
+// coincidence because it never compares nodeIP against the scaffold's own
+// literals, only against its own reference-run positions.
 // ---------------------------------------------------------------------------
 
-Deno.test("property: nodeIP travels as exactly ONE unmodified argv element, for arbitrary strings", async () => {
+// Spaces + all-caps: can't collide with any of templateNode's flags
+// ("-e"/"-n"/"-t"/"-i"), the literal "template", or the default template
+// path "templates/controlplane.yaml" — so every slot this sentinel lands in
+// is unambiguously a nodeIP slot, not a scaffold literal.
+const NODEIP_SENTINEL = " NODEIP ";
+
+async function templateArgvForNodeIP(nodeIP: string): Promise<string[]> {
+  return await withTempClusterDir(async (dir) => {
+    const { ctx } = makeCtx(dir);
+    let argv: string[] = [];
+    await withCommandStub(
+      {
+        success: true,
+        stdout: "machine:\n  install:\n    disk: /dev/vda\n",
+        stderr: "",
+      },
+      async (calls) => {
+        await run(
+          "templateNode",
+          { nodeIP, outputFile: "nodes/p.yaml" },
+          ctx,
+        );
+        argv = calls[0].args;
+      },
+    );
+    return argv;
+  });
+}
+
+Deno.test("property: nodeIP reaches argv verbatim in its own slots and never perturbs the scaffold, for arbitrary strings", async () => {
+  const referenceArgv = await templateArgvForNodeIP(NODEIP_SENTINEL);
+  const slots = referenceArgv
+    .map((value, i) => (value === NODEIP_SENTINEL ? i : -1))
+    .filter((i) => i !== -1);
+  // Pins the shape (nodeIP occupies exactly two argv slots) WITHOUT naming
+  // which flags precede them — if templateNode's argv shape ever changes,
+  // this fails loudly here rather than the property below silently checking
+  // the wrong positions.
+  assertEquals(slots.length, 2);
+
   await fc.assert(
     fc.asyncProperty(
       fc.string({ minLength: 1, maxLength: 40 }),
       async (nodeIP) => {
-        return await withTempClusterDir(async (dir) => {
-          const { ctx } = makeCtx(dir);
-          let argv: string[] = [];
-          await withCommandStub(
-            {
-              success: true,
-              stdout: "machine:\n  install:\n    disk: /dev/vda\n",
-              stderr: "",
-            },
-            async (calls) => {
-              await run(
-                "templateNode",
-                { nodeIP, outputFile: "nodes/p.yaml" },
-                ctx,
-              );
-              argv = calls[0].args;
-            },
-          );
-          return (
-            argv.length === 8 &&
-            argv[2] === nodeIP &&
-            argv[4] === nodeIP &&
-            argv.filter((a) => a === nodeIP).length === 2
-          );
-        });
+        const argv = await templateArgvForNodeIP(nodeIP);
+        if (argv.length !== referenceArgv.length) return false;
+        for (let i = 0; i < argv.length; i++) {
+          if (slots.includes(i)) {
+            if (argv[i] !== nodeIP) return false;
+          } else if (argv[i] !== referenceArgv[i]) return false;
+        }
+        return true;
       },
     ),
     FC_RUNS,
   );
+});
+
+// Regression: nodeIP === "-e" is the exact counterexample the nightly soak
+// found (Counterexample: ["-e"], after 87,042 cases). Pinned as a fixed,
+// non-property test so it always runs, independent of fast-check's random
+// seed. Under the OLD global-occurrence oracle this case failed (verified
+// directly against current model code: argv comes out
+// ["template","-e","-e","-n","-e","-t","templates/controlplane.yaml","-i"],
+// so argv.filter((a) => a === "-e").length === 3, not 2). Under the new
+// positional oracle it passes, because nodeIP still lands verbatim in
+// exactly its two slots and nothing else in the scaffold moved.
+Deno.test("regression: nodeIP === '-e' (a scaffold flag literal) passes the positional oracle", async () => {
+  const referenceArgv = await templateArgvForNodeIP(NODEIP_SENTINEL);
+  const slots = referenceArgv
+    .map((value, i) => (value === NODEIP_SENTINEL ? i : -1))
+    .filter((i) => i !== -1);
+
+  const nodeIP = "-e";
+  const argv = await templateArgvForNodeIP(nodeIP);
+
+  // The old oracle: this MUST be false for "-e" — that is the bug.
+  const oldOracleWouldHavePassed = argv.length === 8 &&
+    argv[2] === nodeIP &&
+    argv[4] === nodeIP &&
+    argv.filter((a) => a === nodeIP).length === 2;
+  assertEquals(
+    oldOracleWouldHavePassed,
+    false,
+    "the old global-occurrence oracle is expected to falsely reject '-e' — " +
+      "if this ever becomes true, the counterexample this test pins no " +
+      "longer demonstrates the historical defect",
+  );
+
+  // The new oracle: this MUST be true for "-e" — nodeIP still travelled
+  // verbatim, unmodified, in exactly its own two slots.
+  assertEquals(argv.length, referenceArgv.length);
+  for (let i = 0; i < argv.length; i++) {
+    if (slots.includes(i)) {
+      assertEquals(argv[i], nodeIP, `slot ${i} should carry nodeIP verbatim`);
+    } else {
+      assertEquals(
+        argv[i],
+        referenceArgv[i],
+        `slot ${i} is scaffold and must not depend on nodeIP`,
+      );
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

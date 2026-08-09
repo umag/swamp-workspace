@@ -271,10 +271,17 @@ jobs:
         working-directory: scripts
         run: deno task test
 
-      - name: Setup swamp (pinned — a rubric/auth change is a deliberate bump)
+      # Tracks the latest swamp release rather than a pin, matching the two
+      # extension-publish jobs below. The pin it replaces (20260727.000815.0)
+      # existed to keep `swamp extension quality` scores reproducible, but the
+      # ratchet already handles the case it was guarding: score_ratchet.ts
+      # compares rubricVersion first and reports a rubric change as
+      # "rebaseline required", NOT a failure. What tracking latest does expose
+      # is score drift WITHIN a rubric version — that surfaces as a ratchet
+      # failure naming the extension and both percentages, which is the
+      # signal we want rather than silently scoring against a stale binary.
+      - name: Setup swamp (latest — the ratchet is rubric-version-aware)
         uses: ./.github/actions/setup-swamp
-        with:
-          version: "20260727.000815.0-sha.db74fcac"
 
       - name: Smoke-check — this job stays tokenless
         run: |
@@ -326,6 +333,11 @@ jobs:
         working-directory: scripts
         run: deno task quality:soak --json ../soak-summary.json
 
+      - name: Check soak-task parity (generated vs hand-authored test:soak)
+        if: ${{ !cancelled() }}
+        working-directory: scripts
+        run: deno task quality:soak-parity --json ../soak-parity-summary.json
+
       - name: Upload compliance summary
         if: always()
         uses: actions/upload-artifact@v7
@@ -337,6 +349,7 @@ jobs:
             ratchet-summary.json
             property-harness-summary.json
             soak-summary.json
+            soak-parity-summary.json
 
   skill-review:
     name: skill-review (tessl)

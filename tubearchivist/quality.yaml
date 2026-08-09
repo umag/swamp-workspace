@@ -3,9 +3,14 @@
 # existing quality.yaml, so edits (justifications, suite states) persist.
 #
 # Backfilled to full five-suite compliance (ext-quality-bf-tubearchivist,
-# wave-2a of the Phase D extension-quality backfill). tubearchivist.ts is
-# unmodified — every suite drives model.methods.<m>.execute() against a
-# stubbed fetch + fake context, characterizing already-shipped behavior.
+# wave-2a of the Phase D extension-quality backfill). Every suite drives
+# model.methods.<m>.execute() against a stubbed fetch + fake context.
+#
+# NOTE: wave-2a left tubearchivist.ts byte-frozen and every suite purely
+# characterizing. That is no longer true as of 2026.08.08.1, which fixed the
+# `search` q/query param bug and marked `token` sensitive — the assertions
+# covering those two are real regression tests (they failed before the fix),
+# not characterization pins. Everything predating them stays characterization.
 schemaVersion: 1
 extension: tubearchivist
 tests:
