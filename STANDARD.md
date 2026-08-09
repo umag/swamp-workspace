@@ -336,10 +336,63 @@ deno task quality:ratchet            # score_ratchet.ts (shells out to swamp)
 deno task quality:harness            # check_property_harness.ts
 deno task quality:soak               # check_soak.ts (property-soak permissions)
 deno task quality:soak-parity        # check_soak_parity.ts (generated vs hand-authored test:soak)
+deno task quality:upgrades           # check_upgrade_chain.ts (model upgrades[] chain terminus)
 deno task test                       # the validators' own unit tests
 ```
 
 Every script also answers `--help` with its usage and exit-code contract.
+
+## The upgrade-chain rule
+
+`scripts/quality/check_upgrade_chain.ts` (built on the hand-rolled
+comment/string/regex-aware parser in `scripts/quality/model_declarations.ts`,
+dependency-free by design) checks, for every manifest-listed model file of
+every extension: **if** a model declaration's `upgrades[]` is a non-empty
+literal array, its LAST entry's `toVersion` must equal that declaration's own
+`version`. This is exactly what swamp's own push-time validator enforces —
+the gate exists to move that failure from a blocked/broken `master` push to a
+red PR, where it is cheap to fix.
+
+Four things this rule deliberately does **not** require:
+
+- **`upgrades[]` may be absent or empty.** Most declarations in this repo
+  have no migration chain at all (28 of 59 today), and that is legal —
+  the rule only fires on a NON-EMPTY chain whose terminus is wrong.
+- **The chain need not be contiguous.** swamp itself accepts a gapped chain
+  (e.g. an entry from `1.0.0` to `2.0.0` followed by one from `5.0.0` to
+  `9.0.0`, with no entry covering the gap in between); this gate does not
+  add a stricter requirement swamp doesn't enforce.
+- **Manifest-vs-model version parity is not this gate's job.** The existing
+  "Check model version matches manifest" CI step already owns that.
+- **Append-only is a convention this gate does not enforce.** The correct
+  way to repair a broken chain is always to bump the version and APPEND a
+  new `upgrades[]` entry that carries the fix forward, never to edit an
+  already-published entry's `fromVersion`/`toVersion` in place — but this
+  gate only ever reads ONE revision (the working tree at HEAD), so it
+  cannot tell an appended entry from an edited one. Enforcing this for real
+  needs a base-diff (parse the file at `base` too, and fail if any entry
+  present there changed shape at `head`) — a natural fit for
+  `release_notes_gate.ts`'s existing base-resolution logic, not for this
+  GLOBAL, snapshot-only compliance job.
+
+A chain the gate cannot read as a literal array — a hoisted identifier, a
+call expression, a spread (`upgrades: [...CHAIN]`), or a spread on the model
+object itself (`{ ...CHAIN_BASE, version: "…" }`) — is rejected as
+`upgrade-chain-indirect` / `model-declaration-indirect` rather than silently
+passed, **because swamp itself is blind to at least one of those shapes**:
+measured, a model object built via `{ ...CHAIN_BASE, version: "…" }` whose
+hoisted chain has a broken terminus passes `swamp extension push --dry-run`
+with exit 0, since swamp validates the deployed object and that spread's
+`upgrades[]` never becomes part of this declaration's own readable text. This
+gate is the only enforcement that exists for that shape anywhere.
+
+The `compliance` job is deliberately **not** in `extension-publish`'s
+`needs:` (see "Why the compliance job runs GLOBAL, not diff-scoped" above),
+so this gate is PR-time-only enforcement. The master-push backstop for a
+broken LITERAL chain is swamp's own client-side validator (which blocks the
+push) plus `registry-drift` (which would notice the publish never happened);
+there is no backstop at all for the indirect shapes (spread, hoisted
+identifier, call expression) beyond this gate.
 
 ## Scaffolding a new extension's quality.yaml
 

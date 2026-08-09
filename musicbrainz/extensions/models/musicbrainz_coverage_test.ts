@@ -989,22 +989,22 @@ Deno.test("sync-artist-discographies: a discography that ends naturally within t
 });
 
 // ---------------------------------------------------------------------------
-// Version self-consistency — model.version must equal the newest
-// upgrades[].toVersion, so the upgrades chain and the published version
-// can never silently drift apart.
+// Chain presence — musicbrainz declares a non-empty upgrades[] migration
+// chain. The TERMINUS rule (the newest upgrades[].toVersion must equal
+// model.version) moved to the repo-wide
+// scripts/quality/check_upgrade_chain.ts gate, which owns that check for
+// every manifest-listed model file, not just this one; what remains here
+// is musicbrainz's OWN presence requirement — this package specifically
+// commits to declaring a migration chain (5 entries today), which the
+// global gate does not and must not enforce (28 of 59 real declarations
+// legitimately have no chain at all, and an absent one is legal).
 // ---------------------------------------------------------------------------
 
-Deno.test("model surface: model.version equals the newest upgrades[].toVersion", () => {
+Deno.test("model surface: model.upgrades declares a non-empty migration chain", () => {
   const upgrades = model.upgrades as Array<
     { fromVersion: string; toVersion: string }
   >;
   assert(upgrades.length > 0, "model.upgrades must not be empty");
-  const newest = upgrades[upgrades.length - 1];
-  assertEquals(
-    newest.toVersion,
-    model.version,
-    "the LAST upgrades entry's toVersion must equal model.version",
-  );
 });
 
 // ---------------------------------------------------------------------------

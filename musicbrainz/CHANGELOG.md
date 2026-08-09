@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Narrowed `musicbrainz_coverage_test.ts`'s "model surface" test to musicbrainz's
+own presence requirement (`model.upgrades` must be non-empty). The terminus rule
+it used to also assert — the newest `upgrades[].toVersion` must equal
+`model.version` — is now owned repo-wide by
+`scripts/quality/check_upgrade_chain.ts`, a new PR-time gate that checks every
+manifest-listed model file's upgrade chain, not just this package's. No code or
+version change; test-only.
+
 ## 2026.08.07.1
 
 Fixes `musicbrainz-search-resource-collision`. `model.version` and
