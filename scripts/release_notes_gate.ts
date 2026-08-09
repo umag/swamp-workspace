@@ -76,6 +76,7 @@
 import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 import { parseManifest } from "./registry_drift.ts";
 import { listExtensions } from "./quality/extensions.ts";
+import { sanitizeForAnnotation } from "./lib/annotation.ts";
 
 // ============================================================================
 // Types
@@ -225,27 +226,6 @@ function isValidManifestPath(path: string): boolean {
 
 function isValidVersion(version: string): boolean {
   return version.length > 0 && !/\s/.test(version);
-}
-
-/**
- * Escapes CR/LF (and other C0 control bytes) in a repo-controlled path or
- * version string before it is embedded in a `Violation.what` — a directory
- * or version string may legally contain a raw newline, and an unescaped one
- * would start a second physical line at column 0 of the `::error`
- * annotation it eventually reaches, where GitHub Actions parses a leading
- * `::` as a NEW workflow command (e.g. `::stop-commands::`).
- */
-function sanitizeForAnnotation(value: string): string {
-  return value.replace(
-    // deno-lint-ignore no-control-regex
-    /[\x00-\x1f\x7f]/g,
-    (c) => {
-      if (c === "\n") return "\\n";
-      if (c === "\r") return "\\r";
-      if (c === "\t") return "\\t";
-      return "\\x" + c.charCodeAt(0).toString(16).padStart(2, "0");
-    },
-  );
 }
 
 /**

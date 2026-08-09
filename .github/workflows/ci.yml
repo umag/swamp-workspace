@@ -209,7 +209,7 @@ jobs:
                 echo "::error file=$EXT/$f::model version \"$mv\" != manifest \"$manifest_ver\""
                 rc=1
               fi
-            done < <(grep -oE '^[[:space:]]*version:[[:space:]]*"[0-9][^"]*"' "$f" \
+            done < <(grep -aoE '^[[:space:]]*version:[[:space:]]*"[0-9][^"]*"' "$f" \
               | grep -oE '"[0-9][^"]*"' | tr -d '"')
           done
           exit $rc
@@ -249,6 +249,12 @@ jobs:
   compliance:
     name: compliance (extension quality standard)
     runs-on: ubuntu-latest
+    # Bounds any future super-linear gate (the quality:upgrades DoS fixed in
+    # this PR measured 95s at 40k lines with NO bound at all — unbounded,
+    # the runner burns the full 360-minute Actions default) to a red/stuck
+    # check in minutes rather than hours. This job's own steps normally
+    # finish in a few minutes.
+    timeout-minutes: 20
     # Deliberately NOT `needs: discover` and no diff-scoped `if:` — this job
     # runs GLOBAL, every extension, every PR and push, regardless of which
     # files a given change touched. See STANDARD.md "Why the compliance job
@@ -302,7 +308,7 @@ jobs:
           fi
           echo "OK: no swamp credentials present in this job"
 
-      # Each of the three gates runs regardless of whether an earlier one
+      # Each of the gates below runs regardless of whether an earlier one
       # failed (`!cancelled()`, not the default "stop on first failure") —
       # the same aggregate-don't-abort philosophy check_compliance.ts itself
       # applies across extensions, applied here across gates: one CI run

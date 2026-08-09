@@ -18,6 +18,13 @@
  * naive glob over `<ext>/extensions/models/*.ts` by exactly one file
  * (telegram-import's `*_test_helpers.ts`, shipped by no manifest) — scanning
  * that file would be scanning something swamp itself never reads as a model.
+ * DISCOVERY ITSELF FAILS CLOSED, one layer above checkModelFile's five
+ * rules: a missing/unparseable manifest, an absent/non-list/non-string-list
+ * `models:` key, a manifest entry that escapes the extension directory
+ * (`../../../etc/hosts`), and a listed path that does not resolve to a
+ * readable file all raise `manifest-models-unreadable` rather than
+ * silently shrinking the file set while the extension still counts as
+ * checked — see readManifestModels() and isContainedIn() below.
  *
  * THREAT MODEL. This gate exists because a broken chain is otherwise
  * invisible everywhere except swamp's own client-side push validator: fmt,
@@ -49,10 +56,11 @@
  * chain); re-check manifest-vs-model version parity (ci.yml's "Check model
  * version matches manifest" step owns that already).
  */
-import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
+import { dirname, fromFileUrl, join, relative, resolve } from "jsr:@std/path@1";
 import { parse as parseYaml } from "jsr:@std/yaml@1.0.10";
 import { listExtensions } from "./extensions.ts";
 import { scanModelDeclarations } from "./model_declarations.ts";
+import { sanitizeForAnnotation } from "../lib/annotation.ts";
 
 export interface Violation {
   extension: string;
@@ -66,40 +74,132 @@ export interface Violation {
   file: string;
 }
 
+/** Aggregate counts across every scanned file — printed on the CLI summary
+ * line and included in `--json` output (build-ci-report.ts's sticky PR
+ * comment reads it) so a healthy run and a run that silently discovered
+ * nothing are no longer indistinguishable at a glance. Never asserted on
+ * in tests, per plan v4: `model-declaration-unreadable` (and friends) are
+ * the structural alarm; these are instrumentation, not a pinned contract. */
+export interface Counts {
+  modelFiles: number;
+  declarations: number;
+  versioned: number;
+  chains: number;
+  entries: number;
+  emptyChains: number;
+  noChain: number;
+}
+
+function emptyCounts(): Counts {
+  return {
+    modelFiles: 0,
+    declarations: 0,
+    versioned: 0,
+    chains: 0,
+    entries: 0,
+    emptyChains: 0,
+    noChain: 0,
+  };
+}
+
 export interface CheckUpgradeChainResult {
   checked: string[];
   violations: Violation[];
+  counts: Counts;
+}
+
+/** Result of one extension's manifest-driven model discovery: either a list
+ * of `models:` paths to scan, or a single fail-closed violation explaining
+ * why discovery itself could not proceed. */
+interface ManifestModels {
+  paths: string[];
+  violation: Violation | null;
+}
+
+function manifestUnreadable(extension: string, why: string): ManifestModels {
+  const manifestRelPath = join(extension, "manifest.yaml");
+  return {
+    paths: [],
+    violation: {
+      extension,
+      rule: "manifest-models-unreadable",
+      what: `${manifestRelPath}: ${why}`,
+      why: "discovery is the layer every fail-closed rule in " +
+        "checkModelFile sits on top of — a manifest this gate cannot read " +
+        "as a 'models: [...]' list of file paths must not silently drop " +
+        "the extension's model files from coverage while the extension " +
+        "still counts as checked",
+      fix: `fix ${manifestRelPath} so its 'models:' key is a non-empty ` +
+        "YAML list of string paths to this extension's model files",
+      file: manifestRelPath,
+    },
+  };
 }
 
 /** Reads `<root>/<extension>/manifest.yaml`'s `models:` list — the ONLY
  * source of "which files does this extension ship as models", per
  * scripts/quality/model_declarations.ts's caller contract and
  * check_upgrade_chain.test.ts's "manifest-driven, not glob-driven" pin.
- * Returns [] when the manifest is missing/unreadable/has no `models:` list
- * — that shape is a different gate's problem (manifest-vs-model version
- * parity, ci.yml:187-210), not this one's. */
+ * FAILS CLOSED: a missing/unparseable manifest, an absent/non-list/
+ * non-string-list `models:` key, or an empty list all return a
+ * `manifest-models-unreadable` violation rather than a silent `[]` — five
+ * shapes (no `models:`, a list of mappings, a scalar, invalid YAML, and —
+ * checked by the caller once it tries to read each path — a path typo)
+ * previously left a broken chain unreported while the extension still
+ * counted as checked, defeating the fail-closed guarantee every rule in
+ * checkModelFile provides. Manifest-vs-model version PARITY (the values
+ * matching) is still a different gate's job — ci.yml's "Check model
+ * version matches manifest" step; this only asserts the manifest is
+ * readable enough to name files at all. */
 async function readManifestModels(
   root: string,
   extension: string,
-): Promise<string[]> {
+): Promise<ManifestModels> {
   let raw: string;
   try {
     raw = await Deno.readTextFile(
       join(root, extension, "manifest.yaml"),
     );
   } catch {
-    return [];
+    return manifestUnreadable(extension, "manifest.yaml could not be read");
   }
   let parsed: unknown;
   try {
     parsed = parseYaml(raw);
   } catch {
-    return [];
+    return manifestUnreadable(extension, "manifest.yaml is not valid YAML");
   }
-  if (!parsed || typeof parsed !== "object") return [];
+  if (!parsed || typeof parsed !== "object") {
+    return manifestUnreadable(
+      extension,
+      "manifest.yaml does not parse to a mapping",
+    );
+  }
   const models = (parsed as Record<string, unknown>).models;
-  if (!Array.isArray(models)) return [];
-  return models.filter((m): m is string => typeof m === "string");
+  if (!Array.isArray(models) || models.length === 0) {
+    return manifestUnreadable(
+      extension,
+      "'models:' is missing, empty, or not a list",
+    );
+  }
+  if (!models.every((m): m is string => typeof m === "string")) {
+    return manifestUnreadable(
+      extension,
+      "'models:' contains an entry that is not a plain string path",
+    );
+  }
+  return { paths: models, violation: null };
+}
+
+/** True when `candidate` (already `resolve()`d) stays under `base`
+ * (already `resolve()`d) — used to reject a manifest `models:` entry like
+ * `"../../../../etc/hosts"` that would otherwise escape the extension
+ * directory once joined and read. Matches check_property_harness.ts's /
+ * check_soak.ts's own `relative()`-based containment check: a `relative`
+ * path that starts with `..` climbed out of `base`. */
+function isContainedIn(base: string, candidate: string): boolean {
+  const rel = relative(base, candidate);
+  return rel !== ".." && !/^\.\.[/\\]/.test(rel);
 }
 
 // The belt-and-braces cross-check for `upgrade-chain-unreadable`: fires
@@ -120,8 +220,10 @@ function checkModelFile(
   extension: string,
   relPath: string,
   source: string,
+  counts: Counts,
 ): Violation[] {
   const violations: Violation[] = [];
+  counts.modelFiles++;
   const fix = (file: string) =>
     `read ${file} — swamp's own push-time validator explains the exact ` +
     "shape it requires; fix the upgrades[] chain (or the version) there";
@@ -144,39 +246,83 @@ function checkModelFile(
     return violations;
   }
 
-  const versioned = declarations.filter((d) =>
-    d.version !== null || d.versionError
-  );
+  // Model identity is "carries a depth-1 `type` key" — the one thing every
+  // real model declaration has and an unrelated helper object (`export
+  // const schemaInfo = { version: 3, strict: true }`) does not. Filtering
+  // on "has a version key" alone (the previous test) treats ANY exported
+  // object literal with a `version` field as a model, which is both a
+  // global false positive (any such helper reddens the whole repo) and a
+  // false negative (a real model whose `version:` was accidentally
+  // stripped drops out of `versioned` instead of being flagged).
+  counts.declarations += declarations.length;
+  const versioned = declarations.filter((d) => d.hasTypeKey);
+  counts.versioned += versioned.length;
   if (versioned.length === 0) {
     violations.push({
       extension,
       rule: "model-declaration-unreadable",
       what:
-        `${relPath} yields zero 'export const <ident> = { ... }' declarations carrying a version key`,
+        `${relPath} yields zero 'export const <ident> = { ... }' declarations carrying a depth-1 'type' key`,
       why:
         "a manifest-listed model file must declare its model as a readable " +
-        "object literal with a version key so the upgrade-chain rule can " +
-        "evaluate it — a parse gap here is indistinguishable from a real " +
-        "defect and must fail closed rather than pass silently",
+        "object literal with a 'type' key (swamp's own model-identity " +
+        "discriminator) so the upgrade-chain rule can find and evaluate it " +
+        "— a parse gap here is indistinguishable from a real defect and " +
+        "must fail closed rather than pass silently",
       fix: `confirm ${relPath} exports its model as ` +
-        "'export const <ident> = { version: \"…\", … }'",
+        '\'export const <ident> = { type: "@…", version: "…", … }\'',
       file: relPath,
     });
     return violations;
   }
 
   for (const decl of versioned) {
-    if (decl.versionError) {
+    if (decl.versionError || decl.version === null) {
       violations.push({
         extension,
         rule: "model-version-unreadable",
-        what:
-          `${relPath}: declaration '${decl.name}' has more than one depth-1 ` +
-          "'version' key, or its value is not a plain double-quoted string",
+        what: `${relPath}: declaration '${decl.name}' has no depth-1 ` +
+          "'version' key, has more than one, or its value is not a plain " +
+          "double-quoted string",
         why: "the chain terminus rule compares upgrades[]'s last toVersion " +
-          "against this declaration's version — an ambiguous or malformed " +
-          "version makes that comparison meaningless",
+          "against this declaration's version — a missing, ambiguous, or " +
+          "malformed version makes that comparison meaningless (and, left " +
+          "unflagged, would silently skip the terminus check entirely)",
         fix: fix(relPath),
+        file: relPath,
+      });
+    }
+
+    if (decl.hasUnreadableProperty) {
+      violations.push({
+        extension,
+        rule: "model-declaration-indirect",
+        what: `${relPath}: declaration '${decl.name}' carries a depth-1 ` +
+          "property whose key could not be read (numeric, computed, or " +
+          "an accessor/modifier shape) — the parser cannot know whether " +
+          "it contributes an upgrades property",
+        why: "a computed key ('[\"upgrades\"]'), a numeric key, or an " +
+          "accessor ('get upgrades() {…}') names the same property to " +
+          "TypeScript as a plain 'upgrades:' but is invisible to both the " +
+          "structural scan and the raw cross-check, so it must fail " +
+          "closed rather than silently drop the property",
+        fix: "give the property a plain bare or quoted string key " +
+          "readable at depth 1 ('upgrades: […]' or '\"upgrades\": […]')",
+        file: relPath,
+      });
+    }
+
+    if (decl.hasDuplicateUpgrades) {
+      violations.push({
+        extension,
+        rule: "model-declaration-indirect",
+        what: `${relPath}: declaration '${decl.name}' has more than one ` +
+          "depth-1 'upgrades' key",
+        why: "JavaScript resolves a duplicate key to the LAST one, but " +
+          "reading only the first (as if it were authoritative) can " +
+          "evaluate a chain that will never actually ship",
+        fix: "remove the duplicate 'upgrades' key, keeping only the one " +
+          "that should ship",
         file: relPath,
       });
     }
@@ -210,10 +356,18 @@ function checkModelFile(
         what: `${relPath}: declaration '${decl.name}' mentions "upgrades:" ` +
           "in its raw text but the parser resolved no depth-1 upgrades property",
         why: "belt-and-braces cross-check: a masking bug that swallowed a " +
-          "real upgrades property would otherwise silently pass as " +
-          "'no chain' — this also fires on an unrelated nested field or a " +
-          'bare comment mentioning "upgrades:", which is an accepted cost',
-        fix: fix(relPath),
+          "real upgrades property would otherwise silently pass as 'no " +
+          "chain' — this also fires on three benign shapes, which is an " +
+          "accepted cost: an unrelated nested field, a bare comment " +
+          'mentioning "upgrades:", or a plain STRING value (e.g. a `note` ' +
+          "or `description` field) that happens to contain the text " +
+          '"upgrades:"',
+        fix: "this declaration has no real upgrades[] chain to fix — the " +
+          'cross-check fired on the text "upgrades:" appearing somewhere ' +
+          "in this declaration's raw source (an unrelated field, a " +
+          "comment, or prose inside a string value). Rename the field, " +
+          "reword the text, or add a real 'upgrades' property if one was " +
+          "intended",
         file: relPath,
       });
       continue;
@@ -221,7 +375,10 @@ function checkModelFile(
 
     switch (decl.chain.kind) {
       case "none":
+        counts.noChain++;
+        break;
       case "empty":
+        counts.emptyChains++;
         break;
       case "indirect":
         violations.push({
@@ -253,6 +410,8 @@ function checkModelFile(
         });
         break;
       case "literal":
+        counts.chains++;
+        counts.entries += decl.chain.entries.length;
         if (decl.version !== null && decl.chain.terminus !== decl.version) {
           violations.push({
             extension,
@@ -282,30 +441,69 @@ function checkModelFile(
  * every declaration — never aborts on the first bad file. `checked`
  * mirrors check_soak.ts's/check_property_harness.ts's Result shape: every
  * extension listExtensions() finds, whether or not it turned up any
- * violation (a missing/unreadable manifest is a different gate's problem
- * — check_compliance.ts / the "Check model version matches manifest" CI
- * step — so it is silently skipped here rather than reported). */
+ * violation. Discovery itself fails CLOSED (readManifestModels /
+ * isContainedIn below) rather than silently skipping an extension whose
+ * manifest can't be read as a `models:` list, or reading a manifest entry
+ * that escapes the extension directory. */
 export async function checkUpgradeChain(
   root: string,
 ): Promise<CheckUpgradeChainResult> {
   const extensions = await listExtensions({ root });
   const violations: Violation[] = [];
+  const counts = emptyCounts();
   for (const extension of extensions) {
-    const modelPaths = await readManifestModels(root, extension);
+    const { paths: modelPaths, violation: discoveryViolation } =
+      await readManifestModels(root, extension);
+    if (discoveryViolation) {
+      violations.push(discoveryViolation);
+      continue;
+    }
+    const extDir = resolve(join(root, extension));
     for (const relModelPath of modelPaths) {
-      let source: string;
-      try {
-        source = await Deno.readTextFile(
-          join(root, extension, relModelPath),
-        );
-      } catch {
+      const relPath = join(extension, relModelPath);
+      const target = resolve(join(root, extension, relModelPath));
+      if (!isContainedIn(extDir, target)) {
+        violations.push({
+          extension,
+          rule: "manifest-models-unreadable",
+          what:
+            `${relPath}: manifest 'models:' entry escapes the extension directory`,
+          why: "a manifest-listed model path is joined onto the extension " +
+            "directory and read under this task's bare --allow-read — an " +
+            "unresolved '..' segment can steer that read at any file on " +
+            "the runner, so it must be rejected rather than silently " +
+            "followed",
+          fix: `fix the offending 'models:' entry in ${
+            join(extension, "manifest.yaml")
+          } so it names a path that stays inside ${extension}/`,
+          file: relPath,
+        });
         continue;
       }
-      const relPath = join(extension, relModelPath);
-      violations.push(...checkModelFile(extension, relPath, source));
+      let source: string;
+      try {
+        source = await Deno.readTextFile(target);
+      } catch {
+        violations.push({
+          extension,
+          rule: "manifest-models-unreadable",
+          what: `${relPath}: manifest-listed model file could not be read`,
+          why: "discovery must fail closed — a manifest entry naming a " +
+            "file that does not exist (or cannot be read) must not " +
+            "silently vanish from coverage",
+          fix:
+            `fix the 'models:' entry in ${
+              join(extension, "manifest.yaml")
+            } so it names a real, readable file, or remove it if ` +
+            `${relModelPath} was renamed or deleted`,
+          file: relPath,
+        });
+        continue;
+      }
+      violations.push(...checkModelFile(extension, relPath, source, counts));
     }
   }
-  return { checked: extensions, violations };
+  return { checked: extensions, violations, counts };
 }
 
 function printHelp() {
@@ -313,7 +511,9 @@ function printHelp() {
     `check_upgrade_chain.ts — every model's upgrades[] chain must terminate at its own version
 
 Usage:
-  deno run --allow-read scripts/quality/check_upgrade_chain.ts [--help] [--json <path>]
+  deno run --allow-read scripts/quality/check_upgrade_chain.ts [--help]
+  deno run --allow-read --allow-write=<path> scripts/quality/check_upgrade_chain.ts --json <path>
+    (--allow-write is only needed with --json, and only needs to cover <path>)
 
 For every manifest-listed model file of every extension, checks that a
 NON-EMPTY literal upgrades[] chain's last entry's toVersion equals the
@@ -347,18 +547,30 @@ if (import.meta.main) {
   const jsonPath = jsonFlagIndex >= 0 ? args[jsonFlagIndex + 1] : undefined;
   const root = Deno.env.get("QUALITY_REPO_ROOT") ??
     join(dirname(fromFileUrl(import.meta.url)), "..", "..");
-  const { checked, violations } = await checkUpgradeChain(root);
-  console.log(`Checked ${checked.length} extension(s).`);
+  const { checked, violations, counts } = await checkUpgradeChain(root);
+  console.log(
+    `Checked ${checked.length} extension(s), ${counts.modelFiles} model ` +
+      `file(s), ${counts.declarations} declaration(s) (${counts.versioned} ` +
+      `versioned): ${counts.chains} chain(s)/${counts.entries} entrie(s), ` +
+      `${counts.emptyChains} empty, ${counts.noChain} with no chain.`,
+  );
   for (const v of violations) {
     console.log(
       `${v.extension}: [${v.rule}] ${v.what}\n  WHY: ${v.why}\n  FIX: ${v.fix}`,
     );
-    console.log(`::error file=${v.file}::${v.what} — ${v.fix}`);
+    // sanitizeForAnnotation guards `v.file` — the one field in a Violation
+    // built from untrusted input (a manifest `models:` entry or extension
+    // directory name) rather than from this gate's own fixed strings; see
+    // scripts/lib/annotation.ts's docblock for the workflow-command-
+    // injection hole this closes.
+    console.log(
+      `::error file=${sanitizeForAnnotation(v.file)}::${v.what} — ${v.fix}`,
+    );
   }
   if (jsonPath) {
     await Deno.writeTextFile(
       jsonPath,
-      JSON.stringify({ checked, violations }, null, 2),
+      JSON.stringify({ checked, violations, counts }, null, 2),
     );
   }
   if (violations.length > 0) {

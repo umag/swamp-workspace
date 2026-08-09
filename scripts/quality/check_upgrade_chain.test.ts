@@ -546,6 +546,213 @@ Deno.test("checkUpgradeChain: discovers model files from the manifest's models: 
 });
 
 // ============================================================================
+// Discovery itself fails closed (PR B review fix) — five manifest shapes
+// that previously left a broken chain unreported while the extension still
+// counted as `checked`.
+// ============================================================================
+
+async function writeManifestOnly(
+  root: string,
+  ext: string,
+  manifestBody: string,
+  modelFiles: Record<string, string>,
+): Promise<void> {
+  await Deno.mkdir(join(root, ext), { recursive: true });
+  await Deno.writeTextFile(join(root, ext, "manifest.yaml"), manifestBody);
+  for (const [relPath, content] of Object.entries(modelFiles)) {
+    const full = join(root, ext, relPath);
+    await Deno.mkdir(dirname(full), { recursive: true });
+    await Deno.writeTextFile(full, content);
+  }
+}
+
+const brokenChainModel = lines(
+  "export const model = {",
+  '  type: "@fixture/widget",',
+  '  version: "2026.08.09.1",',
+  "  upgrades: [",
+  '    { fromVersion: "1.0.0", toVersion: "0.0.0" },',
+  "  ],",
+  "};",
+);
+
+const discoveryFailOpenShapes: Record<string, string> = {
+  "no 'models:' key at all":
+    'manifestVersion: 1\nname: "@fixture/widget"\nversion: "1.0.0"\n',
+  "'models:' as a list of mappings":
+    'manifestVersion: 1\nname: "@fixture/widget"\nversion: "1.0.0"\n' +
+    "models:\n  - path: extensions/models/widget.ts\n",
+  "'models:' as a single scalar":
+    'manifestVersion: 1\nname: "@fixture/widget"\nversion: "1.0.0"\n' +
+    "models: extensions/models/widget.ts\n",
+  "manifest is invalid YAML": "manifestVersion: 1\nname: [unterminated\n",
+};
+
+Deno.test("checkUpgradeChain: discovery fails CLOSED — manifest-models-unreadable, never a silent skip, across four manifest shapes that previously left a broken chain unreported (mutation: revert readManifestModels to 'return []' on any of these -> every one of these fixtures reddens from 1 violation back to 0)", async () => {
+  for (const [label, manifestBody] of Object.entries(discoveryFailOpenShapes)) {
+    await withTempRoot(async (root) => {
+      await writeManifestOnly(root, "widget", manifestBody, {
+        "extensions/models/widget.ts": brokenChainModel,
+      });
+      const { violations } = await checkUpgradeChain(root);
+      assertEquals(
+        violations.length,
+        1,
+        `expected '${label}' to be a fail-closed violation, got: ${
+          JSON.stringify(violations)
+        }`,
+      );
+      assertEquals(violations[0].rule, "manifest-models-unreadable", label);
+    });
+  }
+});
+
+Deno.test("checkUpgradeChain: discovery fails CLOSED — a manifest-listed path that does not resolve to a readable file is a violation, not a silent skip (mutation: revert the 'continue' in checkUpgradeChain's read loop to not push a violation -> reddens to 0)", async () => {
+  await withTempRoot(async (root) => {
+    await writeManifestOnly(
+      root,
+      "widget",
+      'manifestVersion: 1\nname: "@fixture/widget"\nversion: "1.0.0"\n' +
+        "models:\n  - extensions/models/widget_TYPO.ts\n",
+      { "extensions/models/widget.ts": brokenChainModel },
+    );
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "manifest-models-unreadable");
+  });
+});
+
+Deno.test("checkUpgradeChain: a manifest 'models:' entry that escapes the extension directory is rejected, never read (mutation: drop the isContainedIn() check -> this fixture's sentinel file would be read and reddens to a DIFFERENT rule, model-declaration-unreadable, instead of manifest-models-unreadable)", async () => {
+  await withTempRoot(async (root) => {
+    await Deno.writeTextFile(
+      join(root, "sentinel.ts"),
+      "export const NOT_A_MODEL_FILE = true;\n",
+    );
+    await writeManifestOnly(
+      root,
+      "widget",
+      'manifestVersion: 1\nname: "@fixture/widget"\nversion: "1.0.0"\n' +
+        "models:\n  - ../sentinel.ts\n",
+      {},
+    );
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "manifest-models-unreadable");
+    assert(
+      violations[0].what.includes("escapes the extension directory"),
+      JSON.stringify(violations),
+    );
+  });
+});
+
+// ============================================================================
+// Model identity is the 'type' key, not merely 'version' (PR B review fix,
+// HIGH: a false positive that stopped the whole repo, and a false negative
+// that hid a broken chain behind an unrelated helper's version key).
+// ============================================================================
+
+Deno.test("checkUpgradeChain: an unrelated helper object with a 'version' key but no 'type' key is NOT a model and must not be flagged (mutation: filter 'versioned' on version presence alone, not hasTypeKey -> this fixture reddens with a spurious model-version-unreadable/model-declaration-unreadable on schemaInfo/httpDefaults/cacheSpec)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        "export const schemaInfo = { version: 3, strict: true };",
+        "const API_VERSION = 2;",
+        "export const httpDefaults = { version: API_VERSION, timeoutMs: 30_000 };",
+        "export const cacheSpec = { version: 2, upgrades: [{ from: 1, to: 2 }] };",
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "1.0.0",',
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations, [], JSON.stringify(violations));
+  });
+});
+
+Deno.test("checkUpgradeChain: a real model (has 'type') whose 'version' key was stripped is flagged, even when an unrelated helper elsewhere in the same file has a 'version' key (mutation: filter 'versioned' on version presence alone -> this fixture's broken 5-entry chain goes completely unevaluated and reddens to 0 violations)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        "  upgrades: [",
+        '    { fromVersion: "1.0.0", toVersion: "2.0.0" },',
+        '    { fromVersion: "2.0.0", toVersion: "0.0.0" },',
+        "  ],",
+        "};",
+        'export const pkg = { version: "1.0.0" };',
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "model-version-unreadable");
+  });
+});
+
+// ============================================================================
+// A depth-1 property whose key cannot be read (computed, numeric, or an
+// accessor) must fail closed, exactly like a depth-1 spread (PR B review
+// fix, HIGH: the property KEY was fail-open even though the chain VALUE
+// already failed closed).
+// ============================================================================
+
+Deno.test("checkUpgradeChain: a computed '[\"upgrades\"]' key hides a broken chain from every other check — must be reported, not silently dropped (mutation: don't compute hasUnreadableProperty, or don't check it in checkModelFile -> reddens to 0 violations; fmt/lint/tsc all pass this shape clean)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "2026.08.09.1",',
+        '  ["upgrades"]: [',
+        '    { fromVersion: "1.0.0", toVersion: "0.0.0" },',
+        "  ],",
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "model-declaration-indirect");
+  });
+});
+
+Deno.test("checkUpgradeChain: a 'get upgrades()' accessor hides a broken chain the same way — must ALSO be reported (mutation: same as above)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        'const CHAIN = [{ fromVersion: "1.0.0", toVersion: "0.0.0" }];',
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "2026.08.09.1",',
+        "  get upgrades() { return CHAIN; },",
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "model-declaration-indirect");
+  });
+});
+
+Deno.test("checkUpgradeChain: a duplicate depth-1 'upgrades' key is reported rather than silently reading only the first (mutation: read upgradesProps[0] without checking hasDuplicateUpgrades -> reddens: the FIRST chain here is correct, so this fixture goes fully clean instead of reporting the ambiguity)", async () => {
+  await withTempRoot(async (root) => {
+    await writeExtension(root, "widget", {
+      "extensions/models/widget.ts": lines(
+        "export const model = {",
+        '  type: "@fixture/widget",',
+        '  version: "2026.08.09.1",',
+        '  upgrades: [{ fromVersion: "1.0.0", toVersion: "2026.08.09.1" }],',
+        '  "upgrades": [{ fromVersion: "a", toVersion: "9.9.9" }],',
+        "};",
+      ),
+    });
+    const { violations } = await checkUpgradeChain(root);
+    assertEquals(violations.length, 1, JSON.stringify(violations));
+    assertEquals(violations[0].rule, "model-declaration-indirect");
+  });
+});
+
+// ============================================================================
 // Reality pin
 // ============================================================================
 

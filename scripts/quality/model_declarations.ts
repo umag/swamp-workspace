@@ -84,6 +84,30 @@ export interface Declaration {
   /** Whether a type annotation (`: Foo`) sat between the identifier and
    * `=`. */
   hasType: boolean;
+  /** True when the object literal has a depth-1 `type` property — the
+   * discriminator real model declarations carry (`export const model = {
+   * type: "@vendor/name", version: "…", … }`). Distinct from `hasType`,
+   * which is about a TS type ANNOTATION on the const itself, not this
+   * object PROPERTY. Used as the model-identity test: an unrelated helper
+   * object that merely happens to have a `version` field (`export const
+   * schemaInfo = { version: 3 }`) has no `type` key and must not be
+   * mistaken for a model declaration. */
+  hasTypeKey: boolean;
+  /** True when the object literal contains a depth-1 property whose key
+   * could not be read — numeric (`0: …`), computed (`[expr]: …`), or an
+   * accessor/modifier shape (`get upgrades() {…}`, `set x(v) {…}`, `async
+   * foo() {…}`). The parser cannot know whether such a property
+   * contributes an `upgrades` (or `version`) property, so a declaration
+   * carrying one is unreadable at the policy layer — the same reasoning
+   * `hasDepth1Spread` already applies to a depth-1 spread. */
+  hasUnreadableProperty: boolean;
+  /** True when `upgrades` appeared more than once at depth 1. Mirrors
+   * `versionError`'s "more than one depth-1 key" handling — JavaScript
+   * itself resolves a duplicate key to the LAST one, but reading only
+   * `upgradesProps[0]` (as if the first were authoritative) can read a
+   * chain that will never actually ship, so this must fail closed rather
+   * than silently pick one. */
+  hasDuplicateUpgrades: boolean;
   /** The declaration's `version` value, or null if absent/unreadable. */
   version: string | null;
   /** True when `version` appeared more than once at depth 1, or its
@@ -113,6 +137,14 @@ export interface MaskResult {
    * literal, or regex literal — the caller must treat this as a
    * violation, never a silent "no declarations found". */
   error: string | null;
+  /** Offsets of every `${`'s `{` that maskCode kept LIVE (see the module
+   * docblock's TEMPLATE INTERPOLATION trap). A whitespace skip that blanks
+   * straight through a template's backtick and text can land ON one of
+   * these — a caller testing "is the next significant mask character an
+   * object-literal opener `{`" must reject an offset in this set rather
+   * than treat a template's own interpolation brace as a declaration's or
+   * a chain element's `{`. */
+  interpolationBraces: Set<number>;
 }
 
 // Keywords after which a `/` opens a regex literal rather than acting as
@@ -169,6 +201,7 @@ export function maskCode(src: string): MaskResult {
   let lastTokenIsValue = false;
   let templateDepth = 0;
   let error: string | null = null;
+  const interpolationBraces = new Set<number>();
 
   function fail(message: string): void {
     if (error === null) error = message;
@@ -296,6 +329,7 @@ export function maskCode(src: string): MaskResult {
       if (c === "$" && src[j + 1] === "{") {
         blankAt(j); // the `$`
         keepAt(j + 1); // the `{` — stays live, matched by scanCode(true)
+        interpolationBraces.add(j + 1);
         i = j + 2;
         scanCode(true);
         j = i;
@@ -389,7 +423,16 @@ export function maskCode(src: string): MaskResult {
         while (j < n && isIdentChar(src[j])) j++;
         const word = src.slice(i, j);
         for (let k = i; k < j; k++) keepAt(k);
-        lastTokenIsValue = !REGEX_ALLOWED_AFTER_WORD.has(word);
+        // A word right after `.` (or `?.`) is a PROPERTY NAME, never a
+        // keyword in operator position — `o.in / 2` must lex `/` as
+        // division even though "in" is one of REGEX_ALLOWED_AFTER_WORD's
+        // 14 keywords. Look at the nearest already-emitted, non-whitespace
+        // mask character (out[] is filled left-to-right, so everything
+        // before `i` is final).
+        let p = i - 1;
+        while (p >= 0 && /\s/.test(out[p] as string)) p--;
+        const afterDot = p >= 0 && out[p] === ".";
+        lastTokenIsValue = afterDot || !REGEX_ALLOWED_AFTER_WORD.has(word);
         i = j;
         continue;
       }
@@ -419,6 +462,17 @@ export function maskCode(src: string): MaskResult {
         i++;
         continue;
       }
+      // A completed `++`/`--` is a value-producing postfix operator (or a
+      // prefix one immediately before a value) — `i++ / 2` must lex `/` as
+      // division. Consume both characters as one token so the second `+`/
+      // `-` doesn't re-trigger this same check.
+      if ((c === "+" || c === "-") && src[i + 1] === c) {
+        keepAt(i);
+        keepAt(i + 1);
+        lastTokenIsValue = true;
+        i += 2;
+        continue;
+      }
       keepAt(i);
       if (!/\s/.test(c)) lastTokenIsValue = c === ")" || c === "]";
       i++;
@@ -433,7 +487,7 @@ export function maskCode(src: string): MaskResult {
       if (out[k] === undefined) blankAt(k);
     }
   }
-  return { mask: out.join(""), error };
+  return { mask: out.join(""), error, interpolationBraces };
 }
 
 /** Depth (0 = top level) of every position in `mask`, counting `(`/`[`/`{`
@@ -614,6 +668,24 @@ function scanObjectProperties(
     } else if (isIdentStart(raw[keyPos])) {
       let j = keyPos;
       while (j < segEnd && isIdentChar(raw[j])) j++;
+      // A SECOND identifier immediately following the first (skipping
+      // trivia), before any `:`, is not a plain `key` shorthand or `key:
+      // value` pair — it is an accessor or modifier shape (`get upgrades()
+      // {…}`, `set upgrades(v) {…}`, `async upgrades() {…}`, `static
+      // upgrades = …`). The parser cannot know whether the property this
+      // introduces contributes an `upgrades`/`version` value, so it must
+      // fail closed exactly like a numeric/computed key rather than be
+      // silently read as a shorthand property literally named "get".
+      const afterFirstWord = skipTrivia(raw, j, segEnd);
+      if (afterFirstWord < segEnd && isIdentStart(raw[afterFirstWord])) {
+        out.push({
+          key: null,
+          isSpread: false,
+          valueStart: segStart,
+          valueEnd: segEnd,
+        });
+        continue;
+      }
       keyName = raw.slice(keyPos, j);
       afterKey = j;
     } else {
@@ -685,6 +757,17 @@ function classifyChain(
   if (arrayClose === -1) {
     return { kind: "unparseable", entries: [], terminus: null };
   }
+  // The value must be the array literal AND NOTHING ELSE — a trailing
+  // `.concat(BROKEN)` (or any other expression tacked onto the array) means
+  // the array we just matched is only PART of the value, and reading it
+  // alone would silently ignore whatever comes after. A trailing `as`/
+  // `satisfies` type assertion is tolerated (the parser already unwraps
+  // those at the declaration level; disallowing them here would reject a
+  // legal, common annotation for no safety gain).
+  const afterArray = mask.slice(arrayClose + 1, valueEnd).trim();
+  if (afterArray !== "" && !/^(as|satisfies)\b/.test(afterArray)) {
+    return { kind: "indirect", entries: [], terminus: null };
+  }
   const elemDepth = depth[arrayOpen] + 1;
   const spans = splitTopLevel(
     mask,
@@ -755,7 +838,7 @@ function classifyChain(
  * reports an unterminated literal — callers must treat that as a
  * violation, never an empty result. */
 export function scanModelDeclarations(src: string): Declaration[] {
-  const { mask, error } = maskCode(src);
+  const { mask, error, interpolationBraces } = maskCode(src);
   if (error !== null) {
     throw new Error(`model_declarations: unable to lex source: ${error}`);
   }
@@ -777,6 +860,14 @@ export function scanModelDeclarations(src: string): Declaration[] {
     let eq = -1;
     for (let k = afterIdent; k < n; k++) {
       if (depth[k] !== 0) continue;
+      // A declaration's own `=` (if any) must precede its statement
+      // terminator — bounding the search at the first depth-0 `;` makes it
+      // exact AND linear. Without this bound, `export const enum E { A = 0
+      // }` (a real, valid TypeScript shape whose only `=` sits at depth 1,
+      // inside the enum body) sends this loop all the way to EOF on every
+      // such match, making the whole scan O(N*n) in the number of
+      // `export const` matches with no following depth-0 `=`.
+      if (mask[k] === ";") break;
       if (mask[k] !== "=") continue;
       const prevC = k > 0 ? mask[k - 1] : "";
       const nextC = k + 1 < n ? mask[k + 1] : "";
@@ -791,7 +882,11 @@ export function scanModelDeclarations(src: string): Declaration[] {
 
     let b = eq + 1;
     while (b < n && /\s/.test(mask[b])) b++;
-    if (mask[b] !== "{") continue; // not an object-literal declaration
+    // A live template-interpolation brace landed at `b` (the whitespace
+    // skip above blanked straight through a preceding template's backtick
+    // and text) is not a real declaration body — see maskCode's
+    // `interpolationBraces` doc.
+    if (mask[b] !== "{" || interpolationBraces.has(b)) continue;
 
     const close = matchDelims(mask, b, "{", "}");
     if (close === -1) continue;
@@ -808,6 +903,11 @@ export function scanModelDeclarations(src: string): Declaration[] {
     const versionProps = props.filter((p) => p.key === "version");
     const upgradesProps = props.filter((p) => p.key === "upgrades");
     const hasDepth1Spread = props.some((p) => p.isSpread);
+    const hasTypeKey = props.some((p) => p.key === "type");
+    const hasUnreadableProperty = props.some((p) =>
+      p.key === null && !p.isSpread
+    );
+    const hasDuplicateUpgrades = upgradesProps.length > 1;
 
     let version: string | null = null;
     let versionError = false;
@@ -835,6 +935,9 @@ export function scanModelDeclarations(src: string): Declaration[] {
     declarations.push({
       name,
       hasType,
+      hasTypeKey,
+      hasUnreadableProperty,
+      hasDuplicateUpgrades,
       version,
       versionError,
       chain,

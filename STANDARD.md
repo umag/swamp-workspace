@@ -364,6 +364,16 @@ Three things this rule deliberately does **not** require:
   add a stricter requirement swamp doesn't enforce.
 - **Manifest-vs-model version parity is not this gate's job.** The existing
   "Check model version matches manifest" CI step already owns that.
+- **Append-only is a convention this gate does not enforce.** The correct
+  way to repair a broken chain is always to bump the version and APPEND a
+  new `upgrades[]` entry that carries the fix forward, never to edit an
+  already-published entry's `fromVersion`/`toVersion` in place — but this
+  gate only ever reads ONE revision (the working tree at HEAD), so it
+  cannot tell an appended entry from an edited one. Enforcing this for real
+  needs a base-diff (parse the file at `base` too, and fail if any entry
+  present there changed shape at `head`) — a natural fit for
+  `release_notes_gate.ts`'s existing base-resolution logic, not for this
+  GLOBAL, snapshot-only compliance job.
 
 A chain the gate cannot read as a literal array — a hoisted identifier, a
 call expression, a spread (`upgrades: [...CHAIN]`), or a spread on the model
@@ -375,12 +385,6 @@ hoisted chain has a broken terminus passes `swamp extension push --dry-run`
 with exit 0, since swamp validates the deployed object and that spread's
 `upgrades[]` never becomes part of this declaration's own readable text. This
 gate is the only enforcement that exists for that shape anywhere.
-
-**A published entry is append-only.** Registry release notes and a version's
-schema are immutable once published — the correct way to repair a broken
-chain is always to bump the version and APPEND a new `upgrades[]` entry that
-carries the fix forward, never to edit an already-published entry's
-`fromVersion`/`toVersion` in place.
 
 The `compliance` job is deliberately **not** in `extension-publish`'s
 `needs:` (see "Why the compliance job runs GLOBAL, not diff-scoped" above),
