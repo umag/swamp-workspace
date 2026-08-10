@@ -292,6 +292,23 @@ diagnosable in the log rather than silently invisible — the log never echoes
 `bandcampUrl` verbatim (only its hostname), so any userinfo embedded in a
 caller-supplied URL never reaches the log.
 
+Both methods send `artistMbid` to MusicBrainz before writing anything —
+`mbFetch` throws on any non-ok response, verified live twice against the real
+API — so no crafted MBID can place a row at another method's instance name; that
+gate is external, not a guarantee this model makes for its other free-string
+instance sites. `bandcampInstanceName`'s `bandcampUrl` parameter is now
+REQUIRED: the two-argument call shape that made it optional had no real caller
+and kept the original shared-fallback defect reachable behind a supported
+signature. Its unrecognized-method guard also now uses `Object.hasOwn` instead
+of a truthiness check — the truthiness check was satisfied by any inherited
+`Object.prototype` member, so `bandcampInstanceName("toString", "abc")` used to
+return a stringified native-code function instead of throwing (8 of 12 probed
+`Object.prototype` keys bypassed the guard this way). `bandcampInstanceName` and
+`BANDCAMP_INSTANCE_PREFIXES` are both exported now too (unlike the sibling
+`SEARCH_INSTANCE_NAMES`, which stays module-private), so the test suite's
+disjointness checks read the model's own identity rule at runtime instead of a
+hand-copied duplicate of it.
+
 Detect a row still sitting at the OLD, pre-upgrade instance name — replace
 `<instance>` with this model's actual instance name (NOT the literal string
 "musicbrainz" unless that really is what you named it; an empty result here can

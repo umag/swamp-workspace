@@ -3,15 +3,19 @@
 ## 2026.08.07.2
 
 Fixes `musicbrainz-missing-seed-instance-collision`. `model.version` and
-`manifest.yaml` move `2026.08.07.1` -> `2026.08.07.2`.
+`manifest.yaml` move `2026.08.07.1` -> `2026.08.07.2`. Implementation detail
+(digest/sanitizer design, fallback derivation, crafted-argument residual
+analysis) lives in `musicbrainz/README.md`'s "Breaking: `find-missing` /
+`seed-all-missing` instance names changed" section, not repeated here.
 
 ### Breaking change: `find-missing` / `seed-all-missing` now write their own resource instance
 
-The two methods both wrote the BARE `artistMbid` as their instance name (falling
-back to `unknown` / `all-missing`), so one artist run through both methods
-silently destroyed whichever wrote second — `readResource(name)` resolves on the
-instance name alone. Each now writes its own instance via a new
-`BANDCAMP_INSTANCE_PREFIXES` registry, same rule as the `search` family:
+The two methods both wrote the bare `artistMbid` as their instance name (falling
+back to a SHARED `unknown` / `all-missing` constant), so one artist run through
+both methods — or two unresolved artists sharing a fallback — silently destroyed
+whichever wrote second: `readResource(name)` resolves on the instance name
+alone. Each method now writes its own instance, `bc-`-namespaced whenever the
+MBID hasn't resolved:
 
 ```
 # before
@@ -22,95 +26,42 @@ data.latest("musicbrainz", "find-missing-<artistMbid>").attributes.missing
 data.latest("musicbrainz", "seed-all-missing-<artistMbid>").attributes.releases
 ```
 
-The fallback tokens move too, but review caught that they were still a SHARED
-constant (`unknown` / `all-missing`) — every artist whose MBID failed to
-auto-resolve collapsed onto the same fallback instance, reintroducing this same
-collision one axis over (proven by running two unresolved artists through both
-methods four times: only the last artist's two rows survived). Fixed the same
-release: the fallback now derives from the required `bandcampUrl` argument via
-`bandcampUrlSlug`, `bc-`-namespaced so a real MBID (always a UUID) can never
-land in it (`find-missing-bc-obscurealpha` for
-`https://obscurealpha.bandcamp.com`, not a value every unresolved artist shares
-— see the "crafted-argument" section below for the one direction this does NOT
-hold), and both methods `console.error` at the resolution boundary — leading
-with the instance name — whenever the MBID auto-resolve misses. Pass
-`artistMbid` explicitly once an artist is added to MusicBrainz to move onto the
-stable MBID-keyed instance.
+Pass `artistMbid` explicitly once an artist is added to MusicBrainz to move onto
+the stable MBID-keyed instance. Two known, accepted residuals are unchanged by
+this fix (full analysis in the README): two URL-derived rows sharing both
+Bandcamp subdomain AND path still collide post-sanitize, and an
+operator-supplied `artistMbid` that itself starts with `bc-` collides with that
+subdomain's own URL-derived fallback.
 
-Round 2 of the same review, all closed in this release too: (1)
-`bandcampUrlSlug` keyed on the Bandcamp subdomain ALONE, so two unresolved
-artists sharing one label/compilation subdomain still collided; it now also
-folds the URL's path in when that path is not root or `/music`
-(`https://label.bandcamp.com/album/roster-a-lp` ->
-`seed-all-missing-bc-label-album-roster-a-lp`), so two such artists separate as
-long as their paths differ (stated honestly: sharing both subdomain AND path
-still collides — no further signal is available). (2) the preferred subdomain
-branch skipped all sanitizing and length-capping (a 313-character instance name
-and 18 non-LDH characters were both observed to survive unchanged), on the false
-premise that `assertBandcampUrl` already guarantees a valid DNS label — it does
-not; `bandcampUrlSlug` now routes every branch through one sanitizer whose
-truncation appends a collision-resistant digest rather than a lossy `.slice()`
-(an over-80-char slug becomes a deterministic `<71 chars>-<8-hex-char digest>`,
-e.g.
-`find-missing-bc-somelabel-album-the-complete-remastered-recordings-1972-1985-deluxe-vol-315edcd6`;
-collision-resistant against ACCIDENT at ~2^-32 per candidate pair, not against a
-caller who controls both sides of the comparison). (3) `bandcampInstanceName`'s
-`bandcampUrl` parameter is now REQUIRED, not optional — the two-argument call
-shape it preserved had no real caller and kept the original shared-constant
-defect reachable behind a supported signature. (4) the unrecognized-method guard
-now uses `Object.hasOwn` instead of a truthiness check: the truthiness check was
-satisfied by any inherited `Object.prototype` member, so
-`bandcampInstanceName("toString", "abc")` used to return a stringified
-native-code function instead of throwing (8 of 12 probed `Object.prototype` keys
-bypassed the guard this way).
+### Operator action required: two silent orphan classes
 
-Detect a row still at the OLD instance name — replace `<instance>` with this
-model's actual instance name, and if the query below returns nothing, confirm
-that isn't just a wrong instance name via
-`swamp data query 'modelName == "<instance>" && isLatest' --select 'name'`:
+**Pre-upgrade orphans** — any row still at the OLD bare-MBID instance name. The
+old instance does not error or go empty on upgrade: it FREEZES at its last
+pre-upgrade payload forever, so a read against it goes silently stale rather
+than `null`. Detect them (replace `<instance>` with this model's actual instance
+name):
 
 ```
 swamp data query 'modelName == "<instance>" && (specName == "missingReleases" || specName == "seedUrls") && name != "seed-single" && !name.startsWith("find-missing-") && !name.startsWith("seed-all-missing-") && isLatest' --select '{"name": name, "spec": specName, "url": attributes.bandcampUrl}' --json
 ```
 
-Every name this query returns is a pre-upgrade orphan; empty output means there
-are none. The projected `spec` field says which method to re-run and which read
-to repoint (`missingReleases` -> `find-missing` / `.missing`, `seedUrls` ->
-`seed-all-missing` / `.releases`) — needed because a pre-upgrade name is a bare
-MBID and, in the exact collision this fix closes, the SAME bare MBID can appear
-twice, once per spec, indistinguishable by name alone. The projected `url` is
-the `bandcampUrl` to re-run that method with — a REQUIRED field on both specs,
-so it is always present, and without it the query's own "re-run find-missing"
-advice is not executable: an MBID alone is not a valid argument, and a
-`bc-`-prefixed fallback row's `name` identifies no artist at all on its own. The
-`name != "seed-single"` exclusion is required, not cosmetic:
-`seed-from-bandcamp` also writes spec `seedUrls`, at its own fixed, unrelated,
-correctly-named instance `seed-single`; without the exclusion a healthy row
-would be flagged as needing migration. The old instance does not error or go
-empty — it FREEZES at its last pre-upgrade payload forever, nothing warns.
-Remediation: the new instance holds nothing until the method is re-run, so a
-repointed read returns `null` until then; the old row is permanent (cannot be
-deleted) and every reader must be actively repointed.
+Every returned row is a pre-upgrade orphan; empty output means there are none.
+`spec` says which method to re-run (`missingReleases` -> `find-missing`,
+`seedUrls` -> `seed-all-missing`); the projected `url` is the required argument
+to re-run it with — a bare MBID alone is not enough. The `name != "seed-single"`
+clause excludes `seed-from-bandcamp`'s own correctly-named instance, which also
+writes spec `seedUrls`.
 
-A SECOND orphan class, created by the tool's own success rather than by this
-upgrade: once an unresolved artist's MBID auto-resolves on a later run, its rows
+**Post-upgrade orphans** — created by the tool's own success, not by this
+upgrade. Once an unresolved artist's MBID auto-resolves on a later run, its rows
 move to the MBID-keyed instance and the earlier `find-missing-bc-<slug>` /
 `seed-all-missing-bc-<slug>` row freezes at its last unresolved payload,
-permanently, for the same reason above. It is NOT flagged by the query above — a
-`bc-`-suffixed name still starts with `find-missing-`/`seed-all-missing-`, so
-the healthy-looking prefix check treats it as migrated. Same READ consequence as
-the pre-upgrade class too, not just storage growth: any
-`data.latest("<instance>", "find-missing-bc-<slug>")` (or the
-`seed-all-missing-` equivalent) read keeps resolving to that frozen payload
-rather than going `null` once the artist's MBID has since resolved, so it goes
-silently stale exactly the same way — repoint the read to
-`find-missing-<artistMbid>` / `seed-all-missing-<artistMbid>` once it resolves;
-the `console.error` above no longer firing for that artist is the signal the
-move has happened. This class is more likely to bite in practice, too: it is
-created by ordinary successful use on an ongoing basis, and this document points
-operators at `bc-`-namespaced instances to read from in the first place (the
-`find-missing-bc-obscurealpha` example above, and the model's own
-`console.error`). List these separately:
+permanently — the same silent-stale-read consequence as above, not just storage
+growth. It is NOT flagged by the query above: a `bc-`-suffixed name still starts
+with `find-missing-` / `seed-all-missing-`. This class is more likely to bite in
+practice, since it is created by ordinary successful use and this document
+points operators at `bc-`-namespaced instances to read from in the first place.
+List these separately:
 
 ```
 swamp data query 'modelName == "<instance>" && (specName == "missingReleases" || specName == "seedUrls") && (name.startsWith("find-missing-bc-") || name.startsWith("seed-all-missing-bc-")) && isLatest' --select '{"name": name, "artist": attributes.artist, "url": attributes.bandcampUrl}' --json
@@ -120,60 +71,10 @@ swamp data query 'modelName == "<instance>" && (specName == "missingReleases" ||
 swamp data query 'modelName == "<instance>" && (specName == "missingReleases" || specName == "seedUrls") && (name.startsWith("find-missing-") || name.startsWith("seed-all-missing-")) && !name.contains("-bc-") && isLatest' --select '{"name": name, "artist": attributes.artist}' --json
 ```
 
-No alias is shipped, unlike the `search` migration: the one live pre-upgrade row
-has no reader anywhere in this package or the homelab repo, and an alias would
-keep `find-missing` writing a colliding-by-construction bare instance name for
-the whole deprecation window — the property this change removes.
-
-### New exports: `bandcampInstanceName` and `BANDCAMP_INSTANCE_PREFIXES`
-
-Both are exported (unlike the sibling `SEARCH_INSTANCE_NAMES`, which stays
-module-private) so the test suite's disjointness checks read the model's own
-identity rule at runtime instead of a hand-copied duplicate of it.
-
-### Crafted-argument namespace collisions remain gated upstream, not by this fix
-
-Both methods send `artistMbid` to MusicBrainz before writing (`mbFetch` throws
-on any non-ok response), so no crafted MBID could ever place a row at another
-method's instance name — verified live, twice, against the real API. That gate
-is external, not a guarantee this model makes. The prefix does not close a live
-channel; it moves the two Bandcamp-compare namespaces' disjointness from every
-other instance name in the model from depending on MusicBrainz's validation to
-being checked by the model's own deterministic table and runtime sweep. The
-other free-string instance sites in this model still depend on the external
-gate; that residual is unchanged by this fix.
-
-This release ADDS a second free-string channel into these same two instance
-names: `bandcampUrl` -> `bandcampUrlSlug`, gated by `assertBandcampUrl` (host
-scheme/suffix only) plus, in practice, Bandcamp's own DNS actually resolving the
-host — not by MusicBrainz. Within THAT channel, the `bc-` marker keeps a
-Bandcamp-URL-derived name out of a REAL MBID's namespace (verified: a
-UUID-shaped Bandcamp subdomain and that same UUID as a resolved `artistMbid`
-produce different instance names — a MusicBrainz-issued MBID is always a UUID
-and can never start with `bc-`), so a crafted Bandcamp URL cannot land a row on
-a different artist's genuinely-resolved MBID-keyed instance. This is
-one-directional, not mutual disjointness: `artistMbid` itself is
-`z.string().optional()` on both methods, with no UUID-shape check, so an
-operator who hand-passes an `artistMbid` that itself starts with `bc-` (e.g.
-`"bc-obscurealpha"`) still lands on the SAME instance as that subdomain's own
-URL-derived fallback — a known, accepted residual (not attacker-reachable: the
-only non-UUID channel into `artistMbid` is the operator's own argument, since
-the auto-resolve path takes MusicBrainz's `id` verbatim and MusicBrainz always
-returns real UUIDs), pinned by GUARD J4's reverse-direction test rather than
-left unchecked. It CAN still land two different URL-derived rows on the same
-instance if they share the same post-sanitize label — see the shared-subdomain
-honest limitation above.
-
-### Also folded in: narrowed the "model surface" upgrade-chain test
-
-Narrowed `musicbrainz_coverage_test.ts`'s "model surface" test to musicbrainz's
-own presence requirement (`model.upgrades` must be non-empty). The terminus rule
-it used to also assert — the newest `upgrades[].toVersion` must equal
-`model.version` — is now owned repo-wide by
-`scripts/quality/check_upgrade_chain.ts`, a new PR-time gate that checks every
-manifest-listed model file's upgrade chain, not just this package's. Landed on
-master as a test-only, no-version-bump change and is carried into this release
-by the merge.
+Repoint the read to `find-missing-<artistMbid>` /
+`seed-all-missing-<artistMbid>` once the artist resolves; the model's own
+`console.error` no longer firing for that artist is the signal the move has
+happened. No alias is shipped for either class — see the README for why.
 
 ## 2026.08.07.1
 
