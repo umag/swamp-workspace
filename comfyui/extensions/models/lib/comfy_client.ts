@@ -4,6 +4,17 @@ export interface ImageRef {
   type: string;
 }
 
+/**
+ * A saved output file from a completed prompt. Images, animated gifs and videos
+ * all surface in `/history` as `{filename, subfolder, type}` entries under some
+ * output key; `collectFiles` gathers them regardless of that key so video
+ * (`SaveVideo`) output is picked up the same way as `SaveImage`. `format` is
+ * carried through when present (e.g. `video/mp4`).
+ */
+export interface FileRef extends ImageRef {
+  format?: string;
+}
+
 export interface HistoryEntry {
   prompt_id?: string;
   status?: { completed?: boolean; status_str?: string; messages?: unknown[] };
@@ -100,6 +111,40 @@ export class ComfyClient {
     return images;
   }
 
+  /**
+   * Every saved file across all output nodes, regardless of the output key.
+   * Scans each output node's array values and keeps entries shaped like a file
+   * ref (a string `filename` and `type`) — so images (`images`), gifs (`gifs`)
+   * and videos (`SaveVideo`, whatever key it uses) are all collected uniformly.
+   */
+  collectFiles(entry: HistoryEntry): FileRef[] {
+    const files: FileRef[] = [];
+    const outputs = entry.outputs ?? {};
+    for (const nodeId of Object.keys(outputs)) {
+      const node = outputs[nodeId];
+      if (!node || typeof node !== "object") continue;
+      for (const value of Object.values(node)) {
+        if (!Array.isArray(value)) continue;
+        for (const item of value) {
+          if (
+            item && typeof item === "object" &&
+            typeof (item as FileRef).filename === "string" &&
+            typeof (item as FileRef).type === "string"
+          ) {
+            const f = item as FileRef;
+            files.push({
+              filename: f.filename,
+              subfolder: typeof f.subfolder === "string" ? f.subfolder : "",
+              type: f.type,
+              ...(typeof f.format === "string" ? { format: f.format } : {}),
+            });
+          }
+        }
+      }
+    }
+    return files;
+  }
+
   viewUrl(ref: ImageRef): string {
     const params = new URLSearchParams({
       filename: ref.filename,
@@ -119,6 +164,53 @@ export class ComfyClient {
     return new Uint8Array(await res.arrayBuffer());
   }
 
+  /**
+   * Upload an image to the server's input directory via `POST /upload/image`,
+   * returning the server-side `{name, subfolder, type}`. A `LoadImage` node then
+   * references it by `name` (or `subfolder/name` when a subfolder is set). Used
+   * to get a local reference image onto the server before a reference-to-video
+   * run. `overwrite` defaults to true so re-runs reuse the same filename.
+   */
+  async uploadImage(
+    bytes: Uint8Array,
+    filename: string,
+    opts: { subfolder?: string; overwrite?: boolean } = {},
+  ): Promise<{ name: string; subfolder: string; type: string }> {
+    const form = new FormData();
+    form.append(
+      "image",
+      new Blob([bytes as BlobPart]),
+      filename,
+    );
+    form.append("overwrite", String(opts.overwrite ?? true));
+    if (opts.subfolder) form.append("subfolder", opts.subfolder);
+    const res = await this.#fetch(`${this.baseUrl}/upload/image`, {
+      method: "POST",
+      body: form,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(
+        `ComfyUI /upload/image failed: ${res.status} ${res.statusText} ${text}`
+          .trim(),
+      );
+    }
+    let data: { name?: unknown; subfolder?: unknown; type?: unknown };
+    try {
+      data = JSON.parse(text) as typeof data;
+    } catch {
+      throw new Error(`ComfyUI /upload/image returned invalid JSON: ${text}`);
+    }
+    if (typeof data.name !== "string") {
+      throw new Error(`ComfyUI /upload/image missing name: ${text}`);
+    }
+    return {
+      name: data.name,
+      subfolder: typeof data.subfolder === "string" ? data.subfolder : "",
+      type: typeof data.type === "string" ? data.type : "input",
+    };
+  }
+
   async waitForResult(
     promptId: string,
     opts: {
@@ -135,14 +227,14 @@ export class ComfyClient {
     while (true) {
       const entry = await this.getHistory(promptId);
       if (entry) {
-        const images = this.collectImages(entry);
+        const files = this.collectFiles(entry);
         const errored = entry.status?.status_str === "error";
-        if (errored && images.length === 0) {
+        if (errored && files.length === 0) {
           throw new Error(
             `ComfyUI render failed for prompt ${promptId} (status: ${entry.status?.status_str})`,
           );
         }
-        const done = entry.status?.completed === true || images.length > 0;
+        const done = entry.status?.completed === true || files.length > 0;
         if (done) return entry;
       }
       if (Date.now() - start >= timeoutMs) {

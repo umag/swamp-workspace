@@ -1,12 +1,14 @@
 manifestVersion: 1
 name: "@magistr/comfyui"
-version: "2026.08.02.1"
+version: "2026.08.11.1"
 description: |
-  Drive a ComfyUI server over its HTTP API from swamp. Ships two bundled
+  Drive a ComfyUI server over its HTTP API from swamp. Ships three bundled
   API-format workflow templates — `ideogram` (Ideogram 4.0, whose prompt is a
   STRUCTURED JSON CAPTION with per-object bounding boxes [y1,x1,y2,x2] normalized
-  0-1000) and `krea` (FLUX Krea turbo, plain-text prompt with stackable style
-  LoRAs) — so you generate without hand-wiring node ids.
+  0-1000), `krea` (FLUX Krea turbo, plain-text prompt with stackable style
+  LoRAs), and `minimax_h3` (MiniMax H3 reference-to-video: a plain-text prompt
+  plus one or two reference images, produces an mp4) — so you generate without
+  hand-wiring node ids.
 
   One model:
   - `instance` — connect to a ComfyUI server (default http://127.0.0.1:8188),
@@ -33,13 +35,17 @@ additionalFiles:
   - LICENSE.md
   - workflows/ideogram.api.json
   - workflows/krea.api.json
+  - workflows/minimax_h3_r2v.api.json
 labels:
   - comfyui
   - ideogram
   - krea
   - flux
+  - minimax-h3
   - image
   - text-to-image
+  - reference-to-video
+  - video
   - bounding-box
   - lora
   - batch

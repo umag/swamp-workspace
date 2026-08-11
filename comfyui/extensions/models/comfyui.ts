@@ -1,5 +1,5 @@
 import { z } from "npm:zod@4";
-import { ComfyClient, type ImageRef } from "./lib/comfy_client.ts";
+import { ComfyClient, type FileRef } from "./lib/comfy_client.ts";
 import {
   buildCaption,
   parseGeneratedCaption,
@@ -8,9 +8,11 @@ import {
 import {
   type ApiGraph,
   applyIdeogramOverrides,
+  applyReferenceImages,
   chainLoras,
   type LoraSpec,
   patchWorkflow,
+  type RefImageSlot,
 } from "./lib/workflow_patch.ts";
 import { claudeComplete } from "./lib/anthropic.ts";
 import { buildCaptionMessages } from "./lib/ideogram_prompt.ts";
@@ -68,6 +70,17 @@ interface WorkflowTemplate {
     enableNodeId: string;
     enableKey: string;
   };
+  /**
+   * Reference-image slots for reference-to-video templates. `generate`'s
+   * `refImage`/`refImages` fill these positionally (via `applyReferenceImages`);
+   * unfilled slots are dropped. A template with `refImages` requires at least
+   * one image.
+   */
+  refImages?: RefImageSlot[];
+  /** Clip duration in seconds, if the template exposes one (video). */
+  duration?: { nodeId: string; key: string };
+  /** Sampler step count, if the template exposes one. */
+  steps?: { nodeId: string; key: string };
 }
 
 const TEMPLATES: Record<string, WorkflowTemplate> = {
@@ -92,6 +105,30 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
       enableNodeId: "30:23",
       enableKey: "value",
     },
+  },
+  minimax_h3: {
+    file: "workflows/minimax_h3_r2v.api.json",
+    // The prompt is plain multiline text (not an Ideogram bbox caption); pass it
+    // as `caption`. Node 138 PrimitiveStringMultiline/value.
+    caption: { nodeId: "138", key: "value" },
+    seed: { nodeId: "129", key: "noise_seed" },
+    resolution: { nodeId: "115", key: "aspect_ratio" },
+    refImages: [
+      {
+        loaderNodeId: "137",
+        loaderKey: "image",
+        consumerNodeId: "136",
+        consumerKey: "ref_images.ref_image_0",
+      },
+      {
+        loaderNodeId: "139",
+        loaderKey: "image",
+        consumerNodeId: "136",
+        consumerKey: "ref_images.ref_image_1",
+      },
+    ],
+    duration: { nodeId: "132", key: "value" },
+    steps: { nodeId: "124", key: "steps" },
   },
 };
 
@@ -125,6 +162,10 @@ const GenerateArgs = z.object({
   resolution: z.string().optional(),
   resolutionNodeId: z.string().optional(),
   resolutionInputKey: z.string().optional(),
+  refImage: z.string().optional(),
+  refImages: z.array(z.string()).optional(),
+  duration: z.number().optional(),
+  steps: z.number().optional(),
   template: z.string().optional(),
   lora: z.string().optional(),
   loras: z.array(z.string()).optional(),
@@ -290,6 +331,85 @@ function applyContentOverrides(
   return patched;
 }
 
+/** Patch the optional video knobs (duration seconds, sampler steps). */
+function applyVideoOverrides(
+  graph: ApiGraph,
+  args: GenArgs,
+  tpl: WorkflowTemplate | undefined,
+): ApiGraph {
+  const patches = [];
+  if (args.duration !== undefined && tpl?.duration) {
+    patches.push({
+      nodeId: tpl.duration.nodeId,
+      inputs: { [tpl.duration.key]: args.duration },
+    });
+  }
+  if (args.steps !== undefined && tpl?.steps) {
+    patches.push({
+      nodeId: tpl.steps.nodeId,
+      inputs: { [tpl.steps.key]: args.steps },
+    });
+  }
+  return patches.length > 0 ? patchWorkflow(graph, patches) : graph;
+}
+
+/**
+ * Resolve each reference-image value to a server-side name. An existing local
+ * file is uploaded to the server (`/upload/image`) and referenced by its
+ * returned name (prefixed with a subfolder when set); any other value is passed
+ * through as an already-server-side input filename.
+ */
+async function resolveReferenceImageNames(
+  client: ComfyClient,
+  images: string[],
+): Promise<string[]> {
+  const resolved: string[] = [];
+  for (const img of images) {
+    let isLocalFile = false;
+    try {
+      isLocalFile = (await Deno.stat(img)).isFile;
+    } catch {
+      isLocalFile = false;
+    }
+    if (isLocalFile) {
+      const bytes = await Deno.readFile(img);
+      const filename = img.split(/[\\/]/).pop() || "reference.png";
+      const up = await client.uploadImage(bytes, filename, { overwrite: true });
+      resolved.push(up.subfolder ? `${up.subfolder}/${up.name}` : up.name);
+    } else {
+      resolved.push(img);
+    }
+  }
+  return resolved;
+}
+
+/**
+ * Fill a template's reference-image slots from `refImage`/`refImages` (uploading
+ * any local files first). A no-op for templates without `refImages`; throws if
+ * such a template gets no images (a reference-to-video run needs at least one).
+ */
+async function applyRefImages(
+  graph: ApiGraph,
+  args: GenArgs,
+  tpl: WorkflowTemplate | undefined,
+  client: ComfyClient,
+): Promise<ApiGraph> {
+  if (!tpl?.refImages || tpl.refImages.length === 0) return graph;
+  const provided = args.refImages && args.refImages.length > 0
+    ? args.refImages
+    : args.refImage !== undefined
+    ? [args.refImage]
+    : [];
+  if (provided.length === 0) {
+    throw new Error(
+      `template '${args.template ?? DEFAULT_TEMPLATE}' needs a reference image; ` +
+        "pass `refImage` (a local path or a server-side input filename) or `refImages`",
+    );
+  }
+  const names = await resolveReferenceImageNames(client, provided);
+  return applyReferenceImages(graph, tpl.refImages, names);
+}
+
 /** The seed node id + input key to patch, resolved from args then template. */
 function resolveSeedNode(
   args: GenArgs,
@@ -301,19 +421,19 @@ function resolveSeedNode(
   };
 }
 
-/** Download every image to `outputDir`, returning the saved paths. */
-async function saveImages(
+/** Download every output file (image or video) to `outputDir`, returning paths. */
+async function saveFiles(
   client: ComfyClient,
-  images: ImageRef[],
+  files: FileRef[],
   outputDir: string,
 ): Promise<string[]> {
   await Deno.mkdir(outputDir, { recursive: true });
   const paths: string[] = [];
-  for (const img of images) {
-    const bytes = await client.fetchImage(img);
-    const dir = img.subfolder ? `${outputDir}/${img.subfolder}` : outputDir;
-    if (img.subfolder) await Deno.mkdir(dir, { recursive: true });
-    const path = `${dir}/${img.filename}`;
+  for (const file of files) {
+    const bytes = await client.fetchImage(file);
+    const dir = file.subfolder ? `${outputDir}/${file.subfolder}` : outputDir;
+    if (file.subfolder) await Deno.mkdir(dir, { recursive: true });
+    const path = `${dir}/${file.filename}`;
     await Deno.writeFile(path, bytes);
     paths.push(path);
   }
@@ -349,13 +469,20 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.02.1",
+  version: "2026.08.11.1",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
       toVersion: "2026.08.02.1",
       description:
         "Real-fix 4 latent bugs (unapplied-seed record, errored-render silent success, snapshotServer res.ok, saveImages subfolder collision); no globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.02.1",
+      toVersion: "2026.08.11.1",
+      description:
+        "Add 'minimax_h3' reference-to-video template (refImage/refImages, duration, steps) + generic video-output collection (collectFiles) and local ref-image upload; no globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -480,16 +607,25 @@ export const model = {
     },
     generate: {
       description:
-        "Patch a workflow, queue it, fetch images, and record a `generation` " +
-        "resource. Pick a bundled `template` ('ideogram' default, or 'krea') — " +
-        "its caption/seed/resolution node ids are applied automatically — or " +
-        "override with an inline `workflow`/globalArgs.workflowPath and explicit " +
-        "`*NodeId`/`*InputKey` args.",
+        "Patch a workflow, queue it, fetch the output (image or video), and " +
+        "record a `generation` resource. Pick a bundled `template` ('ideogram' " +
+        "default, 'krea', or 'minimax_h3' reference-to-video) — its caption/seed/" +
+        "resolution node ids are applied automatically — or override with an " +
+        "inline `workflow`/globalArgs.workflowPath and explicit `*NodeId`/" +
+        "`*InputKey` args. For 'minimax_h3', pass the prompt as `caption` and a " +
+        "reference image via `refImage`/`refImages` (local path or server-side " +
+        "input filename); optional `duration` (seconds) and `steps`.",
       arguments: GenerateArgs,
       execute: async (args: z.infer<typeof GenerateArgs>, context: Context) => {
         const { globalArgs } = context;
         const { graph, tpl } = await loadGraphAndTemplate(args, context);
-        const base = applyContentOverrides(graph, args, tpl);
+        const client = new ComfyClient({
+          baseUrl: globalArgs.baseUrl,
+          clientId: globalArgs.clientId,
+        });
+        let base = applyContentOverrides(graph, args, tpl);
+        base = applyVideoOverrides(base, args, tpl);
+        base = await applyRefImages(base, args, tpl, client);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,
@@ -514,17 +650,13 @@ export const model = {
           })
           : base;
 
-        const client = new ComfyClient({
-          baseUrl: globalArgs.baseUrl,
-          clientId: globalArgs.clientId,
-        });
         const promptId = await client.queuePrompt(patched);
         const entry = await client.waitForResult(promptId, {
           pollIntervalMs: globalArgs.pollIntervalMs,
           timeoutMs: globalArgs.timeoutMs,
         });
-        const images = client.collectImages(entry);
-        const paths = await saveImages(client, images, globalArgs.outputDir);
+        const images = client.collectFiles(entry);
+        const paths = await saveFiles(client, images, globalArgs.outputDir);
 
         await context.writeResource("generation", "generation", {
           promptId,
@@ -549,7 +681,13 @@ export const model = {
       ) => {
         const { globalArgs } = context;
         const { graph, tpl } = await loadGraphAndTemplate(args, context);
-        const base = applyContentOverrides(graph, args, tpl);
+        const client = new ComfyClient({
+          baseUrl: globalArgs.baseUrl,
+          clientId: globalArgs.clientId,
+        });
+        let base = applyContentOverrides(graph, args, tpl);
+        base = applyVideoOverrides(base, args, tpl);
+        base = await applyRefImages(base, args, tpl, client);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,
@@ -563,11 +701,6 @@ export const model = {
         }
         const seeds = args.seeds ??
           Array.from({ length: args.count ?? 4 }, () => randomSeed());
-
-        const client = new ComfyClient({
-          baseUrl: globalArgs.baseUrl,
-          clientId: globalArgs.clientId,
-        });
 
         // Queue every prompt up front so ComfyUI keeps its pipeline full.
         const queued: { seed: number; promptId: string }[] = [];
@@ -589,9 +722,9 @@ export const model = {
             pollIntervalMs: globalArgs.pollIntervalMs,
             timeoutMs: globalArgs.timeoutMs,
           });
-          const paths = await saveImages(
+          const paths = await saveFiles(
             client,
-            client.collectImages(entry),
+            client.collectFiles(entry),
             globalArgs.outputDir,
           );
           items.push({ seed: q.seed, promptId: q.promptId, paths });

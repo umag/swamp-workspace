@@ -142,6 +142,59 @@ export function chainLoras(
   return clone;
 }
 
+/**
+ * One reference-image slot in a video/reference workflow: the `LoadImage` node
+ * that holds the image filename, plus the consumer node/input the loader is
+ * wired into (so an unused slot can be fully removed).
+ */
+export interface RefImageSlot {
+  /** The `LoadImage` node whose `image` input names the file. */
+  loaderNodeId: string;
+  /** The loader's filename input key (usually `"image"`). */
+  loaderKey: string;
+  /** Node consuming the loader (e.g. the reference-to-video node). */
+  consumerNodeId: string;
+  /** The consumer input fed by this loader (e.g. `ref_images.ref_image_1`). */
+  consumerKey: string;
+}
+
+/**
+ * Point each reference-image slot at a provided image name, positionally.
+ * Slots with an image (`images[i]` defined) get their loader's filename set;
+ * slots BEYOND the supplied images are dropped entirely — the loader node is
+ * deleted and the consumer's corresponding input link removed — so a single-
+ * reference run doesn't leave a dangling `LoadImage` pointing at a missing file.
+ * Deep-clones; never mutates the input. Throws if a used slot's loader is
+ * absent. Extra images past the slot count are ignored (the graph has no slot
+ * to hold them).
+ */
+export function applyReferenceImages(
+  graph: ApiGraph,
+  slots: RefImageSlot[],
+  images: string[],
+): ApiGraph {
+  const clone = structuredClone(graph);
+  slots.forEach((slot, i) => {
+    if (i < images.length) {
+      const loader = clone[slot.loaderNodeId];
+      if (loader === undefined) {
+        throw new Error(
+          `reference-image loader node '${slot.loaderNodeId}' not found`,
+        );
+      }
+      loader.inputs = { ...loader.inputs, [slot.loaderKey]: images[i] };
+    } else {
+      delete clone[slot.loaderNodeId];
+      const consumer = clone[slot.consumerNodeId];
+      if (consumer !== undefined) {
+        const { [slot.consumerKey]: _dropped, ...rest } = consumer.inputs;
+        consumer.inputs = rest;
+      }
+    }
+  });
+  return clone;
+}
+
 export interface IdeogramOverrides {
   caption?: string;
   captionNodeId?: string;
