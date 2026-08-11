@@ -8,11 +8,14 @@ import {
 import {
   type ApiGraph,
   applyIdeogramOverrides,
-  applyReferenceImages,
+  buildReferences,
   chainLoras,
+  chainModelPatchers,
   type LoraSpec,
+  type ModelPatcherSpec,
   patchWorkflow,
-  type RefImageSlot,
+  type ReferenceConfig,
+  type ReferenceSpec,
 } from "./lib/workflow_patch.ts";
 import { claudeComplete } from "./lib/anthropic.ts";
 import { buildCaptionMessages } from "./lib/ideogram_prompt.ts";
@@ -71,16 +74,39 @@ interface WorkflowTemplate {
     enableKey: string;
   };
   /**
-   * Reference-image slots for reference-to-video templates. `generate`'s
-   * `refImage`/`refImages` fill these positionally (via `applyReferenceImages`);
-   * unfilled slots are dropped. A template with `refImages` requires at least
-   * one image.
+   * Reference wiring for reference-to-video templates. `generate`'s
+   * `refImage(s)`/`refVideo(s)` are built onto the consumer node via
+   * `buildReferences`. A template with `references` requires at least one
+   * reference.
    */
-  refImages?: RefImageSlot[];
+  references?: ReferenceConfig;
   /** Clip duration in seconds, if the template exposes one (video). */
   duration?: { nodeId: string; key: string };
   /** Sampler step count, if the template exposes one. */
   steps?: { nodeId: string; key: string };
+  /**
+   * Optional speed/optimization patchers spliced onto the model between a
+   * source node and its consumers. `generate`'s `speed` (a list of patcher ids)
+   * selects which to enable; they inject in the declared order (the
+   * research-recommended order: attention backend → attention patch → FF
+   * chunking → cache). `speedOptions` overrides a patcher's default inputs.
+   */
+  speed?: {
+    modelSource: { nodeId: string; slot: number };
+    consumers: { nodeId: string; key: string }[];
+    patchers: SpeedPatcher[];
+  };
+}
+
+/** A named, ordered speed patcher a template exposes for `generate`'s `speed`. */
+interface SpeedPatcher {
+  /** Stable id used in the `speed` arg (e.g. `attentionBackend`, `spectrum`). */
+  id: string;
+  classType: string;
+  modelKey: string;
+  modelOutSlot: number;
+  /** Default node inputs (excluding the model wire); overridable per run. */
+  defaults: Record<string, unknown>;
 }
 
 const TEMPLATES: Record<string, WorkflowTemplate> = {
@@ -113,22 +139,106 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
     caption: { nodeId: "138", key: "value" },
     seed: { nodeId: "129", key: "noise_seed" },
     resolution: { nodeId: "115", key: "aspect_ratio" },
-    refImages: [
-      {
-        loaderNodeId: "137",
-        loaderKey: "image",
-        consumerNodeId: "136",
-        consumerKey: "ref_images.ref_image_0",
-      },
-      {
-        loaderNodeId: "139",
-        loaderKey: "image",
-        consumerNodeId: "136",
-        consumerKey: "ref_images.ref_image_1",
-      },
-    ],
+    references: {
+      consumerNodeId: "136",
+      imagePrefix: "ref_images.ref_image_",
+      videoPrefix: "ref_videos.ref_video_",
+      videoAudioPrefix: "ref_video_audios.ref_video_audio_",
+      maxImages: 9,
+      maxVideos: 3,
+      placeholderNodeIds: ["137", "139"],
+      loadImageClass: "LoadImage",
+      loadImageKey: "image",
+      loadVideoClass: "LoadVideo",
+      loadVideoKey: "file",
+      videoComponentsClass: "GetVideoComponents",
+      videoComponentsVideoKey: "video",
+      videoImagesSlot: 0,
+      videoAudioSlot: 1,
+    },
     duration: { nodeId: "132", key: "value" },
     steps: { nodeId: "124", key: "steps" },
+    speed: {
+      // UNETLoader (MODEL) → chain → BasicScheduler + BasicGuider.
+      modelSource: { nodeId: "127", slot: 0 },
+      consumers: [
+        { nodeId: "124", key: "model" },
+        { nodeId: "126", key: "model" },
+      ],
+      // Declared in the recommended injection order. Defaults are the
+      // community "fast" values (attention backend uses the comfy-kitchen int8
+      // path — the ~39s headline; Spectrum/Sol values match the shared config).
+      patchers: [
+        {
+          id: "attentionBackend",
+          classType: "ModelAttentionBackend",
+          modelKey: "model",
+          modelOutSlot: 0,
+          defaults: { attention: "comfy kitchen attention" },
+        },
+        {
+          id: "sage",
+          classType: "PathchSageAttentionKJ",
+          modelKey: "model",
+          modelOutSlot: 0,
+          defaults: { sage_attention: "auto", allow_compile: false },
+        },
+        {
+          id: "solAttention",
+          classType: "MiniMaxH3ScheduledSolAttentionPatch",
+          modelKey: "model",
+          modelOutSlot: 0,
+          defaults: {
+            enabled: true,
+            tau_start: 1.3,
+            tau_end: 0.8,
+            curve: "linear",
+            min_tokens: 4096,
+            strict: false,
+            dense_percent: 0,
+            thresh_type: "diag",
+            int8_qk: false,
+            int8_pv: false,
+            sink_conditioning: "exact_kv",
+            dense_blocks: "",
+          },
+        },
+        {
+          id: "chunkFeedForward",
+          classType: "MiniMaxH3ChunkFeedForward",
+          modelKey: "model",
+          modelOutSlot: 0,
+          defaults: { enabled: true, chunks: 2, min_tokens: 8192 },
+        },
+        {
+          id: "spectrum",
+          classType: "SpectrumApplyMiniMaxH3",
+          modelKey: "model",
+          modelOutSlot: 0,
+          defaults: {
+            enabled: true,
+            blend_weight: 0.5,
+            degree: 4,
+            ridge_lambda: 0.1,
+            window_size: 2,
+            flex_window: 0.75,
+            warmup_steps: 5,
+            tail_actual_steps: 1,
+            max_history: 8,
+            debug: false,
+            history_storage: "system_ram",
+            bootstrap_first_forecast: true,
+          },
+        },
+        {
+          id: "fusedModulation",
+          classType: "MiniMaxH3FusedModulation",
+          modelKey: "model",
+          modelOutSlot: 0,
+          defaults: { enabled: true },
+        },
+      ],
+    },
   },
 };
 
@@ -164,8 +274,13 @@ const GenerateArgs = z.object({
   resolutionInputKey: z.string().optional(),
   refImage: z.string().optional(),
   refImages: z.array(z.string()).optional(),
+  refVideo: z.string().optional(),
+  refVideos: z.array(z.string()).optional(),
   duration: z.number().optional(),
   steps: z.number().optional(),
+  speed: z.array(z.string()).optional(),
+  speedOptions: z.record(z.string(), z.record(z.string(), z.unknown()))
+    .optional(),
   template: z.string().optional(),
   lora: z.string().optional(),
   loras: z.array(z.string()).optional(),
@@ -354,60 +469,111 @@ function applyVideoOverrides(
 }
 
 /**
- * Resolve each reference-image value to a server-side name. An existing local
- * file is uploaded to the server (`/upload/image`) and referenced by its
- * returned name (prefixed with a subfolder when set); any other value is passed
- * through as an already-server-side input filename.
+ * Resolve a reference value to a server-side input filename. An existing local
+ * file is uploaded (`/upload/image` accepts image and video files) and referenced
+ * by its returned name (prefixed with a subfolder when set); any other value is a
+ * name already present in the server's input directory and passes through.
  */
-async function resolveReferenceImageNames(
+async function resolveReferenceName(
   client: ComfyClient,
-  images: string[],
-): Promise<string[]> {
-  const resolved: string[] = [];
-  for (const img of images) {
-    let isLocalFile = false;
-    try {
-      isLocalFile = (await Deno.stat(img)).isFile;
-    } catch {
-      isLocalFile = false;
-    }
-    if (isLocalFile) {
-      const bytes = await Deno.readFile(img);
-      const filename = img.split(/[\\/]/).pop() || "reference.png";
-      const up = await client.uploadImage(bytes, filename, { overwrite: true });
-      resolved.push(up.subfolder ? `${up.subfolder}/${up.name}` : up.name);
-    } else {
-      resolved.push(img);
-    }
+  value: string,
+): Promise<string> {
+  let isLocalFile = false;
+  try {
+    isLocalFile = (await Deno.stat(value)).isFile;
+  } catch {
+    isLocalFile = false;
   }
-  return resolved;
+  if (!isLocalFile) return value;
+  const bytes = await Deno.readFile(value);
+  const filename = value.split(/[\\/]/).pop() || "reference";
+  const up = await client.uploadImage(bytes, filename, { overwrite: true });
+  return up.subfolder ? `${up.subfolder}/${up.name}` : up.name;
 }
 
 /**
- * Fill a template's reference-image slots from `refImage`/`refImages` (uploading
- * any local files first). A no-op for templates without `refImages`; throws if
- * such a template gets no images (a reference-to-video run needs at least one).
+ * Build a template's reference inputs from `refImage(s)` and `refVideo(s)`
+ * (uploading any local files first, videos wired as `LoadVideo →
+ * GetVideoComponents`). A no-op for templates without `references`; throws if
+ * such a template gets no references at all.
  */
-async function applyRefImages(
+async function applyReferences(
   graph: ApiGraph,
   args: GenArgs,
   tpl: WorkflowTemplate | undefined,
   client: ComfyClient,
 ): Promise<ApiGraph> {
-  if (!tpl?.refImages || tpl.refImages.length === 0) return graph;
-  const provided = args.refImages && args.refImages.length > 0
+  if (!tpl?.references) return graph;
+  const images = args.refImages && args.refImages.length > 0
     ? args.refImages
     : args.refImage !== undefined
     ? [args.refImage]
     : [];
-  if (provided.length === 0) {
+  const videos = args.refVideos && args.refVideos.length > 0
+    ? args.refVideos
+    : args.refVideo !== undefined
+    ? [args.refVideo]
+    : [];
+  if (images.length === 0 && videos.length === 0) {
     throw new Error(
-      `template '${args.template ?? DEFAULT_TEMPLATE}' needs a reference image; ` +
-        "pass `refImage` (a local path or a server-side input filename) or `refImages`",
+      `template '${args.template ?? DEFAULT_TEMPLATE}' needs a reference; pass ` +
+        "`refImage`/`refImages` or `refVideo`/`refVideos` (a local path or a " +
+        "server-side input filename)",
     );
   }
-  const names = await resolveReferenceImageNames(client, provided);
-  return applyReferenceImages(graph, tpl.refImages, names);
+  const refs: ReferenceSpec[] = [];
+  for (const img of images) {
+    refs.push({ kind: "image", name: await resolveReferenceName(client, img) });
+  }
+  for (const vid of videos) {
+    refs.push({ kind: "video", name: await resolveReferenceName(client, vid) });
+  }
+  return buildReferences(graph, tpl.references, refs);
+}
+
+/**
+ * Splice the selected speed patchers onto the model chain. `args.speed` lists
+ * patcher ids to enable; they inject in the template's declared order (not the
+ * arg order). `args.speedOptions[id]` overrides that patcher's default inputs.
+ * A no-op when `speed` is empty; throws on an unknown id or a template without
+ * speed wiring.
+ */
+function applySpeed(
+  graph: ApiGraph,
+  args: GenArgs,
+  tpl: WorkflowTemplate | undefined,
+): ApiGraph {
+  if (!args.speed || args.speed.length === 0) return graph;
+  if (!tpl?.speed) {
+    throw new Error(
+      `template '${args.template ?? DEFAULT_TEMPLATE}' has no speed patchers; ` +
+        "speed is only available on templates that declare them (e.g. 'minimax_h3')",
+    );
+  }
+  const known = new Map(tpl.speed.patchers.map((p) => [p.id, p]));
+  const wanted = new Set(args.speed);
+  for (const id of wanted) {
+    if (!known.has(id)) {
+      throw new Error(
+        `unknown speed patcher '${id}'. Known: ${[...known.keys()].join(", ")}`,
+      );
+    }
+  }
+  // Inject in the template's declared (recommended) order, not the arg order.
+  const specs: ModelPatcherSpec[] = tpl.speed.patchers
+    .filter((p) => wanted.has(p.id))
+    .map((p) => ({
+      classType: p.classType,
+      modelKey: p.modelKey,
+      modelOutSlot: p.modelOutSlot,
+      inputs: { ...p.defaults, ...(args.speedOptions?.[p.id] ?? {}) },
+    }));
+  return chainModelPatchers(
+    graph,
+    tpl.speed.modelSource,
+    tpl.speed.consumers,
+    specs,
+  );
 }
 
 /** The seed node id + input key to patch, resolved from args then template. */
@@ -469,7 +635,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.11.1",
+  version: "2026.08.12.1",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -480,9 +646,9 @@ export const model = {
     },
     {
       fromVersion: "2026.08.02.1",
-      toVersion: "2026.08.11.1",
+      toVersion: "2026.08.12.1",
       description:
-        "Add 'minimax_h3' reference-to-video template (refImage/refImages, duration, steps) + generic video-output collection (collectFiles) and local ref-image upload; no globalArguments or resource-schema change",
+        "Add 'minimax_h3' reference-to-video template: image AND video references (refImage(s)/refVideo(s), videos via LoadVideo→GetVideoComponents), duration/steps, opt-in speed patcher chain (ModelAttentionBackend/sage/sol-attn/chunk-FF/spectrum via `speed`/`speedOptions`), generic video-output collection (collectFiles) + local ref upload; no globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -613,8 +779,12 @@ export const model = {
         "resolution node ids are applied automatically — or override with an " +
         "inline `workflow`/globalArgs.workflowPath and explicit `*NodeId`/" +
         "`*InputKey` args. For 'minimax_h3', pass the prompt as `caption` and a " +
-        "reference image via `refImage`/`refImages` (local path or server-side " +
-        "input filename); optional `duration` (seconds) and `steps`.",
+        "reference via `refImage`/`refImages` and/or `refVideo`/`refVideos` (each " +
+        "a local path or a server-side input filename; videos are wired through " +
+        "LoadVideo→GetVideoComponents); optional `duration` (seconds) and `steps`. " +
+        "Opt into speed patchers with `speed` (ids: attentionBackend, sage, " +
+        "solAttention, chunkFeedForward, spectrum, fusedModulation), overriding " +
+        "any patcher input via `speedOptions`.",
       arguments: GenerateArgs,
       execute: async (args: z.infer<typeof GenerateArgs>, context: Context) => {
         const { globalArgs } = context;
@@ -625,7 +795,8 @@ export const model = {
         });
         let base = applyContentOverrides(graph, args, tpl);
         base = applyVideoOverrides(base, args, tpl);
-        base = await applyRefImages(base, args, tpl, client);
+        base = await applyReferences(base, args, tpl, client);
+        base = applySpeed(base, args, tpl);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,
@@ -687,7 +858,8 @@ export const model = {
         });
         let base = applyContentOverrides(graph, args, tpl);
         base = applyVideoOverrides(base, args, tpl);
-        base = await applyRefImages(base, args, tpl, client);
+        base = await applyReferences(base, args, tpl, client);
+        base = applySpeed(base, args, tpl);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,

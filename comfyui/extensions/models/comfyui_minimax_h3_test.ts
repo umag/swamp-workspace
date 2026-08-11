@@ -15,8 +15,10 @@ import {
 } from "jsr:@std/assert@1";
 import { GlobalArgs, model } from "./comfyui.ts";
 import {
-  applyReferenceImages,
-  type RefImageSlot,
+  buildReferences,
+  chainModelPatchers,
+  type ModelPatcherSpec,
+  type ReferenceConfig,
 } from "./lib/workflow_patch.ts";
 import { ComfyClient, type HistoryEntry } from "./lib/comfy_client.ts";
 import promptQueued from "../../fixtures/prompt_queued.json" with {
@@ -82,20 +84,23 @@ function pathOf(req: Request): string {
   return new URL(req.url).pathname;
 }
 
-const SLOTS: RefImageSlot[] = [
-  {
-    loaderNodeId: "137",
-    loaderKey: "image",
-    consumerNodeId: "136",
-    consumerKey: "ref_images.ref_image_0",
-  },
-  {
-    loaderNodeId: "139",
-    loaderKey: "image",
-    consumerNodeId: "136",
-    consumerKey: "ref_images.ref_image_1",
-  },
-];
+const REF_CFG: ReferenceConfig = {
+  consumerNodeId: "136",
+  imagePrefix: "ref_images.ref_image_",
+  videoPrefix: "ref_videos.ref_video_",
+  videoAudioPrefix: "ref_video_audios.ref_video_audio_",
+  maxImages: 9,
+  maxVideos: 3,
+  placeholderNodeIds: ["137", "139"],
+  loadImageClass: "LoadImage",
+  loadImageKey: "image",
+  loadVideoClass: "LoadVideo",
+  loadVideoKey: "file",
+  videoComponentsClass: "GetVideoComponents",
+  videoComponentsVideoKey: "video",
+  videoImagesSlot: 0,
+  videoAudioSlot: 1,
+};
 
 function refGraph() {
   return {
@@ -105,6 +110,7 @@ function refGraph() {
       class_type: "MiniMaxH3ReferenceToVideo",
       inputs: {
         prompt: ["138", 0],
+        ref_image_size: "match",
         "ref_images.ref_image_0": ["137", 0],
         "ref_images.ref_image_1": ["139", 0],
       },
@@ -113,40 +119,166 @@ function refGraph() {
 }
 
 // ---------------------------------------------------------------------------
-// applyReferenceImages
+// buildReferences
 // ---------------------------------------------------------------------------
 
-Deno.test("applyReferenceImages: fills every slot when enough images are given", () => {
-  const out = applyReferenceImages(refGraph(), SLOTS, ["a.png", "b.png"]);
-  assertEquals(out["137"].inputs.image, "a.png");
-  assertEquals(out["139"].inputs.image, "b.png");
-  // consumer keeps both ref links
-  assertEquals(out["136"].inputs["ref_images.ref_image_0"], ["137", 0]);
-  assertEquals(out["136"].inputs["ref_images.ref_image_1"], ["139", 0]);
+Deno.test("buildReferences: injects a LoadImage per image ref and rewires the consumer", () => {
+  const out = buildReferences(refGraph(), REF_CFG, [
+    { kind: "image", name: "a.png" },
+    { kind: "image", name: "b.png" },
+  ]);
+  // placeholders removed, fresh loaders injected
+  assertEquals(out["137"], undefined);
+  assertEquals(out["139"], undefined);
+  assertEquals(out["ref_img_0"].inputs.image, "a.png");
+  assertEquals(out["ref_img_1"].inputs.image, "b.png");
+  assertEquals(out["136"].inputs["ref_images.ref_image_0"], ["ref_img_0", 0]);
+  assertEquals(out["136"].inputs["ref_images.ref_image_1"], ["ref_img_1", 0]);
+  // non-ref inputs preserved
+  assertEquals(out["136"].inputs.ref_image_size, "match");
 });
 
-Deno.test("applyReferenceImages: a single image fills slot 0 and DROPS slot 1 (loader node + consumer link)", () => {
-  const out = applyReferenceImages(refGraph(), SLOTS, ["only.png"]);
-  assertEquals(out["137"].inputs.image, "only.png");
-  assertEquals(out["139"], undefined); // loader node removed
-  assertEquals(out["136"].inputs["ref_images.ref_image_0"], ["137", 0]);
-  assertEquals("ref_images.ref_image_1" in out["136"].inputs, false); // link dropped
+Deno.test("buildReferences: a single image ref leaves only slot 0 wired (no dangling ref_image_1)", () => {
+  const out = buildReferences(refGraph(), REF_CFG, [
+    { kind: "image", name: "only.png" },
+  ]);
+  assertEquals(out["ref_img_0"].inputs.image, "only.png");
+  assertEquals(out["136"].inputs["ref_images.ref_image_0"], ["ref_img_0", 0]);
+  assertEquals("ref_images.ref_image_1" in out["136"].inputs, false);
 });
 
-Deno.test("applyReferenceImages: does not mutate the input graph", () => {
+Deno.test("buildReferences: a video ref wires LoadVideo→GetVideoComponents into ref_videos + ref_video_audios", () => {
+  const out = buildReferences(refGraph(), REF_CFG, [
+    { kind: "video", name: "clip.mp4" },
+  ]);
+  assertEquals(out["ref_vid_0"].class_type, "LoadVideo");
+  assertEquals(out["ref_vid_0"].inputs.file, "clip.mp4");
+  assertEquals(out["ref_vidc_0"].class_type, "GetVideoComponents");
+  assertEquals(out["ref_vidc_0"].inputs.video, ["ref_vid_0", 0]);
+  // frames → ref_video_0 (slot 0), audio → ref_video_audio_0 (slot 1)
+  assertEquals(out["136"].inputs["ref_videos.ref_video_0"], ["ref_vidc_0", 0]);
+  assertEquals(
+    out["136"].inputs["ref_video_audios.ref_video_audio_0"],
+    ["ref_vidc_0", 1],
+  );
+  // no image refs ⇒ no image links remain
+  assertEquals("ref_images.ref_image_0" in out["136"].inputs, false);
+});
+
+Deno.test("buildReferences: mixes an image and a video ref", () => {
+  const out = buildReferences(refGraph(), REF_CFG, [
+    { kind: "image", name: "face.png" },
+    { kind: "video", name: "motion.mp4" },
+  ]);
+  assertEquals(out["136"].inputs["ref_images.ref_image_0"], ["ref_img_0", 0]);
+  assertEquals(out["136"].inputs["ref_videos.ref_video_0"], ["ref_vidc_0", 0]);
+});
+
+Deno.test("buildReferences: does not mutate the input graph", () => {
   const input = refGraph();
-  applyReferenceImages(input, SLOTS, ["only.png"]);
-  assertEquals(input["139"]?.class_type, "LoadImage"); // still present on the original
+  buildReferences(input, REF_CFG, [{ kind: "image", name: "only.png" }]);
+  assertEquals(input["139"]?.class_type, "LoadImage"); // original untouched
   assertEquals(input["137"].inputs.image, "example.png");
 });
 
-Deno.test("applyReferenceImages: throws when a used slot's loader node is missing", () => {
-  const g = refGraph();
-  delete (g as Record<string, unknown>)["137"];
+Deno.test("buildReferences: throws when video refs exceed the node maximum", () => {
+  const vids = Array.from({ length: 4 }, (_, i) => ({
+    kind: "video" as const,
+    name: `v${i}.mp4`,
+  }));
   assertThrows(
-    () => applyReferenceImages(g, SLOTS, ["a.png"]),
+    () => buildReferences(refGraph(), REF_CFG, vids),
     Error,
-    "loader node '137' not found",
+    "too many reference videos",
+  );
+});
+
+Deno.test("buildReferences: throws when the consumer node is missing", () => {
+  const g = refGraph();
+  delete (g as Record<string, unknown>)["136"];
+  assertThrows(
+    () => buildReferences(g, REF_CFG, [{ kind: "image", name: "a.png" }]),
+    Error,
+    "consumer node '136' not found",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// chainModelPatchers — the speed chain
+// ---------------------------------------------------------------------------
+
+function speedGraph() {
+  return {
+    "127": { class_type: "UNETLoader", inputs: { unet_name: "m.safetensors" } },
+    "124": {
+      class_type: "BasicScheduler",
+      inputs: { steps: 20, model: ["127", 0] },
+    },
+    "126": {
+      class_type: "BasicGuider",
+      inputs: { conditioning: ["136", 0], model: ["127", 0] },
+    },
+  };
+}
+
+const SOURCE = { nodeId: "127", slot: 0 };
+const CONSUMERS = [
+  { nodeId: "124", key: "model" },
+  { nodeId: "126", key: "model" },
+];
+
+Deno.test("chainModelPatchers: splices patchers in series and repoints every consumer", () => {
+  const patchers: ModelPatcherSpec[] = [
+    {
+      classType: "ModelAttentionBackend",
+      modelKey: "model",
+      modelOutSlot: 0,
+      inputs: { attention: "comfy kitchen attention" },
+    },
+    {
+      classType: "SpectrumApplyMiniMaxH3",
+      modelKey: "model",
+      modelOutSlot: 0,
+      inputs: { enabled: true, degree: 4 },
+    },
+  ];
+  const out = chainModelPatchers(speedGraph(), SOURCE, CONSUMERS, patchers);
+  // first patcher reads the raw UNET model
+  assertEquals(out["speed_0_ModelAttentionBackend"].inputs.model, ["127", 0]);
+  assertEquals(
+    out["speed_0_ModelAttentionBackend"].inputs.attention,
+    "comfy kitchen attention",
+  );
+  // second reads the first
+  assertEquals(out["speed_1_SpectrumApplyMiniMaxH3"].inputs.model, [
+    "speed_0_ModelAttentionBackend",
+    0,
+  ]);
+  assertEquals(out["speed_1_SpectrumApplyMiniMaxH3"].inputs.degree, 4);
+  // both consumers now read the last patcher
+  assertEquals(out["124"].inputs.model, ["speed_1_SpectrumApplyMiniMaxH3", 0]);
+  assertEquals(out["126"].inputs.model, ["speed_1_SpectrumApplyMiniMaxH3", 0]);
+});
+
+Deno.test("chainModelPatchers: empty patcher list is a no-op clone (consumers untouched)", () => {
+  const out = chainModelPatchers(speedGraph(), SOURCE, CONSUMERS, []);
+  assertEquals(out["124"].inputs.model, ["127", 0]);
+  assertEquals(out["126"].inputs.model, ["127", 0]);
+});
+
+Deno.test("chainModelPatchers: throws when a consumer node is missing", () => {
+  const g = speedGraph();
+  delete (g as Record<string, unknown>)["126"];
+  assertThrows(
+    () =>
+      chainModelPatchers(g, SOURCE, CONSUMERS, [{
+        classType: "ModelAttentionBackend",
+        modelKey: "model",
+        modelOutSlot: 0,
+        inputs: {},
+      }]),
+    Error,
+    "consumer node '126' not found",
   );
 });
 
@@ -250,7 +382,7 @@ Deno.test("minimax_h3 bundled graph matches the template's node wiring", async (
 // generate over the real bundled template
 // ---------------------------------------------------------------------------
 
-Deno.test("generate template='minimax_h3': needs a reference image", async () => {
+Deno.test("generate template='minimax_h3': needs a reference (image or video)", async () => {
   const { context } = fakeContext();
   const args = model.methods.generate.arguments.parse({
     template: "minimax_h3",
@@ -259,7 +391,7 @@ Deno.test("generate template='minimax_h3': needs a reference image", async () =>
   await assertRejects(
     () => model.methods.generate.execute(args, context),
     Error,
-    "needs a reference image",
+    "needs a reference",
   );
 });
 
@@ -332,10 +464,15 @@ Deno.test("generate template='minimax_h3': uploads a local ref image, patches pr
     assertEquals(posted["129"].inputs.noise_seed, 4242);
     // duration patched onto PrimitiveFloat 132/value
     assertEquals(posted["132"].inputs.value, 8);
-    // uploaded ref name lands on loader 137
-    assertEquals(posted["137"].inputs.image, "portrait.png");
-    // single ref image ⇒ 2nd loader dropped + consumer link removed
+    // uploaded ref name lands on the injected image loader; placeholders gone
+    assertEquals(posted["ref_img_0"].inputs.image, "portrait.png");
+    assertEquals(posted["137"], undefined);
     assertEquals(posted["139"], undefined);
+    // single ref image ⇒ only slot 0 wired, no dangling ref_image_1
+    assertEquals(posted["136"].inputs["ref_images.ref_image_0"], [
+      "ref_img_0",
+      0,
+    ]);
     assertEquals("ref_images.ref_image_1" in posted["136"].inputs, false);
     // the mp4 was fetched + saved and recorded
     const gen = captured.find((c) => c.spec === "generation");
@@ -347,4 +484,109 @@ Deno.test("generate template='minimax_h3': uploads a local ref image, patches pr
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("generate template='minimax_h3': speed splices the selected patchers (in template order) between UNET and the sampler/guider, with speedOptions overrides", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const { context } = fakeContext({
+      outputDir: dir,
+      pollIntervalMs: 1,
+      timeoutMs: 5000,
+    });
+    let posted: Record<string, { inputs: Record<string, unknown> }> | undefined;
+    const videoHistory = {
+      status: { completed: true },
+      outputs: {
+        "92": {
+          videos: [{ filename: "v.mp4", subfolder: "", type: "output" }],
+        },
+      },
+    };
+    await withFetchStub(
+      [
+        (req) => {
+          if (pathOf(req) !== "/prompt") return undefined;
+          return req.text().then((text) => {
+            posted = (JSON.parse(text) as {
+              prompt: Record<string, { inputs: Record<string, unknown> }>;
+            }).prompt;
+            return json(promptQueued);
+          });
+        },
+        (req) =>
+          pathOf(req) === "/history/synthetic-prompt-0001"
+            ? json({ "synthetic-prompt-0001": videoHistory })
+            : undefined,
+        (req) =>
+          pathOf(req) === "/view"
+            ? new Response(new Uint8Array([1]), { status: 200 })
+            : undefined,
+      ],
+      async () => {
+        const args = model.methods.generate.arguments.parse({
+          template: "minimax_h3",
+          caption: "go fast",
+          // a server-side input name (no local file) ⇒ no upload
+          refImage: "already_on_server.png",
+          // deliberately out of template order — injection still follows the
+          // template's declared order (attentionBackend before spectrum)
+          speed: ["spectrum", "attentionBackend"],
+          speedOptions: { attentionBackend: { attention: "pytorch attention" } },
+        });
+        await model.methods.generate.execute(args, context);
+      },
+    );
+    assert(posted);
+    // attentionBackend injected first (reads raw UNET 127), override applied
+    const ab = posted["speed_0_ModelAttentionBackend"];
+    assert(ab, "ModelAttentionBackend should be first in the chain");
+    assertEquals(ab.inputs.model, ["127", 0]);
+    assertEquals(ab.inputs.attention, "pytorch attention"); // speedOptions override
+    // spectrum injected second, reading the attention backend
+    const sp = posted["speed_1_SpectrumApplyMiniMaxH3"];
+    assert(sp);
+    assertEquals(sp.inputs.model, ["speed_0_ModelAttentionBackend", 0]);
+    assertEquals(sp.inputs.degree, 4); // template default preserved
+    // sampler + guider now read the last patcher
+    assertEquals(posted["124"].inputs.model, [
+      "speed_1_SpectrumApplyMiniMaxH3",
+      0,
+    ]);
+    assertEquals(posted["126"].inputs.model, [
+      "speed_1_SpectrumApplyMiniMaxH3",
+      0,
+    ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generate: an unknown speed patcher id throws, naming the known ones", async () => {
+  const { context } = fakeContext();
+  const args = model.methods.generate.arguments.parse({
+    template: "minimax_h3",
+    caption: "x",
+    refImage: "on_server.png",
+    speed: ["turbocharger"],
+  });
+  await assertRejects(
+    () => model.methods.generate.execute(args, context),
+    Error,
+    "unknown speed patcher 'turbocharger'",
+  );
+});
+
+Deno.test("generate: speed on a template without speed wiring throws", async () => {
+  const { context } = fakeContext();
+  const args = model.methods.generate.arguments.parse({
+    template: "ideogram",
+    caption: "x",
+    speed: ["attentionBackend"],
+  });
+  await assertRejects(
+    () => model.methods.generate.execute(args, context),
+    Error,
+    "has no speed patchers",
+  );
 });

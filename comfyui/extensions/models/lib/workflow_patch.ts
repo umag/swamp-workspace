@@ -143,55 +143,166 @@ export function chainLoras(
 }
 
 /**
- * One reference-image slot in a video/reference workflow: the `LoadImage` node
- * that holds the image filename, plus the consumer node/input the loader is
- * wired into (so an unused slot can be fully removed).
+ * How a reference-consuming node (e.g. `MiniMaxH3ReferenceToVideo`) wires its
+ * dynamic reference inputs, and which loader classes feed them. `buildReferences`
+ * injects one loader per reference and points the consumer's autogrow inputs
+ * (`<imagePrefix>0`, `<videoPrefix>0`, …) at them.
  */
-export interface RefImageSlot {
-  /** The `LoadImage` node whose `image` input names the file. */
-  loaderNodeId: string;
-  /** The loader's filename input key (usually `"image"`). */
-  loaderKey: string;
-  /** Node consuming the loader (e.g. the reference-to-video node). */
+export interface ReferenceConfig {
+  /** The node whose reference inputs are (re)built (e.g. `"136"`). */
   consumerNodeId: string;
-  /** The consumer input fed by this loader (e.g. `ref_images.ref_image_1`). */
-  consumerKey: string;
+  /** Autogrow prefix for image refs (e.g. `"ref_images.ref_image_"`). */
+  imagePrefix: string;
+  /** Autogrow prefix for video-frame refs (e.g. `"ref_videos.ref_video_"`). */
+  videoPrefix: string;
+  /** Autogrow prefix for a video's audio (e.g. `"ref_video_audios.ref_video_audio_"`). */
+  videoAudioPrefix: string;
+  /** Max image refs the consumer accepts. */
+  maxImages: number;
+  /** Max video refs the consumer accepts. */
+  maxVideos: number;
+  /** Bundled placeholder loader node ids to remove before building fresh. */
+  placeholderNodeIds: string[];
+  /** Image loader (`LoadImage`) class + its filename input key. */
+  loadImageClass: string;
+  loadImageKey: string;
+  /** Video loader (`LoadVideo`) class + its filename input key. */
+  loadVideoClass: string;
+  loadVideoKey: string;
+  /** VIDEO→(IMAGE,AUDIO) splitter (`GetVideoComponents`) + its VIDEO input key. */
+  videoComponentsClass: string;
+  videoComponentsVideoKey: string;
+  /** Output slot indices on the splitter for images / audio. */
+  videoImagesSlot: number;
+  videoAudioSlot: number;
+}
+
+/** One reference to feed the consumer: a server-side image or video filename. */
+export interface ReferenceSpec {
+  kind: "image" | "video";
+  /** Server-side input filename (already uploaded / present on the server). */
+  name: string;
 }
 
 /**
- * Point each reference-image slot at a provided image name, positionally.
- * Slots with an image (`images[i]` defined) get their loader's filename set;
- * slots BEYOND the supplied images are dropped entirely — the loader node is
- * deleted and the consumer's corresponding input link removed — so a single-
- * reference run doesn't leave a dangling `LoadImage` pointing at a missing file.
- * Deep-clones; never mutates the input. Throws if a used slot's loader is
- * absent. Extra images past the slot count are ignored (the graph has no slot
- * to hold them).
+ * Rebuild a reference-consuming node's dynamic inputs from `refs`. Removes the
+ * bundled placeholder loaders and any existing `ref_*` links on the consumer,
+ * then injects one loader per reference: an image gets a `LoadImage` wired to
+ * `<imagePrefix>i`; a video gets `LoadVideo → GetVideoComponents` with the frames
+ * wired to `<videoPrefix>j` and the audio to `<videoAudioPrefix>j`. Injected node
+ * ids are string-keyed (`ref_img_0`, `ref_vid_0`, `ref_vidc_0`) so they never
+ * collide with numeric ids. Deep-clones; never mutates the input. Throws if the
+ * consumer is absent or the image/video counts exceed the node's maxima.
  */
-export function applyReferenceImages(
+export function buildReferences(
   graph: ApiGraph,
-  slots: RefImageSlot[],
-  images: string[],
+  cfg: ReferenceConfig,
+  refs: ReferenceSpec[],
 ): ApiGraph {
   const clone = structuredClone(graph);
-  slots.forEach((slot, i) => {
-    if (i < images.length) {
-      const loader = clone[slot.loaderNodeId];
-      if (loader === undefined) {
-        throw new Error(
-          `reference-image loader node '${slot.loaderNodeId}' not found`,
-        );
-      }
-      loader.inputs = { ...loader.inputs, [slot.loaderKey]: images[i] };
-    } else {
-      delete clone[slot.loaderNodeId];
-      const consumer = clone[slot.consumerNodeId];
-      if (consumer !== undefined) {
-        const { [slot.consumerKey]: _dropped, ...rest } = consumer.inputs;
-        consumer.inputs = rest;
-      }
-    }
+  const consumer = clone[cfg.consumerNodeId];
+  if (consumer === undefined) {
+    throw new Error(`reference consumer node '${cfg.consumerNodeId}' not found`);
+  }
+  for (const id of cfg.placeholderNodeIds) delete clone[id];
+
+  const images = refs.filter((r) => r.kind === "image");
+  const videos = refs.filter((r) => r.kind === "video");
+  if (images.length > cfg.maxImages) {
+    throw new Error(
+      `too many reference images: ${images.length} > max ${cfg.maxImages}`,
+    );
+  }
+  if (videos.length > cfg.maxVideos) {
+    throw new Error(
+      `too many reference videos: ${videos.length} > max ${cfg.maxVideos}`,
+    );
+  }
+
+  // Drop any pre-existing ref_* links so we rebuild from scratch.
+  consumer.inputs = Object.fromEntries(
+    Object.entries(consumer.inputs).filter(([k]) =>
+      !k.startsWith(cfg.imagePrefix) &&
+      !k.startsWith(cfg.videoPrefix) &&
+      !k.startsWith(cfg.videoAudioPrefix)
+    ),
+  );
+
+  images.forEach((ref, i) => {
+    const id = `ref_img_${i}`;
+    clone[id] = {
+      class_type: cfg.loadImageClass,
+      inputs: { [cfg.loadImageKey]: ref.name },
+    };
+    consumer.inputs[`${cfg.imagePrefix}${i}`] = [id, 0];
   });
+
+  videos.forEach((ref, j) => {
+    const loaderId = `ref_vid_${j}`;
+    const compId = `ref_vidc_${j}`;
+    clone[loaderId] = {
+      class_type: cfg.loadVideoClass,
+      inputs: { [cfg.loadVideoKey]: ref.name },
+    };
+    clone[compId] = {
+      class_type: cfg.videoComponentsClass,
+      inputs: { [cfg.videoComponentsVideoKey]: [loaderId, 0] },
+    };
+    consumer.inputs[`${cfg.videoPrefix}${j}`] = [compId, cfg.videoImagesSlot];
+    consumer.inputs[`${cfg.videoAudioPrefix}${j}`] = [
+      compId,
+      cfg.videoAudioSlot,
+    ];
+  });
+
+  return clone;
+}
+
+/** One MODEL→MODEL patcher to splice into a model chain. */
+export interface ModelPatcherSpec {
+  /** Node class (e.g. `ModelAttentionBackend`, `SpectrumApplyMiniMaxH3`). */
+  classType: string;
+  /** The node's MODEL input key (usually `model`). */
+  modelKey: string;
+  /** Which output slot carries MODEL (0 for all MiniMax H3 patchers). */
+  modelOutSlot: number;
+  /** Resolved node inputs (defaults + overrides), excluding the model wire. */
+  inputs: Record<string, unknown>;
+}
+
+/**
+ * Splice a series of MODEL→MODEL patchers between a model source and its
+ * consumers. Each patcher becomes a new string-keyed node (`speed_0_<class>`,
+ * …) reading the previous link's MODEL; the consumers are repointed at the last
+ * patcher's output. A no-op returning a clone when `patchers` is empty.
+ * Deep-clones; never mutates the input. Throws if a consumer node is absent.
+ */
+export function chainModelPatchers(
+  graph: ApiGraph,
+  source: { nodeId: string; slot: number },
+  consumers: { nodeId: string; key: string }[],
+  patchers: ModelPatcherSpec[],
+): ApiGraph {
+  const clone = structuredClone(graph);
+  if (patchers.length === 0) return clone;
+
+  let prev: [string, number] = [source.nodeId, source.slot];
+  patchers.forEach((p, i) => {
+    const id = `speed_${i}_${p.classType}`;
+    clone[id] = {
+      class_type: p.classType,
+      inputs: { ...p.inputs, [p.modelKey]: prev },
+    };
+    prev = [id, p.modelOutSlot];
+  });
+
+  for (const c of consumers) {
+    const node = clone[c.nodeId];
+    if (node === undefined) {
+      throw new Error(`speed consumer node '${c.nodeId}' not found`);
+    }
+    node.inputs = { ...node.inputs, [c.key]: prev };
+  }
   return clone;
 }
 
