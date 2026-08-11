@@ -90,11 +90,14 @@ interface WorkflowTemplate {
    * selects which to enable; they inject in the declared order (the
    * research-recommended order: attention backend → attention patch → FF
    * chunking → cache). `speedOptions` overrides a patcher's default inputs.
+   * `default` is the patcher set applied when `speed` is omitted; pass an
+   * explicit `speed: []` to disable them.
    */
   speed?: {
     modelSource: { nodeId: string; slot: number };
     consumers: { nodeId: string; key: string }[];
     patchers: SpeedPatcher[];
+    default: string[];
   };
 }
 
@@ -237,6 +240,17 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
           modelOutSlot: 0,
           defaults: { enabled: true },
         },
+      ],
+      // Applied when `speed` is omitted. The full stack — live-measured ~43%
+      // faster (1m5s vs 1m53s base) with all six accepted together. Pass
+      // `speed: []` to disable, or a subset to pick.
+      default: [
+        "attentionBackend",
+        "sage",
+        "solAttention",
+        "chunkFeedForward",
+        "spectrum",
+        "fusedModulation",
       ],
     },
   },
@@ -532,18 +546,20 @@ async function applyReferences(
 }
 
 /**
- * Splice the selected speed patchers onto the model chain. `args.speed` lists
- * patcher ids to enable; they inject in the template's declared order (not the
- * arg order). `args.speedOptions[id]` overrides that patcher's default inputs.
- * A no-op when `speed` is empty; throws on an unknown id or a template without
- * speed wiring.
+ * Splice the selected speed patchers onto the model chain. When `args.speed` is
+ * omitted the template's `default` set is used; an explicit `speed: []` disables
+ * them. Enabled patchers inject in the template's declared order (not the arg
+ * order). `args.speedOptions[id]` overrides that patcher's default inputs. Throws
+ * on an unknown id or an explicit `speed` on a template without speed wiring.
  */
 function applySpeed(
   graph: ApiGraph,
   args: GenArgs,
   tpl: WorkflowTemplate | undefined,
 ): ApiGraph {
-  if (!args.speed || args.speed.length === 0) return graph;
+  // Omitted `speed` → template default; explicit `speed` (incl. []) wins.
+  const selected = args.speed ?? tpl?.speed?.default ?? [];
+  if (selected.length === 0) return graph;
   if (!tpl?.speed) {
     throw new Error(
       `template '${args.template ?? DEFAULT_TEMPLATE}' has no speed patchers; ` +
@@ -551,7 +567,7 @@ function applySpeed(
     );
   }
   const known = new Map(tpl.speed.patchers.map((p) => [p.id, p]));
-  const wanted = new Set(args.speed);
+  const wanted = new Set(selected);
   for (const id of wanted) {
     if (!known.has(id)) {
       throw new Error(
@@ -635,7 +651,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.1",
+  version: "2026.08.12.2",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -649,6 +665,13 @@ export const model = {
       toVersion: "2026.08.12.1",
       description:
         "Add 'minimax_h3' reference-to-video template: image AND video references (refImage(s)/refVideo(s), videos via LoadVideo→GetVideoComponents), duration/steps, opt-in speed patcher chain (ModelAttentionBackend/sage/sol-attn/chunk-FF/spectrum via `speed`/`speedOptions`), generic video-output collection (collectFiles) + local ref upload; no globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.1",
+      toVersion: "2026.08.12.2",
+      description:
+        "minimax_h3: enable the full speed patcher stack BY DEFAULT (live ~43% faster); `speed: []` disables, an explicit `speed` still overrides. No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -782,9 +805,10 @@ export const model = {
         "reference via `refImage`/`refImages` and/or `refVideo`/`refVideos` (each " +
         "a local path or a server-side input filename; videos are wired through " +
         "LoadVideo→GetVideoComponents); optional `duration` (seconds) and `steps`. " +
-        "Opt into speed patchers with `speed` (ids: attentionBackend, sage, " +
-        "solAttention, chunkFeedForward, spectrum, fusedModulation), overriding " +
-        "any patcher input via `speedOptions`.",
+        "The full speed patcher stack (attentionBackend, sage, solAttention, " +
+        "chunkFeedForward, spectrum, fusedModulation) runs BY DEFAULT (~43% " +
+        "faster); pass `speed: []` to disable, an explicit `speed` list to pick a " +
+        "subset, or `speedOptions` to override a patcher's inputs.",
       arguments: GenerateArgs,
       execute: async (args: z.infer<typeof GenerateArgs>, context: Context) => {
         const { globalArgs } = context;

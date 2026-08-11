@@ -590,3 +590,84 @@ Deno.test("generate: speed on a template without speed wiring throws", async () 
     "has no speed patchers",
   );
 });
+
+/** Run generate over the bundled minimax_h3 template, returning the POSTed graph. */
+async function postedFor(
+  extra: Record<string, unknown>,
+): Promise<Record<string, { inputs: Record<string, unknown> }>> {
+  const dir = await Deno.makeTempDir();
+  try {
+    const { context } = fakeContext({
+      outputDir: dir,
+      pollIntervalMs: 1,
+      timeoutMs: 5000,
+    });
+    let posted: Record<string, { inputs: Record<string, unknown> }> | undefined;
+    const videoHistory = {
+      status: { completed: true },
+      outputs: {
+        "92": { videos: [{ filename: "v.mp4", subfolder: "", type: "output" }] },
+      },
+    };
+    await withFetchStub(
+      [
+        (req) => {
+          if (pathOf(req) !== "/prompt") return undefined;
+          return req.text().then((text) => {
+            posted = (JSON.parse(text) as {
+              prompt: Record<string, { inputs: Record<string, unknown> }>;
+            }).prompt;
+            return json(promptQueued);
+          });
+        },
+        (req) =>
+          pathOf(req) === "/history/synthetic-prompt-0001"
+            ? json({ "synthetic-prompt-0001": videoHistory })
+            : undefined,
+        (req) =>
+          pathOf(req) === "/view"
+            ? new Response(new Uint8Array([1]), { status: 200 })
+            : undefined,
+      ],
+      async () => {
+        const args = model.methods.generate.arguments.parse({
+          template: "minimax_h3",
+          caption: "x",
+          refImage: "on_server.png",
+          ...extra,
+        });
+        await model.methods.generate.execute(args, context);
+      },
+    );
+    assert(posted);
+    return posted;
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test("generate template='minimax_h3': omitting speed applies the full default stack (6 patchers), repointing the consumers", async () => {
+  const posted = await postedFor({});
+  // all six patchers injected, in declared order
+  const ids = [
+    "speed_0_ModelAttentionBackend",
+    "speed_1_PathchSageAttentionKJ",
+    "speed_2_MiniMaxH3ScheduledSolAttentionPatch",
+    "speed_3_MiniMaxH3ChunkFeedForward",
+    "speed_4_SpectrumApplyMiniMaxH3",
+    "speed_5_MiniMaxH3FusedModulation",
+  ];
+  for (const id of ids) assert(posted[id], `${id} should be present`);
+  // first reads the raw UNET; last feeds both consumers
+  assertEquals(posted["speed_0_ModelAttentionBackend"].inputs.model, ["127", 0]);
+  assertEquals(posted["124"].inputs.model, ["speed_5_MiniMaxH3FusedModulation", 0]);
+  assertEquals(posted["126"].inputs.model, ["speed_5_MiniMaxH3FusedModulation", 0]);
+});
+
+Deno.test("generate template='minimax_h3': an explicit empty speed:[] disables the default stack", async () => {
+  const posted = await postedFor({ speed: [] });
+  assertEquals("speed_0_ModelAttentionBackend" in posted, false);
+  // consumers read the raw UNET, unpatched
+  assertEquals(posted["124"].inputs.model, ["127", 0]);
+  assertEquals(posted["126"].inputs.model, ["127", 0]);
+});
