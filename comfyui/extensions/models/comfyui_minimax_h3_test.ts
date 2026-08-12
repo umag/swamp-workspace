@@ -14,10 +14,12 @@ import {
   assertThrows,
 } from "jsr:@std/assert@1";
 import {
+  alignSeams,
   continuationCaption,
   continuationCaptionTail,
   GlobalArgs,
   model,
+  parseMotionProfile,
   planFragments,
 } from "./comfyui.ts";
 import {
@@ -842,7 +844,49 @@ Deno.test("continuationCaptionTail: tags <Video N> as the moving tail anchor", (
   assert(out.includes("without any cut"));
   assert(out.includes("camera trajectory"));
   assert(out.includes("<Picture 1>"));
+  // facing is bound to the tail, NOT to the identity portrait
+  assert(out.includes("head, face, and gaze"));
+  assert(out.includes("NOT her pose or which way she is facing"));
   assert(out.startsWith("subject_definitions:"));
+});
+
+Deno.test("parseMotionProfile: pairs pts_time with the following YAVG", () => {
+  const text = [
+    "frame:0    pts:0       pts_time:0",
+    "lavfi.signalstats.YAVG=0.4",
+    "frame:1    pts:1001    pts_time:0.0334",
+    "lavfi.signalstats.YAVG=15.2",
+    "frame:2    pts:2002    pts_time:0.0668",
+    "lavfi.signalstats.YAVG=3.1",
+  ].join("\n");
+  assertEquals(parseMotionProfile(text), [
+    { t: 0, m: 0.4 },
+    { t: 0.0334, m: 15.2 },
+    { t: 0.0668, m: 3.1 },
+  ]);
+  // a YAVG with no preceding pts_time is ignored
+  assertEquals(parseMotionProfile("lavfi.signalstats.YAVG=9"), []);
+});
+
+Deno.test("alignSeams: snaps boundaries to the lowest-motion frame in the window", () => {
+  // nominal boundary at 5s; motion dips at 4.6s → cut should move there.
+  const motion = [
+    { t: 4.2, m: 20 },
+    { t: 4.6, m: 2 }, // held pose — the minimum in [4,6]
+    { t: 5.0, m: 18 },
+    { t: 5.4, m: 25 },
+  ];
+  const plan = alignSeams(10, 5, motion, 1.0, 1.5);
+  assertEquals(plan.length, 2);
+  assertEquals(plan[0], { index: 0, start: 0, duration: 4.6 });
+  assertEquals(plan[1], { index: 1, start: 4.6, duration: 5.4 });
+});
+
+Deno.test("alignSeams: empty profile falls back to uniform boundaries", () => {
+  assertEquals(alignSeams(10, 5, [], 1.0, 1.5), [
+    { index: 0, start: 0, duration: 5 },
+    { index: 1, start: 5, duration: 5 },
+  ]);
 });
 
 Deno.test("model declares generate_long with totalDuration/fragmentDuration", () => {
@@ -856,6 +900,8 @@ Deno.test("model declares generate_long with totalDuration/fragmentDuration", ()
   assertEquals(parsed.totalDuration, 30);
   assertEquals(parsed.fragmentDuration, 5);
   assertEquals(parsed.continuationSeconds, 0.5);
+  assertEquals(parsed.seamAlign, true);
+  assertEquals(parsed.seamWindow, 1.0);
 });
 
 Deno.test("generate: turbo on a template without a turbo preset throws", async () => {

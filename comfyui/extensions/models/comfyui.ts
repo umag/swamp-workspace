@@ -456,6 +456,13 @@ const GenerateLongArgs = GenerateArgs.extend({
   // motion instead of re-accelerating from a frozen still (the jump-cut cause).
   // ~0.5s ≈ 10-12 frames. Set 0 to fall back to a single last-frame still.
   continuationSeconds: z.number().min(0).max(3).default(0.5),
+  // Snap each fragment boundary to the lowest-motion frame within `seamWindow`
+  // seconds of its nominal position (profiled from the source motion video), so
+  // cuts land on held/near-still poses — not mid-jump or mid-turn, where facing
+  // is ambiguous and the next fragment forgets which way the face points. Needs
+  // a LOCAL `refVideo`. Set false for fixed uniform windows.
+  seamAlign: z.boolean().default(true),
+  seamWindow: z.number().min(0).max(3).default(1.0),
 });
 
 const NodeInfoArgs = z.object({
@@ -1022,6 +1029,91 @@ export function planFragments(
 }
 
 /**
+ * Per-frame motion magnitude of `src`: the mean luma of the frame-to-frame
+ * DIFFERENCE (tblend difference → signalstats YAVG), so high = fast movement,
+ * low = a held/near-still pose. Downscaled to 64px wide for speed. Best-effort:
+ * returns `[]` if ffmpeg fails, so callers fall back to uniform fragments.
+ */
+async function ffmpegMotionProfile(
+  src: string,
+): Promise<{ t: number; m: number }[]> {
+  const cmd = new Deno.Command("ffmpeg", {
+    args: [
+      "-y", "-i", src,
+      "-vf",
+      "format=gray,scale=64:-2,tblend=all_mode=difference," +
+      "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-",
+      "-f", "null", "-",
+    ],
+    stdout: "piped",
+    stderr: "null",
+  });
+  const { success, stdout } = await cmd.output();
+  if (!success) return [];
+  return parseMotionProfile(new TextDecoder().decode(stdout));
+}
+
+/** Parse ffmpeg `metadata=print` output into `{t, m}` motion samples. */
+export function parseMotionProfile(text: string): { t: number; m: number }[] {
+  const out: { t: number; m: number }[] = [];
+  let t: number | undefined;
+  for (const line of text.split("\n")) {
+    const pt = line.match(/pts_time:([-\d.]+)/);
+    if (pt) {
+      t = Number(pt[1]);
+      continue;
+    }
+    const y = line.match(/YAVG=([-\d.]+)/);
+    if (y && t !== undefined) out.push({ t, m: Number(y[1]) });
+  }
+  return out;
+}
+
+/**
+ * Like `planFragments`, but SNAP each interior fragment boundary to the
+ * lowest-motion frame within `window` seconds of its nominal position, so cuts
+ * land on held/near-still poses instead of mid-jump or mid-turn (where the
+ * subject's facing is ambiguous and continuation "forgets" head orientation).
+ * `minSeg` keeps every fragment at least that long. Falls back to uniform
+ * windows for any boundary with no motion samples in range.
+ */
+export function alignSeams(
+  total: number,
+  frag: number,
+  motion: { t: number; m: number }[],
+  window = 1.0,
+  minSeg = 1.5,
+): { index: number; start: number; duration: number }[] {
+  const boundaries = [0];
+  for (let b = frag; b < total - 1e-6; b += frag) {
+    const prev = boundaries[boundaries.length - 1];
+    const lo = Math.max(prev + minSeg, b - window);
+    const hi = Math.min(total - minSeg, b + window);
+    let best = b;
+    let bestM = Infinity;
+    for (const s of motion) {
+      if (s.t < lo || s.t > hi) continue;
+      if (s.m < bestM) {
+        bestM = s.m;
+        best = s.t;
+      }
+    }
+    best = Math.min(Math.max(best, lo), hi);
+    if (best > prev + 1e-6 && best < total - 1e-6) boundaries.push(best);
+  }
+  boundaries.push(total);
+  const out = [];
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    out.push({
+      index: i,
+      start: boundaries[i],
+      duration: boundaries[i + 1] - boundaries[i],
+    });
+  }
+  return out;
+}
+
+/**
  * Append a continuation instruction to a caption, telling H3 that the given
  * `<Picture N>` is the last frame of the previous clip to continue from.
  */
@@ -1046,10 +1138,13 @@ export function continuationCaptionTail(
   return `${caption.trimEnd()}\n\ncontinuation:\n<Video ${videoIndex}> is the ` +
     `final ~0.5 seconds of the immediately preceding clip. Begin this clip on ` +
     `the exact frame <Video ${videoIndex}> ends, matching <Subject 1>'s pose, ` +
-    `position, and the camera framing/angle at that instant, then continue the ` +
-    `same body motion, camera trajectory, and pacing without any cut, jump, or ` +
-    `camera reset. Keep <Subject 1>'s identity and clothing from <Picture 1> ` +
-    `and the choreography and camera from <Video 1>.`;
+    `body position, and — critically — the exact direction her head, face, and ` +
+    `gaze are facing at that instant, plus the camera framing and angle. Then ` +
+    `continue the same body motion, head and face orientation, camera ` +
+    `trajectory, and pacing without any cut, jump, or camera reset. <Picture 1> ` +
+    `supplies ONLY <Subject 1>'s identity, face, and clothing — NOT her pose or ` +
+    `which way she is facing; her facing and orientation come from ` +
+    `<Video ${videoIndex}> and the choreography and camera from <Video 1>.`;
 }
 
 async function snapshotServer(
@@ -1081,7 +1176,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.9",
+  version: "2026.08.12.10",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -1151,6 +1246,13 @@ export const model = {
       toVersion: "2026.08.12.9",
       description:
         "generate_long: continuation now carries the previous fragment's TAIL as a moving reference VIDEO (<Video 2>, `continuationSeconds` default 0.5 ≈ 10-12 frames) instead of a single frozen still — H3 sees the subject's velocity and the camera trajectory at the cut, killing the jump-cut/hitch at each seam and holding the camera steady. `continuationSeconds: 0` restores the single-still fallback. No globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.9",
+      toVersion: "2026.08.12.10",
+      description:
+        "generate_long: SEAM-ALIGN fragment boundaries (`seamAlign` default on, `seamWindow` 1s) — profile the source motion video (tblend-difference → signalstats YAVG per frame) and snap each cut to the lowest-motion frame near its nominal position, so cuts land on held poses instead of mid-jump/turn where facing is ambiguous (fixed the next fragment 'forgetting' head/face orientation). Also bind facing/gaze/head-orientation to <Video 2> in the continuation caption and demote <Picture 1> to appearance-only. No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1414,10 +1516,14 @@ export const model = {
         "and continues its motion + camera, then all fragments are stitched with " +
         "ffmpeg. A moving tail (vs a single still) gives H3 the subject velocity " +
         "and camera trajectory at the cut, removing the jump-cut at each seam; " +
-        "`continuationSeconds: 0` falls back to a single last-frame still. The " +
-        "`refVideo` is the FULL motion reference and is sliced per fragment. All " +
-        "`generate` options (turbo, keepRefAudio, resolution, megapixels, upscale, " +
-        "speed) apply per fragment. minimax_h3 only.",
+        "`continuationSeconds: 0` falls back to a single last-frame still. Fragment " +
+        "boundaries are SEAM-ALIGNED (`seamAlign`, default on): each cut snaps to " +
+        "the lowest-motion frame within `seamWindow`(1s) of its nominal position — " +
+        "profiled from the source motion video — so cuts land on held poses, not " +
+        "mid-jump/turn where facing is ambiguous and the next fragment forgets head " +
+        "orientation. The `refVideo` is the FULL motion reference and is sliced per " +
+        "fragment. All `generate` options (turbo, keepRefAudio, resolution, " +
+        "megapixels, upscale, speed) apply per fragment. minimax_h3 only.",
       arguments: GenerateLongArgs,
       execute: async (
         args: z.infer<typeof GenerateLongArgs>,
@@ -1431,7 +1537,6 @@ export const model = {
         const installed = await client.fetchInstalledClasses();
 
         const frag = args.fragmentDuration ?? 5;
-        const plan = planFragments(args.totalDuration, frag);
 
         // Resolve the character reference image(s) once to server-side names so
         // they aren't re-uploaded every fragment.
@@ -1448,6 +1553,18 @@ export const model = {
         const motionRef = (args.refVideos && args.refVideos.length > 0)
           ? args.refVideos[0]
           : args.refVideo;
+
+        // Fragment plan: snap boundaries to low-motion frames of the source
+        // motion video (avoid cutting mid-jump/turn) when possible, else uniform.
+        let plan = planFragments(args.totalDuration, frag);
+        const motionLocal = motionRef !== undefined &&
+          await Deno.stat(motionRef).then((s) => s.isFile).catch(() => false);
+        if (args.seamAlign && motionLocal) {
+          const profile = await ffmpegMotionProfile(motionRef!);
+          if (profile.length > 0) {
+            plan = alignSeams(args.totalDuration, frag, profile, args.seamWindow);
+          }
+        }
 
         const contSecs = args.continuationSeconds ?? 0.5;
         const tmpDir = await Deno.makeTempDir();
@@ -1492,6 +1609,8 @@ export const model = {
             totalDuration: undefined,
             fragmentDuration: undefined,
             continuationSeconds: undefined,
+            seamAlign: undefined,
+            seamWindow: undefined,
           } as unknown as GenArgs;
 
           const { paths } = await renderClip(clipArgs, context, client, installed);
