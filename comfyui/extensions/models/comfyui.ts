@@ -115,6 +115,8 @@ interface WorkflowTemplate {
   duration?: { nodeId: string; key: string };
   /** Sampler step count, if the template exposes one. */
   steps?: { nodeId: string; key: string };
+  /** Output size in megapixels (ResolutionSelector), if the template exposes it. */
+  megapixels?: { nodeId: string; key: string };
   /**
    * Optional speed/optimization patchers spliced onto the model between a
    * source node and its consumers. `generate`'s `speed` (a list of patcher ids)
@@ -182,6 +184,7 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
     caption: { nodeId: "138", key: "value" },
     seed: { nodeId: "129", key: "noise_seed" },
     resolution: { nodeId: "115", key: "aspect_ratio" },
+    megapixels: { nodeId: "115", key: "megapixels" },
     references: {
       consumerNodeId: "136",
       imagePrefix: "ref_images.ref_image_",
@@ -416,6 +419,7 @@ const GenerateArgs = z.object({
   upscaleModel: z.string().optional(),
   duration: z.number().optional(),
   steps: z.number().optional(),
+  megapixels: z.number().optional(),
   speed: z.array(z.string()).optional(),
   speedOptions: z.record(z.string(), z.record(z.string(), z.unknown()))
     .optional(),
@@ -584,7 +588,7 @@ function applyContentOverrides(
   return patched;
 }
 
-/** Patch the optional video knobs (duration seconds, sampler steps). */
+/** Patch the optional video knobs (duration seconds, sampler steps, megapixels). */
 function applyVideoOverrides(
   graph: ApiGraph,
   args: GenArgs,
@@ -601,6 +605,12 @@ function applyVideoOverrides(
     patches.push({
       nodeId: tpl.steps.nodeId,
       inputs: { [tpl.steps.key]: args.steps },
+    });
+  }
+  if (args.megapixels !== undefined && tpl?.megapixels) {
+    patches.push({
+      nodeId: tpl.megapixels.nodeId,
+      inputs: { [tpl.megapixels.key]: args.megapixels },
     });
   }
   return patches.length > 0 ? patchWorkflow(graph, patches) : graph;
@@ -904,7 +914,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.6",
+  version: "2026.08.12.7",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -953,6 +963,13 @@ export const model = {
       toVersion: "2026.08.12.6",
       description:
         "minimax_h3: add `upscale` — SeedVR2 video super-resolution (SeedVR2LoadDiTModel + SeedVR2LoadVAEModel + SeedVR2VideoUpscaler) spliced between the decoded frames and CreateVideo; `upscaleResolution` (default 1080), `upscaleModel` override. Errors if the SeedVR2 node isn't installed. No globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.6",
+      toVersion: "2026.08.12.7",
+      description:
+        "minimax_h3: expose `megapixels` (ResolutionSelector output size, e.g. 0.8) as an arg alongside `resolution`. No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

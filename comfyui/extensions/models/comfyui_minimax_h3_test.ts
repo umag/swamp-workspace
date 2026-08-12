@@ -792,6 +792,15 @@ Deno.test("generate: upscale when SeedVR2 isn't installed throws", async () => {
   );
 });
 
+Deno.test("generate template='minimax_h3': megapixels + resolution patch the ResolutionSelector (node 115)", async () => {
+  const posted = await postedFor({
+    megapixels: 0.8,
+    resolution: "1:1 (Square)",
+  });
+  assertEquals(posted["115"].inputs.megapixels, 0.8);
+  assertEquals(posted["115"].inputs.aspect_ratio, "1:1 (Square)");
+});
+
 Deno.test("generate: turbo on a template without a turbo preset throws", async () => {
   const { context } = fakeContext();
   const args = model.methods.generate.arguments.parse({
