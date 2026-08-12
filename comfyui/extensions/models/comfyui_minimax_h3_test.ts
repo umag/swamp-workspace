@@ -686,6 +686,39 @@ Deno.test("generate template='minimax_h3': without keepRefAudio the model audio 
   assert(posted["121"], "VAEDecodeAudio should remain");
 });
 
+Deno.test("generate template='minimax_h3': turbo injects the LoRA/cache/sigma-shift chain and drops steps to 8", async () => {
+  const posted = await postedFor({ turbo: true });
+  // turbo preset patchers present, in order: turboLora → firstBlockCache → sage → sol → sigmaShift
+  assertEquals(
+    posted["speed_0_LoraLoaderModelOnly"].inputs.lora_name,
+    "minimax_h3_turbo_4step_ema_ckpt850_pruned_comfyui.safetensors",
+  );
+  assertEquals(posted["speed_0_LoraLoaderModelOnly"].inputs.model, ["127", 0]);
+  assert(posted["speed_1_ApplyMiniMaxH3FirstBlockCache"], "firstBlockCache");
+  assert(posted["speed_4_MiniMaxH3SigmaShift"], "sigmaShift last");
+  assertEquals(posted["speed_4_MiniMaxH3SigmaShift"].inputs.shift_video, 12);
+  // non-turbo default patchers are NOT present
+  assertEquals("speed_0_ModelAttentionBackend" in posted, false);
+  assertEquals("speed_4_SpectrumApplyMiniMaxH3" in posted, false);
+  // consumers read the last (sigma shift); steps dropped to 8
+  assertEquals(posted["124"].inputs.model, ["speed_4_MiniMaxH3SigmaShift", 0]);
+  assertEquals(posted["124"].inputs.steps, 8);
+});
+
+Deno.test("generate: turbo on a template without a turbo preset throws", async () => {
+  const { context } = fakeContext();
+  const args = model.methods.generate.arguments.parse({
+    template: "ideogram",
+    caption: "x",
+    turbo: true,
+  });
+  await assertRejects(
+    () => model.methods.generate.execute(args, context),
+    Error,
+    "has no turbo preset",
+  );
+});
+
 Deno.test("generate template='minimax_h3': keepRefAudio without a ref video throws", async () => {
   const { context } = fakeContext();
   const args = model.methods.generate.arguments.parse({

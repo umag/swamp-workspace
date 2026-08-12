@@ -109,6 +109,15 @@ interface WorkflowTemplate {
     patchers: SpeedPatcher[];
     default: string[];
   };
+  /**
+   * Turbo preset: the distillation-LoRA fast path. `turbo: true` selects this
+   * `speed` set (a turbo LoRA + sigma shift + cache) and drops the sampler to
+   * `steps` — a big speedup, but needs the turbo LoRA installed on the server.
+   */
+  turbo?: {
+    speed: string[];
+    steps: number;
+  };
 }
 
 /** A named, ordered speed patcher a template exposes for `generate`'s `speed`. */
@@ -186,7 +195,35 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
       // Declared in the recommended injection order. Defaults are the
       // community "fast" values (attention backend uses the comfy-kitchen int8
       // path — the ~39s headline; Spectrum/Sol values match the shared config).
+      // `turboLora` must be FIRST (right after the UNET) and `sigmaShift` LAST.
       patchers: [
+        {
+          // Distillation LoRA → run in ~4-8 steps. NEEDS the file installed in
+          // the server's loras/ folder. Model-only (the ref2v node uses raw CLIP).
+          id: "turboLora",
+          classType: "LoraLoaderModelOnly",
+          modelKey: "model",
+          modelOutSlot: 0,
+          defaults: {
+            lora_name:
+              "minimax_h3_turbo_4step_ema_ckpt850_pruned_comfyui.safetensors",
+            strength_model: 1,
+          },
+        },
+        {
+          id: "firstBlockCache",
+          classType: "ApplyMiniMaxH3FirstBlockCache",
+          modelKey: "model",
+          modelOutSlot: 0,
+          defaults: {
+            mode: "H3 Fast — 0.10 / max 2",
+            threshold: 0.1,
+            start_percent: 0.1,
+            end_percent: 0.95,
+            max_consecutive_hits: 2,
+            temporal_guard: false,
+          },
+        },
         {
           id: "attentionBackend",
           classType: "ModelAttentionBackend",
@@ -255,6 +292,15 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
           modelOutSlot: 0,
           defaults: { enabled: true },
         },
+        {
+          // Noise-schedule shift for the distilled/turbo model. Last in the
+          // chain (right before the sampler/guider).
+          id: "sigmaShift",
+          classType: "MiniMaxH3SigmaShift",
+          modelKey: "model",
+          modelOutSlot: 0,
+          defaults: { shift_video: 12, shift_audio: 3 },
+        },
       ],
       // Applied when `speed` is omitted. The full stack — live-measured ~43%
       // faster (1m5s vs 1m53s base) with all six accepted together. Pass
@@ -267,6 +313,13 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
         "spectrum",
         "fusedModulation",
       ],
+    },
+    // `turbo: true` → the 4-step distillation-LoRA fast path (needs the turbo
+    // LoRA installed). LoRA first, cache, sage/sol attention, sigma shift last,
+    // at 8 steps instead of 20.
+    turbo: {
+      speed: ["turboLora", "firstBlockCache", "sage", "solAttention", "sigmaShift"],
+      steps: 8,
     },
   },
 };
@@ -306,6 +359,7 @@ const GenerateArgs = z.object({
   refVideo: z.string().optional(),
   refVideos: z.array(z.string()).optional(),
   keepRefAudio: z.boolean().optional(),
+  turbo: z.boolean().optional(),
   duration: z.number().optional(),
   steps: z.number().optional(),
   speed: z.array(z.string()).optional(),
@@ -598,6 +652,30 @@ function applyKeepRefAudio(
 }
 
 /**
+/**
+ * Resolve the `turbo` sugar into effective args: when `turbo` is set, default
+ * `speed` to the template's turbo preset and `steps` to its turbo step count
+ * (explicit `speed`/`steps` still win). Throws if `turbo` is requested on a
+ * template without a turbo preset.
+ */
+function resolveTurboArgs(
+  args: GenArgs,
+  tpl: WorkflowTemplate | undefined,
+): GenArgs {
+  if (!args.turbo) return args;
+  if (!tpl?.turbo) {
+    throw new Error(
+      `template '${args.template ?? DEFAULT_TEMPLATE}' has no turbo preset`,
+    );
+  }
+  return {
+    ...args,
+    speed: args.speed ?? tpl.turbo.speed,
+    steps: args.steps ?? tpl.turbo.steps,
+  };
+}
+
+/**
  * Splice the selected speed patchers onto the model chain. When `args.speed` is
  * omitted the template's `default` set is used; an explicit `speed: []` disables
  * them. Enabled patchers inject in the template's declared order (not the arg
@@ -703,7 +781,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.3",
+  version: "2026.08.12.4",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -731,6 +809,13 @@ export const model = {
       toVersion: "2026.08.12.3",
       description:
         "minimax_h3: add `keepRefAudio` — use the first reference video's original audio for the output (repoints CreateVideo audio, drops the VAEDecodeAudio node; audio VAE loader stays, required by the ref2v node). No globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.3",
+      toVersion: "2026.08.12.4",
+      description:
+        "minimax_h3: add `turbo` — 4-step distillation-LoRA fast path (turboLora + firstBlockCache + sage/sol + MiniMaxH3SigmaShift at 8 steps). New speed patchers turboLora/firstBlockCache/sigmaShift. Needs the turbo LoRA installed on the server. No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -867,9 +952,10 @@ export const model = {
         "The full speed patcher stack (attentionBackend, sage, solAttention, " +
         "chunkFeedForward, spectrum, fusedModulation) runs BY DEFAULT (~43% " +
         "faster); pass `speed: []` to disable, an explicit `speed` list to pick a " +
-        "subset, or `speedOptions` to override a patcher's inputs. `keepRefAudio` " +
-        "uses the first reference video's original audio instead of the " +
-        "model-generated track.",
+        "subset, or `speedOptions` to override a patcher's inputs. `turbo: true` " +
+        "is the 4-step distillation-LoRA fast path (needs the turbo LoRA on the " +
+        "server). `keepRefAudio` uses the first reference video's original audio " +
+        "instead of the model-generated track.",
       arguments: GenerateArgs,
       execute: async (args: z.infer<typeof GenerateArgs>, context: Context) => {
         const { globalArgs } = context;
@@ -878,11 +964,12 @@ export const model = {
           baseUrl: globalArgs.baseUrl,
           clientId: globalArgs.clientId,
         });
-        let base = applyContentOverrides(graph, args, tpl);
-        base = applyVideoOverrides(base, args, tpl);
-        base = await applyReferences(base, args, tpl, client);
-        base = applyKeepRefAudio(base, args, tpl);
-        base = applySpeed(base, args, tpl);
+        const eArgs = resolveTurboArgs(args, tpl);
+        let base = applyContentOverrides(graph, eArgs, tpl);
+        base = applyVideoOverrides(base, eArgs, tpl);
+        base = await applyReferences(base, eArgs, tpl, client);
+        base = applyKeepRefAudio(base, eArgs, tpl);
+        base = applySpeed(base, eArgs, tpl);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,
@@ -942,11 +1029,12 @@ export const model = {
           baseUrl: globalArgs.baseUrl,
           clientId: globalArgs.clientId,
         });
-        let base = applyContentOverrides(graph, args, tpl);
-        base = applyVideoOverrides(base, args, tpl);
-        base = await applyReferences(base, args, tpl, client);
-        base = applyKeepRefAudio(base, args, tpl);
-        base = applySpeed(base, args, tpl);
+        const eArgs = resolveTurboArgs(args, tpl);
+        let base = applyContentOverrides(graph, eArgs, tpl);
+        base = applyVideoOverrides(base, eArgs, tpl);
+        base = await applyReferences(base, eArgs, tpl, client);
+        base = applyKeepRefAudio(base, eArgs, tpl);
+        base = applySpeed(base, eArgs, tpl);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,
