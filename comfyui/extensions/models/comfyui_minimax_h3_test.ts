@@ -15,6 +15,7 @@ import {
 } from "jsr:@std/assert@1";
 import {
   continuationCaption,
+  continuationCaptionTail,
   GlobalArgs,
   model,
   planFragments,
@@ -833,16 +834,28 @@ Deno.test("continuationCaption: appends the last-frame continuation instruction 
   assert(out.startsWith("subject_definitions:"));
 });
 
+Deno.test("continuationCaptionTail: tags <Video N> as the moving tail anchor", () => {
+  const out = continuationCaptionTail("subject_definitions:\n<Subject 1> ...", 2);
+  assert(out.includes("<Video 2> is the"));
+  assert(out.includes("final ~0.5 seconds"));
+  // continuity language: no cut, camera trajectory, identity from <Picture 1>
+  assert(out.includes("without any cut"));
+  assert(out.includes("camera trajectory"));
+  assert(out.includes("<Picture 1>"));
+  assert(out.startsWith("subject_definitions:"));
+});
+
 Deno.test("model declares generate_long with totalDuration/fragmentDuration", () => {
   const m = model.methods.generate_long;
   assert(m);
-  // totalDuration required, fragmentDuration defaults to 5
+  // totalDuration required, fragmentDuration defaults to 5, continuationSeconds 0.5
   const parsed = m.arguments.parse({
     template: "minimax_h3",
     totalDuration: 30,
   });
   assertEquals(parsed.totalDuration, 30);
   assertEquals(parsed.fragmentDuration, 5);
+  assertEquals(parsed.continuationSeconds, 0.5);
 });
 
 Deno.test("generate: turbo on a template without a turbo preset throws", async () => {

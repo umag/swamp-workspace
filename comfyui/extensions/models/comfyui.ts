@@ -450,6 +450,12 @@ const GenerateBatchArgs = GenerateArgs.extend({
 const GenerateLongArgs = GenerateArgs.extend({
   totalDuration: z.number().positive().max(600),
   fragmentDuration: z.number().positive().max(15).default(5),
+  // Length (seconds) of the previous fragment's TAIL carried into the next one
+  // as a continuation reference video (`<Video 2>`) — a moving clip conveys the
+  // subject's velocity and the camera trajectory at the cut, so H3 continues the
+  // motion instead of re-accelerating from a frozen still (the jump-cut cause).
+  // ~0.5s ≈ 10-12 frames. Set 0 to fall back to a single last-frame still.
+  continuationSeconds: z.number().min(0).max(3).default(0.5),
 });
 
 const NodeInfoArgs = z.object({
@@ -975,6 +981,20 @@ function ffmpegLastFrame(src: string, dst: string): Promise<void> {
   ]);
 }
 
+/**
+ * Write the last `seconds` of `src` to `dst` as a short SILENT mp4 — the motion
+ * anchor for continuation (multiple frames, so H3 sees velocity + camera path at
+ * the cut, not a frozen still). Audio is dropped (`-an`); it never becomes the
+ * output soundtrack (keepRefAudio takes the source-motion clip's audio instead).
+ */
+function ffmpegTail(src: string, seconds: number, dst: string): Promise<void> {
+  return runFfmpeg([
+    "-sseof", String(-Math.abs(seconds)), "-i", src,
+    "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16",
+    "-movflags", "+faststart", dst,
+  ]);
+}
+
 /** Concatenate `parts` (re-encoded, uniform) into `dst` via the concat demuxer. */
 async function ffmpegConcat(parts: string[], dst: string): Promise<void> {
   const list = `${await Deno.makeTempDir()}/concat.txt`;
@@ -1012,6 +1032,26 @@ export function continuationCaption(caption: string, pictureIndex: number): stri
     `keeping <Subject 1>'s identity and clothing from <Picture 1>.`;
 }
 
+/**
+ * Append a continuation instruction telling H3 that the given `<Video N>` is the
+ * TAIL (last ~0.5s) of the immediately preceding clip. Unlike a single still,
+ * this carries the subject's velocity and the camera trajectory, so the model
+ * continues the motion and holds the camera steady across the cut instead of
+ * hard-cutting. `<Subject 1>`'s identity still comes from `<Picture 1>`.
+ */
+export function continuationCaptionTail(
+  caption: string,
+  videoIndex: number,
+): string {
+  return `${caption.trimEnd()}\n\ncontinuation:\n<Video ${videoIndex}> is the ` +
+    `final ~0.5 seconds of the immediately preceding clip. Begin this clip on ` +
+    `the exact frame <Video ${videoIndex}> ends, matching <Subject 1>'s pose, ` +
+    `position, and the camera framing/angle at that instant, then continue the ` +
+    `same body motion, camera trajectory, and pacing without any cut, jump, or ` +
+    `camera reset. Keep <Subject 1>'s identity and clothing from <Picture 1> ` +
+    `and the choreography and camera from <Video 1>.`;
+}
+
 async function snapshotServer(
   context: Context,
 ): Promise<{ dataHandles: never[] }> {
@@ -1041,7 +1081,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.8",
+  version: "2026.08.12.9",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -1104,6 +1144,13 @@ export const model = {
       toVersion: "2026.08.12.8",
       description:
         "Add `generate_long` — long video by CONTINUATION: slices the full refVideo into `fragmentDuration`(5s) windows, renders each fragment carrying the previous fragment's last frame as a ref image (Strategy A: motion-faithful), ffmpeg-stitches to `totalDuration`. New `long` resource. Refactored shared per-clip renderer. No globalArguments change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.8",
+      toVersion: "2026.08.12.9",
+      description:
+        "generate_long: continuation now carries the previous fragment's TAIL as a moving reference VIDEO (<Video 2>, `continuationSeconds` default 0.5 ≈ 10-12 frames) instead of a single frozen still — H3 sees the subject's velocity and the camera trajectory at the cut, killing the jump-cut/hitch at each seam and holding the camera steady. `continuationSeconds: 0` restores the single-still fallback. No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1362,12 +1409,15 @@ export const model = {
       description:
         "Build a long video (`totalDuration` s) from `fragmentDuration`-second " +
         "clips (default 5) by CONTINUATION: fragment 1 renders normally; each " +
-        "later fragment takes the previous fragment's last frame as an extra " +
-        "reference image and continues the motion, then all fragments are " +
-        "stitched with ffmpeg. The `refVideo` is the FULL motion reference and is " +
-        "sliced per fragment. All `generate` options (turbo, keepRefAudio, " +
-        "resolution, megapixels, upscale, speed) apply per fragment. " +
-        "minimax_h3 only.",
+        "later fragment carries the previous fragment's TAIL (`continuationSeconds` " +
+        "≈0.5s of moving frames) forward as an extra reference video `<Video 2>` " +
+        "and continues its motion + camera, then all fragments are stitched with " +
+        "ffmpeg. A moving tail (vs a single still) gives H3 the subject velocity " +
+        "and camera trajectory at the cut, removing the jump-cut at each seam; " +
+        "`continuationSeconds: 0` falls back to a single last-frame still. The " +
+        "`refVideo` is the FULL motion reference and is sliced per fragment. All " +
+        "`generate` options (turbo, keepRefAudio, resolution, megapixels, upscale, " +
+        "speed) apply per fragment. minimax_h3 only.",
       arguments: GenerateLongArgs,
       execute: async (
         args: z.infer<typeof GenerateLongArgs>,
@@ -1399,23 +1449,37 @@ export const model = {
           ? args.refVideos[0]
           : args.refVideo;
 
+        const contSecs = args.continuationSeconds ?? 0.5;
         const tmpDir = await Deno.makeTempDir();
         const fragmentPaths: string[] = [];
+        // Continuation anchor from the previous fragment: a moving TAIL clip
+        // (contSecs > 0) or, when disabled, a single last-frame still.
+        let tailClip: string | undefined;
         let lastFrameName: string | undefined;
 
         for (const f of plan) {
-          let segRefVideos: string[] | undefined;
+          const segRefVideos: string[] = [];
           if (motionRef) {
             const seg = `${tmpDir}/seg_${f.index}.mp4`;
             await ffmpegSlice(motionRef, f.start, f.duration, seg);
-            segRefVideos = [seg];
+            segRefVideos.push(seg);
           }
-          const refImages = lastFrameName !== undefined
-            ? [...charNames, lastFrameName]
-            : [...charNames];
-          const caption = f.index === 0
-            ? args.caption
-            : continuationCaption(args.caption ?? "", charNames.length + 1);
+          // Later fragments continue from the previous one. Prefer the tail clip
+          // (motion + camera continuity); otherwise the single still fallback.
+          const refImages = [...charNames];
+          let caption = args.caption;
+          if (f.index > 0) {
+            if (tailClip !== undefined) {
+              segRefVideos.push(tailClip); // → <Video 2> (after the motion <Video 1>)
+              caption = continuationCaptionTail(
+                args.caption ?? "",
+                segRefVideos.length,
+              );
+            } else if (lastFrameName !== undefined) {
+              refImages.push(lastFrameName);
+              caption = continuationCaption(args.caption ?? "", refImages.length);
+            }
+          }
 
           const clipArgs = {
             ...args,
@@ -1424,9 +1488,10 @@ export const model = {
             refImage: undefined,
             refImages,
             refVideo: undefined,
-            refVideos: segRefVideos,
+            refVideos: segRefVideos.length > 0 ? segRefVideos : undefined,
             totalDuration: undefined,
             fragmentDuration: undefined,
+            continuationSeconds: undefined,
           } as unknown as GenArgs;
 
           const { paths } = await renderClip(clipArgs, context, client, installed);
@@ -1437,15 +1502,21 @@ export const model = {
           }
           fragmentPaths.push(mp4);
 
-          // Extract this fragment's last frame → upload as next fragment's anchor.
-          const lfPng = `${tmpDir}/last_${f.index}.png`;
-          await ffmpegLastFrame(mp4, lfPng);
-          const up = await client.uploadImage(
-            await Deno.readFile(lfPng),
-            `h3long_last_${f.index}.png`,
-            { overwrite: true },
-          );
-          lastFrameName = up.subfolder ? `${up.subfolder}/${up.name}` : up.name;
+          // Carry this fragment forward as the next one's continuation anchor.
+          if (contSecs > 0) {
+            const tail = `${tmpDir}/tail_${f.index}.mp4`;
+            await ffmpegTail(mp4, Math.min(contSecs, f.duration - 0.05), tail);
+            tailClip = tail; // a local path; renderClip uploads it per fragment
+          } else {
+            const lfPng = `${tmpDir}/last_${f.index}.png`;
+            await ffmpegLastFrame(mp4, lfPng);
+            const up = await client.uploadImage(
+              await Deno.readFile(lfPng),
+              `h3long_last_${f.index}.png`,
+              { overwrite: true },
+            );
+            lastFrameName = up.subfolder ? `${up.subfolder}/${up.name}` : up.name;
+          }
         }
 
         await Deno.mkdir(`${globalArgs.outputDir}/video`, { recursive: true });
