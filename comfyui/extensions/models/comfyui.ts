@@ -90,6 +90,27 @@ interface WorkflowTemplate {
     audioKey: string;
     decodeNodeId: string;
   };
+  /**
+   * SeedVR2 video-upscale wiring for `upscale`. Inserts a DiT + VAE loader and a
+   * `SeedVR2VideoUpscaler` between the decoded frames (`imageSource`) and the
+   * video assembler (`consumer`), repointing the consumer at the upscaled frames.
+   */
+  upscale?: {
+    imageSource: { nodeId: string; slot: number };
+    consumer: { nodeId: string; key: string };
+    ditClass: string;
+    ditModelKey: string;
+    ditDefaults: Record<string, unknown>;
+    vaeClass: string;
+    vaeDefaults: Record<string, unknown>;
+    upscalerClass: string;
+    imageKey: string;
+    ditKey: string;
+    vaeKey: string;
+    resolutionKey: string;
+    defaultResolution: number;
+    upscalerDefaults: Record<string, unknown>;
+  };
   /** Clip duration in seconds, if the template exposes one (video). */
   duration?: { nodeId: string; key: string };
   /** Sampler step count, if the template exposes one. */
@@ -182,6 +203,33 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
       createVideoNodeId: "130",
       audioKey: "audio",
       decodeNodeId: "121",
+    },
+    upscale: {
+      // VAEDecode(122) frames → SeedVR2 → CreateVideo(130) images.
+      imageSource: { nodeId: "122", slot: 0 },
+      consumer: { nodeId: "130", key: "images" },
+      ditClass: "SeedVR2LoadDiTModel",
+      ditModelKey: "model",
+      ditDefaults: {
+        model: "seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+        device: "cuda:0",
+      },
+      vaeClass: "SeedVR2LoadVAEModel",
+      vaeDefaults: { model: "ema_vae_fp16.safetensors", device: "cuda:0" },
+      upscalerClass: "SeedVR2VideoUpscaler",
+      imageKey: "image",
+      ditKey: "dit",
+      vaeKey: "vae",
+      resolutionKey: "resolution",
+      defaultResolution: 1080,
+      // All required widget inputs (API format doesn't auto-fill UI defaults).
+      upscalerDefaults: {
+        seed: 42,
+        max_resolution: 0,
+        batch_size: 5,
+        uniform_batch_size: false,
+        color_correction: "lab",
+      },
     },
     duration: { nodeId: "132", key: "value" },
     steps: { nodeId: "124", key: "steps" },
@@ -363,6 +411,9 @@ const GenerateArgs = z.object({
   refVideos: z.array(z.string()).optional(),
   keepRefAudio: z.boolean().optional(),
   turbo: z.boolean().optional(),
+  upscale: z.boolean().optional(),
+  upscaleResolution: z.number().optional(),
+  upscaleModel: z.string().optional(),
   duration: z.number().optional(),
   steps: z.number().optional(),
   speed: z.array(z.string()).optional(),
@@ -655,6 +706,58 @@ function applyKeepRefAudio(
 }
 
 /**
+ * When `upscale` is set, splice a SeedVR2 super-resolution stage between the
+ * decoded frames and the video assembler: inject a DiT loader, a VAE loader, and
+ * a `SeedVR2VideoUpscaler` (target short edge = `upscaleResolution`, DiT model
+ * overridable via `upscaleModel`), then repoint the consumer at the upscaled
+ * frames. A no-op unless the template declares `upscale`; throws if the SeedVR2
+ * node isn't installed.
+ */
+function applyUpscale(
+  graph: ApiGraph,
+  args: GenArgs,
+  tpl: WorkflowTemplate | undefined,
+  installed?: Set<string>,
+): ApiGraph {
+  if (!args.upscale || !tpl?.upscale) return graph;
+  const u = tpl.upscale;
+  if (installed && !installed.has(u.upscalerClass)) {
+    throw new Error(
+      `upscale needs '${u.upscalerClass}' (SeedVR2) installed on the ComfyUI ` +
+        "server; install the node or drop `upscale`",
+    );
+  }
+  const clone = structuredClone(graph);
+  const consumer = clone[u.consumer.nodeId];
+  if (consumer === undefined) {
+    throw new Error(`upscale consumer node '${u.consumer.nodeId}' not found`);
+  }
+  const ditId = "upscale_dit";
+  const vaeId = "upscale_vae";
+  const upId = "upscale_seedvr2";
+  clone[ditId] = {
+    class_type: u.ditClass,
+    inputs: {
+      ...u.ditDefaults,
+      ...(args.upscaleModel ? { [u.ditModelKey]: args.upscaleModel } : {}),
+    },
+  };
+  clone[vaeId] = { class_type: u.vaeClass, inputs: { ...u.vaeDefaults } };
+  clone[upId] = {
+    class_type: u.upscalerClass,
+    inputs: {
+      ...u.upscalerDefaults,
+      [u.imageKey]: [u.imageSource.nodeId, u.imageSource.slot],
+      [u.ditKey]: [ditId, 0],
+      [u.vaeKey]: [vaeId, 0],
+      [u.resolutionKey]: args.upscaleResolution ?? u.defaultResolution,
+    },
+  };
+  consumer.inputs = { ...consumer.inputs, [u.consumer.key]: [upId, 0] };
+  return clone;
+}
+
+/**
 /**
  * Resolve the `turbo` sugar into effective args: when `turbo` is set, default
  * `speed` to the template's turbo preset and `steps` to its turbo step count
@@ -801,7 +904,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.5",
+  version: "2026.08.12.6",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -843,6 +946,13 @@ export const model = {
       toVersion: "2026.08.12.5",
       description:
         "minimax_h3: speed injection checks installed nodes (/object_info) — an explicit `speed`/`turbo` patcher whose node is missing now errors clearly (install it or drop it); the DEFAULT stack skips missing nodes gracefully. Turbo preset trimmed to installed nodes (sol-attn removed upstream). No globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.5",
+      toVersion: "2026.08.12.6",
+      description:
+        "minimax_h3: add `upscale` — SeedVR2 video super-resolution (SeedVR2LoadDiTModel + SeedVR2LoadVAEModel + SeedVR2VideoUpscaler) spliced between the decoded frames and CreateVideo; `upscaleResolution` (default 1080), `upscaleModel` override. Errors if the SeedVR2 node isn't installed. No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -982,7 +1092,8 @@ export const model = {
         "subset, or `speedOptions` to override a patcher's inputs. `turbo: true` " +
         "is the 4-step distillation-LoRA fast path (needs the turbo LoRA on the " +
         "server). `keepRefAudio` uses the first reference video's original audio " +
-        "instead of the model-generated track.",
+        "instead of the model-generated track. `upscale: true` adds a SeedVR2 " +
+        "super-resolution pass (`upscaleResolution`, default 1080).",
       arguments: GenerateArgs,
       execute: async (args: z.infer<typeof GenerateArgs>, context: Context) => {
         const { globalArgs } = context;
@@ -996,10 +1107,11 @@ export const model = {
         base = applyVideoOverrides(base, eArgs, tpl);
         base = await applyReferences(base, eArgs, tpl, client);
         base = applyKeepRefAudio(base, eArgs, tpl);
-        const installed = tpl?.speed
+        const installed = (tpl?.speed || (eArgs.upscale && tpl?.upscale))
           ? await client.fetchInstalledClasses()
           : undefined;
         base = applySpeed(base, eArgs, tpl, installed);
+        base = applyUpscale(base, eArgs, tpl, installed);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,
@@ -1064,10 +1176,11 @@ export const model = {
         base = applyVideoOverrides(base, eArgs, tpl);
         base = await applyReferences(base, eArgs, tpl, client);
         base = applyKeepRefAudio(base, eArgs, tpl);
-        const installed = tpl?.speed
+        const installed = (tpl?.speed || (eArgs.upscale && tpl?.upscale))
           ? await client.fetchInstalledClasses()
           : undefined;
         base = applySpeed(base, eArgs, tpl, installed);
+        base = applyUpscale(base, eArgs, tpl, installed);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/comfyui"
-version: "2026.08.12.5"
+version: "2026.08.12.6"
 description: |
   Drive a ComfyUI server over its HTTP API from swamp. Ships three bundled
   API-format workflow templates — `ideogram` (Ideogram 4.0, whose prompt is a

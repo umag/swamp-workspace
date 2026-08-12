@@ -96,6 +96,7 @@ const ALL_SPEED_CLASSES = [
   "SpectrumApplyMiniMaxH3",
   "MiniMaxH3FusedModulation",
   "MiniMaxH3SigmaShift",
+  "SeedVR2VideoUpscaler",
 ];
 
 /** Route that answers /object_info with the given classes installed (default: all). */
@@ -762,6 +763,33 @@ Deno.test("generate: the DEFAULT speed stack silently skips patchers whose node 
   assertEquals("speed_2_SpectrumApplyMiniMaxH3" in posted, false);
   // consumers still repointed at the last INSTALLED patcher
   assertEquals(posted["124"].inputs.model, ["speed_1_PathchSageAttentionKJ", 0]);
+});
+
+Deno.test("generate template='minimax_h3': upscale splices SeedVR2 between the frames and CreateVideo", async () => {
+  const posted = await postedFor({ upscale: true, upscaleResolution: 1440 }) as
+    Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  assertEquals(posted["upscale_dit"].class_type, "SeedVR2LoadDiTModel");
+  assertEquals(posted["upscale_vae"].class_type, "SeedVR2LoadVAEModel");
+  assertEquals(posted["upscale_seedvr2"].class_type, "SeedVR2VideoUpscaler");
+  // upscaler reads VAEDecode(122) frames + the DiT/VAE loaders, target res applied
+  assertEquals(posted["upscale_seedvr2"].inputs.image, ["122", 0]);
+  assertEquals(posted["upscale_seedvr2"].inputs.dit, ["upscale_dit", 0]);
+  assertEquals(posted["upscale_seedvr2"].inputs.vae, ["upscale_vae", 0]);
+  assertEquals(posted["upscale_seedvr2"].inputs.resolution, 1440);
+  // CreateVideo(130) now reads the upscaled frames, not the raw decode
+  assertEquals(posted["130"].inputs.images, ["upscale_seedvr2", 0]);
+});
+
+Deno.test("generate: upscale when SeedVR2 isn't installed throws", async () => {
+  await assertRejects(
+    () =>
+      postedFor(
+        { upscale: true },
+        ALL_SPEED_CLASSES.filter((c) => c !== "SeedVR2VideoUpscaler"),
+      ),
+    Error,
+    "SeedVR2",
+  );
 });
 
 Deno.test("generate: turbo on a template without a turbo preset throws", async () => {
