@@ -447,6 +447,11 @@ const GenerateBatchArgs = GenerateArgs.extend({
   seeds: z.array(z.number()).max(50).optional(),
 });
 
+const GenerateLongArgs = GenerateArgs.extend({
+  totalDuration: z.number().positive().max(600),
+  fragmentDuration: z.number().positive().max(15).default(5),
+});
+
 const NodeInfoArgs = z.object({
   classType: z.string(),
 });
@@ -483,6 +488,12 @@ const BatchResource = z.object({
     promptId: z.string(),
     paths: z.array(z.string()),
   })),
+  paths: z.array(z.string()),
+});
+
+const LongResource = z.object({
+  count: z.number(),
+  fragments: z.array(z.string()),
   paths: z.array(z.string()),
 });
 
@@ -885,6 +896,122 @@ async function saveFiles(
   return paths;
 }
 
+/**
+ * Build the graph for one clip from `args` (content/refs/audio/speed/upscale/
+ * seed), queue it, wait, and save the output. Shared by `generate` and each
+ * fragment of `generate_long`. Returns the applied seed + saved file paths.
+ */
+async function renderClip(
+  args: GenArgs,
+  context: Context,
+  client: ComfyClient,
+  installed: Set<string> | undefined,
+): Promise<
+  { promptId: string; images: FileRef[]; paths: string[]; seed: number | null }
+> {
+  const { globalArgs } = context;
+  const { graph, tpl } = await loadGraphAndTemplate(args, context);
+  const eArgs = resolveTurboArgs(args, tpl);
+  let base = applyContentOverrides(graph, eArgs, tpl);
+  base = applyVideoOverrides(base, eArgs, tpl);
+  base = await applyReferences(base, eArgs, tpl, client);
+  base = applyKeepRefAudio(base, eArgs, tpl);
+  base = applySpeed(base, eArgs, tpl, installed);
+  base = applyUpscale(base, eArgs, tpl, installed);
+
+  const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(args, tpl);
+  const seed = args.seed ??
+    (seedNodeId !== undefined ? randomSeed() : undefined);
+  const appliedSeed = seed !== undefined && seedNodeId !== undefined
+    ? seed
+    : undefined;
+  const patched = appliedSeed !== undefined
+    ? applyIdeogramOverrides(base, { seed: appliedSeed, seedNodeId, seedInputKey })
+    : base;
+
+  const promptId = await client.queuePrompt(patched);
+  const entry = await client.waitForResult(promptId, {
+    pollIntervalMs: globalArgs.pollIntervalMs,
+    timeoutMs: globalArgs.timeoutMs,
+  });
+  const images = client.collectFiles(entry);
+  const paths = await saveFiles(client, images, globalArgs.outputDir);
+  return { promptId, images, paths, seed: appliedSeed ?? null };
+}
+
+/** Run ffmpeg with the given args (a `-y` is prepended); throws on failure. */
+async function runFfmpeg(args: string[]): Promise<void> {
+  const cmd = new Deno.Command("ffmpeg", {
+    args: ["-y", ...args],
+    stdout: "null",
+    stderr: "piped",
+  });
+  const { success, stderr } = await cmd.output();
+  if (!success) {
+    throw new Error(
+      "ffmpeg failed: " + new TextDecoder().decode(stderr).slice(-500),
+    );
+  }
+}
+
+/** Cut `[start, start+dur]` from `src` (accurate seek, re-encoded) to `dst`. */
+function ffmpegSlice(
+  src: string,
+  start: number,
+  dur: number,
+  dst: string,
+): Promise<void> {
+  return runFfmpeg([
+    "-i", src, "-ss", String(start), "-t", String(dur),
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16",
+    "-c:a", "aac", "-movflags", "+faststart", dst,
+  ]);
+}
+
+/** Write the last frame of `src` to `dst` (a PNG). */
+function ffmpegLastFrame(src: string, dst: string): Promise<void> {
+  return runFfmpeg([
+    "-sseof", "-0.15", "-i", src, "-update", "1", "-frames:v", "1", dst,
+  ]);
+}
+
+/** Concatenate `parts` (re-encoded, uniform) into `dst` via the concat demuxer. */
+async function ffmpegConcat(parts: string[], dst: string): Promise<void> {
+  const list = `${await Deno.makeTempDir()}/concat.txt`;
+  await Deno.writeTextFile(
+    list,
+    parts.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n") + "\n",
+  );
+  await runFfmpeg([
+    "-f", "concat", "-safe", "0", "-i", list,
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16",
+    "-c:a", "aac", "-movflags", "+faststart", dst,
+  ]);
+}
+
+/** Split a total duration into ordered fragment windows of at most `frag` s. */
+export function planFragments(
+  total: number,
+  frag: number,
+): { index: number; start: number; duration: number }[] {
+  const out = [];
+  for (let start = 0, i = 0; start < total - 1e-6; start += frag, i++) {
+    out.push({ index: i, start, duration: Math.min(frag, total - start) });
+  }
+  return out;
+}
+
+/**
+ * Append a continuation instruction to a caption, telling H3 that the given
+ * `<Picture N>` is the last frame of the previous clip to continue from.
+ */
+export function continuationCaption(caption: string, pictureIndex: number): string {
+  return `${caption.trimEnd()}\n\ncontinuation:\n<Picture ${pictureIndex}> is ` +
+    `the exact last frame of the immediately preceding clip; begin this clip ` +
+    `from it and continue the same motion, camera, and pacing seamlessly, ` +
+    `keeping <Subject 1>'s identity and clothing from <Picture 1>.`;
+}
+
 async function snapshotServer(
   context: Context,
 ): Promise<{ dataHandles: never[] }> {
@@ -914,7 +1041,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.7",
+  version: "2026.08.12.8",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -972,6 +1099,13 @@ export const model = {
         "minimax_h3: expose `megapixels` (ResolutionSelector output size, e.g. 0.8) as an arg alongside `resolution`. No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      fromVersion: "2026.08.12.7",
+      toVersion: "2026.08.12.8",
+      description:
+        "Add `generate_long` — long video by CONTINUATION: slices the full refVideo into `fragmentDuration`(5s) windows, renders each fragment carrying the previous fragment's last frame as a ref image (Strategy A: motion-faithful), ffmpeg-stitches to `totalDuration`. New `long` resource. Refactored shared per-clip renderer. No globalArguments change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   globalArguments: GlobalArgs,
   resources: {
@@ -1002,6 +1136,13 @@ export const model = {
     batch: {
       description: "A batch of renders sharing a prompt, one per seed.",
       schema: BatchResource,
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
+    long: {
+      description:
+        "A long video assembled by continuation: fragment paths + the stitched result.",
+      schema: LongResource,
       lifetime: "infinite",
       garbageCollection: 10,
     },
@@ -1114,58 +1255,25 @@ export const model = {
       arguments: GenerateArgs,
       execute: async (args: z.infer<typeof GenerateArgs>, context: Context) => {
         const { globalArgs } = context;
-        const { graph, tpl } = await loadGraphAndTemplate(args, context);
         const client = new ComfyClient({
           baseUrl: globalArgs.baseUrl,
           clientId: globalArgs.clientId,
         });
-        const eArgs = resolveTurboArgs(args, tpl);
-        let base = applyContentOverrides(graph, eArgs, tpl);
-        base = applyVideoOverrides(base, eArgs, tpl);
-        base = await applyReferences(base, eArgs, tpl, client);
-        base = applyKeepRefAudio(base, eArgs, tpl);
-        const installed = (tpl?.speed || (eArgs.upscale && tpl?.upscale))
+        const { tpl } = await loadGraphAndTemplate(args, context);
+        const installed = (tpl?.speed || (args.upscale && tpl?.upscale))
           ? await client.fetchInstalledClasses()
           : undefined;
-        base = applySpeed(base, eArgs, tpl, installed);
-        base = applyUpscale(base, eArgs, tpl, installed);
-
-        const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
+        const { promptId, images, paths, seed } = await renderClip(
           args,
-          tpl,
+          context,
+          client,
+          installed,
         );
-        // Auto-pick a random seed when omitted — but only when we know which
-        // node to set it on (a template is active or seedNodeId was given).
-        // Otherwise a seedless run would reuse the graph's baked constant.
-        const seed = args.seed ??
-          (seedNodeId !== undefined ? randomSeed() : undefined);
-        // The seed actually applied to the graph — undefined (recorded as
-        // null) when there is no known seed node to patch it onto, even if
-        // the caller passed an explicit `seed`.
-        const appliedSeed = seed !== undefined && seedNodeId !== undefined
-          ? seed
-          : undefined;
-        const patched = appliedSeed !== undefined
-          ? applyIdeogramOverrides(base, {
-            seed: appliedSeed,
-            seedNodeId,
-            seedInputKey,
-          })
-          : base;
-
-        const promptId = await client.queuePrompt(patched);
-        const entry = await client.waitForResult(promptId, {
-          pollIntervalMs: globalArgs.pollIntervalMs,
-          timeoutMs: globalArgs.timeoutMs,
-        });
-        const images = client.collectFiles(entry);
-        const paths = await saveFiles(client, images, globalArgs.outputDir);
-
         await context.writeResource("generation", "generation", {
           promptId,
           images,
           paths,
-          seed: appliedSeed ?? null,
+          seed,
         });
         return { dataHandles: [] };
       },
@@ -1246,6 +1354,109 @@ export const model = {
           seeds,
           items,
           paths: allPaths,
+        });
+        return { dataHandles: [] };
+      },
+    },
+    generate_long: {
+      description:
+        "Build a long video (`totalDuration` s) from `fragmentDuration`-second " +
+        "clips (default 5) by CONTINUATION: fragment 1 renders normally; each " +
+        "later fragment takes the previous fragment's last frame as an extra " +
+        "reference image and continues the motion, then all fragments are " +
+        "stitched with ffmpeg. The `refVideo` is the FULL motion reference and is " +
+        "sliced per fragment. All `generate` options (turbo, keepRefAudio, " +
+        "resolution, megapixels, upscale, speed) apply per fragment. " +
+        "minimax_h3 only.",
+      arguments: GenerateLongArgs,
+      execute: async (
+        args: z.infer<typeof GenerateLongArgs>,
+        context: Context,
+      ) => {
+        const { globalArgs } = context;
+        const client = new ComfyClient({
+          baseUrl: globalArgs.baseUrl,
+          clientId: globalArgs.clientId,
+        });
+        const installed = await client.fetchInstalledClasses();
+
+        const frag = args.fragmentDuration ?? 5;
+        const plan = planFragments(args.totalDuration, frag);
+
+        // Resolve the character reference image(s) once to server-side names so
+        // they aren't re-uploaded every fragment.
+        const charInputs = args.refImages && args.refImages.length > 0
+          ? args.refImages
+          : args.refImage !== undefined
+          ? [args.refImage]
+          : [];
+        const charNames: string[] = [];
+        for (const c of charInputs) {
+          charNames.push(await resolveReferenceName(client, c));
+        }
+        // The full motion reference to slice per fragment (a local file).
+        const motionRef = (args.refVideos && args.refVideos.length > 0)
+          ? args.refVideos[0]
+          : args.refVideo;
+
+        const tmpDir = await Deno.makeTempDir();
+        const fragmentPaths: string[] = [];
+        let lastFrameName: string | undefined;
+
+        for (const f of plan) {
+          let segRefVideos: string[] | undefined;
+          if (motionRef) {
+            const seg = `${tmpDir}/seg_${f.index}.mp4`;
+            await ffmpegSlice(motionRef, f.start, f.duration, seg);
+            segRefVideos = [seg];
+          }
+          const refImages = lastFrameName !== undefined
+            ? [...charNames, lastFrameName]
+            : [...charNames];
+          const caption = f.index === 0
+            ? args.caption
+            : continuationCaption(args.caption ?? "", charNames.length + 1);
+
+          const clipArgs = {
+            ...args,
+            caption,
+            duration: f.duration,
+            refImage: undefined,
+            refImages,
+            refVideo: undefined,
+            refVideos: segRefVideos,
+            totalDuration: undefined,
+            fragmentDuration: undefined,
+          } as unknown as GenArgs;
+
+          const { paths } = await renderClip(clipArgs, context, client, installed);
+          const mp4 = paths.find((p) => p.toLowerCase().endsWith(".mp4")) ??
+            paths[0];
+          if (mp4 === undefined) {
+            throw new Error(`fragment ${f.index} produced no output file`);
+          }
+          fragmentPaths.push(mp4);
+
+          // Extract this fragment's last frame → upload as next fragment's anchor.
+          const lfPng = `${tmpDir}/last_${f.index}.png`;
+          await ffmpegLastFrame(mp4, lfPng);
+          const up = await client.uploadImage(
+            await Deno.readFile(lfPng),
+            `h3long_last_${f.index}.png`,
+            { overwrite: true },
+          );
+          lastFrameName = up.subfolder ? `${up.subfolder}/${up.name}` : up.name;
+        }
+
+        await Deno.mkdir(`${globalArgs.outputDir}/video`, { recursive: true });
+        const finalPath =
+          `${globalArgs.outputDir}/video/minimax_h3_long_${plan.length}x${frag}s.mp4`;
+        await ffmpegConcat(fragmentPaths, finalPath);
+
+        await context.writeResource("long", "long", {
+          count: plan.length,
+          fragments: fragmentPaths,
+          paths: [finalPath],
         });
         return { dataHandles: [] };
       },

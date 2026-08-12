@@ -13,7 +13,12 @@ import {
   assertRejects,
   assertThrows,
 } from "jsr:@std/assert@1";
-import { GlobalArgs, model } from "./comfyui.ts";
+import {
+  continuationCaption,
+  GlobalArgs,
+  model,
+  planFragments,
+} from "./comfyui.ts";
 import {
   buildReferences,
   chainModelPatchers,
@@ -411,11 +416,13 @@ Deno.test("generate template='minimax_h3': needs a reference (image or video)", 
     template: "minimax_h3",
     caption: "a robot waves",
   });
-  await assertRejects(
-    () => model.methods.generate.execute(args, context),
-    Error,
-    "needs a reference",
-  );
+  await withFetchStub([objectInfoRoute()], async () => {
+    await assertRejects(
+      () => model.methods.generate.execute(args, context),
+      Error,
+      "needs a reference",
+    );
+  });
 });
 
 Deno.test("generate template='minimax_h3': uploads a local ref image, patches prompt/seed/duration, drops the 2nd ref slot, saves the video", async () => {
@@ -801,6 +808,43 @@ Deno.test("generate template='minimax_h3': megapixels + resolution patch the Res
   assertEquals(posted["115"].inputs.aspect_ratio, "1:1 (Square)");
 });
 
+Deno.test("planFragments: splits a total into ordered windows, last one truncated", () => {
+  assertEquals(planFragments(30, 5), [
+    { index: 0, start: 0, duration: 5 },
+    { index: 1, start: 5, duration: 5 },
+    { index: 2, start: 10, duration: 5 },
+    { index: 3, start: 15, duration: 5 },
+    { index: 4, start: 20, duration: 5 },
+    { index: 5, start: 25, duration: 5 },
+  ]);
+  // non-even total → final fragment is shorter
+  assertEquals(planFragments(12, 5), [
+    { index: 0, start: 0, duration: 5 },
+    { index: 1, start: 5, duration: 5 },
+    { index: 2, start: 10, duration: 2 },
+  ]);
+  assertEquals(planFragments(5, 5).length, 1);
+});
+
+Deno.test("continuationCaption: appends the last-frame continuation instruction with the right <Picture N>", () => {
+  const out = continuationCaption("subject_definitions:\n<Subject 1> ...", 2);
+  assert(out.includes("<Picture 2> is"));
+  assert(out.includes("continue the same motion"));
+  assert(out.startsWith("subject_definitions:"));
+});
+
+Deno.test("model declares generate_long with totalDuration/fragmentDuration", () => {
+  const m = model.methods.generate_long;
+  assert(m);
+  // totalDuration required, fragmentDuration defaults to 5
+  const parsed = m.arguments.parse({
+    template: "minimax_h3",
+    totalDuration: 30,
+  });
+  assertEquals(parsed.totalDuration, 30);
+  assertEquals(parsed.fragmentDuration, 5);
+});
+
 Deno.test("generate: turbo on a template without a turbo preset throws", async () => {
   const { context } = fakeContext();
   const args = model.methods.generate.arguments.parse({
@@ -823,9 +867,11 @@ Deno.test("generate template='minimax_h3': keepRefAudio without a ref video thro
     refImage: "on_server.png",
     keepRefAudio: true,
   });
-  await assertRejects(
-    () => model.methods.generate.execute(args, context),
-    Error,
-    "needs a reference video",
-  );
+  await withFetchStub([objectInfoRoute()], async () => {
+    await assertRejects(
+      () => model.methods.generate.execute(args, context),
+      Error,
+      "needs a reference video",
+    );
+  });
 });
