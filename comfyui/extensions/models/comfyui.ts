@@ -80,6 +80,16 @@ interface WorkflowTemplate {
    * reference.
    */
   references?: ReferenceConfig;
+  /**
+   * Audio wiring for `keepRefAudio`: the `CreateVideo` node whose `audio` input
+   * is repointed at the first reference video's audio, and the `VAEDecodeAudio`
+   * node that generates model audio (deleted when keeping the reference audio).
+   */
+  audio?: {
+    createVideoNodeId: string;
+    audioKey: string;
+    decodeNodeId: string;
+  };
   /** Clip duration in seconds, if the template exposes one (video). */
   duration?: { nodeId: string; key: string };
   /** Sampler step count, if the template exposes one. */
@@ -158,6 +168,11 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
       videoComponentsVideoKey: "video",
       videoImagesSlot: 0,
       videoAudioSlot: 1,
+    },
+    audio: {
+      createVideoNodeId: "130",
+      audioKey: "audio",
+      decodeNodeId: "121",
     },
     duration: { nodeId: "132", key: "value" },
     steps: { nodeId: "124", key: "steps" },
@@ -290,6 +305,7 @@ const GenerateArgs = z.object({
   refImages: z.array(z.string()).optional(),
   refVideo: z.string().optional(),
   refVideos: z.array(z.string()).optional(),
+  keepRefAudio: z.boolean().optional(),
   duration: z.number().optional(),
   steps: z.number().optional(),
   speed: z.array(z.string()).optional(),
@@ -546,6 +562,42 @@ async function applyReferences(
 }
 
 /**
+ * When `keepRefAudio` is set, use the first reference video's original audio for
+ * the output instead of the model-generated track: repoint the `CreateVideo`
+ * node's audio input at that reference audio and delete the `VAEDecodeAudio`
+ * node (the audio VAE *loader* stays — the reference-to-video node requires it).
+ * A no-op unless the template declares `audio` wiring and the flag is set; throws
+ * if there is no reference video to take audio from. Runs after `applyReferences`
+ * so the video's `GetVideoComponents` node already exists. Note: the reference
+ * audio spans the ref clip's length, which may differ from the output duration.
+ */
+function applyKeepRefAudio(
+  graph: ApiGraph,
+  args: GenArgs,
+  tpl: WorkflowTemplate | undefined,
+): ApiGraph {
+  if (!args.keepRefAudio || !tpl?.audio || !tpl.references) return graph;
+  const clone = structuredClone(graph);
+  const refConsumer = clone[tpl.references.consumerNodeId];
+  const audioSource = refConsumer?.inputs[`${tpl.references.videoAudioPrefix}0`];
+  if (audioSource === undefined) {
+    throw new Error(
+      "keepRefAudio needs a reference video to take audio from; pass " +
+        "`refVideo`/`refVideos` (or drop keepRefAudio)",
+    );
+  }
+  const createVideo = clone[tpl.audio.createVideoNodeId];
+  if (createVideo === undefined) {
+    throw new Error(
+      `keepRefAudio: CreateVideo node '${tpl.audio.createVideoNodeId}' not found`,
+    );
+  }
+  createVideo.inputs = { ...createVideo.inputs, [tpl.audio.audioKey]: audioSource };
+  delete clone[tpl.audio.decodeNodeId];
+  return clone;
+}
+
+/**
  * Splice the selected speed patchers onto the model chain. When `args.speed` is
  * omitted the template's `default` set is used; an explicit `speed: []` disables
  * them. Enabled patchers inject in the template's declared order (not the arg
@@ -651,7 +703,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.2",
+  version: "2026.08.12.3",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -672,6 +724,13 @@ export const model = {
       toVersion: "2026.08.12.2",
       description:
         "minimax_h3: enable the full speed patcher stack BY DEFAULT (live ~43% faster); `speed: []` disables, an explicit `speed` still overrides. No globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.2",
+      toVersion: "2026.08.12.3",
+      description:
+        "minimax_h3: add `keepRefAudio` — use the first reference video's original audio for the output (repoints CreateVideo audio, drops the VAEDecodeAudio node; audio VAE loader stays, required by the ref2v node). No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -808,7 +867,9 @@ export const model = {
         "The full speed patcher stack (attentionBackend, sage, solAttention, " +
         "chunkFeedForward, spectrum, fusedModulation) runs BY DEFAULT (~43% " +
         "faster); pass `speed: []` to disable, an explicit `speed` list to pick a " +
-        "subset, or `speedOptions` to override a patcher's inputs.",
+        "subset, or `speedOptions` to override a patcher's inputs. `keepRefAudio` " +
+        "uses the first reference video's original audio instead of the " +
+        "model-generated track.",
       arguments: GenerateArgs,
       execute: async (args: z.infer<typeof GenerateArgs>, context: Context) => {
         const { globalArgs } = context;
@@ -820,6 +881,7 @@ export const model = {
         let base = applyContentOverrides(graph, args, tpl);
         base = applyVideoOverrides(base, args, tpl);
         base = await applyReferences(base, args, tpl, client);
+        base = applyKeepRefAudio(base, args, tpl);
         base = applySpeed(base, args, tpl);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
@@ -883,6 +945,7 @@ export const model = {
         let base = applyContentOverrides(graph, args, tpl);
         base = applyVideoOverrides(base, args, tpl);
         base = await applyReferences(base, args, tpl, client);
+        base = applyKeepRefAudio(base, args, tpl);
         base = applySpeed(base, args, tpl);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(

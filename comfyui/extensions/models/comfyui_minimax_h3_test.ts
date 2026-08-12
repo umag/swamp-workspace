@@ -671,3 +671,32 @@ Deno.test("generate template='minimax_h3': an explicit empty speed:[] disables t
   assertEquals(posted["124"].inputs.model, ["127", 0]);
   assertEquals(posted["126"].inputs.model, ["127", 0]);
 });
+
+Deno.test("generate template='minimax_h3': keepRefAudio routes CreateVideo audio from the ref video and drops VAEDecodeAudio", async () => {
+  const posted = await postedFor({ refVideo: "clip.mp4", keepRefAudio: true });
+  // ref video builds ref_vid_0 → ref_vidc_0 (GetVideoComponents); audio = out slot 1
+  assertEquals(posted["130"].inputs.audio, ["ref_vidc_0", 1]);
+  // the model-audio decode node is removed
+  assertEquals("121" in posted, false);
+});
+
+Deno.test("generate template='minimax_h3': without keepRefAudio the model audio path is intact", async () => {
+  const posted = await postedFor({ refVideo: "clip.mp4" });
+  assertEquals(posted["130"].inputs.audio, ["121", 0]); // CreateVideo ← VAEDecodeAudio
+  assert(posted["121"], "VAEDecodeAudio should remain");
+});
+
+Deno.test("generate template='minimax_h3': keepRefAudio without a ref video throws", async () => {
+  const { context } = fakeContext();
+  const args = model.methods.generate.arguments.parse({
+    template: "minimax_h3",
+    caption: "x",
+    refImage: "on_server.png",
+    keepRefAudio: true,
+  });
+  await assertRejects(
+    () => model.methods.generate.execute(args, context),
+    Error,
+    "needs a reference video",
+  );
+});
