@@ -84,6 +84,28 @@ function pathOf(req: Request): string {
   return new URL(req.url).pathname;
 }
 
+// Every speed-patcher class the minimax_h3 template can inject — used to stub
+// /object_info so the installed-node check sees them all present.
+const ALL_SPEED_CLASSES = [
+  "LoraLoaderModelOnly",
+  "ApplyMiniMaxH3FirstBlockCache",
+  "ModelAttentionBackend",
+  "PathchSageAttentionKJ",
+  "MiniMaxH3ScheduledSolAttentionPatch",
+  "MiniMaxH3ChunkFeedForward",
+  "SpectrumApplyMiniMaxH3",
+  "MiniMaxH3FusedModulation",
+  "MiniMaxH3SigmaShift",
+];
+
+/** Route that answers /object_info with the given classes installed (default: all). */
+function objectInfoRoute(classes: string[] = ALL_SPEED_CLASSES) {
+  return (req: Request) =>
+    pathOf(req) === "/object_info"
+      ? json(Object.fromEntries(classes.map((c) => [c, {}])))
+      : undefined;
+}
+
 const REF_CFG: ReferenceConfig = {
   consumerNodeId: "136",
   imagePrefix: "ref_images.ref_image_",
@@ -422,6 +444,7 @@ Deno.test("generate template='minimax_h3': uploads a local ref image, patches pr
     };
     await withFetchStub(
       [
+        objectInfoRoute(),
         (req) => {
           if (pathOf(req) !== "/upload/image") return undefined;
           uploadHit = true;
@@ -505,6 +528,7 @@ Deno.test("generate template='minimax_h3': speed splices the selected patchers (
     };
     await withFetchStub(
       [
+        objectInfoRoute(),
         (req) => {
           if (pathOf(req) !== "/prompt") return undefined;
           return req.text().then((text) => {
@@ -570,11 +594,13 @@ Deno.test("generate: an unknown speed patcher id throws, naming the known ones",
     refImage: "on_server.png",
     speed: ["turbocharger"],
   });
-  await assertRejects(
-    () => model.methods.generate.execute(args, context),
-    Error,
-    "unknown speed patcher 'turbocharger'",
-  );
+  await withFetchStub([objectInfoRoute()], async () => {
+    await assertRejects(
+      () => model.methods.generate.execute(args, context),
+      Error,
+      "unknown speed patcher 'turbocharger'",
+    );
+  });
 });
 
 Deno.test("generate: speed on a template without speed wiring throws", async () => {
@@ -594,6 +620,7 @@ Deno.test("generate: speed on a template without speed wiring throws", async () 
 /** Run generate over the bundled minimax_h3 template, returning the POSTed graph. */
 async function postedFor(
   extra: Record<string, unknown>,
+  installedClasses: string[] = ALL_SPEED_CLASSES,
 ): Promise<Record<string, { inputs: Record<string, unknown> }>> {
   const dir = await Deno.makeTempDir();
   try {
@@ -609,8 +636,13 @@ async function postedFor(
         "92": { videos: [{ filename: "v.mp4", subfolder: "", type: "output" }] },
       },
     };
+    const objectInfo = Object.fromEntries(
+      installedClasses.map((c) => [c, {}]),
+    );
     await withFetchStub(
       [
+        (req) =>
+          pathOf(req) === "/object_info" ? json(objectInfo) : undefined,
         (req) => {
           if (pathOf(req) !== "/prompt") return undefined;
           return req.text().then((text) => {
@@ -646,22 +678,26 @@ async function postedFor(
   }
 }
 
-Deno.test("generate template='minimax_h3': omitting speed applies the full default stack (6 patchers), repointing the consumers", async () => {
+Deno.test("generate template='minimax_h3': omitting speed applies the full default stack (all installed), repointing the consumers", async () => {
   const posted = await postedFor({});
-  // all six patchers injected, in declared order
+  // default patchers injected in template-declared order (firstBlockCache first)
   const ids = [
-    "speed_0_ModelAttentionBackend",
-    "speed_1_PathchSageAttentionKJ",
-    "speed_2_MiniMaxH3ScheduledSolAttentionPatch",
-    "speed_3_MiniMaxH3ChunkFeedForward",
-    "speed_4_SpectrumApplyMiniMaxH3",
-    "speed_5_MiniMaxH3FusedModulation",
+    "speed_0_ApplyMiniMaxH3FirstBlockCache",
+    "speed_1_ModelAttentionBackend",
+    "speed_2_PathchSageAttentionKJ",
+    "speed_3_MiniMaxH3ScheduledSolAttentionPatch",
+    "speed_4_MiniMaxH3ChunkFeedForward",
+    "speed_5_SpectrumApplyMiniMaxH3",
+    "speed_6_MiniMaxH3FusedModulation",
   ];
   for (const id of ids) assert(posted[id], `${id} should be present`);
   // first reads the raw UNET; last feeds both consumers
-  assertEquals(posted["speed_0_ModelAttentionBackend"].inputs.model, ["127", 0]);
-  assertEquals(posted["124"].inputs.model, ["speed_5_MiniMaxH3FusedModulation", 0]);
-  assertEquals(posted["126"].inputs.model, ["speed_5_MiniMaxH3FusedModulation", 0]);
+  assertEquals(
+    posted["speed_0_ApplyMiniMaxH3FirstBlockCache"].inputs.model,
+    ["127", 0],
+  );
+  assertEquals(posted["124"].inputs.model, ["speed_6_MiniMaxH3FusedModulation", 0]);
+  assertEquals(posted["126"].inputs.model, ["speed_6_MiniMaxH3FusedModulation", 0]);
 });
 
 Deno.test("generate template='minimax_h3': an explicit empty speed:[] disables the default stack", async () => {
@@ -688,21 +724,44 @@ Deno.test("generate template='minimax_h3': without keepRefAudio the model audio 
 
 Deno.test("generate template='minimax_h3': turbo injects the LoRA/cache/sigma-shift chain and drops steps to 8", async () => {
   const posted = await postedFor({ turbo: true });
-  // turbo preset patchers present, in order: turboLora → firstBlockCache → sage → sol → sigmaShift
+  // turbo preset (installed nodes only): turboLora → firstBlockCache → sage → sigmaShift
   assertEquals(
     posted["speed_0_LoraLoaderModelOnly"].inputs.lora_name,
     "minimax_h3_turbo_4step_ema_ckpt850_pruned_comfyui.safetensors",
   );
   assertEquals(posted["speed_0_LoraLoaderModelOnly"].inputs.model, ["127", 0]);
   assert(posted["speed_1_ApplyMiniMaxH3FirstBlockCache"], "firstBlockCache");
-  assert(posted["speed_4_MiniMaxH3SigmaShift"], "sigmaShift last");
-  assertEquals(posted["speed_4_MiniMaxH3SigmaShift"].inputs.shift_video, 12);
+  assert(posted["speed_3_MiniMaxH3SigmaShift"], "sigmaShift last");
+  assertEquals(posted["speed_3_MiniMaxH3SigmaShift"].inputs.shift_video, 12);
   // non-turbo default patchers are NOT present
   assertEquals("speed_0_ModelAttentionBackend" in posted, false);
-  assertEquals("speed_4_SpectrumApplyMiniMaxH3" in posted, false);
   // consumers read the last (sigma shift); steps dropped to 8
-  assertEquals(posted["124"].inputs.model, ["speed_4_MiniMaxH3SigmaShift", 0]);
+  assertEquals(posted["124"].inputs.model, ["speed_3_MiniMaxH3SigmaShift", 0]);
   assertEquals(posted["124"].inputs.steps, 8);
+});
+
+Deno.test("generate: an explicit speed patcher whose node is NOT installed errors clearly", async () => {
+  await assertRejects(
+    // server has everything EXCEPT the sol-attn node
+    () =>
+      postedFor(
+        { speed: ["attentionBackend", "solAttention"] },
+        ALL_SPEED_CLASSES.filter((c) => c !== "MiniMaxH3ScheduledSolAttentionPatch"),
+      ),
+    Error,
+    "not installed on the ComfyUI server",
+  );
+});
+
+Deno.test("generate: the DEFAULT speed stack silently skips patchers whose node is missing", async () => {
+  // only attentionBackend + sage installed; default also lists the missing ones
+  const posted = await postedFor({}, ["ModelAttentionBackend", "PathchSageAttentionKJ"]);
+  assert(posted["speed_0_ModelAttentionBackend"], "installed one injected");
+  assert(posted["speed_1_PathchSageAttentionKJ"], "installed one injected");
+  // the missing spectrum/sol/etc. are simply absent — no error
+  assertEquals("speed_2_SpectrumApplyMiniMaxH3" in posted, false);
+  // consumers still repointed at the last INSTALLED patcher
+  assertEquals(posted["124"].inputs.model, ["speed_1_PathchSageAttentionKJ", 0]);
 });
 
 Deno.test("generate: turbo on a template without a turbo preset throws", async () => {

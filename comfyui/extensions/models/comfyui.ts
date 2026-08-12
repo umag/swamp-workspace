@@ -308,6 +308,7 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
       default: [
         "attentionBackend",
         "sage",
+        "firstBlockCache",
         "solAttention",
         "chunkFeedForward",
         "spectrum",
@@ -318,7 +319,9 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
     // LoRA installed). LoRA first, cache, sage/sol attention, sigma shift last,
     // at 8 steps instead of 20.
     turbo: {
-      speed: ["turboLora", "firstBlockCache", "sage", "solAttention", "sigmaShift"],
+      // Only currently-installed nodes (sol-attn was removed in a conflict fix).
+      // The essentials are turboLora + sigmaShift + low steps; cache/sage help.
+      speed: ["turboLora", "firstBlockCache", "sage", "sigmaShift"],
       steps: 8,
     },
   },
@@ -686,6 +689,7 @@ function applySpeed(
   graph: ApiGraph,
   args: GenArgs,
   tpl: WorkflowTemplate | undefined,
+  installed?: Set<string>,
 ): ApiGraph {
   // Omitted `speed` → template default; explicit `speed` (incl. []) wins.
   const selected = args.speed ?? tpl?.speed?.default ?? [];
@@ -705,9 +709,25 @@ function applySpeed(
       );
     }
   }
-  // Inject in the template's declared (recommended) order, not the arg order.
-  const specs: ModelPatcherSpec[] = tpl.speed.patchers
-    .filter((p) => wanted.has(p.id))
+  // Patchers to inject, in the template's declared (recommended) order.
+  const selectedPatchers = tpl.speed.patchers.filter((p) => wanted.has(p.id));
+  // Complain about patchers whose custom node isn't installed. When `speed` was
+  // requested explicitly (or via `turbo`), a missing node is an error — the
+  // caller asked for it. The DEFAULT stack instead degrades gracefully, skipping
+  // whatever isn't installed so a churning node set doesn't break a plain render.
+  const missing = installed
+    ? selectedPatchers.filter((p) => !installed.has(p.classType))
+    : [];
+  const explicit = args.speed !== undefined;
+  if (missing.length > 0 && explicit) {
+    throw new Error(
+      "speed patcher(s) not installed on the ComfyUI server: " +
+        missing.map((p) => `${p.id} (${p.classType})`).join(", ") +
+        " — install the node(s) or drop them from `speed`",
+    );
+  }
+  const specs: ModelPatcherSpec[] = selectedPatchers
+    .filter((p) => installed === undefined || installed.has(p.classType))
     .map((p) => ({
       classType: p.classType,
       modelKey: p.modelKey,
@@ -781,7 +801,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.4",
+  version: "2026.08.12.5",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -816,6 +836,13 @@ export const model = {
       toVersion: "2026.08.12.4",
       description:
         "minimax_h3: add `turbo` — 4-step distillation-LoRA fast path (turboLora + firstBlockCache + sage/sol + MiniMaxH3SigmaShift at 8 steps). New speed patchers turboLora/firstBlockCache/sigmaShift. Needs the turbo LoRA installed on the server. No globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.4",
+      toVersion: "2026.08.12.5",
+      description:
+        "minimax_h3: speed injection checks installed nodes (/object_info) — an explicit `speed`/`turbo` patcher whose node is missing now errors clearly (install it or drop it); the DEFAULT stack skips missing nodes gracefully. Turbo preset trimmed to installed nodes (sol-attn removed upstream). No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -969,7 +996,10 @@ export const model = {
         base = applyVideoOverrides(base, eArgs, tpl);
         base = await applyReferences(base, eArgs, tpl, client);
         base = applyKeepRefAudio(base, eArgs, tpl);
-        base = applySpeed(base, eArgs, tpl);
+        const installed = tpl?.speed
+          ? await client.fetchInstalledClasses()
+          : undefined;
+        base = applySpeed(base, eArgs, tpl, installed);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,
@@ -1034,7 +1064,10 @@ export const model = {
         base = applyVideoOverrides(base, eArgs, tpl);
         base = await applyReferences(base, eArgs, tpl, client);
         base = applyKeepRefAudio(base, eArgs, tpl);
-        base = applySpeed(base, eArgs, tpl);
+        const installed = tpl?.speed
+          ? await client.fetchInstalledClasses()
+          : undefined;
+        base = applySpeed(base, eArgs, tpl, installed);
 
         const { nodeId: seedNodeId, key: seedInputKey } = resolveSeedNode(
           args,

@@ -97,6 +97,22 @@ export class ComfyClient {
     return (await res.json()) as Record<string, unknown>;
   }
 
+  /**
+   * The set of node class names installed on the server (`/object_info` keys).
+   * Used to skip optional patchers whose custom node isn't installed, so a
+   * churning node set doesn't break a render with a `missing_node_type` error.
+   */
+  async fetchInstalledClasses(): Promise<Set<string>> {
+    const res = await this.#fetch(`${this.baseUrl}/object_info`);
+    if (!res.ok) {
+      throw new Error(
+        `ComfyUI /object_info failed: ${res.status} ${res.statusText}`,
+      );
+    }
+    const info = await res.json() as Record<string, unknown>;
+    return new Set(Object.keys(info ?? {}));
+  }
+
   collectImages(entry: HistoryEntry): ImageRef[] {
     const images: ImageRef[] = [];
     const outputs = entry.outputs ?? {};
