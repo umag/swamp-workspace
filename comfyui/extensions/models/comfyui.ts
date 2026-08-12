@@ -1002,6 +1002,21 @@ function ffmpegTail(src: string, seconds: number, dst: string): Promise<void> {
   ]);
 }
 
+/**
+ * Return `path` if free, else the first non-existing `name_N.ext` sibling
+ * (`_2`, `_3`, …) — so repeated runs auto-increment instead of overwriting.
+ */
+export async function nextFreePath(path: string): Promise<string> {
+  const exists = (p: string) =>
+    Deno.stat(p).then(() => true).catch(() => false);
+  const m = path.match(/^(.*?)(\.[^.\/\\]+)$/);
+  const stem = m ? m[1] : path;
+  const ext = m ? m[2] : "";
+  let candidate = path;
+  for (let i = 2; await exists(candidate); i++) candidate = `${stem}_${i}${ext}`;
+  return candidate;
+}
+
 /** Concatenate `parts` (re-encoded, uniform) into `dst` via the concat demuxer. */
 async function ffmpegConcat(parts: string[], dst: string): Promise<void> {
   const list = `${await Deno.makeTempDir()}/concat.txt`;
@@ -1176,7 +1191,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.10",
+  version: "2026.08.12.11",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -1253,6 +1268,13 @@ export const model = {
       toVersion: "2026.08.12.10",
       description:
         "generate_long: SEAM-ALIGN fragment boundaries (`seamAlign` default on, `seamWindow` 1s) — profile the source motion video (tblend-difference → signalstats YAVG per frame) and snap each cut to the lowest-motion frame near its nominal position, so cuts land on held poses instead of mid-jump/turn where facing is ambiguous (fixed the next fragment 'forgetting' head/face orientation). Also bind facing/gaze/head-orientation to <Video 2> in the continuation caption and demote <Picture 1> to appearance-only. No globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.10",
+      toVersion: "2026.08.12.11",
+      description:
+        "generate_long: AUTO-INCREMENT the stitched output filename (nextFreePath) — a new run writes minimax_h3_long_NxMs_2.mp4, _3.mp4, … instead of overwriting the previous stitched video. No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1639,8 +1661,10 @@ export const model = {
         }
 
         await Deno.mkdir(`${globalArgs.outputDir}/video`, { recursive: true });
-        const finalPath =
-          `${globalArgs.outputDir}/video/minimax_h3_long_${plan.length}x${frag}s.mp4`;
+        // Auto-increment so a new run never overwrites a previous stitched video.
+        const finalPath = await nextFreePath(
+          `${globalArgs.outputDir}/video/minimax_h3_long_${plan.length}x${frag}s.mp4`,
+        );
         await ffmpegConcat(fragmentPaths, finalPath);
 
         await context.writeResource("long", "long", {

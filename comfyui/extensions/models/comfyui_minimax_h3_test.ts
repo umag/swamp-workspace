@@ -19,6 +19,7 @@ import {
   continuationCaptionTail,
   GlobalArgs,
   model,
+  nextFreePath,
   parseMotionProfile,
   planFragments,
 } from "./comfyui.ts";
@@ -887,6 +888,19 @@ Deno.test("alignSeams: empty profile falls back to uniform boundaries", () => {
     { index: 0, start: 0, duration: 5 },
     { index: 1, start: 5, duration: 5 },
   ]);
+});
+
+Deno.test("nextFreePath: returns the path when free, else the next _N sibling", async () => {
+  const dir = await Deno.makeTempDir();
+  const base = `${dir}/minimax_h3_long_6x5s.mp4`;
+  // nothing there yet → the base path is used
+  assertEquals(await nextFreePath(base), base);
+  // base taken → _2; base and _2 taken → _3
+  await Deno.writeTextFile(base, "");
+  assertEquals(await nextFreePath(base), `${dir}/minimax_h3_long_6x5s_2.mp4`);
+  await Deno.writeTextFile(`${dir}/minimax_h3_long_6x5s_2.mp4`, "");
+  assertEquals(await nextFreePath(base), `${dir}/minimax_h3_long_6x5s_3.mp4`);
+  await Deno.remove(dir, { recursive: true });
 });
 
 Deno.test("model declares generate_long with totalDuration/fragmentDuration", () => {
