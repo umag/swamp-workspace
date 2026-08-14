@@ -20,7 +20,11 @@
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
-import { formatDuration, model } from "./musicbrainz.ts";
+import {
+  BANDCAMP_INSTANCE_PREFIXES,
+  formatDuration,
+  model,
+} from "./musicbrainz.ts";
 import { ARTIST_MUSICGRID_HTML } from "../../fixtures/bandcamp/artist_musicgrid.ts";
 import { ALBUM_JSONLD_HTML } from "../../fixtures/bandcamp/album_jsonld.ts";
 
@@ -45,8 +49,43 @@ function makeCtx() {
         return Promise.resolve({ spec, name });
       },
       logger: { info: () => {}, warning: () => {} },
+      // Fail-closed write-budget funnel (musicbrainz-missing-seed-instance-
+      // collision, round 4) — see WRITE_BUDGET/run() below. The model itself
+      // never reads this property; it's exposed purely so run() can assert
+      // on it.
+      __written: written,
     },
   };
+}
+
+/**
+ * Assert the STRUCTURAL invariant find-missing/seed-all-missing both hold —
+ * exactly one resource written, at the given spec — and return it. Round 3
+ * (musicbrainz-missing-seed-instance-collision review): a deprecation alias
+ * gated on argument shape (`!args.artistMbid`), then on the resolved local
+ * (`!artistMbid`), then on computed state (`missing.length === 0` /
+ * `releases.length === 0`) each slipped past a DIFFERENT hand-picked
+ * `written.map((w) => w.name)` literal pin, because a pin attached to one
+ * fixture's write list only covers the state that fixture happens to
+ * produce. `onlyWrite` is attached to the property instead of any one
+ * fixture: it fails on an extra write regardless of what condition produced
+ * it or what the fixture's other assertions expect, so it cannot be walked
+ * past by inventing a new gate the way the four per-test pins were.
+ */
+function onlyWrite(written: Written[], spec: string): Written {
+  assertEquals(
+    written.length,
+    1,
+    `expected exactly one resource write, got ${written.length}: ${
+      JSON.stringify(written.map((w) => `${w.spec}:${w.name}`))
+    }`,
+  );
+  assertEquals(
+    written[0].spec,
+    spec,
+    `the one write must be spec "${spec}", got "${written[0].spec}"`,
+  );
+  return written[0];
 }
 
 type MethodMap = Record<string, {
@@ -54,9 +93,165 @@ type MethodMap = Record<string, {
   execute: (a: unknown, c: unknown) => Promise<unknown>;
 }>;
 
-function run(name: string, args: Record<string, unknown>, ctx: unknown) {
+// Per-method write budget for every method with a call-shape-independent
+// write count — the funnel `run()` enforces below. `sync-artist-discographies`
+// is a genuine fan-out (0..batchSize per-artist writes plus one cursor-state
+// write) and is deliberately left OUT rather than pinned to a number that
+// would be wrong on the very next fixture.
+//
+// This is the STRUCTURAL counterpart to `onlyWrite` above: `onlyWrite`
+// documents and asserts the shape a given TEST expects; WRITE_BUDGET/run()
+// make that shape true of every invocation of a budgeted method in this
+// file, whether or not the test author remembered to call `onlyWrite` — see
+// the round-4 review this closes (three invented gatings — a paginated-
+// catalogue alias, a maxPages-gated alias, and find-missing writing into
+// seed-all-missing's spec — all passed 263/0 by landing in one of this
+// file's eleven un-pinned `written.find(...)` readers, none of which
+// exercise `onlyWrite` at all).
+const WRITE_BUDGET: Record<string, number> = {
+  "search-artist": 2, // canonical + time-bounded deprecation alias
+  "search-artists-batch": 1,
+  "search-release-group": 1,
+  "search-release": 1,
+  "search-recording": 1,
+  "search-label": 1,
+  "lookup-artist": 1,
+  "lookup-release-group": 1,
+  "lookup-release": 1,
+  "lookup-recording": 1,
+  "lookup-label": 1,
+  "browse-release-groups": 1,
+  "browse-releases": 1,
+  "browse-recordings": 1,
+  "seed-from-bandcamp": 1,
+  "find-missing": 1,
+  "seed-all-missing": 1,
+  search: 1,
+};
+
+// Round 5 (musicbrainz-missing-seed-instance-collision review): a
+// call-shape-independent COUNT cannot express `sync-artist-discographies`'
+// contract — it is a genuine fan-out (0..batchSize per-artist writes) — so
+// leaving it out of WRITE_BUDGET entirely left it completely unchecked; a
+// surplus write gated on any state the fixtures don't drive (e.g. the
+// `truncated` page-ceiling flag) passed 265/0. Its writes DO have a fixed
+// SHAPE that holds regardless of call shape or exit path, though: every
+// `writeResource` it makes is either spec "browse" at `rg-by-artist-<mbid>`
+// (the `writeResource("browse", \`rg-by-artist-${mbid}\`, ...)` call inside
+// sync-artist-discographies, once per processed artist) or spec
+// "discographySyncState" at "discography-sync-cursor" (that same method's
+// `writeResource("discographySyncState", DISCOGRAPHY_SYNC_CURSOR_INSTANCE,
+// ...)` call, written durably in its own `finally` even on a mid-batch
+// throw — see the
+// "a crash mid-batch still persists..." test in musicbrainz_methods_test.ts).
+// `run()` below checks every row in the delta window against this predicate
+// in place of a count for any method listed here.
+const WRITE_SHAPE: Record<
+  string,
+  (w: { spec: string; name: string }) => boolean
+> = {
+  "sync-artist-discographies": (w) =>
+    (w.spec === "browse" && w.name.startsWith("rg-by-artist-")) ||
+    (w.spec === "discographySyncState" &&
+      w.name === "discography-sync-cursor"),
+};
+
+// Round 6 (musicbrainz-missing-seed-instance-collision review): the finally
+// below's assertEquals/assertEquals-on-bad-rows can be swallowed at any
+// `assertRejects(fn)` or `assertRejects(fn, Error)` call site that doesn't
+// pin a message — JS replaces an in-flight rejection with whatever a
+// `finally` throws, so the caller's bare assertRejects then accepts the
+// substituted AssertionError as the expected rejection and the test stays
+// green. Recording every violation OUT OF BAND, in addition to (not instead
+// of) the existing assertEquals, means it cannot be absorbed that way: the
+// FUNNEL: the unload handler below reads this array after every run() in the
+// file has executed and fails the file if anything landed in it, regardless
+// of what any individual assertRejects call swallowed.
+const FUNNEL_VIOLATIONS: string[] = [];
+
+// The funnel: every one of this file's `run()` calls passes through here, so
+// arming the check ONCE closes the class for every fixture — present and
+// future — rather than relying on each new test to remember a per-test pin.
+// Fail-CLOSED on two axes:
+//  1. A method with NEITHER a WRITE_BUDGET NOR a WRITE_SHAPE entry throws
+//     immediately, rather than passing through unchecked the way
+//     `sync-artist-discographies` used to — so the next method added to the
+//     model can't silently land outside the funnel either.
+//  2. A budgeted/shaped method invoked against a ctx that doesn't expose
+//     `__written` throws rather than silently skipping the check, so a
+//     hand-rolled ctx (makeSyncCtx / makeCollisionCtx below) has to opt in.
+// The check runs in a `finally`, so a method that throws is still checked —
+// a write made before rethrowing is exactly as visible as one on the happy
+// path, not a silent escape. For a WRITE_BUDGET method the expected count on
+// a throwing exit is 0 (none of the 18 budgeted methods deliberately persist
+// before rethrowing today — only `sync-artist-discographies` does, and it is
+// shape-checked, not count-checked, precisely because its throw-path write
+// count varies with how much of the batch completed before the throw).
+async function run(name: string, args: Record<string, unknown>, ctx: unknown) {
   const method = (model.methods as MethodMap)[name];
-  return method.execute(method.arguments.parse(args), ctx);
+  const budget = WRITE_BUDGET[name];
+  const shape = WRITE_SHAPE[name];
+  if (budget === undefined && shape === undefined) {
+    throw new Error(
+      `run("${name}", ...) has neither a WRITE_BUDGET nor a WRITE_SHAPE entry — every model method invoked through run() must be checked one way or the other, so an unbudgeted, unlisted method fails closed instead of passing through unchecked`,
+    );
+  }
+  const written =
+    (ctx as { __written?: Array<{ spec: string; name: string }> }).__written;
+  if (!Array.isArray(written)) {
+    throw new Error(
+      `run("${name}", ...) is ${
+        budget !== undefined
+          ? `budgeted at ${budget} write(s)`
+          : "shape-checked"
+      } but its ctx does not expose __written — every ctx passed to a checked method must come from a makeCtx()-style helper (or opt in explicitly) so the write invariant can be enforced`,
+    );
+  }
+  const before = written.length;
+  let threw = false;
+  try {
+    return await method.execute(method.arguments.parse(args), ctx);
+  } catch (e) {
+    threw = true;
+    throw e;
+  } finally {
+    const rows = written.slice(before);
+    if (shape !== undefined) {
+      const bad = rows.filter((w) => !shape(w));
+      if (bad.length !== 0) {
+        FUNNEL_VIOLATIONS.push(
+          `${name} wrote ${bad.length} resource(s) outside its declared WRITE_SHAPE: ${
+            JSON.stringify(bad.map((w) => `${w.spec}:${w.name}`))
+          }`,
+        );
+      }
+      assertEquals(
+        bad.length,
+        0,
+        `${name} wrote ${bad.length} resource(s) outside its declared WRITE_SHAPE: ${
+          JSON.stringify(bad.map((w) => `${w.spec}:${w.name}`))
+        }`,
+      );
+    } else {
+      const expected = threw ? 0 : budget;
+      if (rows.length !== expected) {
+        FUNNEL_VIOLATIONS.push(
+          `${name} count ${rows.length} != ${expected}: ${
+            JSON.stringify(rows.map((w) => `${w.spec}:${w.name}`))
+          }`,
+        );
+      }
+      assertEquals(
+        rows.length,
+        expected,
+        `${name} must write exactly ${expected} resource(s) per${
+          threw ? " throwing" : ""
+        } execution, got ${rows.length}: ${
+          JSON.stringify(rows.map((w) => `${w.spec}:${w.name}`))
+        }`,
+      );
+    }
+  }
 }
 
 type Route = (req: Request) => Response | Promise<Response> | undefined;
@@ -294,6 +489,52 @@ Deno.test("search: count/offset ABSENT -> derived from results.length / defaulte
 });
 
 // ---------------------------------------------------------------------------
+// KNOWN COVERAGE GAPS in find-missing / seed-all-missing (musicbrainz-
+// missing-seed-instance-collision, round 5) — recorded here, not just in a
+// review file, so the next person editing either method's pagination or
+// track-count handling sees the gap instead of trusting a green suite.
+// Each was confirmed by temporarily throwing on the condition and observing
+// the suite stay fully green.
+//   - `bandcampUrl` already ending "/music" — the else-arm of the URL-
+//     normalization guard (the `if (!bcUrl.endsWith("/music")) bcUrl +=
+//     "/music";` line, present verbatim once in find-missing's execute and
+//     once in seed-all-missing's) — no fixture in this file passes a
+//     bandcampUrl already suffixed "/music".
+//   - seed-all-missing's `context.globalArgs.maxPages` override
+//     (`maxPagesArg !== undefined`, i.e. the `?? 50` fallback on
+//     `const maxPages = maxPagesArg ?? 50;` inside seed-all-missing's own
+//     execute, distinct from find-missing's copy of the same line) — no
+//     seed-all-missing fixture sets a custom maxPages global arg.
+//   - seed-all-missing's release-group pagination loop reaching a full
+//     100-item first page (the `for (let page = 0; page < maxPages;
+//     page++)` loop inside seed-all-missing's own `if (artistMbid) {`
+//     block) — find-missing's mirror of this IS exercised (the "LB4 FIX"
+//     pagination tests below), but no seed-all-missing fixture drives its
+//     own loop past one partial page.
+//   - the "trust the album data" `albumData.tracks.length || trackCount`
+//     branch — present once in find-missing's per-album try block and once
+//     in seed-all-missing's — no fixture's album JSON-LD/tralbum payload
+//     supplies a non-empty `tracks` array, so the DOM-derived trackCount
+//     always wins.
+//   - WRITE_SHAPE for sync-artist-discographies is a PREFIX PATTERN, not
+//     membership: the predicate accepts any `browse` row whose name starts
+//     with "rg-by-artist-", so a write for an MBID that was never in the
+//     requested batch would still pass the funnel (the WRITE_SHAPE preamble
+//     comment above explains why shape replaced count but not what shape
+//     does not check).
+//   - seed-all-missing has no failure-path test mirroring find-missing's
+//     "failure path — a non-ok Bandcamp discography fetch throws, and
+//     writes nothing on the way out" (musicbrainz_methods_test.ts:1321) —
+//     no seed-all-missing fixture drives a non-ok discography fetch, so a
+//     write-before-rethrow there has no dedicated catcher.
+// None of these writes anything conditionally as shipped today (they're
+// pagination/arithmetic branches, not gated writes), which is why closing
+// GUARD I's gap didn't also close these — but a future change that adds a
+// write behind any of them would land here unnoticed, the same shape as the
+// escape this issue has spent five rounds closing elsewhere.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // find-missing / seed-all-missing — exact-match / no-match / ARTIST-MBID-
 // UNRESOLVED branches, pinned for BOTH methods (round-2 review fold-in)
 // ---------------------------------------------------------------------------
@@ -324,13 +565,22 @@ Deno.test("find-missing: artist-MBID-UNRESOLVED (search returns no exact match) 
         }),
       ),
   );
-  const res = written.find((w) => w.spec === "missingReleases")!;
+  // onlyWrite subsumes round-2's GUARD C full-write-list pin: this is the
+  // artist-MBID-UNRESOLVED path, exactly where the pre-fix bare "unknown"
+  // instance lived, and where a deprecation alias has twice been re-added
+  // gated on a DIFFERENT condition each round. Round-3 review (fallback
+  // axis): the instance name is now derived from bandcampUrl
+  // ("fixturemarinholloway", this fixture's subdomain), not the old shared
+  // "unknown" constant — see GUARD J in musicbrainz_property_test.ts and the
+  // two-artist reproduction below for why that constant was itself a
+  // collision.
+  const res = onlyWrite(written, "missingReleases");
   assertEquals(res.payload.artistMbid, undefined);
   assertEquals(res.payload.mbReleaseCount, 0);
   assertEquals(
     res.name,
-    "unknown",
-    "writeResource's name falls back to 'unknown' when artistMbid is undefined",
+    "find-missing-bc-fixturemarinholloway",
+    "writeResource's name falls back to a bandcampUrl-derived instance when artistMbid is undefined",
   );
   const missing = res.payload.missing as unknown[];
   assertEquals(missing.length, 2, "both discography entries land in 'missing'");
@@ -354,10 +604,306 @@ Deno.test("seed-all-missing: artist-MBID-UNRESOLVED (mirror) -> MB release-group
         }),
       ),
   );
-  const res = written.find((w) => w.spec === "seedUrls")!;
+  // onlyWrite subsumes round-2's GUARD C mirror pin — see the find-missing
+  // test above.
+  const res = onlyWrite(written, "seedUrls");
   assertEquals(res.payload.artistMbid, undefined);
-  assertEquals(res.name, "all-missing");
+  assertEquals(res.name, "seed-all-missing-bc-fixturemarinholloway");
   assertEquals(res.payload.total, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Round 3/round 4 review (musicbrainz-missing-seed-instance-collision): the
+// unresolved-artist console.error diagnostic — naming the instance actually
+// written, rendering bandcampUrl's HOSTNAME ONLY (never the raw argument, so
+// embedded userinfo never reaches the log), and clamping the scraped artist
+// name to 120 chars — had NO assertion anywhere in this package. Three
+// mutants survived a fully green suite: reverting the hostname-only render
+// back to the raw bandcampUrl argument, dropping the 120-char artistName
+// clamp, and deleting BOTH console.error call sites outright. Captures the
+// real console.error around run() rather than reimplementing the log's
+// format, so a wording change does not itself break this test — only the
+// three properties below do.
+// ---------------------------------------------------------------------------
+
+const ARTIST_LONGNAME_HTML = `<!doctype html>
+<html><head></head><body>
+<p id="band-name-location"><span class="title">${"A".repeat(5000)}</span></p>
+<div id="music-grid"><ol>
+  <li class="music-grid-item"><a href="/album/x"><p class="title">X</p></a></li>
+</ol></div>
+</body></html>`;
+
+async function withCapturedConsoleError(
+  fn: () => Promise<unknown>,
+): Promise<string[]> {
+  const captured: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => {
+    captured.push(args.map(String).join(" "));
+  };
+  try {
+    await fn();
+  } finally {
+    console.error = original;
+  }
+  return captured;
+}
+
+Deno.test("find-missing: unresolved-artist console.error names the instance actually written, never leaks bandcampUrl's userinfo, and stays length-bounded against a pathological scraped artist name", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+
+  const captured = await withCapturedConsoleError(() =>
+    withFetchStub(
+      [
+        (req) => (isBcHost(req) ? html(ARTIST_LONGNAME_HTML) : undefined),
+        (req) => (isMbHost(req) ? mbEmptyArtistSearch() : undefined),
+      ],
+      () =>
+        drainAndAwait(
+          time,
+          run("find-missing", {
+            bandcampUrl:
+              "https://alice:hunter2@fixturemarinholloway.bandcamp.com",
+          }, ctx),
+        ),
+    )
+  );
+
+  const res = onlyWrite(written, "missingReleases");
+  assertEquals(
+    captured.length,
+    1,
+    "exactly one console.error at the resolution boundary — a deleted call site (mutant M12) leaves this at 0",
+  );
+  const message = captured[0];
+  assert(
+    message.includes(res.name),
+    `console.error must name the instance actually written ("${res.name}"), got: ${message}`,
+  );
+  assert(
+    !message.includes("hunter2"),
+    `console.error must never leak bandcampUrl's userinfo credential — a raw-URL regression (mutant M10) puts "hunter2" in the message, got: ${message}`,
+  );
+  assert(
+    message.length < 1000,
+    `console.error must stay length-bounded against a pathological scraped artist name (5000 chars in) — a dropped clamp (mutant M11) makes this thousands of chars, got ${message.length} chars`,
+  );
+});
+
+Deno.test("seed-all-missing: unresolved-artist console.error mirror — same three properties as find-missing's version above", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+
+  const captured = await withCapturedConsoleError(() =>
+    withFetchStub(
+      [
+        (req) => (isBcHost(req) ? html(ARTIST_LONGNAME_HTML) : undefined),
+        (req) => (isMbHost(req) ? mbEmptyArtistSearch() : undefined),
+      ],
+      () =>
+        drainAndAwait(
+          time,
+          run("seed-all-missing", {
+            bandcampUrl:
+              "https://alice:hunter2@fixturemarinholloway.bandcamp.com",
+          }, ctx),
+        ),
+    )
+  );
+
+  const res = onlyWrite(written, "seedUrls");
+  assertEquals(captured.length, 1);
+  const message = captured[0];
+  assert(
+    message.includes(res.name),
+    `console.error must name the instance actually written ("${res.name}"), got: ${message}`,
+  );
+  assert(
+    !message.includes("hunter2"),
+    `console.error must never leak bandcampUrl's userinfo credential, got: ${message}`,
+  );
+  assert(
+    message.length < 1000,
+    `console.error must stay length-bounded, got ${message.length} chars`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// GUARD B (musicbrainz-missing-seed-instance-collision) — the EMPTY-STRING
+// case, execute()-level. `artistMbid: ""` is falsy, exactly like `undefined`,
+// but is a DIFFERENT input: it is explicitly PASSED, not omitted, so it
+// enters (and survives, unresolved) the exact same auto-resolve branch as the
+// omitted-argument tests above. The fallback operator must be `||`, not `??`
+// — `??` only catches null/undefined, so an empty string would slip through
+// and render a dangling-hyphen name (`find-missing-` / `seed-all-missing-`)
+// instead of falling back to the bandcampUrl-derived instance (round-2's
+// "unknown" constant, before the fallback-axis fix below). Nothing before
+// this issue tested this input at all.
+// ---------------------------------------------------------------------------
+
+Deno.test("GUARD B: find-missing — an EXPLICIT empty-string artistMbid (not omitted) still falls back to the bandcampUrl-derived instance, never a dangling hyphen", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(ARTIST_MUSICGRID_HTML) : undefined),
+      (req) => (isMbHost(req) ? mbEmptyArtistSearch() : undefined),
+    ],
+    () =>
+      drainAndAwait(
+        time,
+        run("find-missing", {
+          bandcampUrl: "https://fixturemarinholloway.bandcamp.com",
+          artistMbid: "",
+        }, ctx),
+      ),
+  );
+  // onlyWrite subsumes round-2's GUARD B full-write-list pin.
+  const res = onlyWrite(written, "missingReleases");
+  assertEquals(
+    res.name,
+    "find-missing-bc-fixturemarinholloway",
+    'GUARD B: find-missing\'s written instance name must be exactly "find-missing-bc-fixturemarinholloway" for an explicit empty-string artistMbid — a divergence here may be the || fallback rendering a dangling hyphen, or any other regression in how the name is built',
+  );
+});
+
+Deno.test("GUARD B: seed-all-missing — an EXPLICIT empty-string artistMbid (not omitted) still falls back to the bandcampUrl-derived instance, never a dangling hyphen", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(ARTIST_MUSICGRID_HTML) : undefined),
+      (req) => (isMbHost(req) ? mbEmptyArtistSearch() : undefined),
+    ],
+    () =>
+      drainAndAwait(
+        time,
+        run("seed-all-missing", {
+          bandcampUrl: "https://fixturemarinholloway.bandcamp.com",
+          artistMbid: "",
+        }, ctx),
+      ),
+  );
+  // onlyWrite subsumes round-2's GUARD B mirror pin.
+  const res = onlyWrite(written, "seedUrls");
+  assertEquals(
+    res.name,
+    "seed-all-missing-bc-fixturemarinholloway",
+    'GUARD B: seed-all-missing\'s written instance name must be exactly "seed-all-missing-bc-fixturemarinholloway" for an explicit empty-string artistMbid — a divergence here may be the || fallback rendering a dangling hyphen, or any other regression in how the name is built',
+  );
+});
+
+// ---------------------------------------------------------------------------
+// GUARD J (musicbrainz-missing-seed-instance-collision, fallback axis) —
+// review found round-2's fix namespaces by METHOD, not by ARTIST: on the
+// unresolved-artistMbid path, every unresolved artist collapsed onto the
+// SAME constant suffix ("unknown"), so the collision this issue exists to
+// close reappeared one axis over, across artists rather than across
+// methods — and "unresolved" is the MODAL path for a tool whose job is
+// finding artists MISSING from MusicBrainz. Reproduces the review's exact
+// scenario: two distinct unresolved artists, run through BOTH methods (four
+// executions total against ONE shared ctx, so every write lands in the same
+// `written` array exactly as it would across four separate
+// `swamp model method run` invocations). Pre-fix this left only the last
+// artist's two rows surviving; post-fix `bandcampUrlSlug` derives a
+// distinct, `bc-`-namespaced suffix per artist from the required
+// `bandcampUrl`, so all four writes land at four distinct names and BOTH
+// artists' rows survive intact.
+// ---------------------------------------------------------------------------
+
+const ARTIST_OBSCURE_ALPHA_HTML = `<!doctype html>
+<html><head></head><body>
+<p id="band-name-location"><span class="title">Obscure Alpha</span></p>
+<div id="music-grid"><ol>
+  <li class="music-grid-item"><a href="/album/alpha-debut"><p class="title">Alpha Debut</p></a></li>
+</ol></div>
+</body></html>`;
+
+const ARTIST_OBSCURE_BETA_HTML = `<!doctype html>
+<html><head></head><body>
+<p id="band-name-location"><span class="title">Obscure Beta</span></p>
+<div id="music-grid"><ol>
+  <li class="music-grid-item"><a href="/album/beta-debut"><p class="title">Beta Debut</p></a></li>
+</ol></div>
+</body></html>`;
+
+Deno.test("GUARD J: two distinct unresolved artists, both methods, four runs — every row survives at a distinct instance (the fallback-axis collision review found by execution)", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+
+  const runOne = (
+    method: string,
+    bandcampUrl: string,
+    artistHtml: string,
+  ) =>
+    withFetchStub(
+      [
+        (req) => (isBcHost(req) ? html(artistHtml) : undefined),
+        (req) => (isMbHost(req) ? mbEmptyArtistSearch() : undefined),
+      ],
+      () => drainAndAwait(time, run(method, { bandcampUrl }, ctx)),
+    );
+
+  await runOne(
+    "find-missing",
+    "https://obscurealpha.bandcamp.com",
+    ARTIST_OBSCURE_ALPHA_HTML,
+  );
+  await runOne(
+    "find-missing",
+    "https://obscurebeta.bandcamp.com",
+    ARTIST_OBSCURE_BETA_HTML,
+  );
+  await runOne(
+    "seed-all-missing",
+    "https://obscurealpha.bandcamp.com",
+    ARTIST_OBSCURE_ALPHA_HTML,
+  );
+  await runOne(
+    "seed-all-missing",
+    "https://obscurebeta.bandcamp.com",
+    ARTIST_OBSCURE_BETA_HTML,
+  );
+
+  assertEquals(
+    written.length,
+    4,
+    `expected four writes (one per run), got ${written.length}: ${
+      JSON.stringify(written.map((w) => `${w.spec}:${w.name}`))
+    }`,
+  );
+  assertEquals(
+    new Set(written.map((w) => w.name)).size,
+    4,
+    `all four instance names must be distinct — a repeat here means the fallback still collides: ${
+      JSON.stringify(written.map((w) => w.name))
+    }`,
+  );
+
+  const findMissingAlpha = written.find((w) =>
+    w.spec === "missingReleases" && w.name === "find-missing-bc-obscurealpha"
+  );
+  const findMissingBeta = written.find((w) =>
+    w.spec === "missingReleases" && w.name === "find-missing-bc-obscurebeta"
+  );
+  const seedAlpha = written.find((w) =>
+    w.spec === "seedUrls" && w.name === "seed-all-missing-bc-obscurealpha"
+  );
+  const seedBeta = written.find((w) =>
+    w.spec === "seedUrls" && w.name === "seed-all-missing-bc-obscurebeta"
+  );
+
+  assert(findMissingAlpha, "find-missing-bc-obscurealpha must survive intact");
+  assert(findMissingBeta, "find-missing-bc-obscurebeta must survive intact");
+  assert(seedAlpha, "seed-all-missing-bc-obscurealpha must survive intact");
+  assert(seedBeta, "seed-all-missing-bc-obscurebeta must survive intact");
+
+  assertEquals(findMissingAlpha!.payload.artist, "Obscure Alpha");
+  assertEquals(findMissingBeta!.payload.artist, "Obscure Beta");
+  assertEquals(seedAlpha!.payload.artist, "Obscure Alpha");
+  assertEquals(seedBeta!.payload.artist, "Obscure Beta");
 });
 
 Deno.test("find-missing: an EXACT normalizeTitle match resolves the artist, matched[] gets an entry, and only the remainder is 'missing'", async () => {
@@ -401,12 +947,219 @@ Deno.test("find-missing: an EXACT normalizeTitle match resolves the artist, matc
         }),
       ),
   );
-  const res = written.find((w) => w.spec === "missingReleases")!;
+  // onlyWrite subsumes round-2's GUARD G(a) full-write-list pin.
+  const res = onlyWrite(written, "missingReleases");
   assertEquals(res.payload.artistMbid, "00000000-0000-0000-0000-000000000001");
+  assertEquals(
+    res.name,
+    "find-missing-00000000-0000-0000-0000-000000000001",
+    'GUARD G(a): find-missing\'s written instance name must equal "find-missing-00000000-0000-0000-0000-000000000001" — built from the RESOLVED local artistMbid (reassigned from the artist search), not the omitted args.artistMbid',
+  );
   const matched = res.payload.matched as Array<Record<string, unknown>>;
   const missing = res.payload.missing as unknown[];
   assertEquals(matched.length, 1);
   assertEquals(missing.length, 1);
+});
+
+Deno.test("GUARD G(a) mirror: seed-all-missing — an EXACT normalizeTitle match auto-resolves the artist, and the written instance name is built from the RESOLVED mbid, never the omitted argument", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(ARTIST_MUSICGRID_HTML) : undefined),
+      (req) => {
+        if (!isMbHost(req)) return undefined;
+        const url = new URL(req.url);
+        if (url.pathname === "/ws/2/artist/") {
+          return json({
+            artists: [{
+              id: "00000000-0000-0000-0000-000000000001",
+              name: "Fixture Marin Holloway",
+            }],
+          });
+        }
+        return json({
+          "release-groups": [{
+            id: "00000000-0000-0000-0000-000000000601",
+            title: "Fixture Drift Sessions",
+          }],
+          "release-group-count": 1,
+          "release-group-offset": 0,
+        });
+      },
+    ],
+    (calls) =>
+      drainAndAwait(
+        time,
+        run("seed-all-missing", {
+          bandcampUrl: "https://fixturemarinholloway.bandcamp.com",
+        }, ctx).then(() => {
+          assertEquals(
+            calls.filter(isMbHost).length,
+            2,
+            "1 artist search + 1 release-group browse",
+          );
+        }),
+      ),
+  );
+  // onlyWrite subsumes round-2's GUARD G(a) mirror pin.
+  const res = onlyWrite(written, "seedUrls");
+  assertEquals(res.payload.artistMbid, "00000000-0000-0000-0000-000000000001");
+  assertEquals(
+    res.name,
+    "seed-all-missing-00000000-0000-0000-0000-000000000001",
+    'GUARD G(a) mirror: seed-all-missing\'s written instance name must equal "seed-all-missing-00000000-0000-0000-0000-000000000001" — built from the RESOLVED local artistMbid, not the omitted args.artistMbid',
+  );
+  const releases = res.payload.releases as unknown[];
+  assertEquals(releases.length, 1, "the matched release is excluded");
+});
+
+// ---------------------------------------------------------------------------
+// GUARD I (musicbrainz-missing-seed-instance-collision, reachability gap) —
+// every exact-match fixture above (GUARD G(a) and its mirror) resolves an MB
+// artist whose `.name` is BYTE-IDENTICAL to ARTIST_MUSICGRID_HTML's
+// "Fixture Marin Holloway", so `artistName = exact.name` (musicbrainz.ts's
+// auto-resolve reassignment) is a same-value write on every fixture in this
+// suite: no fixture anywhere drives `artistName !== bcArtist.name` to true.
+// A write (or any other behavior) gated on that condition is therefore
+// unreachable — probed directly by temporarily throwing on the condition and
+// confirming the suite stays 263/0. MusicBrainz canonical names routinely
+// differ from a Bandcamp page's rendering (diacritics is one of the more
+// common cases: MB carries "í", Bandcamp's plain-text title strips it), so
+// this is a realistic case, not a contrived one. Both tests keep the SAME
+// normalizeTitle-equivalence the GUARD G(a) fixtures rely on (NFKD-decompose
+// + strip combining marks makes "í" and "i" equal) while making the raw
+// strings differ, so the exact-match branch still fires but now with a
+// TEXTUAL mismatch downstream.
+// ---------------------------------------------------------------------------
+
+Deno.test("GUARD I: find-missing — an EXACT normalizeTitle match whose canonical MusicBrainz name differs TEXTUALLY (diacritic) from the Bandcamp-parsed name still auto-resolves, and the written `artist` field reflects the RESOLVED canonical name, not the Bandcamp string", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(ARTIST_MUSICGRID_HTML) : undefined),
+      (req) => {
+        if (!isMbHost(req)) return undefined;
+        const url = new URL(req.url);
+        if (url.pathname === "/ws/2/artist/") {
+          return json({
+            artists: [{
+              id: "00000000-0000-0000-0000-000000000002",
+              // Diacritic on the "i" in "Marin" — NFKD-decomposes to
+              // "i" + combining acute (U+0301), which normalizeTitle's
+              // U+0300-U+036F strip removes, so this is normalizeTitle-equal
+              // to Bandcamp's plain "Fixture Marin Holloway" while being a
+              // DIFFERENT JS string (!==).
+              name: "Fixture Marín Holloway",
+            }],
+          });
+        }
+        return json({
+          "release-groups": [{
+            id: "00000000-0000-0000-0000-000000000602",
+            title: "Fixture Drift Sessions",
+          }],
+          "release-group-count": 1,
+          "release-group-offset": 0,
+        });
+      },
+    ],
+    (calls) =>
+      drainAndAwait(
+        time,
+        run("find-missing", {
+          bandcampUrl: "https://fixturemarinholloway.bandcamp.com",
+        }, ctx).then(() => {
+          assertEquals(
+            calls.filter(isMbHost).length,
+            2,
+            "1 artist search + 1 release-group browse — the exact match still auto-resolves despite the textual diff",
+          );
+        }),
+      ),
+  );
+  const res = onlyWrite(written, "missingReleases");
+  assertEquals(res.payload.artistMbid, "00000000-0000-0000-0000-000000000002");
+  assertEquals(
+    res.payload.artist,
+    "Fixture Marín Holloway",
+    "the written artist field must be the RESOLVED canonical name (exact.name), not the Bandcamp-parsed string",
+  );
+  assert(
+    res.payload.artist !== "Fixture Marin Holloway",
+    "GUARD I: this is the textual-mismatch state (artistName !== bcArtist.name) that no other fixture in this suite ever drives",
+  );
+  assertEquals(
+    res.name,
+    "find-missing-00000000-0000-0000-0000-000000000002",
+    "instance name is still built from the resolved mbid, unaffected by the name mismatch",
+  );
+  const matched = res.payload.matched as Array<Record<string, unknown>>;
+  const missing = res.payload.missing as unknown[];
+  assertEquals(matched.length, 1);
+  assertEquals(missing.length, 1);
+});
+
+Deno.test("GUARD I mirror: seed-all-missing — an EXACT normalizeTitle match whose canonical MusicBrainz name differs TEXTUALLY (diacritic) from the Bandcamp-parsed name still auto-resolves, and the written `artist` field reflects the RESOLVED canonical name, not the Bandcamp string", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(ARTIST_MUSICGRID_HTML) : undefined),
+      (req) => {
+        if (!isMbHost(req)) return undefined;
+        const url = new URL(req.url);
+        if (url.pathname === "/ws/2/artist/") {
+          return json({
+            artists: [{
+              id: "00000000-0000-0000-0000-000000000002",
+              name: "Fixture Marín Holloway",
+            }],
+          });
+        }
+        return json({
+          "release-groups": [{
+            id: "00000000-0000-0000-0000-000000000602",
+            title: "Fixture Drift Sessions",
+          }],
+          "release-group-count": 1,
+          "release-group-offset": 0,
+        });
+      },
+    ],
+    (calls) =>
+      drainAndAwait(
+        time,
+        run("seed-all-missing", {
+          bandcampUrl: "https://fixturemarinholloway.bandcamp.com",
+        }, ctx).then(() => {
+          assertEquals(
+            calls.filter(isMbHost).length,
+            2,
+            "1 artist search + 1 release-group browse — the exact match still auto-resolves despite the textual diff",
+          );
+        }),
+      ),
+  );
+  const res = onlyWrite(written, "seedUrls");
+  assertEquals(res.payload.artistMbid, "00000000-0000-0000-0000-000000000002");
+  assertEquals(
+    res.payload.artist,
+    "Fixture Marín Holloway",
+    "the written artist field must be the RESOLVED canonical name (exact.name), not the Bandcamp-parsed string",
+  );
+  assert(
+    res.payload.artist !== "Fixture Marin Holloway",
+    "GUARD I mirror: this is the textual-mismatch state (artistName !== bcArtist.name) that no other fixture in this suite ever drives",
+  );
+  assertEquals(
+    res.name,
+    "seed-all-missing-00000000-0000-0000-0000-000000000002",
+    "instance name is still built from the resolved mbid, unaffected by the name mismatch",
+  );
+  const releases = res.payload.releases as unknown[];
+  assertEquals(releases.length, 1, "the matched release is excluded");
 });
 
 Deno.test("find-missing: the album-fetch try/catch — a failing per-album fetch falls back to a MINIMAL seed URL (no track data, still succeeds)", async () => {
@@ -432,7 +1185,7 @@ Deno.test("find-missing: the album-fetch try/catch — a failing per-album fetch
         }, ctx),
       ),
   );
-  const res = written.find((w) => w.spec === "missingReleases")!;
+  const res = onlyWrite(written, "missingReleases");
   const missing = res.payload.missing as Array<Record<string, unknown>>;
   assertEquals(missing.length, 2);
   for (const m of missing) {
@@ -494,7 +1247,7 @@ Deno.test("normalizeTitle COLLISION: 'Fixture-Drift Sessions' (bandcamp) and 'Fi
         }, ctx),
       ),
   );
-  const res = written.find((w) => w.spec === "missingReleases")!;
+  const res = onlyWrite(written, "missingReleases");
   const matched = res.payload.matched as Array<Record<string, unknown>>;
   const missing = res.payload.missing as unknown[];
   assertEquals(
@@ -557,7 +1310,7 @@ Deno.test("LB5 FIX: 'Café Nuit' (bandcamp) and 'Caf Nuit' (MusicBrainz) NO LONG
         }, ctx),
       ),
   );
-  const res = written.find((w) => w.spec === "missingReleases")!;
+  const res = onlyWrite(written, "missingReleases");
   const matched = res.payload.matched as Array<Record<string, unknown>>;
   const missing = res.payload.missing as Array<Record<string, unknown>>;
   assertEquals(
@@ -615,7 +1368,7 @@ Deno.test("LB5 FIX: a CJK title and a punctuation-only title NO LONGER collide �
         }, ctx),
       ),
   );
-  const res = written.find((w) => w.spec === "missingReleases")!;
+  const res = onlyWrite(written, "missingReleases");
   const matched = res.payload.matched as Array<Record<string, unknown>>;
   const missing = res.payload.missing as Array<Record<string, unknown>>;
   assertEquals(
@@ -677,7 +1430,7 @@ Deno.test("LB5 FIX: 'Motörhead' (bandcamp) and 'Motorhead' (MusicBrainz) now MA
         }, ctx),
       ),
   );
-  const res = written.find((w) => w.spec === "missingReleases")!;
+  const res = onlyWrite(written, "missingReleases");
   const matched = res.payload.matched as Array<Record<string, unknown>>;
   const missing = res.payload.missing as unknown[];
   assertEquals(
@@ -688,6 +1441,136 @@ Deno.test("LB5 FIX: 'Motörhead' (bandcamp) and 'Motorhead' (MusicBrainz) now MA
   assertEquals(missing.length, 0);
   assertEquals(matched[0].bcTitle, "Motörhead");
   assertEquals(matched[0].mbTitle, "Motorhead");
+});
+
+// ---------------------------------------------------------------------------
+// Round-3 MEDIUM finding (musicbrainz-missing-seed-instance-collision):
+// seed-all-missing's album-fetch catch (the `catch {` immediately after
+// `trackCount = albumData.tracks.length || trackCount;` inside
+// seed-all-missing's own per-album try block) was reached by no test — the
+// mirror find-missing catch above was covered, this one was
+// not — plus two fixture states neither method's tests ever produced: an
+// empty Bandcamp discography, and a Bandcamp page whose artist name doesn't
+// parse. All three hide a bare-"unknown" write at 260/0 before this fix.
+// ---------------------------------------------------------------------------
+
+Deno.test("seed-all-missing: the album-fetch try/catch — a failing per-album fetch falls back to a MINIMAL seed URL (mirror of find-missing's fallback test above; this catch had NO coverage at all before this fixture)", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [
+      (req) => {
+        if (!isBcHost(req)) return undefined;
+        const url = new URL(req.url);
+        // Discography listing succeeds; the per-album detail fetch (any
+        // /album or /track path) FAILS to exercise seed-all-missing's OWN
+        // try/catch fallback (its `catch {` right after the
+        // `albumData.tracks.length || trackCount` line) — distinct from
+        // (and, before this test, unlike) find-missing's mirror catch above.
+        if (url.pathname.endsWith("/music")) return html(ARTIST_MUSICGRID_HTML);
+        return html("server error", 500);
+      },
+      () => mbEmptyArtistSearch(),
+    ],
+    () =>
+      drainAndAwait(
+        time,
+        run("seed-all-missing", {
+          bandcampUrl: "https://fixturemarinholloway.bandcamp.com",
+        }, ctx),
+      ),
+  );
+  const res = onlyWrite(written, "seedUrls");
+  const releases = res.payload.releases as Array<Record<string, unknown>>;
+  assertEquals(
+    releases.length,
+    2,
+    "neither discography entry matches an MB release, so both fall through to the failed-fetch minimal seed",
+  );
+  for (const r of releases) {
+    assertEquals(
+      r.trackCount,
+      0,
+      "the minimal fallback seed has no track-count data — the album fetch that would supply it failed",
+    );
+    assert(
+      (r.seedUrl as string).startsWith("https://musicbrainz.org/release/add?"),
+      "the minimal fallback still produces a usable seed URL",
+    );
+  }
+});
+
+Deno.test("find-missing: an EMPTY Bandcamp discography (no JSON-LD album list, empty #music-grid) -> missing and matched both stay [] instead of never being produced", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const emptyDiscographyHtml = `<!doctype html>
+<html><head></head><body>
+<p id="band-name-location"><span class="title">Fixture Empty Discography Artist</span></p>
+<div id="music-grid"><ol></ol></div>
+</body></html>`;
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(emptyDiscographyHtml) : undefined),
+      (req) => (isMbHost(req) ? mbEmptyArtistSearch() : undefined),
+    ],
+    () =>
+      drainAndAwait(
+        time,
+        run("find-missing", {
+          bandcampUrl: "https://fixtureemptydiscographyartist.bandcamp.com",
+        }, ctx),
+      ),
+  );
+  const res = onlyWrite(written, "missingReleases");
+  assertEquals(res.payload.bcReleaseCount, 0);
+  const missing = res.payload.missing as unknown[];
+  const matched = res.payload.matched as unknown[];
+  assertEquals(missing.length, 0, "no discography entries -> nothing to seed");
+  assertEquals(
+    matched.length,
+    0,
+    "no discography entries -> nothing to match either",
+  );
+});
+
+Deno.test("find-missing: an UNPARSEABLE artist name (no #band-name-location title) -> the auto-resolve branch is SKIPPED entirely (no MusicBrainz artist-search call), artistMbid stays unresolved", async () => {
+  using time = new FakeTime();
+  const { ctx, written } = makeCtx();
+  const noArtistNameHtml = `<!doctype html>
+<html><head></head><body>
+<div id="music-grid"><ol>
+  <li class="music-grid-item"><a href="/album/x"><p class="title">Fixture Untitled Release</p></a></li>
+</ol></div>
+</body></html>`;
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(noArtistNameHtml) : undefined),
+      (req) => (isMbHost(req) ? mbEmptyArtistSearch() : undefined),
+    ],
+    (calls) =>
+      drainAndAwait(
+        time,
+        run("find-missing", {
+          bandcampUrl: "https://fixtureuntitled.bandcamp.com",
+        }, ctx).then(() => {
+          assertEquals(
+            calls.filter(isMbHost).length,
+            0,
+            "an empty/unparsed artist name is falsy, so `!artistMbid && artistName` is false and the auto-resolve search is never called at all",
+          );
+        }),
+      ),
+  );
+  const res = onlyWrite(written, "missingReleases");
+  assertEquals(res.payload.artist, "");
+  assertEquals(res.payload.artistMbid, undefined);
+  assertEquals(res.name, "find-missing-bc-fixtureuntitled");
+  const missing = res.payload.missing as Array<Record<string, unknown>>;
+  assertEquals(
+    missing.length,
+    1,
+    "no MB releases were ever fetched, so the one discography entry is unconditionally 'missing'",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -912,6 +1795,10 @@ function makeSyncCtx(store: SyncStore = new Map()) {
         return Promise.resolve({ spec, name });
       },
       logger: { info: () => {}, warning: () => {} },
+      // See makeCtx() above — this file also drives budgeted
+      // search-artists-batch calls through this ctx, not just
+      // sync-artist-discographies.
+      __written: written,
     },
   };
 }
@@ -995,7 +1882,7 @@ Deno.test("sync-artist-discographies: a discography that ends naturally within t
 // scripts/quality/check_upgrade_chain.ts gate, which owns that check for
 // every manifest-listed model file, not just this one; what remains here
 // is musicbrainz's OWN presence requirement — this package specifically
-// commits to declaring a migration chain (5 entries today), which the
+// commits to declaring a migration chain, which the
 // global gate does not and must not enforce (28 of 59 real declarations
 // legitimately have no chain at all, and an absent one is legal).
 // ---------------------------------------------------------------------------
@@ -1197,31 +2084,32 @@ Deno.test("NEW SURFACE (payload budget regression): a full MusicBrainz artist ob
 // SCOPE, stated honestly in this comment because it must not be overclaimed
 // anywhere else either: this is a BEHAVIOURAL statement over the fixture set
 // actually executed below, not a proof over every possible argument.
-// `find-missing` and `seed-all-missing` both derive their written instance
-// name directly from an UNCONSTRAINED free-string `artistMbid`
-// (`artistMbid || "unknown"` / `artistMbid || "all-missing"` in
-// musicbrainz.ts), so any caller-supplied string reaches the instance name
-// unfiltered — no test, this one included, can close that channel. This
-// invariant only ever says "collision-free across the fixtures actually run
-// here, with one named, tracked carve-out" — never "any present or future
-// collision".
+// `find-missing` and `seed-all-missing` still derive the SUFFIX of their
+// written instance name from an UNCONSTRAINED free-string `artistMbid`, so no
+// test, this one included, can prove disjointness over every possible
+// caller-supplied string. What changed with
+// musicbrainz-missing-seed-instance-collision: the two methods now write
+// under DISJOINT PREFIXES (`bandcampInstanceName`, `BANDCAMP_INSTANCE_
+// PREFIXES` in musicbrainz.ts) instead of sharing the bare `artistMbid` as
+// the whole instance name, so the two of them can no longer collide WITH
+// EACH OTHER regardless of what `artistMbid` is — closed by construction,
+// checked by Guard D (the prefix sweep below) and Guard E (the deterministic
+// exhaustive disjointness table in musicbrainz_property_test.ts), not left to
+// this fixture-bounded invariant alone. This invariant now says
+// "collision-free across the fixtures actually run below, with NO carve-out"
+// — never "any present or future collision", but no longer needs one either.
 //
-// The one carve-out: `find-missing` and `seed-all-missing` both key their
-// write on the SAME optional `artistMbid` argument (`missingReleases` vs
-// `seedUrls`), so one artist run through both methods produces the
-// identical defect this issue fixes for the five search methods — pinned
-// live already at musicbrainz_methods_test.ts:1151-1152 and :1216-1217, with
-// one row already on the live instance. It is explicitly OUT OF SCOPE here
-// (see the plan's hard constraints) and tracked by its own filed issue,
-// `musicbrainz-missing-seed-instance-collision`. `KNOWN_UNFIXED_COLLISIONS`
-// is keyed on the INSTANCE NAME **and** the sorted spec set together, not
-// the spec set alone: spec `seedUrls` has a SECOND writer at instance
-// `seed-single` (`seed-from-bandcamp`, musicbrainz.ts:2117), and a
-// spec-set-only key would silently excuse a future `{missingReleases,
-// seedUrls}` pair arising at any OTHER instance name too. The test also
-// asserts every allowlist key was actually observed, so this carve-out
-// self-destructs (goes red) the moment the follow-up issue lands and the
-// collision it names stops occurring.
+// KNOWN_UNFIXED_COLLISIONS is kept EMPTY as the documented extension point
+// for a future, different, genuinely-unfixed collision — see its own comment
+// below for why it stays keyed on the instance name **and** the sorted spec
+// set together (spec-set-only would silently excuse a future
+// `{missingReleases, seedUrls}` pair landing at some OTHER instance name; spec
+// `seedUrls` already has a second, unrelated writer, `seed-from-bandcamp`'s
+// fixed instance `seed-single`, written by the model's `seed-from-bandcamp`
+// method). The test still asserts
+// every allowlist key was actually observed, so if this Map is ever populated
+// again, that new entry self-destructs (goes red) the moment its own
+// collision is fixed too.
 // ---------------------------------------------------------------------------
 
 const COLLISION_ARTIST_MBID = "00000000-0000-0000-0000-000000000001";
@@ -1251,6 +2139,11 @@ function makeCollisionCtx() {
         return Promise.resolve({ spec, name });
       },
       logger: { info: () => {}, warning: () => {} },
+      // See makeCtx() above — the COLLISION_FIXTURES table below drives
+      // EVERY model method (including every budgeted one) through this ctx
+      // via runCollision(), so this is the one hand-rolled ctx in the file
+      // that MUST opt in or the funnel throws on the very first fixture.
+      __written: written,
     },
   };
 }
@@ -1277,9 +2170,10 @@ const bcRoute = (body: string): Route => (req) =>
   isBcHost(req) ? html(body) : undefined;
 
 /** The generic `search` method's entity enum, read LIVE off the model's own
- * declared arguments schema (musicbrainz.ts:2406-2418) rather than
- * hardcoded — a 13th entity added to the enum is automatically covered by
- * one more execution here, with no edit needed in this file. */
+ * declared arguments schema (the `entity` field of `search`'s own `arguments`
+ * zod object) rather than hardcoded — a 13th entity added to the enum is
+ * automatically covered by one more execution here, with no edit needed in
+ * this file. */
 type SearchEntityShape = {
   arguments: { shape: { entity: { options: readonly string[] } } };
 };
@@ -1373,10 +2267,18 @@ const COLLISION_FIXTURES: Record<
       { bandcampUrl: "https://fixturecollision.bandcamp.com/album/x" },
       [bcRoute(ALBUM_JSONLD_HTML)],
     ),
-  // find-missing and seed-all-missing are BOTH given the SAME artistMbid —
-  // matching the existing live pins at musicbrainz_methods_test.ts:1151-1152
-  // and :1216-1217 — so the second, already-tracked live collision
-  // (KNOWN_UNFIXED_COLLISIONS below) is genuinely observed here, not assumed.
+  // find-missing and seed-all-missing are BOTH given the SAME artistMbid,
+  // matching the live `res.name` pins in musicbrainz_methods_test.ts's
+  // find-missing / seed-all-missing happy-path tests — deliberately, and no
+  // longer to observe a collision (there isn't one
+  // anymore): sharing one constant is what makes a TWO-SIDED REVERT of the
+  // fix observable by this invariant (mutation C1) and a drifted MBID between
+  // the two fixtures observable by Guard G(b)'s exact instance-name-set
+  // assertion below (mutation G3) — if the two fixtures ever used different
+  // MBIDs, a bug that reverted BOTH call sites back to the bare artistMbid
+  // would produce two same-named single-spec entries in byInstance instead of
+  // one two-spec entry, and this invariant would stay green over the exact
+  // regression it exists to catch.
   "find-missing": (time) =>
     runCollision(
       time,
@@ -1430,22 +2332,24 @@ const COLLISION_FIXTURES: Record<
   },
 };
 
-/** The one named, tracked carve-out — see the section comment above for why
- * it is keyed on the instance name AND the sorted spec set together. */
+/** The documented extension point for a FUTURE, genuinely-unfixed collision —
+ * empty today. musicbrainz-missing-seed-instance-collision's carve-out
+ * (`find-missing` / `seed-all-missing` sharing the bare `artistMbid`) is
+ * DELETED, not emptied-and-forgotten: the two methods now write disjoint
+ * prefixed instance names (musicbrainz.ts's `bandcampInstanceName` /
+ * `BANDCAMP_INSTANCE_PREFIXES`), so byInstance below no longer produces a
+ * multi-spec entry for either of them, and a still-present carve-out entry
+ * would trip the "was never observed" assertion a few lines down — this Map
+ * would go red the moment the fix landed if the entry stayed, by design (see
+ * the section comment above). Kept keyed on the instance name AND the sorted
+ * spec set together, same rationale as before: spec-set-only would silently
+ * excuse a future collision at some OTHER instance name too. */
 const KNOWN_UNFIXED_COLLISIONS = new Map<
   string,
   { producers: string[]; tracking: string }
->([
-  [
-    `${COLLISION_ARTIST_MBID}|missingReleases|seedUrls`,
-    {
-      producers: ["find-missing", "seed-all-missing"],
-      tracking: "musicbrainz-missing-seed-instance-collision",
-    },
-  ],
-]);
+>([]);
 
-Deno.test("COLLISION INVARIANT: every resource instance this model writes maps to exactly one spec, except the one named, tracked carve-out", async () => {
+Deno.test("COLLISION INVARIANT: every resource instance this model writes maps to exactly one spec (no carve-outs), and the two Bandcamp-compare namespaces are exclusive to their own methods", async () => {
   using time = new FakeTime();
 
   assertEquals(
@@ -1455,6 +2359,18 @@ Deno.test("COLLISION INVARIANT: every resource instance this model writes maps t
   );
 
   const byInstance = new Map<string, Set<string>>();
+  // GUARD D prerequisite: byInstance alone discards WHICH method wrote a
+  // name, so the prefix sweep below needs its own accumulator, built in the
+  // SAME loop rather than re-running every fixture a second time.
+  const byMethod = new Map<string, Set<string>>();
+  // GUARD G(b) prerequisite, kept SEPARATE from byMethod above: byMethod is
+  // a Map<string, Set<string>>, so a duplicate write at the SAME name AND
+  // spec (a double-write / non-idempotent-emit regression — two data rows,
+  // two handles, one name) collapses to one Set entry and stays invisible to
+  // every check that reads byMethod. byMethodWrites accumulates the RAW
+  // write array per method instead, so G(b) below can assert on write
+  // COUNT as well as name.
+  const byMethodWrites = new Map<string, string[]>();
   for (const [method, fixture] of Object.entries(COLLISION_FIXTURES)) {
     const writes = await fixture(time);
     assert(writes.length > 0, `${method}'s collision fixture wrote nothing`);
@@ -1462,6 +2378,12 @@ Deno.test("COLLISION INVARIANT: every resource instance this model writes maps t
       const specs = byInstance.get(name) ?? new Set<string>();
       specs.add(spec);
       byInstance.set(name, specs);
+      const names = byMethod.get(method) ?? new Set<string>();
+      names.add(name);
+      byMethod.set(method, names);
+      const rawNames = byMethodWrites.get(method) ?? [];
+      rawNames.push(name);
+      byMethodWrites.set(method, rawNames);
     }
   }
 
@@ -1491,6 +2413,89 @@ Deno.test("COLLISION INVARIANT: every resource instance this model writes maps t
     assert(
       observedAllowlistKeys.has(key),
       `KNOWN_UNFIXED_COLLISIONS entry "${key}" was never observed in this run — the carve-out has rotted into a silent no-op (either the collision was fixed, or the fixture no longer reproduces it) and must be removed`,
+    );
+  }
+
+  // GUARD D (musicbrainz-missing-seed-instance-collision) — prefix-based
+  // cross-method sweep: for EITHER in-scope prefix (read live off the
+  // IMPORTED BANDCAMP_INSTANCE_PREFIXES, never hardcoded here), no OTHER
+  // method may have written a name landing in that namespace. Deliberately
+  // NOT broadened to "no name written by two methods" — browse-release-groups
+  // and sync-artist-discographies legitimately share `rg-by-artist-<mbid>`
+  // under one spec, and that is fine.
+  for (
+    const [inScopeMethod, prefix] of Object.entries(
+      BANDCAMP_INSTANCE_PREFIXES,
+    )
+  ) {
+    for (const [method, names] of byMethod) {
+      if (method === inScopeMethod) continue;
+      for (const name of names) {
+        assert(
+          name !== prefix && !name.startsWith(`${prefix}-`),
+          `GUARD D: method "${method}" wrote instance "${name}", landing inside "${inScopeMethod}"'s namespace (prefix "${prefix}")`,
+        );
+      }
+    }
+  }
+
+  // GUARD G(b) (musicbrainz-missing-seed-instance-collision) — the COMPLETE
+  // write list (not a deduplicated set: byMethodWrites, so a duplicate write
+  // at the same name is also visible) each in-scope method produced, compared
+  // against names BUILT FROM THE IMPORTED BANDCAMP_INSTANCE_PREFIXES
+  // registry — never a hardcoded literal. This is what actually joins the
+  // registry to PRODUCTION: Guard D (above) reads the registry but skips the
+  // in-scope method's own output (`if (method === inScopeMethod) continue`),
+  // and Guard E/F in musicbrainz_property_test.ts only prove the registry is
+  // internally disjoint and that the FACTORY matches it — neither compares
+  // the registry against what find-missing/seed-all-missing actually wrote.
+  // Registry-derived expected values close that gap: if the registry value
+  // and what find-missing/seed-all-missing actually write ever diverge — a
+  // renamed registry entry that a call site did not follow, or a call site
+  // that stopped going through `bandcampInstanceName` and then drifted —
+  // this fails. (Measured: a call site that inlines a byte-identical
+  // template literal instead of calling `bandcampInstanceName` is NOT
+  // caught and does not need to be — the name it writes is still pinned
+  // exactly here.) Also catches a re-added second write inside find-missing
+  // for THIS FIXTURE'S argument shape (an explicit COLLISION_ARTIST_MBID)
+  // and a fixture MBID drifting out of sync between the two
+  // COLLISION_FIXTURES entries above, which would silently disarm mutation
+  // C1's two-sided-revert observation. It does NOT reach the omitted- or
+  // unresolved-artistMbid shapes — COLLISION_FIXTURES always passes an
+  // explicit mbid, so a deprecation alias gated on the omitted argument or
+  // on the resolved local `artistMbid` never fires this fixture at all; the
+  // `onlyWrite` calls in the artist-MBID-unresolved and empty-string tests
+  // above cover those two shapes instead — and, being gated on the write
+  // count rather than a fixture-specific name list, also cover any OTHER
+  // condition a future alias might be gated on.
+  assertEquals(
+    byMethodWrites.get("find-missing") ?? [],
+    [`${BANDCAMP_INSTANCE_PREFIXES["find-missing"]}-${COLLISION_ARTIST_MBID}`],
+    "GUARD G(b): find-missing must write EXACTLY the one instance name find-missing-<mbid>, exactly once",
+  );
+  assertEquals(
+    byMethodWrites.get("seed-all-missing") ?? [],
+    [
+      `${
+        BANDCAMP_INSTANCE_PREFIXES["seed-all-missing"]
+      }-${COLLISION_ARTIST_MBID}`,
+    ],
+    "GUARD G(b): seed-all-missing must write EXACTLY the one instance name seed-all-missing-<mbid>, exactly once",
+  );
+});
+
+// Round 7: moved off Deno.test onto the module "unload" event, which Deno
+// fires once per module after every SELECTED test has run — under any
+// --shuffle permutation and any --filter — so this no longer depends on
+// declaration order or on which tests were selected. An exception thrown
+// from this handler is reported as an uncaught module error that fails the
+// run. See the FUNNEL_VIOLATIONS comment near WRITE_SHAPE.
+addEventListener("unload", () => {
+  if (FUNNEL_VIOLATIONS.length !== 0) {
+    throw new Error(
+      `FUNNEL: ${FUNNEL_VIOLATIONS.length} write-invariant violation(s) were recorded by run() but swallowed by a bare assertRejects: ${
+        JSON.stringify(FUNNEL_VIOLATIONS)
+      }`,
     );
   }
 });

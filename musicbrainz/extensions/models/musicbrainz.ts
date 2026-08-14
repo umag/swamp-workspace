@@ -562,25 +562,42 @@ export function dedupeMbids(mbids: string[]): string[] {
 }
 
 /**
- * Deterministic, length-prefixed FNV-1a hex digest over a deduped MBID
- * list — identifies the list a persisted `discographySyncState` cursor
- * indexes, so a changed list is never silently resumed against a
- * meaningless offset. No crypto import, no async, no clock read. A 32-bit
- * digest collides across different-length inputs at ~2^-32; the length
- * prefix changes the hash INPUT so most length changes also change the
- * digest, but it does not itself make growth detection exact — the
- * persisted distinct-count comparison in the cursor reset rule is what
- * does that. NOT pinned as "different for any two lists of different
- * length" — that would be a false invariant.
+ * 8-hex-char FNV-1a hex digest of `input`. Shared primitive behind both
+ * `fingerprintMbids` (below) and `shortHash` (used by
+ * `sanitizeBandcampSlugSegment`'s over-length-slug truncation, further down
+ * this file) — the two used to carry independent, hand-copied copies of this
+ * exact loop, which risked exactly the drift this consolidation avoids: a
+ * future correctness fix (64-bit, a real digest, whatever) landing in one
+ * copy and not the other. No crypto import, no async, no clock read,
+ * deterministic (pure, no seeding).
+ *
+ * Collision-resistant against ACCIDENT, not against a caller choosing both
+ * inputs: a 32-bit digest collides at ~2^-32 per candidate pair, which is a
+ * sub-second brute-force search for anyone who controls both sides of the
+ * comparison. Neither caller below treats it as a security boundary — see
+ * each caller's own comment for what it actually relies on this for.
  */
-export function fingerprintMbids(mbids: string[]): string {
-  const input = `${mbids.length}:${mbids.join(",")}`;
+function fnv1a32Hex(input: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
     hash ^= input.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * Deterministic, length-prefixed digest over a deduped MBID list —
+ * identifies the list a persisted `discographySyncState` cursor indexes, so
+ * a changed list is never silently resumed against a meaningless offset.
+ * The length prefix changes the hash INPUT so most length changes also
+ * change the digest, but it does not itself make growth detection exact —
+ * the persisted distinct-count comparison in the cursor reset rule is what
+ * does that. NOT pinned as "different for any two lists of different
+ * length" — that would be a false invariant.
+ */
+export function fingerprintMbids(mbids: string[]): string {
+  return fnv1a32Hex(`${mbids.length}:${mbids.join(",")}`);
 }
 
 /** One run's coverage of its requested artist list. `covered` is the
@@ -810,6 +827,275 @@ const SEARCH_INSTANCE_NAMES: Record<SearchMethod, string> = {
  * path and removal criterion.
  */
 const DEPRECATED_SEARCH_ALIAS_INSTANCE = "search";
+
+/**
+ * Registry + factory fixing musicbrainz-missing-seed-instance-collision:
+ * `find-missing` (spec `missingReleases`) and `seed-all-missing` (spec
+ * `seedUrls`) both used to write the bare `artistMbid` (falling back to
+ * "unknown" / "all-missing") as their instance name, so one artist run
+ * through both methods silently destroyed whichever wrote second —
+ * `readResource(name)` resolves on the instance name alone. Each method now
+ * writes its own namespaced instance via this registry, extending the same
+ * naming rule PR #180 shipped for the five typed search methods
+ * (SEARCH_INSTANCE_NAMES above): the instance name is derivable from the
+ * token an operator types in `swamp model method run`.
+ *
+ * That closes the cross-METHOD collision, but review caught a second one on
+ * a different axis: when `artistMbid` cannot be auto-resolved, EVERY such
+ * artist used to collapse onto the same constant fallback suffix
+ * ("unknown"), so two different unresolved artists still destroyed each
+ * other's row — and for a tool whose job is finding artists missing from
+ * MusicBrainz, "unresolved" is the MODAL path, not an edge case. The fallback
+ * is now derived per-artist from the REQUIRED `bandcampUrl` argument (see
+ * `bandcampUrlSlug` below) instead of a shared constant, so unresolved
+ * artists get distinct instances the same way resolved ones do.
+ *
+ * THIS REGISTRY, its `BandcampCompareMethod` key type, AND
+ * `bandcampInstanceName` are all exported — unlike SEARCH_INSTANCE_NAMES
+ * above, which is deliberately module-private. The disjointness test suite
+ * (musicbrainz_coverage_test.ts's COLLISION INVARIANT sweep and
+ * musicbrainz_property_test.ts's Guards E/F) reads this table AT RUNTIME so
+ * it is testing the model's own identity rule, not a duplicate of it — a
+ * test that hardcoded its own copy of these two prefix strings (or restated
+ * `BandcampCompareMethod`'s union inline) would stay green under a
+ * registry-value mutation that silently reintroduces a collision.
+ *
+ * The object is `Object.freeze`d: an unfrozen exported mutable object would
+ * let any module in the same graph — including the test files that import
+ * it — reassign a key and silently change what production writes for the
+ * rest of the process, which would let a guard validate a value it had
+ * itself supplied. The `Readonly<Record<BandcampCompareMethod, string>>`
+ * annotation backs the runtime freeze with a compile-time one: this package
+ * sets `noImplicitAny: false` (deno.json), which suppresses the `TS7053` a
+ * bracket-accessed inferred/`as const` object would raise on a missing key,
+ * so the explicit `Record<...>` half of the annotation is what turns a
+ * deleted entry into a `deno task check` error (`TS2741`) instead of a
+ * silent no-op — and wrapping it in `Readonly<...>` is free: it still raises
+ * `TS2741` on a missing key, and additionally raises `TS2540` on exactly the
+ * kind of consumer-side mutation `Object.freeze` already blocks at runtime,
+ * so a consumer now gets the same answer from `deno check` and from actually
+ * running the code.
+ *
+ * `seed-<mbid>` (dropping the `-all-missing` half of the token) was
+ * considered and REJECTED: `"seed-single".startsWith("seed-")` is true
+ * (seed-from-bandcamp's own fixed `"seedUrls"` instance, written further
+ * below in this file), and because that overlap would sit under one spec
+ * pair per name the COLLISION INVARIANT would not even flag it — see Guard
+ * E's mutation E1 in musicbrainz_property_test.ts. `missing-<mbid>` would be
+ * disjoint but drops the method-name-derivability property the search
+ * family established.
+ */
+export type BandcampCompareMethod = "find-missing" | "seed-all-missing";
+
+export const BANDCAMP_INSTANCE_PREFIXES: Readonly<
+  Record<BandcampCompareMethod, string>
+> = Object.freeze({
+  "find-missing": "find-missing",
+  "seed-all-missing": "seed-all-missing",
+});
+
+const MAX_BANDCAMP_SLUG_LENGTH = 80;
+
+/**
+ * Delegates to `fnv1a32Hex` (defined earlier in this file, next to
+ * `fingerprintMbids`, which used to carry an independent copy of this same
+ * loop). NOT a security hash — used only to keep an over-length slug's
+ * truncation collision-resistant. A bare `.slice()` truncation collapses any
+ * two inputs that agree on their first `MAX_BANDCAMP_SLUG_LENGTH` characters
+ * (observed: two distinct 373-char `bandcamp.com/...` paths sharing a
+ * 67-char prefix produced the SAME instance name); appending a digest of the
+ * full untruncated string keeps them apart for any pair that collides by
+ * ACCIDENT.
+ *
+ * Structural note this does NOT cover: the truncated output's namespace
+ * OVERLAPS the natural (non-truncated) one, not just by probability. A
+ * truncated result is always exactly `<MAX_BANDCAMP_SLUG_LENGTH - 9 chars>-
+ * <8 hex>`, and a natural slug that happens to be exactly that shape passes
+ * through untruncated and is indistinguishable from it — same ~2^-32
+ * accidental-collision bound as the truncation-vs-truncation case, not a
+ * separate weakness, and not attacker-reachable through `execute()` today
+ * (see `sanitizeBandcampSlugSegment`'s own comment for why).
+ */
+function shortHash(input: string): string {
+  return fnv1a32Hex(input);
+}
+
+/**
+ * Sanitizes and length-bounds ANY raw label into a safe swamp instance-name
+ * segment — the single exit point `bandcampUrlSlug` routes EVERY branch
+ * through (including the preferred Bandcamp-subdomain branch), not just the
+ * bare-domain/unparseable fallback. An earlier version ran this only on the
+ * fallback branches, on the premise that `assertBandcampUrl` already
+ * guarantees the subdomain label is a valid, length-bounded DNS label. It
+ * does not: WHATWG host parsing runs with `VerifyDnsLength` off and forbids
+ * only a small set of ASCII code points, so `a_b`, multi-label hosts like
+ * `a.b.c.bandcamp.com`, and a several-hundred-character label all pass
+ * `assertBandcampUrl` unchanged. What actually keeps exotic labels out of
+ * production is that `fetchPage` needs a real `200` first, so the host has
+ * to resolve — an EXTERNAL property of Bandcamp's own DNS, not an invariant
+ * this model enforces.
+ *
+ * Truncation is collision-resistant, not a bare `.slice()`: an over-cap
+ * input keeps its first `MAX_BANDCAMP_SLUG_LENGTH - 9` characters and
+ * appends an 8-hex-char digest (`shortHash`) of the FULL untruncated string,
+ * so two inputs that agree on the visible prefix but diverge later still
+ * diverge in the output.
+ */
+function sanitizeBandcampSlugSegment(raw: string): string {
+  const cleaned = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const slug = cleaned || "unknown";
+  return slug.length > MAX_BANDCAMP_SLUG_LENGTH
+    ? `${slug.slice(0, MAX_BANDCAMP_SLUG_LENGTH - 9)}-${shortHash(slug)}`
+    : slug;
+}
+
+/**
+ * Deterministic, collision-resistant suffix for the unresolved-`artistMbid`
+ * fallback in `bandcampInstanceName`, derived from `bandcampUrl` — a
+ * REQUIRED argument on both `find-missing` and `seed-all-missing`, so it is
+ * always available at both call sites even when the MBID auto-resolve
+ * misses entirely.
+ *
+ * Prefers the Bandcamp subdomain label (`obscurealpha` from
+ * `https://obscurealpha.bandcamp.com`), stable for the same artist across
+ * repeated runs and distinct across artists in the ordinary case, since each
+ * artist has their own subdomain. When the URL's path is anything other than
+ * root or `/music` — the shape a Bandcamp label/compilation account
+ * produces, where several artists' pages hang off ONE shared subdomain at
+ * different paths (e.g. `/album/roster-a-lp` vs. `/album/roster-b-lp`) —
+ * that path is folded into the slug too, so two unresolved artists sharing a
+ * subdomain land on two different instances as long as their paths differ.
+ *
+ * Stated honestly, this is a PARTIAL fix for the shared-subdomain case: two
+ * unresolved artists that share both the subdomain AND the path (including
+ * two that both just browse the bare artist root) still collide, because at
+ * this call site `bandcampUrl` and `artistMbid` are the only signal
+ * available and neither differs between them. Closing that residual needs
+ * either a third identifying argument or a read-before-write check against
+ * whatever row already occupies the target instance; out of scope for this
+ * fix — see musicbrainz-missing-seed-instance-collision's review notes.
+ *
+ * Falls back to a sanitized `hostname` + `pathname` slug for the rare bare
+ * `bandcamp.com/...` shape (no artist subdomain to key on) and for any input
+ * that fails to parse as a URL at all, so this never throws and never
+ * returns an empty string. Every branch is routed through
+ * `sanitizeBandcampSlugSegment`, which owns both the charset restriction and
+ * the length cap in exactly one place — see that function's doc comment for
+ * why the preferred subdomain branch needs it too.
+ */
+function bandcampUrlSlug(bandcampUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(bandcampUrl);
+  } catch {
+    return sanitizeBandcampSlugSegment(bandcampUrl);
+  }
+  const host = parsed.hostname;
+  if (host.endsWith(".bandcamp.com")) {
+    const sub = host.slice(0, -".bandcamp.com".length);
+    // Collapse runs of interior slashes (e.g. the "//music" a caller gets by
+    // concatenating a stored bandcampUrl already ending in "/" with "/music")
+    // to one BEFORE stripping the trailing slash, so "//music" and "/music"
+    // fold to the same distinguishingPath instead of surviving as two —
+    // GUARD J2's root-vs-/music collapse pin covers the near-miss spellings
+    // too, not just the exact string. Compare case-insensitively so "/MUSIC"
+    // folds the same way for any caller that reaches this factory directly
+    // (fetchPage's own bcUrl normalization only ever produces lowercase).
+    const trimmedPath = parsed.pathname
+      .replace(/\/+/g, "/")
+      .replace(/\/$/, "");
+    const distinguishingPath =
+      trimmedPath === "" || trimmedPath.toLowerCase() === "/music"
+        ? ""
+        : trimmedPath;
+    return sanitizeBandcampSlugSegment(`${sub}${distinguishingPath}`);
+  }
+  return sanitizeBandcampSlugSegment(`${host}${parsed.pathname}`);
+}
+
+/**
+ * Hostname-only rendering of `bandcampUrl` for the resolution-boundary log
+ * lines below — never the raw argument. `assertBandcampUrl` only restricts
+ * scheme and host suffix, so a caller-supplied URL carrying userinfo
+ * (`https://user:pass@artist.bandcamp.com`) passes the gate; echoing the raw
+ * argument would put that credential in the operator's terminal/CI
+ * log/journald. The derived instance name already names the artist; the log
+ * line does not additionally need the full URL.
+ */
+function bandcampUrlHostForLog(bandcampUrl: string): string {
+  try {
+    return new URL(bandcampUrl).hostname;
+  } catch {
+    return "<unparsed>";
+  }
+}
+
+/**
+ * Pure factory for find-missing/seed-all-missing's resource instance name.
+ * Uses `||`, NOT `??`, deliberately for the `artistMbid` half: both call
+ * sites this replaces used `artistMbid || "unknown"` /
+ * `artistMbid || "all-missing"`, which also catches an EXPLICIT empty-string
+ * `artistMbid` (accepted by `z.string().optional()`, and reachable
+ * un-mutated through the auto-resolve block when no exact artist match is
+ * found). `??` only catches null/undefined, so an empty string would slip
+ * through and render a dangling-hyphen name (`find-missing-` /
+ * `seed-all-missing-`) instead of falling back — pinned by an explicit
+ * empty-string test at both this factory level and the execute() level.
+ *
+ * When `artistMbid` is absent, falls back to a `bc-`-prefixed
+ * `bandcampUrlSlug(bandcampUrl)` rather than the old shared "unknown"
+ * constant, so two different artists that both fail to resolve an MBID land
+ * on two different instances instead of colliding
+ * (musicbrainz-missing-seed-instance-collision's fallback-axis gap). The
+ * `bc-` marker gives the URL-derived suffix its OWN sub-namespace: a
+ * MusicBrainz-issued MBID is a UUID and can never start with `bc-`, so a
+ * Bandcamp subdomain spelled like a UUID (or like the literal string
+ * `unknown`, or like another artist's MBID) can never collide with that
+ * MBID's genuinely-resolved instance. That holds for every real MBID; it is
+ * NOT enforced here for `artistMbid` itself, which this factory (and both
+ * call sites' `z.string().optional()` argument schema) accepts as any
+ * string — a hand-passed `artistMbid` that itself starts with `bc-` (e.g.
+ * `"bc-obscurealpha"`) collides with the URL-derived fallback for a
+ * `obscurealpha.bandcamp.com` caller, same as it would with any other
+ * unmarked scheme. See GUARD J4's reverse-direction pin in
+ * musicbrainz_property_test.ts, which pins this as a known, accepted
+ * residual rather than leaving it silently unchecked.
+ *
+ * `bandcampUrl` is REQUIRED, not optional: the two-argument call shape this
+ * used to preserve does not exist anywhere in this package (or its test
+ * suite, or any external caller — the symbol is unreleased) and kept the
+ * original shared-"unknown" defect reachable behind a supported signature.
+ * `bandcampUrlSlug("")` already returns `"unknown"` (via
+ * `sanitizeBandcampSlugSegment`'s `cleaned || "unknown"`), so an
+ * empty-string `bandcampUrl` still yields a defined `bc-unknown` answer
+ * without needing a second code path.
+ *
+ * `method` is validated with `Object.hasOwn`, not `if (!prefix)`: a
+ * truthiness check on a bracket read into `BANDCAMP_INSTANCE_PREFIXES`
+ * (whose prototype is still `Object.prototype`) is satisfied by every
+ * INHERITED member — `bandcampInstanceName("toString", "abc")` used to
+ * return `"function toString() { [native code] }-abc"` instead of throwing,
+ * and 7 more `Object.prototype` keys did the same. `Object.hasOwn` tests own
+ * enumerable presence only, so every inherited key is correctly rejected.
+ */
+export function bandcampInstanceName(
+  method: BandcampCompareMethod,
+  artistMbid: string | undefined,
+  bandcampUrl: string,
+): string {
+  if (!Object.hasOwn(BANDCAMP_INSTANCE_PREFIXES, method)) {
+    throw new Error(
+      `bandcampInstanceName: unrecognized method "${method}" (expected ` +
+        `"find-missing" or "seed-all-missing")`,
+    );
+  }
+  const prefix = BANDCAMP_INSTANCE_PREFIXES[method];
+  const suffix = artistMbid || `bc-${bandcampUrlSlug(bandcampUrl)}`;
+  return `${prefix}-${suffix}`;
+}
 
 /**
  * Default page ceiling (100 release groups per page) for one artist's
@@ -1058,7 +1344,7 @@ const ArtistSearchBatchSchema = z.object({
  */
 export const model = {
   type: "@magistr/musicbrainz",
-  version: "2026.08.07.1",
+  version: "2026.08.07.2",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1093,6 +1379,13 @@ export const model = {
       toVersion: "2026.08.07.1",
       description:
         'Fixes musicbrainz-search-resource-collision: the five typed search methods (search-artist, search-release-group, search-release, search-recording, search-label) each wrote the shared literal instance "search" under five different resource specs, so readResource(name), which resolves on the instance name alone, returned whichever method ran last — a producer-side defect (no live reader remains; only the published README documented the collision as the contract). Each method now writes its own instance, named for itself, via a new module-scope SEARCH_INSTANCE_NAMES registry. Breaking change: data.latest("musicbrainz", "search").attributes.artists no longer reflects search-artist\'s output going forward; use data.latest("musicbrainz", "search-artist").attributes.artists (and the equivalent typed instance name for the other four). search-artist ALSO writes the historical "search" instance as a time-bounded deprecation alias (two new additive optional fields on the artists resource schema, deprecated: true / supersededBy: "search-artist"), removed no earlier than 2026-09-07, so the currently-published data.latest read keeps working during the migration window instead of going silently null the moment this version publishes. No resource SPEC changes and no new resource — the five existing specs are unchanged, only the instance argument was wrong; the artists spec\'s two new fields are additive and optional. globalArguments unchanged. A second, unrelated instance collision (find-missing\'s missingReleases and seed-all-missing\'s seedUrls both keying on artistMbid) is explicitly OUT OF SCOPE here and tracked separately as musicbrainz-missing-seed-instance-collision. Pre-existing "search" data rows from before this change are left in place, not deleted or renamed (two lineages share the name under one model UUID; swamp data delete resurrects rows from the datastore per Lab #1440).',
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.07.1",
+      toVersion: "2026.08.07.2",
+      description:
+        'Fixes musicbrainz-missing-seed-instance-collision: find-missing (spec missingReleases) and seed-all-missing (spec seedUrls) both wrote the bare artistMbid (falling back to "unknown" / "all-missing") as their instance name, so one artist run through both methods silently destroyed whichever wrote second — readResource(name) resolves on the instance name alone. Each method now writes its own instance via a new exported BANDCAMP_INSTANCE_PREFIXES registry and bandcampInstanceName(method, artistMbid, bandcampUrl) factory, extending the same naming rule SEARCH_INSTANCE_NAMES established for the five typed search methods. Review caught the fallback still collapsing on three further axes, all closed in this same release: (1) every artist whose MBID could not be auto-resolved shared one constant suffix ("unknown") — reproduced by running two unresolved artists through both methods four times, leaving only the last artist\'s rows; the fallback now derives from the REQUIRED bandcampUrl argument via bandcampUrlSlug, folding the URL\'s path in when it is not root or "/music" so two unresolved artists sharing one Bandcamp label/compilation subdomain at different paths no longer collide either (stated honestly: two that share both subdomain AND path still do — no further signal is available at this call site). (2) bandcampUrlSlug now sanitizes and length-caps every branch it can take, not just the bare-domain fallback — the preferred subdomain branch used to return the raw WHATWG-parsed label unbounded and unsanitized, and the bare-domain branch\'s truncation used a lossy slice() that could itself manufacture a collision between two distinct URLs; both are now routed through one sanitizer whose truncation appends a collision-resistant digest. (3) the URL-derived fallback suffix is now marked with a "bc-" prefix, giving it its own namespace that a real MBID (always a UUID) can never land in — a Bandcamp subdomain spelled like a UUID, or like the literal "unknown", used to produce the exact same instance name as that MBID\'s or that literal\'s resolved row; artistMbid itself is not shape-validated, so a hand-passed non-UUID artistMbid that itself starts "bc-" is a known, accepted residual, not a closed one (see bandcampInstanceName\'s doc comment and GUARD J4\'s reverse-direction pin). bandcampUrl is now a REQUIRED (not optional) third argument to bandcampInstanceName — the optional two-argument shape it used to preserve had no real caller and kept the original "unknown" collision reachable behind a supported signature — and the unrecognized-method guard now uses Object.hasOwn instead of a truthiness check, since the truthiness check was satisfied by any inherited Object.prototype key (bandcampInstanceName("toString", "abc") returned a stringified native-code function instead of throwing). Both methods also console.error at the resolution boundary when artistMbid could not be auto-resolved, leading with the instance name about to be written and never echoing bandcampUrl\'s raw userinfo or an unbounded scraped artist name. Breaking change: data.latest("musicbrainz", "<artistMbid>").attributes.missing / .releases no longer reflect find-missing/seed-all-missing\'s output going forward; use data.latest("musicbrainz", "find-missing-<artistMbid>") and data.latest("musicbrainz", "seed-all-missing-<artistMbid>") respectively (the fallback suffix moves too, and is now "bc-"-prefixed rather than a fixed token — see README.md). No alias is shipped — the one live pre-upgrade row has no reader anywhere in this package or the homelab repo, and an alias would keep find-missing writing a colliding-by-construction bare instance name for the whole deprecation window. No resource SPEC changes and no new resource; globalArguments unchanged. Pre-existing rows at the old bare-artistMbid instance are left in place (data.latest keeps resolving them forever; swamp data delete resurrects rows from the datastore per Lab #1440) — see README.md/CHANGELOG.md for the detection query and remediation.',
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -2173,6 +2466,25 @@ export const model = {
             artistName = exact.name;
           }
         }
+        const findMissingInstanceName = bandcampInstanceName(
+          "find-missing",
+          artistMbid,
+          args.bandcampUrl,
+        );
+        if (!artistMbid) {
+          console.error(
+            `find-missing: writing "${findMissingInstanceName}" ` +
+              `(bandcampUrl-derived fallback instance) — no MusicBrainz ` +
+              `artist MBID resolved for host ${
+                bandcampUrlHostForLog(
+                  args.bandcampUrl,
+                )
+              }, artist name ${
+                JSON.stringify((artistName || "<unparsed>").slice(0, 120))
+              }. Pass artistMbid explicitly once the artist is added to ` +
+              `MusicBrainz to pin this write to a stable MBID-keyed instance.`,
+          );
+        }
 
         // 3. Get MusicBrainz release groups (bounded by maxPages so a
         // hostile/misbehaving MusicBrainz endpoint that always returns a
@@ -2263,7 +2575,7 @@ export const model = {
 
         const handle = await context.writeResource(
           "missingReleases",
-          artistMbid || "unknown",
+          findMissingInstanceName,
           {
             artist: artistName,
             artistMbid,
@@ -2311,6 +2623,25 @@ export const model = {
             artistMbid = exact.id;
             artistName = exact.name;
           }
+        }
+        const seedAllMissingInstanceName = bandcampInstanceName(
+          "seed-all-missing",
+          artistMbid,
+          args.bandcampUrl,
+        );
+        if (!artistMbid) {
+          console.error(
+            `seed-all-missing: writing "${seedAllMissingInstanceName}" ` +
+              `(bandcampUrl-derived fallback instance) — no MusicBrainz ` +
+              `artist MBID resolved for host ${
+                bandcampUrlHostForLog(
+                  args.bandcampUrl,
+                )
+              }, artist name ${
+                JSON.stringify((artistName || "<unparsed>").slice(0, 120))
+              }. Pass artistMbid explicitly once the artist is added to ` +
+              `MusicBrainz to pin this write to a stable MBID-keyed instance.`,
+          );
         }
 
         // Get MB releases (bounded by maxPages — see find-missing's comment)
@@ -2382,7 +2713,7 @@ export const model = {
 
         const handle = await context.writeResource(
           "seedUrls",
-          artistMbid || "all-missing",
+          seedAllMissingInstanceName,
           {
             artist: artistName,
             artistMbid,

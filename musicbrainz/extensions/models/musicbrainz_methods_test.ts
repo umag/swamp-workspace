@@ -65,6 +65,11 @@ function makeCtx() {
         return Promise.resolve({ spec, name });
       },
       logger: { info: () => {}, warning: () => {} },
+      // Fail-closed write-budget funnel (musicbrainz-missing-seed-instance-
+      // collision, round 4) — see WRITE_BUDGET/run() below. The model itself
+      // never reads this property; it's exposed purely so run() can assert
+      // on it.
+      __written: written,
     },
   };
 }
@@ -74,10 +79,157 @@ type MethodMap = Record<string, {
   execute: (a: unknown, c: unknown) => Promise<unknown>;
 }>;
 
-function run(name: string, args: Record<string, unknown>, ctx: unknown) {
+// Per-method write budget for every method with a call-shape-independent
+// write count — the funnel `run()` enforces below. `sync-artist-discographies`
+// is a genuine fan-out (0..batchSize per-artist writes plus one cursor-state
+// write) and is deliberately left OUT rather than pinned to a number that
+// would be wrong on the very next fixture.
+const WRITE_BUDGET: Record<string, number> = {
+  "search-artist": 2, // canonical + time-bounded deprecation alias
+  "search-artists-batch": 1,
+  "search-release-group": 1,
+  "search-release": 1,
+  "search-recording": 1,
+  "search-label": 1,
+  "lookup-artist": 1,
+  "lookup-release-group": 1,
+  "lookup-release": 1,
+  "lookup-recording": 1,
+  "lookup-label": 1,
+  "browse-release-groups": 1,
+  "browse-releases": 1,
+  "browse-recordings": 1,
+  "seed-from-bandcamp": 1,
+  "find-missing": 1,
+  "seed-all-missing": 1,
+  search: 1,
+};
+
+// Round 5 (musicbrainz-missing-seed-instance-collision review): a
+// call-shape-independent COUNT cannot express `sync-artist-discographies`'
+// contract — it is a genuine fan-out (0..batchSize per-artist writes) — so
+// leaving it out of WRITE_BUDGET entirely left it completely unchecked; a
+// surplus write gated on any state the fixtures don't drive (e.g. the
+// `truncated` page-ceiling flag) passed 265/0. Its writes DO have a fixed
+// SHAPE that holds regardless of call shape or exit path, though: every
+// `writeResource` it makes is either spec "browse" at `rg-by-artist-<mbid>`
+// (the `writeResource("browse", \`rg-by-artist-${mbid}\`, ...)` call inside
+// sync-artist-discographies, once per processed artist) or spec
+// "discographySyncState" at "discography-sync-cursor" (that same method's
+// `writeResource("discographySyncState", DISCOGRAPHY_SYNC_CURSOR_INSTANCE,
+// ...)` call, written durably in its own `finally` even on a mid-batch
+// throw — see "a
+// crash mid-batch still persists..." below). `run()` below checks every row
+// in the delta window against this predicate in place of a count for any
+// method listed here.
+const WRITE_SHAPE: Record<
+  string,
+  (w: { spec: string; name: string }) => boolean
+> = {
+  "sync-artist-discographies": (w) =>
+    (w.spec === "browse" && w.name.startsWith("rg-by-artist-")) ||
+    (w.spec === "discographySyncState" &&
+      w.name === "discography-sync-cursor"),
+};
+
+// Round 6 (musicbrainz-missing-seed-instance-collision review): the finally
+// below's assertEquals/assertEquals-on-bad-rows can be swallowed at any
+// `assertRejects(fn)` or `assertRejects(fn, Error)` call site that doesn't
+// pin a message — JS replaces an in-flight rejection with whatever a
+// `finally` throws, so the caller's bare assertRejects then accepts the
+// substituted AssertionError as the expected rejection and the test stays
+// green. Recording every violation OUT OF BAND, in addition to (not instead
+// of) the existing assertEquals, means it cannot be absorbed that way: the
+// FUNNEL: the unload handler below reads this array after every run() in the
+// file has executed and fails the file if anything landed in it, regardless
+// of what any individual assertRejects call swallowed.
+const FUNNEL_VIOLATIONS: string[] = [];
+
+// The funnel: every one of this file's `run()` calls passes through here, so
+// arming the check ONCE closes the class for every fixture — present and
+// future — rather than relying on each new test to remember a per-test pin.
+// Fail-CLOSED on two axes:
+//  1. A method with NEITHER a WRITE_BUDGET NOR a WRITE_SHAPE entry throws
+//     immediately, rather than passing through unchecked the way
+//     `sync-artist-discographies` used to — so the next method added to the
+//     model can't silently land outside the funnel either.
+//  2. A budgeted/shaped method invoked against a ctx that doesn't expose
+//     `__written` throws rather than silently skipping the check, so a
+//     hand-rolled ctx (e.g. makeSyncCtx below, or GUARD H's shared-store run
+//     of find-missing then seed-all-missing) has to opt in.
+// The check runs in a `finally`, so a method that throws is still checked —
+// a write made before rethrowing is exactly as visible as one on the happy
+// path, not a silent escape. For a WRITE_BUDGET method the expected count on
+// a throwing exit is 0 (none of the 18 budgeted methods deliberately persist
+// before rethrowing today — only `sync-artist-discographies` does, and it is
+// shape-checked, not count-checked, precisely because its throw-path write
+// count varies with how much of the batch completed before the throw).
+async function run(name: string, args: Record<string, unknown>, ctx: unknown) {
   const method = (model.methods as MethodMap)[name];
   assert(method, `method ${name} must exist on the model`);
-  return method.execute(method.arguments.parse(args), ctx);
+  const budget = WRITE_BUDGET[name];
+  const shape = WRITE_SHAPE[name];
+  if (budget === undefined && shape === undefined) {
+    throw new Error(
+      `run("${name}", ...) has neither a WRITE_BUDGET nor a WRITE_SHAPE entry — every model method invoked through run() must be checked one way or the other, so an unbudgeted, unlisted method fails closed instead of passing through unchecked`,
+    );
+  }
+  const written =
+    (ctx as { __written?: Array<{ spec: string; name: string }> }).__written;
+  if (!Array.isArray(written)) {
+    throw new Error(
+      `run("${name}", ...) is ${
+        budget !== undefined
+          ? `budgeted at ${budget} write(s)`
+          : "shape-checked"
+      } but its ctx does not expose __written — every ctx passed to a checked method must come from a makeCtx()-style helper (or opt in explicitly) so the write invariant can be enforced`,
+    );
+  }
+  const before = written.length;
+  let threw = false;
+  try {
+    return await method.execute(method.arguments.parse(args), ctx);
+  } catch (e) {
+    threw = true;
+    throw e;
+  } finally {
+    const rows = written.slice(before);
+    if (shape !== undefined) {
+      const bad = rows.filter((w) => !shape(w));
+      if (bad.length !== 0) {
+        FUNNEL_VIOLATIONS.push(
+          `${name} wrote ${bad.length} resource(s) outside its declared WRITE_SHAPE: ${
+            JSON.stringify(bad.map((w) => `${w.spec}:${w.name}`))
+          }`,
+        );
+      }
+      assertEquals(
+        bad.length,
+        0,
+        `${name} wrote ${bad.length} resource(s) outside its declared WRITE_SHAPE: ${
+          JSON.stringify(bad.map((w) => `${w.spec}:${w.name}`))
+        }`,
+      );
+    } else {
+      const expected = threw ? 0 : budget;
+      if (rows.length !== expected) {
+        FUNNEL_VIOLATIONS.push(
+          `${name} count ${rows.length} != ${expected}: ${
+            JSON.stringify(rows.map((w) => `${w.spec}:${w.name}`))
+          }`,
+        );
+      }
+      assertEquals(
+        rows.length,
+        expected,
+        `${name} must write exactly ${expected} resource(s) per${
+          threw ? " throwing" : ""
+        } execution, got ${rows.length}: ${
+          JSON.stringify(rows.map((w) => `${w.spec}:${w.name}`))
+        }`,
+      );
+    }
+  }
 }
 
 type Route = (req: Request) => Response | Promise<Response> | undefined;
@@ -605,8 +757,8 @@ for (const [method, wireKey, spec] of INSTANCE_NAME_PINS) {
 // pins that directly), so only running the alias payload through the
 // resource's OWN declared schema (part ii) can see a change to the two
 // additive `artists` schema fields — zod strips unknown keys on `.parse()`
-// by default. Pattern copied from the cast form already used at
-// musicbrainz_coverage_test.ts:840-843.
+// by default. Pattern copied from the `model.resources as Record<...>` cast
+// used by musicbrainz_coverage_test.ts's discographySyncState schema pin.
 // ---------------------------------------------------------------------------
 
 Deno.test("search-artist: ALSO writes the deprecated 'search' alias (spec artists) with deprecated/supersededBy markers; the canonical write carries neither", async () => {
@@ -1149,7 +1301,11 @@ Deno.test("find-missing: happy path — matches by normalized title, reports the
       ),
   );
   const res = written.find((w) => w.spec === "missingReleases")!;
-  assertEquals(res.name, "00000000-0000-0000-0000-000000000001");
+  assertEquals(
+    res.name,
+    "find-missing-00000000-0000-0000-0000-000000000001",
+    "musicbrainz-missing-seed-instance-collision: find-missing must write its own find-missing-<mbid> instance, not the bare artistMbid",
+  );
   assertEquals(res.payload.mbReleaseCount, 1);
   assertEquals(res.payload.bcReleaseCount, 2);
   const matched = res.payload.matched as Array<Record<string, unknown>>;
@@ -1165,9 +1321,9 @@ Deno.test("find-missing: happy path — matches by normalized title, reports the
   );
 });
 
-Deno.test("find-missing: failure path — a non-ok Bandcamp discography fetch throws", async () => {
+Deno.test("find-missing: failure path — a non-ok Bandcamp discography fetch throws, and writes nothing on the way out", async () => {
   using time = new FakeTime();
-  const { ctx } = makeCtx();
+  const { ctx, written } = makeCtx();
   await withFetchStub(
     [(req) => (isBcHost(req) ? html("nope", 500) : undefined)],
     () =>
@@ -1181,6 +1337,15 @@ Deno.test("find-missing: failure path — a non-ok Bandcamp discography fetch th
             }, ctx),
         ),
       ),
+  );
+  // Round 5 review, HIGH 2: a write-before-rethrow is exactly the shape that
+  // used to slip past the funnel (no try/finally). The funnel now enforces
+  // 0 writes on this throwing exit for a budgeted method, but pin it locally
+  // too so this failure-path contract reads standalone from the test body.
+  assertEquals(
+    written.length,
+    0,
+    "a non-ok Bandcamp fetch must throw before writing anything",
   );
 });
 
@@ -1214,7 +1379,11 @@ Deno.test("seed-all-missing: happy path — writes seed URLs for every UNMATCHED
       ),
   );
   const res = written.find((w) => w.spec === "seedUrls")!;
-  assertEquals(res.name, "00000000-0000-0000-0000-000000000001");
+  assertEquals(
+    res.name,
+    "seed-all-missing-00000000-0000-0000-0000-000000000001",
+    "musicbrainz-missing-seed-instance-collision: seed-all-missing must write its own seed-all-missing-<mbid> instance, not the bare artistMbid",
+  );
   assertEquals(res.payload.total, 1);
   const releases = res.payload.releases as Array<Record<string, unknown>>;
   assertEquals(releases[0].title, "Fixture Drift Sessions");
@@ -1248,6 +1417,111 @@ Deno.test("seed-all-missing: no artistMbid AND unresolvable artist name — MB c
   const res = written.find((w) => w.spec === "seedUrls")!;
   assertEquals(res.payload.artistMbid, undefined);
   assertEquals(res.payload.total, 2, "both discography entries are 'missing'");
+});
+
+// ---------------------------------------------------------------------------
+// GUARD H (musicbrainz-missing-seed-instance-collision) — the behavioural
+// acceptance property. Every fixture above runs find-missing and
+// seed-all-missing against SEPARATE `makeCtx()` stores, so nothing shown so
+// far demonstrates what happens when the SAME artistMbid goes through BOTH
+// methods against ONE instance-name-keyed store — the exact shape of
+// `readResource(name)` in production. `makeSyncCtx` (defined below, but a
+// `function` declaration so it is hoisted and usable here) already wires
+// `readResource`/`writeResource` to one shared `Map<name, payload>`, which is
+// precisely the shared store this guard needs — deliberately NOT
+// `runCollision` (musicbrainz_coverage_test.ts), which builds a FRESH store
+// per method and therefore could never show one payload surviving the
+// other's write.
+// ---------------------------------------------------------------------------
+
+Deno.test("GUARD H: find-missing then seed-all-missing with the SAME artistMbid against ONE shared store write DISTINCT instance names, and find-missing's row survives", async () => {
+  using time = new FakeTime();
+  const mbid = "00000000-0000-0000-0000-000000000001";
+  const { ctx, store, written } = makeSyncCtx();
+
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(ARTIST_MUSICGRID_HTML) : undefined),
+      (req) =>
+        isMbHost(req)
+          ? json({
+            "release-groups": [
+              {
+                id: "00000000-0000-0000-0000-000000000601",
+                title: "Fixture Drift Sessions",
+              },
+            ],
+            "release-group-count": 1,
+            "release-group-offset": 0,
+          })
+          : undefined,
+    ],
+    () =>
+      drainAndAwait(
+        time,
+        run("find-missing", {
+          bandcampUrl: "https://fixturemarinholloway.bandcamp.com",
+          artistMbid: mbid,
+        }, ctx),
+      ),
+  );
+
+  await withFetchStub(
+    [
+      (req) => (isBcHost(req) ? html(ARTIST_MUSICGRID_HTML) : undefined),
+      (req) =>
+        isMbHost(req)
+          ? json({
+            "release-groups": [
+              {
+                id: "00000000-0000-0000-0000-000000000601",
+                title: "Fixture Single Echo",
+              },
+            ],
+            "release-group-count": 1,
+            "release-group-offset": 0,
+          })
+          : undefined,
+    ],
+    () =>
+      drainAndAwait(
+        time,
+        run("seed-all-missing", {
+          bandcampUrl: "https://fixturemarinholloway.bandcamp.com",
+          artistMbid: mbid,
+        }, ctx),
+      ),
+  );
+
+  assertEquals(
+    [...store.keys()].sort(),
+    [`find-missing-${mbid}`, `seed-all-missing-${mbid}`].sort(),
+    "both methods must write two DISTINCT instance names for the same artistMbid, not collide on one",
+  );
+  // GUARD H's own claim, made independently observable: `written` (unlike
+  // `store`, which is keyed on name alone and discards which spec wrote it)
+  // carries the (spec, name) pair for every write, so this pins the actual
+  // user-visible defect the issue was filed for — find-missing's
+  // missingReleases row surviving seed-all-missing's seedUrls write — rather
+  // than the weaker proxy `findMissingRow.missing !== undefined` below, which
+  // never inspects a spec at all.
+  assertEquals(
+    written.map((w) => [w.spec, w.name]),
+    [
+      ["missingReleases", `find-missing-${mbid}`],
+      ["seedUrls", `seed-all-missing-${mbid}`],
+    ],
+    "GUARD H: find-missing must write a missingReleases row at find-missing-<mbid> and seed-all-missing must write a seedUrls row at seed-all-missing-<mbid> — one write each, in order, neither overwriting the other",
+  );
+  const findMissingRow = store.get(`find-missing-${mbid}`);
+  assert(
+    findMissingRow !== undefined,
+    "find-missing's row must still exist after seed-all-missing runs",
+  );
+  assert(
+    findMissingRow.missing !== undefined,
+    "find-missing's payload must still be readable by its own field — the defect this issue fixes is seed-all-missing silently destroying it via a shared instance name",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1290,6 +1564,9 @@ function makeSyncCtx(
         return Promise.resolve({ spec, name });
       },
       logger: { info: () => {}, warning: () => {} },
+      // See makeCtx() above — GUARD H below runs find-missing and
+      // seed-all-missing (both budgeted) through THIS ctx, not makeCtx()'s.
+      __written: written,
     },
   };
 }
@@ -2085,4 +2362,20 @@ Deno.test("sync-artist-discographies: the missing-artistMbids throw writes NO st
     undefined,
     "a missing-artistMbids rejection is not a sync attempt — it must write no state whatsoever",
   );
+});
+
+// Round 7: moved off Deno.test onto the module "unload" event, which Deno
+// fires once per module after every SELECTED test has run — under any
+// --shuffle permutation and any --filter — so this no longer depends on
+// declaration order or on which tests were selected. An exception thrown
+// from this handler is reported as an uncaught module error that fails the
+// run. See the FUNNEL_VIOLATIONS comment near WRITE_SHAPE.
+addEventListener("unload", () => {
+  if (FUNNEL_VIOLATIONS.length !== 0) {
+    throw new Error(
+      `FUNNEL: ${FUNNEL_VIOLATIONS.length} write-invariant violation(s) were recorded by run() but swallowed by a bare assertRejects: ${
+        JSON.stringify(FUNNEL_VIOLATIONS)
+      }`,
+    );
+  }
 });
