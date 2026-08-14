@@ -113,6 +113,8 @@ interface WorkflowTemplate {
   };
   /** Diffusion-model loader (UNETLoader), if the template lets you swap it. */
   model?: { nodeId: string; key: string };
+  /** Reference sizing input (e.g. `match`|`max`), if the template exposes it. */
+  refImageSize?: { nodeId: string; key: string };
   /** Clip duration in seconds, if the template exposes one (video). */
   duration?: { nodeId: string; key: string };
   /** Sampler step count, if the template exposes one. */
@@ -238,6 +240,8 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
     },
     // UNETLoader — swap the diffusion checkpoint (e.g. an fl2va×ref2va hybrid).
     model: { nodeId: "127", key: "unet_name" },
+    // Reference sizing: 'match' (default) vs 'max' (2048px, stronger reference).
+    refImageSize: { nodeId: "136", key: "ref_image_size" },
     duration: { nodeId: "132", key: "value" },
     steps: { nodeId: "124", key: "steps" },
     speed: {
@@ -416,6 +420,10 @@ const GenerateArgs = z.object({
   // the server's diffusion_models/unet folder), e.g. an fl2va×ref2va hybrid for
   // stronger reference/clothes transfer. Omit to keep the template's default.
   unetModel: z.string().optional(),
+  // Reference sizing on the H3 ref node: 'match' (scale refs to the output area)
+  // or 'max' (2048px short edge — markedly STRONGER reference/identity/clothes
+  // adherence, several× slower). Omit to keep the graph default ('match').
+  refImageSize: z.enum(["match", "max"]).optional(),
   refImage: z.string().optional(),
   refImages: z.array(z.string()).optional(),
   refVideo: z.string().optional(),
@@ -727,6 +735,29 @@ async function applyReferences(
 }
 
 /**
+ * Set the reference-sizing input (`match`|`max`) on the H3 ref node when
+ * `refImageSize` is given. `max` feeds references at 2048px for much stronger
+ * reference adherence (identity/clothes) at a speed cost. A no-op unless the
+ * template exposes `refImageSize`; throws if that node is missing.
+ */
+function applyRefImageSize(
+  graph: ApiGraph,
+  args: GenArgs,
+  tpl: WorkflowTemplate | undefined,
+): ApiGraph {
+  if (!args.refImageSize || !tpl?.refImageSize) return graph;
+  const clone = structuredClone(graph);
+  const node = clone[tpl.refImageSize.nodeId];
+  if (node === undefined) {
+    throw new Error(
+      `refImageSize: ref node '${tpl.refImageSize.nodeId}' not found in the graph`,
+    );
+  }
+  node.inputs = { ...node.inputs, [tpl.refImageSize.key]: args.refImageSize };
+  return clone;
+}
+
+/**
  * Swap the diffusion checkpoint the UNETLoader loads when `unetModel` is set
  * (e.g. an fl2va×ref2va hybrid). A no-op unless the template exposes a `model`
  * loader; throws if that node is missing from the graph.
@@ -974,6 +1005,7 @@ async function renderClip(
   base = applyModelOverride(base, eArgs, tpl);
   base = applyVideoOverrides(base, eArgs, tpl);
   base = await applyReferences(base, eArgs, tpl, client);
+  base = applyRefImageSize(base, eArgs, tpl);
   base = applyKeepRefAudio(base, eArgs, tpl);
   base = applySpeed(base, eArgs, tpl, installed);
   base = applyUpscale(base, eArgs, tpl, installed);
@@ -1282,7 +1314,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.12",
+  version: "2026.08.12.13",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -1373,6 +1405,13 @@ export const model = {
       toVersion: "2026.08.12.12",
       description:
         "Add `ref2i` — style/clothes transfer to a STILL: drives the H3 reference graph with styleImage (<Picture 1>) + targetImage (<Picture 2>), generates the shortest clip and saves frame 0 as a PNG (new `ref2i` resource, auto-incremented). Default clothes-transfer caption. Also add `unetModel` arg + template `model` loader (UNETLoader node 127) to swap the diffusion checkpoint (e.g. an fl2va×ref2va hybrid) on generate/generate_long/ref2i via applyModelOverride. No globalArguments change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.12.12",
+      toVersion: "2026.08.12.13",
+      description:
+        "minimax_h3: expose `refImageSize` ('match'|'max') on the H3 ref node (136, applyRefImageSize) — 'max' feeds references at 2048px for markedly STRONGER reference/clothes/identity adherence (several× slower). Fixes weak transfer where a subtle outfit loses to the target's own clothing (esp. with the quality-tuned b30-49 hybrid). No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

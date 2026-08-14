@@ -825,6 +825,14 @@ Deno.test("generate template='minimax_h3': unetModel swaps the UNETLoader checkp
   );
 });
 
+Deno.test("generate template='minimax_h3': refImageSize sets the ref node (136) sizing input", async () => {
+  const posted = await postedFor({ refImageSize: "max" });
+  assertEquals(posted["136"].inputs.ref_image_size, "max");
+  // omitted → the graph default ('match') is left untouched
+  const plain = await postedFor({});
+  assertEquals(plain["136"].inputs.ref_image_size, "match");
+});
+
 Deno.test("clothesTransferCaption: binds the outfit from <Picture 1> onto the person in <Picture 2>", () => {
   const c = clothesTransferCaption();
   assert(c.startsWith("subject_definitions:"));
