@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/arckit"
-version: "2026.08.07.1"
+version: "2026.08.14.1"
 description: |
   Standalone swamp port of ArcKit (https://github.com/tractorjuice/arc-kit —
   the Enterprise Architecture Governance Harness): a skill-driven governance
@@ -45,7 +45,9 @@ description: |
     `ladder` selects the target ladder (uae = UK → UAE Smart Data, the
     default and unchanged; nl = UK → NL rubricering), report-only by default
   - euSovereigntyScore — EU Cloud Sovereignty Framework v1.2.1 weighted
-    score over SOV-1..SOV-8 with caller-supplied minimum SEAL floors.
+    score over SOV-1..SOV-8, the overall SEAL (the framework's actual
+    rejection gate — the minimum SEAL across all eight objectives), and,
+    with caller-supplied minimum SEAL floors, pass/fail per objective.
     Records an assessment; it does not certify
   - nlCloudEligibility — public-cloud eligibility under the Herziening
     rijksbreed cloudbeleid 2026, returning allowed | conditional |

@@ -66,6 +66,28 @@
 # identity `upgrades[]` entry; defaulting a previously-required field only
 # widens what parses, so no data transformation is needed.
 #
+# 2026.08.14.1: ports three verified upstream arc-kit defects in the EU Cloud
+# Sovereignty Framework v1.2.1 implementation (SOV_WEIGHTS had three wrong
+# values that still summed to 100; SEAL_LABELS.SEAL3.en was wrong, the .nl
+# label is a verified deliberate divergence and stays unchanged; no overall
+# SEAL was computed even though it is the framework's actual rejection gate)
+# plus a related backward-compatible widening (objectives[].maxScore is now
+# optional, defaulting to a new exported SOV_MAX_SCORES for the accept/reject
+# guard while the contribution divisor stays the calculator's flat nominal
+# 1000 — a maximal response now faithfully scores 100.0756%, not 100%).
+# TDD RED round: the weight fix's test asserted all eight weights
+# individually against unmodified source first, capturing SOV-1/SOV-5/SOV-7
+# failing by name. manifest.yaml and model.version bumped in lockstep with a
+# fifth identity `upgrades[]` entry — additive/corrective resource-shape
+# changes only, no data transformation; previously-written
+# sovereigntyAssessment records are NOT recomputed. A SEVENTH suite file
+# joins the role map below (`arckit_workspace_csf_test.ts`), carried under
+# `coverage`: it is the dedicated correction suite for this port, kept
+# separate from `arckit_workspace_nl_test.ts` (whose local SOV_WEIGHTS
+# duplicate, one sanity-test title, and one hard-coded weight literal were
+# also corrected in place, since they would otherwise go stale against the
+# fixed production weights).
+#
 # Role map (each file assigned to exactly ONE honest role):
 #   contract-fixture        -> arckit_workspace_test.ts (unchanged — pins
 #                               behavior against the REAL bundled templates/
@@ -82,6 +104,12 @@
 #                               scoring bounds, cloud-eligibility total order
 #                               and fail-closed inputs, clause-citation pins,
 #                               and the two new methods' resource naming)
+#                            +  arckit_workspace_csf_test.ts (EU CSF v1.2.1
+#                               correction suite: the eight SOV_WEIGHTS
+#                               individually, SEAL3 English/Dutch, overallSeal
+#                               as a minimum with tie/missing-SEAL cases, and
+#                               SOV_MAX_SCORES/optional-maxScore including the
+#                               100.0756% maximal-response case)
 #   property-invariant-flow -> arckit_workspace_property_test.ts
 #                               (fast-check@4.8.0, restricted arbitraries)
 schemaVersion: 1
@@ -104,6 +132,7 @@ tests:
     files:
       - extensions/models/arckit_workspace_coverage_test.ts
       - extensions/models/arckit_workspace_nl_test.ts
+      - extensions/models/arckit_workspace_csf_test.ts
   property-invariant-flow:
     state: present
     files:
