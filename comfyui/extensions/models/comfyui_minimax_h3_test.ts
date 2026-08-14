@@ -15,6 +15,7 @@ import {
 } from "jsr:@std/assert@1";
 import {
   alignSeams,
+  clothesTransferCaption,
   continuationCaption,
   continuationCaptionTail,
   GlobalArgs,
@@ -810,6 +811,53 @@ Deno.test("generate template='minimax_h3': megapixels + resolution patch the Res
   });
   assertEquals(posted["115"].inputs.megapixels, 0.8);
   assertEquals(posted["115"].inputs.aspect_ratio, "1:1 (Square)");
+});
+
+Deno.test("generate template='minimax_h3': unetModel swaps the UNETLoader checkpoint (node 127)", async () => {
+  const hybrid = "minimax_h3_hybrid_fl2va_ref2va_b25-49.safetensors";
+  const posted = await postedFor({ unetModel: hybrid });
+  assertEquals(posted["127"].inputs.unet_name, hybrid);
+  // omitting it keeps the bundled default
+  const plain = await postedFor({});
+  assertEquals(
+    plain["127"].inputs.unet_name,
+    "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+  );
+});
+
+Deno.test("clothesTransferCaption: binds the outfit from <Picture 1> onto the person in <Picture 2>", () => {
+  const c = clothesTransferCaption();
+  assert(c.startsWith("subject_definitions:"));
+  // person from #2, clothing from #1
+  assert(c.includes("<Subject 1> is the person from <Picture 2>"));
+  assert(c.includes("<Picture 2> (person source"));
+  assert(c.includes("fully_preserved"));
+  assert(c.includes("<Picture 1> (clothing/style source)"));
+  assert(c.includes("attribute_transfer"));
+  // the 6 H3 sections are present
+  for (
+    const s of [
+      "summary:",
+      "retention_analysis:",
+      "detailed_description:",
+      "overall_soundscape:",
+      "non_diegetic_music:",
+    ]
+  ) assert(c.includes(s), `missing section ${s}`);
+});
+
+Deno.test("model declares ref2i requiring styleImage + targetImage", () => {
+  const m = model.methods.ref2i;
+  assert(m);
+  const parsed = m.arguments.parse({
+    template: "minimax_h3",
+    styleImage: "dress.png",
+    targetImage: "person.png",
+  });
+  assertEquals(parsed.styleImage, "dress.png");
+  assertEquals(parsed.targetImage, "person.png");
+  // both are required
+  assertThrows(() => m.arguments.parse({ styleImage: "dress.png" }));
 });
 
 Deno.test("planFragments: splits a total into ordered windows, last one truncated", () => {

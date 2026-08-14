@@ -111,6 +111,8 @@ interface WorkflowTemplate {
     defaultResolution: number;
     upscalerDefaults: Record<string, unknown>;
   };
+  /** Diffusion-model loader (UNETLoader), if the template lets you swap it. */
+  model?: { nodeId: string; key: string };
   /** Clip duration in seconds, if the template exposes one (video). */
   duration?: { nodeId: string; key: string };
   /** Sampler step count, if the template exposes one. */
@@ -234,6 +236,8 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
         color_correction: "lab",
       },
     },
+    // UNETLoader — swap the diffusion checkpoint (e.g. an fl2va×ref2va hybrid).
+    model: { nodeId: "127", key: "unet_name" },
     duration: { nodeId: "132", key: "value" },
     steps: { nodeId: "124", key: "steps" },
     speed: {
@@ -408,6 +412,10 @@ const GenerateArgs = z.object({
   resolution: z.string().optional(),
   resolutionNodeId: z.string().optional(),
   resolutionInputKey: z.string().optional(),
+  // Override the diffusion checkpoint the UNETLoader loads (a filename already in
+  // the server's diffusion_models/unet folder), e.g. an fl2va×ref2va hybrid for
+  // stronger reference/clothes transfer. Omit to keep the template's default.
+  unetModel: z.string().optional(),
   refImage: z.string().optional(),
   refImages: z.array(z.string()).optional(),
   refVideo: z.string().optional(),
@@ -465,6 +473,15 @@ const GenerateLongArgs = GenerateArgs.extend({
   seamWindow: z.number().min(0).max(3).default(1.0),
 });
 
+const Ref2iArgs = GenerateArgs.extend({
+  // Clothing/style SOURCE image → <Picture 1>; the garments/style are copied FROM
+  // here. A local path or a server-side input filename.
+  styleImage: z.string(),
+  // Target PERSON image → <Picture 2>; identity/pose/background are kept, only the
+  // outfit is replaced. A local path or a server-side input filename.
+  targetImage: z.string(),
+});
+
 const NodeInfoArgs = z.object({
   classType: z.string(),
 });
@@ -508,6 +525,12 @@ const LongResource = z.object({
   count: z.number(),
   fragments: z.array(z.string()),
   paths: z.array(z.string()),
+});
+
+const Ref2iResource = z.object({
+  promptId: z.string(),
+  paths: z.array(z.string()),
+  seed: z.number().nullable(),
 });
 
 /**
@@ -701,6 +724,28 @@ async function applyReferences(
     refs.push({ kind: "video", name: await resolveReferenceName(client, vid) });
   }
   return buildReferences(graph, tpl.references, refs);
+}
+
+/**
+ * Swap the diffusion checkpoint the UNETLoader loads when `unetModel` is set
+ * (e.g. an fl2va×ref2va hybrid). A no-op unless the template exposes a `model`
+ * loader; throws if that node is missing from the graph.
+ */
+function applyModelOverride(
+  graph: ApiGraph,
+  args: GenArgs,
+  tpl: WorkflowTemplate | undefined,
+): ApiGraph {
+  if (!args.unetModel || !tpl?.model) return graph;
+  const clone = structuredClone(graph);
+  const loader = clone[tpl.model.nodeId];
+  if (loader === undefined) {
+    throw new Error(
+      `unetModel: model loader node '${tpl.model.nodeId}' not found in the graph`,
+    );
+  }
+  loader.inputs = { ...loader.inputs, [tpl.model.key]: args.unetModel };
+  return clone;
 }
 
 /**
@@ -926,6 +971,7 @@ async function renderClip(
   const { graph, tpl } = await loadGraphAndTemplate(args, context);
   const eArgs = resolveTurboArgs(args, tpl);
   let base = applyContentOverrides(graph, eArgs, tpl);
+  base = applyModelOverride(base, eArgs, tpl);
   base = applyVideoOverrides(base, eArgs, tpl);
   base = await applyReferences(base, eArgs, tpl, client);
   base = applyKeepRefAudio(base, eArgs, tpl);
@@ -986,6 +1032,11 @@ function ffmpegLastFrame(src: string, dst: string): Promise<void> {
   return runFfmpeg([
     "-sseof", "-0.15", "-i", src, "-update", "1", "-frames:v", "1", dst,
   ]);
+}
+
+/** Write the FIRST frame of `src` to `dst` (a PNG). */
+function ffmpegFirstFrame(src: string, dst: string): Promise<void> {
+  return runFfmpeg(["-i", src, "-frames:v", "1", "-update", "1", dst]);
 }
 
 /**
@@ -1162,6 +1213,46 @@ export function continuationCaptionTail(
     `<Video ${videoIndex}> and the choreography and camera from <Video 1>.`;
 }
 
+/**
+ * Default H3-format prompt for `ref2i` clothes/style transfer: `<Picture 1>` is
+ * the garment/style source, `<Picture 2>` the target person. Binds the outfit
+ * from #1 onto the person in #2 while preserving their face, pose, and
+ * background. Used when the caller doesn't pass an explicit `caption`.
+ */
+export function clothesTransferCaption(): string {
+  return [
+    "subject_definitions:",
+    "<Subject 1> is the person from <Picture 2>, wearing the clothing, outfit, " +
+    "and styling from <Picture 1>.",
+    "",
+    "summary:",
+    "[reference generation] A single still image of <Subject 1> — the exact " +
+    "person in <Picture 2> — re-dressed in the garments and style from " +
+    "<Picture 1>, keeping that person's own face, hair, body, pose, framing, " +
+    "and background unchanged.",
+    "",
+    "retention_analysis:",
+    "<Picture 2> (person source, [Shot 1]): fully_preserved - the person's face, " +
+    "hair, body, skin tone, pose, camera framing, and background are kept.",
+    "<Picture 1> (clothing/style source): attribute_transfer - ONLY the clothing, " +
+    "outfit, garments, fabric, colours, and styling transfer onto <Subject 1>; " +
+    "the person, face, body, and background of <Picture 1> are NOT carried over.",
+    "",
+    "detailed_description:",
+    "[Shot 1] A clean, well-lit still of <Subject 1>, the person from " +
+    "<Picture 2>, now wearing the outfit from <Picture 1>. Same face, hairstyle, " +
+    "body, pose, framing, and background as <Picture 2>; only the clothing is " +
+    "replaced with the garments from <Picture 1>, fitted naturally to the body " +
+    "with consistent lighting and realistic fabric.",
+    "",
+    "overall_soundscape:",
+    "N/A",
+    "",
+    "non_diegetic_music:",
+    "N/A",
+  ].join("\n");
+}
+
 async function snapshotServer(
   context: Context,
 ): Promise<{ dataHandles: never[] }> {
@@ -1191,7 +1282,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.11",
+  version: "2026.08.12.12",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -1277,6 +1368,13 @@ export const model = {
         "generate_long: AUTO-INCREMENT the stitched output filename (nextFreePath) — a new run writes minimax_h3_long_NxMs_2.mp4, _3.mp4, … instead of overwriting the previous stitched video. No globalArguments or resource-schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      fromVersion: "2026.08.12.11",
+      toVersion: "2026.08.12.12",
+      description:
+        "Add `ref2i` — style/clothes transfer to a STILL: drives the H3 reference graph with styleImage (<Picture 1>) + targetImage (<Picture 2>), generates the shortest clip and saves frame 0 as a PNG (new `ref2i` resource, auto-incremented). Default clothes-transfer caption. Also add `unetModel` arg + template `model` loader (UNETLoader node 127) to swap the diffusion checkpoint (e.g. an fl2va×ref2va hybrid) on generate/generate_long/ref2i via applyModelOverride. No globalArguments change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   globalArguments: GlobalArgs,
   resources: {
@@ -1316,6 +1414,13 @@ export const model = {
       schema: LongResource,
       lifetime: "infinite",
       garbageCollection: 10,
+    },
+    ref2i: {
+      description:
+        "A style/clothes-transfer still: the saved first frame's path + seed.",
+      schema: Ref2iResource,
+      lifetime: "infinite",
+      garbageCollection: 20,
     },
   },
   methods: {
@@ -1671,6 +1776,66 @@ export const model = {
           count: plan.length,
           fragments: fragmentPaths,
           paths: [finalPath],
+        });
+        return { dataHandles: [] };
+      },
+    },
+    ref2i: {
+      description:
+        "Style/clothes transfer to a STILL image (minimax_h3): drive the H3 " +
+        "reference graph with two image refs — `styleImage` (the garment/style " +
+        "source → <Picture 1>) and `targetImage` (the person to re-dress → " +
+        "<Picture 2>) — generate the shortest clip, and save its FIRST frame as a " +
+        "PNG. The person's face/pose/background are kept; only the outfit is " +
+        "replaced. A default clothes-transfer prompt is used unless `caption` is " +
+        "given. Point `unetModel` at an fl2va×ref2va hybrid for stronger transfer. " +
+        "`duration` (default 1s) trades speed for the model's minimum clip length.",
+      arguments: Ref2iArgs,
+      execute: async (
+        args: z.infer<typeof Ref2iArgs>,
+        context: Context,
+      ) => {
+        const { globalArgs } = context;
+        const client = new ComfyClient({
+          baseUrl: globalArgs.baseUrl,
+          clientId: globalArgs.clientId,
+        });
+        const installed = await client.fetchInstalledClasses();
+
+        // style → <Picture 1>, target → <Picture 2> (buildReferences keeps order).
+        const clipArgs = {
+          ...args,
+          template: args.template ?? "minimax_h3",
+          caption: args.caption ?? clothesTransferCaption(),
+          duration: args.duration ?? 1,
+          keepRefAudio: false,
+          upscale: false,
+          refImage: undefined,
+          refImages: [args.styleImage, args.targetImage],
+          refVideo: undefined,
+          refVideos: undefined,
+        } as unknown as GenArgs;
+
+        const { promptId, paths, seed } = await renderClip(
+          clipArgs,
+          context,
+          client,
+          installed,
+        );
+        const mp4 = paths.find((p) => p.toLowerCase().endsWith(".mp4")) ??
+          paths[0];
+        if (mp4 === undefined) throw new Error("ref2i produced no output file");
+
+        await Deno.mkdir(`${globalArgs.outputDir}/image`, { recursive: true });
+        const outPng = await nextFreePath(
+          `${globalArgs.outputDir}/image/ref2i_styled.png`,
+        );
+        await ffmpegFirstFrame(mp4, outPng);
+
+        await context.writeResource("ref2i", "ref2i", {
+          promptId,
+          paths: [outPng],
+          seed,
         });
         return { dataHandles: [] };
       },
