@@ -1,5 +1,67 @@
 # Changelog
 
+## 2026.08.14.1
+
+Ports three verified upstream arc-kit defects in the EU Cloud Sovereignty
+Framework v1.2.1 implementation into this fork, found against the Commission's
+own
+[Implementation guidance](https://commission.europa.eu/document/download/2ad80a48-166f-4c77-a513-80c53ca2a128_en)
+PDF and
+[Annex Sovereignty assessment calculator](https://commission.europa.eu/document/download/3acb8fe8-8a4a-4339-ae74-f56138d913d1_en)
+XLSX, plus one related backward-compatible widening. TDD RED round: the weight
+fix's test asserted all eight weights individually against unmodified source
+first, capturing SOV-1/SOV-5/SOV-7 failing by name before any production code
+changed — a sum-only assertion would have missed all three, since both the wrong
+and the right weight sets sum to 100.
+
+- **`SOV_WEIGHTS` had three wrong values.** SOV-1 was 15 (should be 20), SOV-5
+  was 20 (should be 10), SOV-7 was 10 (should be 15) — ground truth is guidance
+  p.7 / calculator cells D4/D45/D76/D102/D133/D169/D195/D231. The wrong set
+  summed to 100 too, which is exactly why it survived review.
+  **Previously-written `sovereigntyAssessment` records were scored against the
+  wrong weights and are NOT recomputed** by this upgrade — that resource is
+  `lifetime: "infinite"`, so such records persist; re-run `euSovereigntyScore`
+  for any assessment that still matters.
+- **`SEAL_LABELS.SEAL3.en` was wrong.** Corrected `"Digital resilience"` →
+  `"Technological sovereignty"` (guidance p.2-3, p.10). **`SEAL_LABELS.SEAL3.nl`
+  is UNCHANGED** — `"Digitale veerkracht"` is a verified, deliberate divergence
+  from the Commission's English name, quoted verbatim from the NDS
+  Cloudprogramma notitie "Verkenning Overheidsbrede Soevereine Clouddiensten"
+  (11 juni 2026), Tabel 1 p.8 — not a bug, and not something a future pass
+  should "fix" to match the English.
+- **No overall SEAL was computed**, even though it is the framework's actual
+  rejection gate (guidance p.9: "The overall SEAL level is the lowest SEAL level
+  achieved in any of the objectives" — calculator cell F2:
+  `="SEAL-"&MIN(H5:H251)`). `computeSovereigntyScore` now returns `overallSeal`
+  (a MINIMUM across all eight objectives, never an average or a mode;
+  `undefined` — never fabricated as SEAL0 — when any objective has no recorded
+  SEAL) and `overallSealGovernedBy` (every objective id tied at that minimum).
+  `SovereigntyAssessmentSchema` gains both fields.
+- **`maxScore` had no default and no documented ceiling.** Added an exported
+  `SOV_MAX_SCORES` constant with the calculator's actual per-objective maxima
+  (`SOV-1 1000.03 · SOV-2 1002 · SOV-3 1000 · SOV-4 1002 · SOV-5 1001
+  · SOV-6 1000 · SOV-7 1001 · SOV-8 1000`
+  — a nominal 1000 is design intent, not arithmetic; the workbook rounds each
+  criterion's answer value to 2dp). `objectives[].maxScore` is now OPTIONAL:
+  when omitted, the accept/reject GUARD widens to the objective's actual
+  `SOV_MAX_SCORES[id]` ceiling (a flat-1000 clamp would have falsely rejected a
+  legitimate maximal SOV-2 response of 1002), while the contribution DIVISOR
+  stays the calculator's flat nominal 1000 — the same formula the calculator
+  itself uses for every objective regardless of that objective's true ceiling.
+  Consequence, kept faithful rather than hidden: a maximal response across all
+  eight objectives (every objective at its `SOV_MAX_SCORES` ceiling, `maxScore`
+  omitted throughout) scores **100.0756%, not 100%**. An explicit
+  caller-supplied `maxScore` is honoured exactly as before for both roles — the
+  new defaulting only applies when it is omitted.
+
+`manifest.yaml` and `model.version` bumped in lockstep with a fifth identity
+`upgrades[]` entry — additive/corrective resource-shape changes only, no data
+transformation. New suite file `arckit_workspace_csf_test.ts` (26 tests) plus
+corrections to three stale assertions in `arckit_workspace_nl_test.ts` that
+hard-coded the old wrong weights (a local `SOV_WEIGHTS` duplicate, one
+sanity-test title, one hard-coded `15` in the fractional-contribution test).
+Suite is now 274, all green; `deno lint`/`deno fmt --check` clean.
+
 ## 2026.08.07.1
 
 Release of the NL sovereign-cloud overlay, with two defects closed that the
