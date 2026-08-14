@@ -719,14 +719,18 @@ const SOV_IDS = [
   "SOV-8",
 ] as const;
 
+// Corrected per the csf_test.ts port (2026.08.14.1): the live SOV_WEIGHTS
+// table had SOV-1/SOV-5/SOV-7 wrong (15/20/10) while still summing to 100 —
+// see arckit_workspace_csf_test.ts for the individually-asserted ground
+// truth (EU CSF v1.2.1 Implementation guidance p.7) that caught it.
 const SOV_WEIGHTS: Record<string, number> = {
-  "SOV-1": 15,
+  "SOV-1": 20,
   "SOV-2": 10,
   "SOV-3": 10,
   "SOV-4": 15,
-  "SOV-5": 20,
+  "SOV-5": 10,
   "SOV-6": 15,
-  "SOV-7": 10,
+  "SOV-7": 15,
   "SOV-8": 5,
 };
 
@@ -749,7 +753,7 @@ function asScore(x: unknown): SovereigntyScoreResult {
   return x as SovereigntyScoreResult;
 }
 
-Deno.test("sanity: the test fixture's SOV_WEIGHTS table sums to exactly 100 (EU CSF v1.2.1: 15/10/10/15/20/15/10/5)", () => {
+Deno.test("sanity: the test fixture's SOV_WEIGHTS table sums to exactly 100 (EU CSF v1.2.1: 20/10/10/15/10/15/15/5)", () => {
   assertEquals(Object.values(SOV_WEIGHTS).reduce((a, b) => a + b, 0), 100);
 });
 
@@ -793,10 +797,10 @@ Deno.test("computeSovereigntyScore: per-objective contribution equals round(scor
   const r = asScore(computeSovereigntyScore({ objectives }));
   const entry = r.breakdown.find((b) => b.id === "SOV-1");
   assert(entry, "breakdown missing SOV-1");
-  assertAlmostEquals(entry!.weight, 15, 0.01);
+  assertAlmostEquals(entry!.weight, 20, 0.01);
   assertAlmostEquals(
     entry!.contribution,
-    Math.round((7 / 9) * 15 * 100) / 100,
+    Math.round((7 / 9) * 20 * 100) / 100,
     0.01,
   );
 });

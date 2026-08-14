@@ -445,20 +445,56 @@ export const CLASSIFICATION_LADDERS: Record<
 
 // ---------- EU Cloud Sovereignty Framework v1.2.1 (Sovereignty Objectives) --
 
-/** SOV-1..SOV-8 weights (EU Cloud Sovereignty Framework v1.2.1) — sum to 100. */
+/**
+ * SOV-1..SOV-8 weights (EU Cloud Sovereignty Framework v1.2.1 Implementation
+ * guidance p.7; calculator cells D4/D45/D76/D102/D133/D169/D195/D231) — sum
+ * to 100.
+ */
 const SOV_WEIGHTS: Record<string, number> = {
-  "SOV-1": 15,
+  "SOV-1": 20,
   "SOV-2": 10,
   "SOV-3": 10,
   "SOV-4": 15,
-  "SOV-5": 20,
+  "SOV-5": 10,
   "SOV-6": 15,
-  "SOV-7": 10,
+  "SOV-7": 15,
   "SOV-8": 5,
 };
 
 const SOV_IDS = Object.keys(SOV_WEIGHTS);
 const SOV_ID_SET = new Set(SOV_IDS);
+
+/**
+ * Per-objective ACTUAL achievable ceiling for `score` (EU Cloud Sovereignty
+ * Framework v1.2.1 calculator, "Max.Score(SOVn)"). Each objective's criteria
+ * are DESIGNED to normalise to a nominal 1000 (SOV-1 8x125, SOV-2 6x167,
+ * SOV-3 5x200, SOV-4 6x167, SOV-5 7x143, SOV-6 5x200, SOV-7 7x143, SOV-8
+ * 4x250 = 48 criteria total) — but 1000 is design intent, not arithmetic:
+ * the workbook rounds each criterion's answer value to 2dp, so the actual
+ * achievable total per objective differs slightly from 1000. Used by
+ * computeSovereigntyScore as the default GUARD ceiling for `score` when the
+ * caller omits `maxScore` — see that function's doc comment for why this is
+ * deliberately NOT also the default contribution divisor.
+ */
+export const SOV_MAX_SCORES: Record<string, number> = {
+  "SOV-1": 1000.03,
+  "SOV-2": 1002,
+  "SOV-3": 1000,
+  "SOV-4": 1002,
+  "SOV-5": 1001,
+  "SOV-6": 1000,
+  "SOV-7": 1001,
+  "SOV-8": 1000,
+};
+
+/**
+ * Flat nominal divisor the EU CSF v1.2.1 calculator's own formula uses for
+ * EVERY objective's percentage contribution (`Score(SOVn) / 1000 * weight`),
+ * regardless of that objective's actual achievable ceiling (SOV_MAX_SCORES
+ * above). Not exported: an internal implementation detail of
+ * computeSovereigntyScore's default divisor, not a value callers set.
+ */
+const SOV_NOMINAL_MAX_SCORE = 1000;
 
 /** SEAL0..SEAL4 rank, for comparing an achieved SEAL against a caller-supplied floor. */
 const SEAL_RANK: Record<string, number> = {
@@ -470,8 +506,25 @@ const SEAL_RANK: Record<string, number> = {
 };
 
 /**
- * SEAL0..SEAL4 English + official Dutch labels (NDS Cloudprogramma notitie,
- * "Verkenning Overheidsbrede Soevereine Clouddiensten", 11 juni 2026).
+ * SEAL0..SEAL4 English (EU Cloud Sovereignty Framework v1.2.1 Implementation
+ * guidance p.2-3, p.10) + official Dutch labels (NDS Cloudprogramma notitie,
+ * "Verkenning Overheidsbrede Soevereine Clouddiensten", 11 juni 2026, Tabel 1
+ * p.8).
+ *
+ * SEAL3's English and Dutch names are a DELIBERATE, VERIFIED divergence, not
+ * a bug: the Commission names SEAL3 "Technological sovereignty" (guidance
+ * p.2-3, p.10), while NDS's Dutch table renders it "Digitale veerkracht"
+ * ("digital resilience") — a faithful verbatim quotation of the Dutch
+ * source, which does NOT translate the Commission's English name. Do not
+ * "fix" the Dutch to match the English, or vice versa; anyone reconciling a
+ * Dutch assessment against an EU one needs to know these are the same rung
+ * under two different names. The same divergence pattern recurs in the
+ * level *descriptions* (not carried in this lookup table today): NDS's
+ * Dutch reads "EU-wetgeving is van toepassing en afdwingbaar" ("EU law is
+ * applicable and enforceable") where the Commission's English reads "EU
+ * jurisdictions apply" — where this codebase carries English descriptions
+ * in future, prefer the Commission's English wording; where it carries
+ * Dutch, keep NDS's.
  */
 export const SEAL_LABELS: Record<string, { en: string; nl: string }> = {
   "SEAL0": { en: "No sovereignty", nl: "Geen soevereiniteit" },
@@ -480,7 +533,7 @@ export const SEAL_LABELS: Record<string, { en: string; nl: string }> = {
     nl: "Jurisdictionele soevereiniteit",
   },
   "SEAL2": { en: "Data sovereignty", nl: "Data-soevereiniteit" },
-  "SEAL3": { en: "Digital resilience", nl: "Digitale veerkracht" },
+  "SEAL3": { en: "Technological sovereignty", nl: "Digitale veerkracht" },
   "SEAL4": {
     en: "Full digital sovereignty",
     nl: "Volledige digitale soevereiniteit",
@@ -722,6 +775,13 @@ const SovereigntyAssessmentSchema = z.object({
   floorsEvaluated: z.boolean(),
   floorsPassed: z.boolean(),
   objectivesBelowFloor: z.array(z.string()),
+  // The framework's actual rejection gate (guidance p.9): the LOWEST SEAL
+  // achieved across all eight objectives, never an average or a mode.
+  // undefined — NOT fabricated as SEAL0 — when any objective has no
+  // recorded SEAL.
+  overallSeal: z.string().optional(),
+  // Every objective id whose SEAL equals overallSeal (a tie is possible).
+  overallSealGovernedBy: z.array(z.string()),
   assessedAt: z.string(),
 });
 
@@ -977,25 +1037,65 @@ export function proposeClassification(text: string, ladder: string = "uae"): {
 
 /**
  * EU Cloud Sovereignty Framework v1.2.1: score eight weighted Sovereignty
- * Objectives (SOV-1..SOV-8, weights 15/10/10/15/20/15/10/5, summing to 100).
- * Score = sum((score/maxScore) * weight), rounded to 2dp. FAIL-CLOSED —
- * `objectives` must contain EXACTLY the eight known ids, each EXACTLY once:
- * rejects a missing objective, a DUPLICATE objective id (the array must not
- * name the same objective twice — a later duplicate silently overriding an
- * earlier one is a fail-open shape this function refuses), an UNRECOGNIZED
- * objective id (one outside SOV-1..SOV-8), a negative score, a score
- * exceeding its maxScore, or maxScore <= 0. Per-objective SEAL floors are
- * CALLER-SUPPLIED (never hardcoded — the framework states the tender
- * specification defines the minimum SEAL per objective); when supplied,
- * every objective whose achieved SEAL falls below its floor is named in
- * `objectivesBelowFloor`.
+ * Objectives (SOV-1..SOV-8, weights 20/10/10/15/10/15/15/5, summing to 100).
+ *
+ * `maxScore` is OPTIONAL per objective and plays TWO roles that are the SAME
+ * number only when the caller supplies it explicitly:
+ *
+ *  - GUARD ceiling: the highest `score` this function accepts for that
+ *    objective. Defaults to SOV_MAX_SCORES[id] (the objective's actual
+ *    achievable maximum per the calculator) when omitted.
+ *  - CONTRIBUTION DIVISOR: `contribution = round((score/divisor)*weight, 2)`.
+ *    Defaults to the flat nominal 1000 (SOV_NOMINAL_MAX_SCORE) when omitted
+ *    — the calculator's own formula divides every objective by the SAME
+ *    1000, never by that objective's true ceiling.
+ *
+ * A caller who omits `maxScore` and scores an objective at its true ceiling
+ * (e.g. SOV-2 at 1002) is therefore ACCEPTED (1002 <= SOV_MAX_SCORES["SOV-2"])
+ * but still divides by 1000, not 1002 — reproducing the calculator's own
+ * faithful behaviour that a maximal response across all eight objectives
+ * scores just OVER 100% (100.0756%), never capped at 100%. This is a
+ * documented property of the framework's formula, not a bug introduced
+ * here: the workbook rounds each criterion's answer value to 2dp, so the
+ * per-objective criteria total lands slightly above 1000 for five of the
+ * eight objectives, while the calculator's divisor stays a flat 1000 —
+ * reporting that faithfully beats forcing a tidy 100% ceiling. If the
+ * caller supplies `maxScore` explicitly, it is honoured for BOTH roles
+ * exactly as before FIX 4 — the defaulting above only applies when it is
+ * omitted.
+ *
+ * SEAL is NOT an input to this score, and never derives from it either:
+ * guidance p.9 — "The same answers are used to determine the SEAL of each
+ * row, with each answer defining the SEAL level of the question." Score and
+ * SEAL are two parallel readings of the same 48 criteria answers; treating
+ * one as computed FROM the other is the misreading this formula invites.
+ *
+ * FAIL-CLOSED — `objectives` must contain EXACTLY the eight known ids, each
+ * EXACTLY once: rejects a missing objective, a DUPLICATE objective id (the
+ * array must not name the same objective twice — a later duplicate silently
+ * overriding an earlier one is a fail-open shape this function refuses), an
+ * UNRECOGNIZED objective id (one outside SOV-1..SOV-8), a negative score, a
+ * score exceeding its (resolved) maxScore, or a resolved maxScore <= 0.
+ * Per-objective SEAL floors are CALLER-SUPPLIED (never hardcoded — the
+ * framework states the tender specification defines the minimum SEAL per
+ * objective); when supplied, every objective whose achieved SEAL falls
+ * below its floor is named in `objectivesBelowFloor`.
+ *
+ * `overallSeal` is the framework's ACTUAL rejection gate (guidance p.9:
+ * "The overall SEAL level is the lowest SEAL level achieved in any of the
+ * objectives" — calculator cell F2: `="SEAL-"&MIN(H5:H251)`) — a MINIMUM,
+ * never an average or a mode, across all eight objectives' achieved SEALs.
+ * `undefined` — NEVER fabricated as SEAL0 — when any objective has no
+ * recorded SEAL, since that would silently manufacture a gate failure.
+ * `overallSealGovernedBy` names every objective id whose SEAL equals that
+ * minimum (a tie is possible).
  */
 export function computeSovereigntyScore(input: {
   objectives: Array<
     {
       id: string;
       score: number;
-      maxScore: number;
+      maxScore?: number;
       seal?: string;
       evidence?: string;
     }
@@ -1015,6 +1115,8 @@ export function computeSovereigntyScore(input: {
   floorsEvaluated: boolean;
   floorsPassed: boolean;
   objectivesBelowFloor: string[];
+  overallSeal: string | undefined;
+  overallSealGovernedBy: string[];
 } {
   const seenIds = new Set<string>();
   for (const o of input.objectives) {
@@ -1044,19 +1146,22 @@ export function computeSovereigntyScore(input: {
         }`,
       );
     }
+    // Guard ceiling: caller-supplied maxScore, or the objective's actual
+    // achievable maximum — NOT the flat nominal 1000 (see doc comment).
+    const guardMax = o.maxScore ?? SOV_MAX_SCORES[id];
     if (o.score < 0) {
       throw new Error(
         `computeSovereigntyScore: objective "${id}" has a negative score (${o.score})`,
       );
     }
-    if (o.maxScore <= 0) {
+    if (guardMax <= 0) {
       throw new Error(
-        `computeSovereigntyScore: objective "${id}" has maxScore <= 0 (${o.maxScore})`,
+        `computeSovereigntyScore: objective "${id}" has maxScore <= 0 (${guardMax})`,
       );
     }
-    if (o.score > o.maxScore) {
+    if (o.score > guardMax) {
       throw new Error(
-        `computeSovereigntyScore: objective "${id}" score (${o.score}) exceeds maxScore (${o.maxScore})`,
+        `computeSovereigntyScore: objective "${id}" score (${o.score}) exceeds maxScore (${guardMax})`,
       );
     }
     if (o.seal !== undefined && !(o.seal in SEAL_RANK)) {
@@ -1071,7 +1176,13 @@ export function computeSovereigntyScore(input: {
   const breakdown = SOV_IDS.map((id) => {
     const o = byId.get(id)!;
     const weight = SOV_WEIGHTS[id];
-    const contribution = Math.round((o.score / o.maxScore) * weight * 100) /
+    // Contribution divisor: caller-supplied maxScore when given (honoured
+    // exactly as before FIX 4), or else the flat nominal 1000 — NEVER
+    // SOV_MAX_SCORES[id] by default (that would force every maximal
+    // response to exactly 100%, which is not how the calculator's own
+    // formula behaves).
+    const divisor = o.maxScore ?? SOV_NOMINAL_MAX_SCORE;
+    const contribution = Math.round((o.score / divisor) * weight * 100) /
       100;
     return { id, weight, contribution, seal: o.seal, evidence: o.evidence };
   });
@@ -1097,12 +1208,31 @@ export function computeSovereigntyScore(input: {
     }
   }
 
+  // overallSeal: the framework's actual gate, a MINIMUM — never fabricated
+  // when any objective lacks a recorded SEAL.
+  let overallSeal: string | undefined;
+  let overallSealGovernedBy: string[] = [];
+  const allSealed = SOV_IDS.every((id) => byId.get(id)!.seal !== undefined);
+  if (allSealed) {
+    let minRank = Infinity;
+    for (const id of SOV_IDS) {
+      const rank = SEAL_RANK[byId.get(id)!.seal!];
+      if (rank < minRank) minRank = rank;
+    }
+    overallSeal = Object.keys(SEAL_RANK).find((s) => SEAL_RANK[s] === minRank);
+    overallSealGovernedBy = SOV_IDS.filter((id) =>
+      SEAL_RANK[byId.get(id)!.seal!] === minRank
+    );
+  }
+
   return {
     score,
     breakdown,
     floorsEvaluated,
     floorsPassed: !floorsEvaluated || objectivesBelowFloor.length === 0,
     objectivesBelowFloor,
+    overallSeal,
+    overallSealGovernedBy,
   };
 }
 
@@ -1513,7 +1643,7 @@ const TEMPLATES_DIR = "templates";
  */
 export const model = {
   type: "@magistr/arckit/workspace",
-  version: "2026.08.07.1",
+  version: "2026.08.14.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1541,6 +1671,13 @@ export const model = {
       toVersion: "2026.08.07.1",
       description:
         'Closes two defects found by the pre-publish adversarial review of 2026.08.06.1, which was never published (the registry went 2026.08.02.1 -> 2026.08.07.1 directly): computeSovereigntyScore now rejects a duplicate or unrecognized objective id, not only a missing one — the guard was one-sided, so a repeated SOV-1 silently changed the computed score; and MigrationSchema.ladder gains a "uae" default so a classificationMigration record written before the ladder field existed still parses (that resource is lifetime "infinite", so such records persist and can be restored). Defaulting a previously-required field only widens what parses — no data transformation needed.',
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.07.1",
+      toVersion: "2026.08.14.1",
+      description:
+        'Ports three verified upstream arc-kit defects in the EU Cloud Sovereignty Framework v1.2.1 implementation, found against the Commission\'s own Implementation guidance PDF and Annex calculator XLSX, plus one related backward-compatible widening: (1) SOV_WEIGHTS had three wrong values — SOV-1 15->20, SOV-5 20->10, SOV-7 10->15 — that happened to still sum to 100, which is exactly why this survived review; PREVIOUSLY-WRITTEN sovereigntyAssessment records were scored against the wrong weights and are NOT recomputed by this upgrade (that resource is lifetime "infinite" — re-run euSovereigntyScore for any assessment that still matters). (2) SEAL_LABELS.SEAL3.en corrected "Digital resilience" -> "Technological sovereignty" (guidance p.2-3, p.10); SEAL_LABELS.SEAL3.nl is UNCHANGED — "Digitale veerkracht" is a verified, deliberate divergence from the Commission\'s English name, quoted verbatim from the NDS Cloudprogramma notitie, not a bug. (3) computeSovereigntyScore now also returns overallSeal (the minimum SEAL across all eight objectives — the framework\'s actual rejection gate, guidance p.9 — undefined, never fabricated as SEAL0, when any objective lacks a recorded SEAL) and overallSealGovernedBy (which objective(s) achieve that minimum); SovereigntyAssessmentSchema gains both fields. (4) objectives[].maxScore is now optional, defaulting per-objective to the new exported SOV_MAX_SCORES (the calculator\'s actual per-objective ceiling, 1000-1002 depending on objective, due to workbook rounding) for the accept/reject guard, while the contribution divisor stays the calculator\'s flat nominal 1000 unless maxScore is supplied explicitly — reproducing the calculator\'s own documented behaviour that a maximal response scores 100.0756%, not 100%. All four changes are additive/corrective to the resource shape, not a data-shape break — identity migration; no data transformation needed.',
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1611,7 +1748,7 @@ export const model = {
     },
     sovereigntyAssessment: {
       description:
-        "EU Cloud Sovereignty Framework v1.2.1 score for one subject (service or provider): per-objective (SOV-1..SOV-8) weighted contribution, total score, and — when caller-supplied SEAL floors were given — pass/fail per objective. An assessment record, not a certification.",
+        "EU Cloud Sovereignty Framework v1.2.1 score for one subject (service or provider): per-objective (SOV-1..SOV-8) weighted contribution, total score, overallSeal (the framework's actual rejection gate — the minimum SEAL across all eight objectives, undefined if any objective has no recorded SEAL) with overallSealGovernedBy naming which objective(s) achieve it, and — when caller-supplied SEAL floors were given — pass/fail per objective. An assessment record, not a certification.",
       schema: SovereigntyAssessmentSchema,
       lifetime: "infinite",
       garbageCollection: 10,
@@ -2247,7 +2384,7 @@ export const model = {
 
     euSovereigntyScore: {
       description:
-        "EU Cloud Sovereignty Framework v1.2.1: score a subject (service or provider) against the eight weighted Sovereignty Objectives (SOV-1..SOV-8) and, when caller-supplied SEAL floors are given, report pass/fail per objective. Computes an assessment — it does not certify.",
+        "EU Cloud Sovereignty Framework v1.2.1: score a subject (service or provider) against the eight weighted Sovereignty Objectives (SOV-1..SOV-8), report overallSeal (the framework's actual rejection gate — the minimum SEAL across all eight objectives) and, when caller-supplied SEAL floors are given, pass/fail per objective. Computes an assessment — it does not certify.",
       arguments: z.object({
         subject: z.string().describe(
           "The service or provider being assessed",
@@ -2260,8 +2397,8 @@ export const model = {
             "Sovereignty Objective id — SOV-1..SOV-8 (EU Cloud Sovereignty Framework v1.2.1), any order",
           ),
           score: z.number().describe("Achieved score for this objective"),
-          maxScore: z.number().describe(
-            "Maximum possible score for this objective",
+          maxScore: z.number().optional().describe(
+            "Maximum possible score for this objective — defaults per-objective to SOV_MAX_SCORES[id] (the EU CSF v1.2.1 calculator's actual achievable ceiling, e.g. 1002 for SOV-2) when omitted. The contribution divisor is a separate concern: it stays the calculator's flat nominal 1000 unless this is supplied explicitly, so a maximal response with maxScore omitted throughout can score just over 100% (100.0756%) — faithful to the calculator, not capped",
           ),
           seal: z.string().optional().describe(
             "Achieved SEAL level for this objective (SEAL0..SEAL4), if assessed",
