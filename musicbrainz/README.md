@@ -31,7 +31,7 @@ hard ceiling against a misbehaving endpoint that never returns a short page).
 
 ```yaml
 type: "@magistr/musicbrainz"
-typeVersion: "2026.08.07.1"
+typeVersion: "2026.08.07.2"
 name: musicbrainz
 globalArguments:
   userAgent: "MyApp/1.0.0 (contact@example.com)"
@@ -49,27 +49,27 @@ A literal cell is the exact, fixed name that method always writes; a
 `<placeholder>` cell is a template the method fills in per call (usually from an
 MBID argument).
 
-| Method                      | Purpose                                                                                                                       | Writes instance                                                |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `search-artist`             | Search artists by name or Lucene query                                                                                        | `search-artist` (plus `search`, deprecated — see below)        |
-| `search-artists-batch`      | Search MANY artist queries in ONE invocation — the fan-out-safe alternative to calling `search-artist` once per artist        | `artist-search-batch`                                          |
-| `search-release-group`      | Search release groups (albums/EPs/singles)                                                                                    | `search-release-group`                                         |
-| `search-release`            | Search releases                                                                                                               | `search-release`                                               |
-| `search-recording`          | Search recordings (tracks)                                                                                                    | `search-recording`                                             |
-| `search-label`              | Search record labels                                                                                                          | `search-label`                                                 |
-| `search`                    | Generic search over any entity type                                                                                           | `<entity>-search`                                              |
-| `lookup-artist`             | Look up an artist by MBID (with optional `inc` includes)                                                                      | `artist-<id>`                                                  |
-| `lookup-release-group`      | Look up a release group by MBID                                                                                               | `rg-<id>`                                                      |
-| `lookup-release`            | Look up a release by MBID                                                                                                     | `release-<id>`                                                 |
-| `lookup-recording`          | Look up a recording by MBID                                                                                                   | `recording-<id>`                                               |
-| `lookup-label`              | Look up a label by MBID                                                                                                       | `label-<id>`                                                   |
-| `browse-release-groups`     | Browse release groups by artist MBID                                                                                          | `rg-by-artist-<mbid>`                                          |
-| `browse-releases`           | Browse releases by artist, label, or release-group MBID                                                                       | `releases-by-<entity>-<id>`                                    |
-| `browse-recordings`         | Browse recordings by artist or release MBID                                                                                   | `recordings-by-<entity>-<id>`                                  |
-| `seed-from-bandcamp`        | Generate a MusicBrainz seed URL from one Bandcamp album                                                                       | `seed-single`                                                  |
-| `find-missing`              | Compare a Bandcamp discography to MusicBrainz, list missing                                                                   | `<artistMbid>` (falls back to `unknown`)                       |
-| `seed-all-missing`          | Generate seed URLs for all missing releases of an artist                                                                      | `<artistMbid>` (falls back to `all-missing`)                   |
-| `sync-artist-discographies` | Cursored, resumable fan-out that caches each artist's full release-group discography — `artistMbids` is REQUIRED, no fallback | `rg-by-artist-<mbid>` (per artist) + `discography-sync-cursor` |
+| Method                      | Purpose                                                                                                                       | Writes instance                                                                                                                                                        |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `search-artist`             | Search artists by name or Lucene query                                                                                        | `search-artist` (plus `search`, deprecated — see below)                                                                                                                |
+| `search-artists-batch`      | Search MANY artist queries in ONE invocation — the fan-out-safe alternative to calling `search-artist` once per artist        | `artist-search-batch`                                                                                                                                                  |
+| `search-release-group`      | Search release groups (albums/EPs/singles)                                                                                    | `search-release-group`                                                                                                                                                 |
+| `search-release`            | Search releases                                                                                                               | `search-release`                                                                                                                                                       |
+| `search-recording`          | Search recordings (tracks)                                                                                                    | `search-recording`                                                                                                                                                     |
+| `search-label`              | Search record labels                                                                                                          | `search-label`                                                                                                                                                         |
+| `search`                    | Generic search over any entity type                                                                                           | `<entity>-search`                                                                                                                                                      |
+| `lookup-artist`             | Look up an artist by MBID (with optional `inc` includes)                                                                      | `artist-<id>`                                                                                                                                                          |
+| `lookup-release-group`      | Look up a release group by MBID                                                                                               | `rg-<id>`                                                                                                                                                              |
+| `lookup-release`            | Look up a release by MBID                                                                                                     | `release-<id>`                                                                                                                                                         |
+| `lookup-recording`          | Look up a recording by MBID                                                                                                   | `recording-<id>`                                                                                                                                                       |
+| `lookup-label`              | Look up a label by MBID                                                                                                       | `label-<id>`                                                                                                                                                           |
+| `browse-release-groups`     | Browse release groups by artist MBID                                                                                          | `rg-by-artist-<mbid>`                                                                                                                                                  |
+| `browse-releases`           | Browse releases by artist, label, or release-group MBID                                                                       | `releases-by-<entity>-<id>`                                                                                                                                            |
+| `browse-recordings`         | Browse recordings by artist or release MBID                                                                                   | `recordings-by-<entity>-<id>`                                                                                                                                          |
+| `seed-from-bandcamp`        | Generate a MusicBrainz seed URL from one Bandcamp album                                                                       | `seed-single`                                                                                                                                                          |
+| `find-missing`              | Compare a Bandcamp discography to MusicBrainz, list missing                                                                   | `find-missing-<artistMbid>` (unresolved MBID: falls back to a `bc-`-namespaced Bandcamp-URL-derived instance, e.g. `find-missing-bc-obscurealpha` — see below)         |
+| `seed-all-missing`          | Generate seed URLs for all missing releases of an artist                                                                      | `seed-all-missing-<artistMbid>` (unresolved MBID: falls back to a `bc-`-namespaced Bandcamp-URL-derived instance, e.g. `seed-all-missing-bc-obscurealpha` — see below) |
+| `sync-artist-discographies` | Cursored, resumable fan-out that caches each artist's full release-group discography — `artistMbids` is REQUIRED, no fallback | `rg-by-artist-<mbid>` (per artist) + `discography-sync-cursor`                                                                                                         |
 
 ## Usage
 
@@ -224,16 +224,185 @@ swamp data query 'modelName == "musicbrainz" && name == "search" && isLatest' \
   --select 'attributes' --json
 ```
 
-Tracked follow-up: a second, unrelated instance collision between `find-missing`
-(spec `missingReleases`) and `seed-all-missing` (spec `seedUrls`), both keyed on
-`artistMbid`, is OUT OF SCOPE for this fix and tracked separately as
-`musicbrainz-missing-seed-instance-collision`.
-
 The three-command sequence above is the portable form this package ships. In the
 homelab repo the whole artist-map -> sync -> want-derivation sequence is wired
 as one workflow — `swamp workflow run music-wanted` — which carries the artist
 list between model instances for you and gates each hand-off with an assert.
 That workflow lives in the private homelab repo, not in this package.
+
+### Breaking: `find-missing` / `seed-all-missing` instance names changed
+
+`find-missing` (spec `missingReleases`) and `seed-all-missing` (spec `seedUrls`)
+used to both write the BARE `artistMbid` as their instance name — `<artistMbid>`
+(falling back to `unknown` / `all-missing`) — so one artist run through both
+methods silently destroyed whichever wrote second: `readResource(name)` resolves
+on the instance name alone. Each method now writes its own namespaced instance,
+extending the same rule the `search` family uses above:
+
+```
+# before
+data.latest("musicbrainz", "<artistMbid>").attributes.missing        # find-missing
+data.latest("musicbrainz", "<artistMbid>").attributes.releases       # seed-all-missing
+
+# after
+data.latest("musicbrainz", "find-missing-<artistMbid>").attributes.missing
+data.latest("musicbrainz", "seed-all-missing-<artistMbid>").attributes.releases
+```
+
+The fallback tokens move too, but are NOT the fixed `unknown` / `all-missing`
+constants they used to be. When `artistMbid` cannot be auto-resolved, the
+instance name is derived from the (required) `bandcampUrl` argument instead —
+`find-missing-bc-obscurealpha` for `https://obscurealpha.bandcamp.com`, not a
+value shared by every unresolved artist. The `bc-` marker gives this suffix its
+own namespace: a MusicBrainz-issued MBID is a UUID and can never start with
+`bc-`, so a Bandcamp subdomain that happens to be spelled like a UUID — or like
+the literal string `unknown` — can never collide with that MBID's genuinely
+resolved row. That holds for every real MBID; it is NOT enforced by this model
+for `artistMbid` itself, which accepts any string — a hand-passed `artistMbid`
+that itself starts with `bc-` (e.g. `bc-obscurealpha`) still collides with the
+URL-derived fallback for the matching subdomain. This is a known, accepted
+residual, not a silent gap: it is pinned by GUARD J4's reverse-direction test in
+`musicbrainz_property_test.ts` and reachable only through an operator's own
+`artistMbid` argument (MusicBrainz-returned MBIDs are always real UUIDs). This
+is itself a fix, not just a rename: a single shared fallback would have
+reintroduced this same collision one axis over, since two different artists that
+both fail to resolve an MBID are common for a tool whose job is finding artists
+MISSING from MusicBrainz — "unresolved" is the modal case, not an edge case. The
+derivation prefers the artist's Bandcamp subdomain and, when several artists'
+pages share ONE subdomain (a label or compilation account), also folds in the
+URL's path — `https://label.bandcamp.com/album/roster-a-lp` becomes
+`seed-all-missing-bc-label-album-roster-a-lp`, distinct from `.../roster-b-lp`'s
+`seed-all-missing-bc-label-album-roster-b-lp` — stated honestly, two unresolved
+artists that share both the subdomain AND the path still collide, since neither
+`bandcampUrl` nor `artistMbid` gives the model any further signal to tell them
+apart at that point. A slug over 80 characters is truncated to a deterministic
+`<71 chars>-<8-hex-char digest>` form (e.g.
+`.../the-complete-remastered-recordings-1972-1985-deluxe-vol-live-321-extra`
+becomes
+`find-missing-bc-somelabel-album-the-complete-remastered-recordings-1972-1985-deluxe-vol-315edcd6`)
+instead of silently colliding with another long slug sharing the same visible
+prefix, so long label/album URLs still get distinct, stable names — the digest
+is collision-resistant against ACCIDENT (~2^-32 per candidate pair), not against
+a caller who controls both sides of the comparison. Pass `artistMbid` explicitly
+once an artist is added to MusicBrainz to move its rows onto the stable
+MBID-keyed instance instead of the URL-keyed one. Both methods also
+`console.error` at the resolution boundary (leading with the instance about to
+be written) whenever the auto-resolve misses, so an unresolved artist is
+diagnosable in the log rather than silently invisible — the log never echoes
+`bandcampUrl` verbatim (only its hostname), so any userinfo embedded in a
+caller-supplied URL never reaches the log.
+
+Both methods send `artistMbid` to MusicBrainz before writing anything —
+`mbFetch` throws on any non-ok response, verified live twice against the real
+API — so no crafted MBID can place a row at another method's instance name; that
+gate is external, not a guarantee this model makes for its other free-string
+instance sites. `bandcampInstanceName`'s `bandcampUrl` parameter is now
+REQUIRED: the two-argument call shape that made it optional had no real caller
+and kept the original shared-fallback defect reachable behind a supported
+signature. Its unrecognized-method guard also now uses `Object.hasOwn` instead
+of a truthiness check — the truthiness check was satisfied by any inherited
+`Object.prototype` member, so `bandcampInstanceName("toString", "abc")` used to
+return a stringified native-code function instead of throwing (8 of 12 probed
+`Object.prototype` keys bypassed the guard this way). `bandcampInstanceName` and
+`BANDCAMP_INSTANCE_PREFIXES` are both exported now too (unlike the sibling
+`SEARCH_INSTANCE_NAMES`, which stays module-private), so the test suite's
+disjointness checks read the model's own identity rule at runtime instead of a
+hand-copied duplicate of it.
+
+Detect a row still sitting at the OLD, pre-upgrade instance name — replace
+`<instance>` with this model's actual instance name (NOT the literal string
+"musicbrainz" unless that really is what you named it; an empty result here can
+mean either "fully migrated" or "wrong instance name", so confirm with
+`swamp data query 'modelName == "<instance>" && isLatest' --select 'name'` that
+rows exist at all before trusting an empty answer):
+
+```
+swamp data query 'modelName == "<instance>" && (specName == "missingReleases" || specName == "seedUrls") && name != "seed-single" && !name.startsWith("find-missing-") && !name.startsWith("seed-all-missing-") && isLatest' --select '{"name": name, "spec": specName, "url": attributes.bandcampUrl}' --json
+```
+
+Every row this query returns is a pre-upgrade orphan; empty output means there
+are none — the predicate is self-evaluating, no eyeballing required. The `spec`
+field tells you which method to re-run and which read to repoint:
+`missingReleases` -> re-run `find-missing` (repoint `.missing`), `seedUrls` ->
+re-run `seed-all-missing` (repoint `.releases`). Projecting `spec` matters
+because a pre-upgrade name is a bare MBID and looks identical for both specs —
+in the exact collision this fix closes, the SAME bare MBID can appear twice,
+once per spec, and only the `spec` field tells them apart. The projected `url`
+is the exact `bandcampUrl` to re-run that method with — it is a REQUIRED field
+on both `missingReleases` and `seedUrls`, so it is always present on every
+returned row, and without it the query's own remediation advice ("re-run
+`find-missing`") is not actually executable from the output: `bandcampUrl` is a
+required argument and an MBID alone will not do. This matters even more for a
+row already at the NEW naming scheme's fallback instance
+(`find-missing-bc-<slug>`), where `name` alone identifies no artist at all
+(`{"name": "find-missing-bc-unknown", ...}` names nothing) — `url` is what makes
+that row actionable too; see the query below for those. The
+`name != "seed-single"` clause is not cosmetic: `seed-from-bandcamp` also writes
+spec `seedUrls`, at its own fixed, unrelated, CORRECTLY-named instance
+`seed-single` — without the exclusion, an operator who has ever run
+`seed-from-bandcamp` would be told that healthy row needs migrating too.
+
+The old instance does not error and does not go empty on upgrade — it FREEZES.
+Nothing in this model warns or throws when `find-missing`/`seed-all-missing`
+stop writing the bare `artistMbid`, so
+`data.latest("musicbrainz",
+"<artistMbid>")` keeps RESOLVING forever, returning
+whichever payload it held right before this version — valid-looking, silently
+stale data, strictly harder to notice than a `null`. Remediation: the new
+instance name holds NOTHING until the method is re-run against that artist, so a
+repointed read returns `null` rather than frozen-but-plausible data until then;
+the old row is PERMANENT (it cannot be deleted — `swamp data delete` resurrects
+rows from the datastore, and `model delete --force` on this model UUID would
+also destroy the unrelated `rg-by-artist-*` cache and the discography-sync
+cursor), so every reader must be actively repointed rather than left to expire
+on its own.
+
+Passing an artist through `find-missing`/`seed-all-missing` a second time, AFTER
+it has been added to MusicBrainz, creates a second kind of orphan beyond the
+pre-upgrade one described above: the earlier URL-keyed row
+(`find-missing-bc-<slug>` / `seed-all-missing-bc-<slug>`) freezes at its last
+unresolved payload and is never written again once the auto-resolve starts
+succeeding and rows move to the MBID-keyed instance — permanent, for the same
+reason the pre-upgrade rows are (`swamp data delete` resurrects rows from the
+datastore, Lab #1440). It is NOT flagged by the detection query above: a
+`find-missing-bc-<slug>` name starts with `find-missing-`, so the query's own
+`!name.startsWith("find-missing-")` predicate classifies it as healthy. This is
+the same READ consequence as the pre-upgrade orphan above, not just the storage
+growth: any `data.latest("<instance>", "find-missing-bc-<slug>")` (or the
+`seed-all-missing-` equivalent) read keeps resolving to that frozen payload
+rather than going `null` once the artist's MBID has since resolved, so it goes
+silently stale exactly the same way the pre-upgrade row does — repoint the read
+to `find-missing-<artistMbid>` / `seed-all-missing-<artistMbid>` once the artist
+resolves; the `console.error` above no longer firing for that artist on a later
+run is the signal the move has happened. This class is more likely to bite in
+practice than the pre-upgrade one, too: it is created by ordinary successful
+use, on an ongoing basis, rather than by a one-time upgrade, and this document
+actively points operators at URL-keyed instances to read from in the first place
+— the "Writes instance" column above and the model's own `console.error` both
+name `find-missing-bc-obscurealpha`-shaped instances as the thing being written.
+An orphan per resolved artist is strictly better than the pre-fix shared row
+that silently destroyed other artists' data, but it is an unbounded, undeletable
+growth term worth knowing about. To list rows still at a `bc-`-namespaced
+fallback instance — this returns every such row, both ones still genuinely
+unresolved and ones already superseded by an MBID-keyed row for the same artist;
+a row is superseded if the same `artist` also appears under a
+`find-missing-<mbid>` / `seed-all-missing-<mbid>` name, which this companion
+query lists for cross-reference:
+
+```
+swamp data query 'modelName == "<instance>" && (specName == "missingReleases" || specName == "seedUrls") && (name.startsWith("find-missing-bc-") || name.startsWith("seed-all-missing-bc-")) && isLatest' --select '{"name": name, "artist": attributes.artist, "url": attributes.bandcampUrl}' --json
+
+# companion — the MBID-keyed rows to cross-reference the above against
+swamp data query 'modelName == "<instance>" && (specName == "missingReleases" || specName == "seedUrls") && (name.startsWith("find-missing-") || name.startsWith("seed-all-missing-")) && !name.contains("-bc-") && isLatest' --select '{"name": name, "artist": attributes.artist}' --json
+```
+
+No alias is shipped for either instance, unlike the `search` migration above —
+declined, not impossible: (a) the one live pre-upgrade row (`missingReleases` at
+a bare-MBID instance) has no reader anywhere in this package or the homelab
+repo's workflows/models, so there is nothing to bridge; (b) an alias would keep
+`find-missing` writing an un-namespaced, colliding-by-construction instance name
+for the whole deprecation window — the exact property this change exists to
+remove.
 
 ## License
 

@@ -33,11 +33,19 @@
  *      an always-full-page stub and asserting the walk stops after exactly
  *      2 pages.
  */
-import { assertEquals, assertNotEquals } from "jsr:@std/assert@1";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertThrows,
+} from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
 import { FakeTime } from "jsr:@std/testing@1/time";
 import {
   advanceSyncCursor,
+  BANDCAMP_INSTANCE_PREFIXES,
+  type BandcampCompareMethod,
+  bandcampInstanceName,
   classifyDiscographyCache,
   dedupeMbids,
   dedupeQueries,
@@ -110,6 +118,11 @@ function makeCtx() {
         return Promise.resolve({ spec, name });
       },
       logger: { info: () => {}, warning: () => {} },
+      // Fail-closed write-budget funnel (musicbrainz-missing-seed-instance-
+      // collision, round 4) — see WRITE_BUDGET/run() below. The model itself
+      // never reads this property; it's exposed purely so run() can assert
+      // on it.
+      __written: written,
     },
   };
 }
@@ -119,9 +132,159 @@ type MethodMap = Record<string, {
   execute: (a: unknown, c: unknown) => Promise<unknown>;
 }>;
 
-function run(name: string, args: Record<string, unknown>, ctx: unknown) {
+// Per-method write budget for every method with a call-shape-independent
+// write count — the funnel `run()` enforces below. `sync-artist-discographies`
+// is a genuine fan-out (0..batchSize per-artist writes plus one cursor-state
+// write) and is deliberately left OUT rather than pinned to a number that
+// would be wrong on the very next fixture; this file only tests its pure
+// helpers directly, never through run().
+const WRITE_BUDGET: Record<string, number> = {
+  "search-artist": 2, // canonical + time-bounded deprecation alias
+  "search-artists-batch": 1,
+  "search-release-group": 1,
+  "search-release": 1,
+  "search-recording": 1,
+  "search-label": 1,
+  "lookup-artist": 1,
+  "lookup-release-group": 1,
+  "lookup-release": 1,
+  "lookup-recording": 1,
+  "lookup-label": 1,
+  "browse-release-groups": 1,
+  "browse-releases": 1,
+  "browse-recordings": 1,
+  "seed-from-bandcamp": 1,
+  "find-missing": 1,
+  "seed-all-missing": 1,
+  search: 1,
+};
+
+// Round 5 (musicbrainz-missing-seed-instance-collision review): a
+// call-shape-independent COUNT cannot express `sync-artist-discographies`'
+// contract — it is a genuine fan-out (0..batchSize per-artist writes) — so
+// leaving it out of WRITE_BUDGET entirely left it completely unchecked; a
+// surplus write gated on any state the fixtures don't drive (e.g. the
+// `truncated` page-ceiling flag) passed 265/0. Its writes DO have a fixed
+// SHAPE that holds regardless of call shape or exit path, though: every
+// `writeResource` it makes is either spec "browse" at `rg-by-artist-<mbid>`
+// (the `writeResource("browse", \`rg-by-artist-${mbid}\`, ...)` call inside
+// sync-artist-discographies, once per processed artist) or spec
+// "discographySyncState" at "discography-sync-cursor" (that same method's
+// `writeResource("discographySyncState", DISCOGRAPHY_SYNC_CURSOR_INSTANCE,
+// ...)` call, written durably in its own `finally` even on a mid-batch
+// throw). `run()`
+// below checks every row in the delta window against this predicate in
+// place of a count for any method listed here; this file only tests
+// sync-artist-discographies' pure helpers directly, never through run(), but
+// the table is kept identical across all five test files for one shared
+// source of truth to read.
+const WRITE_SHAPE: Record<
+  string,
+  (w: { spec: string; name: string }) => boolean
+> = {
+  "sync-artist-discographies": (w) =>
+    (w.spec === "browse" && w.name.startsWith("rg-by-artist-")) ||
+    (w.spec === "discographySyncState" &&
+      w.name === "discography-sync-cursor"),
+};
+
+// Round 6 (musicbrainz-missing-seed-instance-collision review): the finally
+// below's assertEquals/assertEquals-on-bad-rows can be swallowed at any
+// `assertRejects(fn)` or `assertRejects(fn, Error)` call site that doesn't
+// pin a message — JS replaces an in-flight rejection with whatever a
+// `finally` throws, so the caller's bare assertRejects then accepts the
+// substituted AssertionError as the expected rejection and the test stays
+// green. Recording every violation OUT OF BAND, in addition to (not instead
+// of) the existing assertEquals, means it cannot be absorbed that way: the
+// FUNNEL: the unload handler below reads this array after every run() in the
+// file has executed and fails the file if anything landed in it, regardless
+// of what any individual assertRejects call swallowed.
+const FUNNEL_VIOLATIONS: string[] = [];
+
+// The funnel: every one of this file's `run()` calls passes through here, so
+// arming the check ONCE closes the class for every fixture — present and
+// future, including every fast-check-generated iteration — rather than
+// relying on each new test to remember a per-test pin. Fail-CLOSED on two
+// axes:
+//  1. A method with NEITHER a WRITE_BUDGET NOR a WRITE_SHAPE entry throws
+//     immediately, rather than passing through unchecked the way
+//     `sync-artist-discographies` used to — so the next method added to the
+//     model can't silently land outside the funnel either.
+//  2. A budgeted/shaped method invoked against a ctx that doesn't expose
+//     `__written` throws rather than silently skipping the check, so the
+//     LB4 FIX test's hand-rolled ctx below has to opt in.
+// The check runs in a `finally`, so a method that throws is still checked —
+// a write made before rethrowing is exactly as visible as one on the happy
+// path, not a silent escape. For a WRITE_BUDGET method the expected count on
+// a throwing exit is 0 (none of the 18 budgeted methods deliberately persist
+// before rethrowing today — only `sync-artist-discographies` does, and it is
+// shape-checked, not count-checked, precisely because its throw-path write
+// count varies with how much of the batch completed before the throw).
+async function run(name: string, args: Record<string, unknown>, ctx: unknown) {
   const method = (model.methods as MethodMap)[name];
-  return method.execute(method.arguments.parse(args), ctx);
+  const budget = WRITE_BUDGET[name];
+  const shape = WRITE_SHAPE[name];
+  if (budget === undefined && shape === undefined) {
+    throw new Error(
+      `run("${name}", ...) has neither a WRITE_BUDGET nor a WRITE_SHAPE entry — every model method invoked through run() must be checked one way or the other, so an unbudgeted, unlisted method fails closed instead of passing through unchecked`,
+    );
+  }
+  const written =
+    (ctx as { __written?: Array<{ spec: string; name: string }> }).__written;
+  if (!Array.isArray(written)) {
+    throw new Error(
+      `run("${name}", ...) is ${
+        budget !== undefined
+          ? `budgeted at ${budget} write(s)`
+          : "shape-checked"
+      } but its ctx does not expose __written — every ctx passed to a checked method must come from a makeCtx()-style helper (or opt in explicitly) so the write invariant can be enforced`,
+    );
+  }
+  const before = written.length;
+  let threw = false;
+  try {
+    return await method.execute(method.arguments.parse(args), ctx);
+  } catch (e) {
+    threw = true;
+    throw e;
+  } finally {
+    const rows = written.slice(before);
+    if (shape !== undefined) {
+      const bad = rows.filter((w) => !shape(w));
+      if (bad.length !== 0) {
+        FUNNEL_VIOLATIONS.push(
+          `${name} wrote ${bad.length} resource(s) outside its declared WRITE_SHAPE: ${
+            JSON.stringify(bad.map((w) => `${w.spec}:${w.name}`))
+          }`,
+        );
+      }
+      assertEquals(
+        bad.length,
+        0,
+        `${name} wrote ${bad.length} resource(s) outside its declared WRITE_SHAPE: ${
+          JSON.stringify(bad.map((w) => `${w.spec}:${w.name}`))
+        }`,
+      );
+    } else {
+      const expected = threw ? 0 : budget;
+      if (rows.length !== expected) {
+        FUNNEL_VIOLATIONS.push(
+          `${name} count ${rows.length} != ${expected}: ${
+            JSON.stringify(rows.map((w) => `${w.spec}:${w.name}`))
+          }`,
+        );
+      }
+      assertEquals(
+        rows.length,
+        expected,
+        `${name} must write exactly ${expected} resource(s) per${
+          threw ? " throwing" : ""
+        } execution, got ${rows.length}: ${
+          JSON.stringify(rows.map((w) => `${w.spec}:${w.name}`))
+        }`,
+      );
+    }
+  }
 }
 
 type Route = (req: Request) => Response | Promise<Response> | undefined;
@@ -646,6 +809,9 @@ Deno.test("LB4 FIX: globalArgs.maxPages=2 stops find-missing's pagination after 
       return Promise.resolve({ spec, name });
     },
     logger: { info: () => {}, warning: () => {} },
+    // See makeCtx() above — this is the one hand-rolled ctx in the file, so
+    // it must opt into the write-budget funnel explicitly or run() throws.
+    __written: written,
   };
   const offsetsSeen: string[] = [];
   const artistPageHtml = `<!doctype html><html><head></head><body>
@@ -1360,4 +1526,535 @@ Deno.test("fingerprintMbids: different for these specific example lists (a same-
   const c = ["aaaaaaaa-0000-4000-8000-000000000001"];
   assertNotEquals(fingerprintMbids(a), fingerprintMbids(b));
   assertNotEquals(fingerprintMbids(a), fingerprintMbids(c));
+});
+
+// ---------------------------------------------------------------------------
+// GUARDS E + F (musicbrainz-missing-seed-instance-collision) — disjointness
+// of the two Bandcamp-compare instance-name prefixes from every OTHER
+// instance name/prefix this model writes.
+//
+// Disjointness is a finite relation over FIXED tokens, not a property of an
+// arbitrary argument: `seed-${a}` equals the literal `seed-single` only when
+// a === "single", a value randomized `fc.string()` sampling will not
+// reliably draw. Guard E therefore replaces a fast-check-only disjointness
+// property with a DETERMINISTIC, EXHAUSTIVE check over the finite token set;
+// Guard F is the (small) fast-check property left in this area, and its job
+// is narrower: bind the pure factory to the registry, so Guard E's result
+// (computed purely from BANDCAMP_INSTANCE_PREFIXES) actually covers every
+// name the factory can produce. Neither alone earns "argument-complete";
+// their COMPOSITION does.
+//
+// Both guards read `BANDCAMP_INSTANCE_PREFIXES` from the model module at
+// runtime — imported above, never hardcoded here and never re-derived by
+// calling `bandcampInstanceName` (which would make Guard F self-referential
+// and worthless, and would leave Guard E blind to every registry mutation).
+//
+// The nine module literals and eight template prefixes below are a
+// hand-maintained table with NO assertion tying its length to
+// musicbrainz.ts — nothing here reddens if a 22nd writeResource site lands
+// carrying a brand-new literal or prefix. That residual is caught by the
+// coverage test's Guard D runtime sweep, but ONLY for write sites the
+// COLLISION_FIXTURES argument shapes actually reach — a conditional write on
+// an unreached branch (e.g. a back-compat alias gated on an omitted
+// argument) is covered by NEITHER mechanism. The COUNT_PIN assertion below
+// is a cheap structural forcing function — it does not prove the table's
+// CONTENTS are still correct, only that nobody added or removed an entry
+// without visiting this comment. Only the twelve-member `search` entity set
+// is derived LIVE off the model's own declared schema, exactly as
+// musicbrainz_coverage_test.ts's own SEARCH_ENTITIES derivation does, so a
+// 13th entity added to that enum is automatically covered with no edit
+// needed in this file.
+// ---------------------------------------------------------------------------
+
+/** The nine LITERAL (non-templated) instance names this model writes: the
+ * five SEARCH_INSTANCE_NAMES entries (search-artist, search-release-group,
+ * search-release, search-recording, search-label — one per typed search
+ * method), DEPRECATED_SEARCH_ALIAS_INSTANCE ("search", search-artist's own
+ * time-bounded back-compat alias), search-artists-batch's fixed
+ * "artist-search-batch", DISCOGRAPHY_SYNC_CURSOR_INSTANCE
+ * ("discography-sync-cursor"), and seed-from-bandcamp's fixed "seed-single".
+ * None of these constants is exported (deliberately, like their sibling
+ * SEARCH_INSTANCE_NAMES — see musicbrainz.ts's own comment), so this table
+ * is hand-maintained, same as the template prefixes below. */
+const MODULE_INSTANCE_LITERALS = [
+  "search-artist",
+  "search",
+  "artist-search-batch",
+  "search-release-group",
+  "search-release",
+  "search-recording",
+  "search-label",
+  "discography-sync-cursor",
+  "seed-single",
+];
+
+/** The eight DISTINCT template prefixes among the nine TEMPLATE writeResource
+ * sites (`rg-by-artist-` is shared by TWO write sites — browse-release-groups
+ * and sync-artist-discographies' per-artist discography cache — which is
+ * fine: they share one SPEC, `browse`, so the COLLISION INVARIANT in
+ * musicbrainz_coverage_test.ts does not flag it): `artist-` (lookup-artist),
+ * `rg-` (lookup-release-group), `release-` (lookup-release), `recording-`
+ * (lookup-recording), `label-` (lookup-label), `rg-by-artist-`
+ * (browse-release-groups + sync-artist-discographies), `releases-by-`
+ * (browse-releases), `recordings-by-` (browse-recordings). */
+const TEMPLATE_PREFIXES = [
+  "artist-",
+  "rg-",
+  "release-",
+  "recording-",
+  "label-",
+  "rg-by-artist-",
+  "releases-by-",
+  "recordings-by-",
+];
+
+/** The generic `search` method's entity enum, read LIVE off the model's own
+ * declared arguments schema rather than hardcoded — mirrors
+ * musicbrainz_coverage_test.ts's own SEARCH_ENTITIES derivation exactly
+ * (deliberately duplicated per this suite's per-file harness convention,
+ * rather than hoisted into a shared module). */
+type SearchEntityShape = {
+  arguments: { shape: { entity: { options: readonly string[] } } };
+};
+const SEARCH_ENTITIES =
+  (model.methods as unknown as Record<string, SearchEntityShape>).search
+    .arguments.shape.entity.options;
+
+// COUNT PIN — a cheap structural forcing function mirroring Guard E's own
+// `prefixes.length === 2` sanity assert below: it does not prove
+// MODULE_INSTANCE_LITERALS/TEMPLATE_PREFIXES are still CORRECT, only that
+// their combined length (9 + 8 = 17) has not silently drifted out of sync
+// with musicbrainz.ts without a human visiting this comment block.
+Deno.test("GUARD E (count pin): the hand-maintained MODULE_INSTANCE_LITERALS + TEMPLATE_PREFIXES tables total 17 entries", () => {
+  assertEquals(
+    MODULE_INSTANCE_LITERALS.length + TEMPLATE_PREFIXES.length,
+    17,
+    "a writeResource site was added or removed in musicbrainz.ts without updating MODULE_INSTANCE_LITERALS/TEMPLATE_PREFIXES above",
+  );
+});
+
+Deno.test("GUARD E: BANDCAMP_INSTANCE_PREFIXES is disjoint, deterministically and exhaustively, from every other instance name/prefix this model writes", () => {
+  const prefixes = Object.values(BANDCAMP_INSTANCE_PREFIXES);
+  assertEquals(
+    prefixes.length,
+    2,
+    "sanity: exactly two Bandcamp-compare methods share this registry",
+  );
+
+  for (const p of prefixes) {
+    for (const literal of MODULE_INSTANCE_LITERALS) {
+      assert(
+        literal !== p && !literal.startsWith(`${p}-`),
+        `prefix "${p}" collides with module literal instance "${literal}"`,
+      );
+    }
+    for (const t of TEMPLATE_PREFIXES) {
+      assert(
+        !`${p}-`.startsWith(t) && !t.startsWith(`${p}-`),
+        `prefix "${p}-" and template prefix "${t}" overlap: one is a prefix of the other, so a name from either namespace can land inside the other's`,
+      );
+    }
+    for (const entity of SEARCH_ENTITIES) {
+      const entityName = `${entity}-search`;
+      assert(
+        entityName !== p && !entityName.startsWith(`${p}-`),
+        `prefix "${p}" collides with generic-search instance "${entityName}"`,
+      );
+    }
+  }
+
+  const [a, b] = prefixes;
+  assert(
+    !`${a}-`.startsWith(`${b}-`) && !`${b}-`.startsWith(`${a}-`),
+    `the two Bandcamp-compare prefixes ("${a}", "${b}") must be mutually non-prefixing`,
+  );
+});
+
+// GUARD F: binds the PURE factory to the IMPORTED BANDCAMP_INSTANCE_PREFIXES
+// registry, so Guard E's disjointness result (computed purely from the
+// table) actually covers every name `bandcampInstanceName` can produce for
+// an arbitrary argument. Asserts INSIDE the property (via assertEquals)
+// rather than returning a bare boolean: fast-check can only print the
+// counterexample INPUT for a boolean-returning property (under mutation F1
+// the entire diagnostic used to be "Counterexample: [...] / Property failed
+// by returning false" — no actual/expected, no hint that a prefix went
+// missing). assertEquals throws inside the property, so fast-check's report
+// now also carries the AssertionError's actual/expected diff.
+Deno.test("GUARD F: bandcampInstanceName's output equals the IMPORTED registry's prefix, joined to the fallback-applied argument — binds the pure factory to BANDCAMP_INSTANCE_PREFIXES so Guard E's table result covers every name the factory can actually produce", () => {
+  // A fixed bandcampUrl (now REQUIRED) whose own bc-<slug> fallback is a
+  // hand-computed literal, not obtained by calling the module's own
+  // (private) bandcampUrlSlug — this property is about binding the factory
+  // to the PREFIXES table and to `||` semantics on artistMbid, not about
+  // re-deriving bandcampUrlSlug's own logic (Guards J and the mutation-kill
+  // tests below own that).
+  const fixedBandcampUrl = "https://guardf.bandcamp.com";
+  fc.assert(
+    fc.property(
+      fc.constantFrom<BandcampCompareMethod>(
+        ...(Object.keys(BANDCAMP_INSTANCE_PREFIXES) as BandcampCompareMethod[]),
+      ),
+      fc.string(),
+      (method, x) => {
+        const expected = `${BANDCAMP_INSTANCE_PREFIXES[method]}-${
+          x || "bc-guardf"
+        }`;
+        assertEquals(
+          bandcampInstanceName(method, x, fixedBandcampUrl),
+          expected,
+          `GUARD F: bandcampInstanceName("${method}", ${JSON.stringify(x)}, ${
+            JSON.stringify(fixedBandcampUrl)
+          }) must equal the registry-derived name`,
+        );
+      },
+    ),
+    { numRuns: NIGHT(500) },
+  );
+});
+
+// GUARD B (factory level) — deterministic pins, not left to fast-check's
+// probabilistic corpus. Covers two argument shapes together because both
+// exercise the SAME fallback operator and neither is reliably sampled by
+// `fc.string()` in Guard F above (which MAY draw "" in a given run, but is
+// not guaranteed to, and can never draw "no second argument at all"):
+//  - an EXPLICIT empty string must fall back to the same "unknown" token as
+//    an omitted argument — this is what actually observes mutation B2 (`||`
+//    silently replaced with `??`), which let a dangling-hyphen name through
+//    undetected in an earlier round;
+//  - an OMITTED artistMbid (undefined, no second argument at all) must also
+//    fall back to "unknown". Folded in from a separate two-case
+//    fast-check property (its only generator was a two-element
+//    fc.constantFrom, so running it under NIGHT(50)/FC_NUM_RUNS gave zero
+//    additional coverage over asserting both cases directly — the same
+//    "disjointness is a finite relation over fixed tokens, not a property of
+//    an arbitrary argument" reasoning that motivated Guard E's deterministic
+//    rewrite applies here too).
+Deno.test("GUARD B (factory level): bandcampInstanceName — an EXPLICIT empty-string artistMbid AND an EXPLICIT undefined artistMbid both fall back to the SAME bandcampUrl-derived slug (|| semantics), never a dangling hyphen (?? semantics). bandcampUrl is REQUIRED as of this round, so there is no longer an 'omitted' call shape to pin — see the throws-on-missing-argument coverage this replaces at the type level.", () => {
+  const url = "https://guardb.bandcamp.com";
+  assertEquals(
+    bandcampInstanceName("find-missing", "", url),
+    "find-missing-bc-guardb",
+    "GUARD B: an EXPLICIT empty-string artistMbid must render the bandcampUrl-derived fallback for find-missing",
+  );
+  assertEquals(
+    bandcampInstanceName("seed-all-missing", "", url),
+    "seed-all-missing-bc-guardb",
+    "GUARD B: an EXPLICIT empty-string artistMbid must render the bandcampUrl-derived fallback for seed-all-missing",
+  );
+  assertEquals(
+    bandcampInstanceName("find-missing", undefined, url),
+    "find-missing-bc-guardb",
+    "GUARD B: an EXPLICIT undefined artistMbid must render the bandcampUrl-derived fallback for find-missing",
+  );
+  assertEquals(
+    bandcampInstanceName("seed-all-missing", undefined, url),
+    "seed-all-missing-bc-guardb",
+    "GUARD B: an EXPLICIT undefined artistMbid must render the bandcampUrl-derived fallback for seed-all-missing",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// GUARD J (musicbrainz-missing-seed-instance-collision, fallback axis) —
+// review found the fix above namespaces by METHOD, not by ARTIST: when
+// artistMbid cannot be auto-resolved, EVERY unresolved artist used to
+// collapse onto the same constant suffix ("unknown"), so the collision this
+// issue exists to close reappeared one axis over — proven by running two
+// unresolved artists through both methods four times, which left only the
+// last artist's two rows surviving. The fallback now derives from the
+// REQUIRED `bandcampUrl` argument (`bandcampUrlSlug`) instead of a shared
+// constant. Round 2 of the same review found the fallback itself still
+// collapsed on three further axes — subdomain-only keying (two artists
+// sharing one label/compilation subdomain), an uncapped/unsanitized
+// preferred branch, and a suffix namespace that intersected the MBID space
+// — all covered below alongside the original stability/distinctness pins.
+// These are factory-level (pure-function) pins; the execute()-level
+// reproduction of the review's exact four-run scenario lives in
+// musicbrainz_coverage_test.ts.
+// ---------------------------------------------------------------------------
+
+Deno.test("GUARD J (factory level): bandcampInstanceName's bandcampUrl-derived fallback is STABLE for the same artist across repeated calls, DISTINCT across different artists, and stays inside its own method's namespace — for both methods", () => {
+  const alpha = "https://obscurealpha.bandcamp.com/music";
+  const beta = "https://obscurebeta.bandcamp.com/music";
+
+  for (
+    const method of Object.keys(
+      BANDCAMP_INSTANCE_PREFIXES,
+    ) as BandcampCompareMethod[]
+  ) {
+    const alphaName = bandcampInstanceName(method, undefined, alpha);
+    const betaName = bandcampInstanceName(method, undefined, beta);
+
+    assertEquals(
+      alphaName,
+      `${BANDCAMP_INSTANCE_PREFIXES[method]}-bc-obscurealpha`,
+      `GUARD J: ${method}'s bandcampUrl-derived fallback must be the bc-namespaced subdomain slug`,
+    );
+    assertEquals(
+      bandcampInstanceName(method, undefined, alpha),
+      alphaName,
+      `GUARD J: ${method}'s bandcampUrl-derived fallback must be stable across repeated calls for the same artist`,
+    );
+    assertEquals(
+      bandcampInstanceName(method, "", alpha),
+      alphaName,
+      `GUARD J: ${method}'s bandcampUrl-derived fallback must also apply for an explicit empty-string artistMbid (|| semantics, same as the "unknown" fallback it replaces)`,
+    );
+    assertNotEquals(
+      alphaName,
+      betaName,
+      `GUARD J: ${method}'s bandcampUrl-derived fallback must differ between two distinct artists — a collision here is the exact defect musicbrainz-missing-seed-instance-collision's fallback axis reintroduced`,
+    );
+    assert(
+      alphaName.startsWith(`${BANDCAMP_INSTANCE_PREFIXES[method]}-`),
+      `GUARD J: ${method}'s derived name must stay inside its own prefix namespace, got "${alphaName}"`,
+    );
+
+    // A resolved artistMbid still takes priority over bandcampUrl — the
+    // fallback only applies when artistMbid is absent/empty.
+    assertEquals(
+      bandcampInstanceName(method, "resolved-mbid-123", alpha),
+      `${BANDCAMP_INSTANCE_PREFIXES[method]}-resolved-mbid-123`,
+      `GUARD J: ${method} must prefer a resolved artistMbid over the bandcampUrl-derived fallback`,
+    );
+  }
+
+  // bandcampUrl is REQUIRED (round-2 review: the two-argument call shape had
+  // no real caller and kept the shared-"unknown" collision reachable behind
+  // a supported signature). The degenerate "truly have neither value" case
+  // is now an EXPLICIT empty-string bandcampUrl, not an omitted argument —
+  // bandcampUrlSlug("") still yields a defined answer (cleaned || "unknown"
+  // inside sanitizeBandcampSlugSegment), now inside the bc- namespace.
+  assertEquals(
+    bandcampInstanceName("find-missing", undefined, ""),
+    "find-missing-bc-unknown",
+  );
+});
+
+Deno.test("GUARD J2: two unresolved artists sharing ONE Bandcamp subdomain (a label/compilation account) land on DIFFERENT instances when their paths differ — the exact shape the round-2 review found colliding; stated honestly, two that share BOTH subdomain and path still collide, because no further signal is available at this call site", () => {
+  const rosterA = "https://somelabel.bandcamp.com/album/roster-a-lp";
+  const rosterB = "https://somelabel.bandcamp.com/album/roster-b-lp";
+  const rosterAName = bandcampInstanceName("find-missing", undefined, rosterA);
+  const rosterBName = bandcampInstanceName("find-missing", undefined, rosterB);
+
+  assertEquals(rosterAName, "find-missing-bc-somelabel-album-roster-a-lp");
+  assertEquals(rosterBName, "find-missing-bc-somelabel-album-roster-b-lp");
+  assertNotEquals(
+    rosterAName,
+    rosterBName,
+    "two unresolved artists sharing one subdomain must NOT collide when their bandcampUrl paths differ",
+  );
+
+  // Honest residual: root and /music are both treated as "no path to fold"
+  // (they are the two shapes fetchPage's own bcUrl normalization produces
+  // for a SINGLE artist's own page across call-to-call spelling variance —
+  // folding them in would break the existing same-artist stability pin
+  // above), so two DIFFERENT artists that both merely browse the shared
+  // subdomain's root still collide. This is a known, accepted limitation,
+  // not a silent gap: see bandcampUrlSlug's doc comment.
+  const rootName = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    "https://somelabel.bandcamp.com",
+  );
+  const musicPathName = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    "https://somelabel.bandcamp.com/music",
+  );
+  assertEquals(
+    rootName,
+    musicPathName,
+    "root and /music must still collapse to the same instance — this is what keeps repeated runs against the SAME artist stable across bcUrl's own trailing-slash/`/music` normalization",
+  );
+
+  // Round-4 review MEDIUM: a caller that concatenates a stored bandcampUrl
+  // already ending in "/" with "/music" (a realistic producer — every
+  // written row's attributes.bandcampUrl is stored verbatim from the
+  // argument) produces "//music", which survived the pre-fix trailing-slash-
+  // only normalization untouched and split ONE artist across two instances.
+  // Every near-miss spelling below must now collapse to the same instance as
+  // the canonical root/`/music` spellings pinned above.
+  const doubleSlashMusicName = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    "https://somelabel.bandcamp.com//music",
+  );
+  const doubleSlashTrailingName = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    "https://somelabel.bandcamp.com//",
+  );
+  const upperMusicName = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    "https://somelabel.bandcamp.com/MUSIC",
+  );
+  assertEquals(
+    doubleSlashMusicName,
+    rootName,
+    'https://somelabel.bandcamp.com//music must collapse to the same instance as the bare root — a caller concatenating a trailing-slash bandcampUrl with "/music" must not split the artist across two instances',
+  );
+  assertEquals(
+    doubleSlashTrailingName,
+    rootName,
+    "a doubled trailing slash on the bare root must also collapse to the same instance",
+  );
+  assertEquals(
+    upperMusicName,
+    rootName,
+    "/MUSIC (case-insensitive) must collapse to the same instance as /music",
+  );
+});
+
+Deno.test("GUARD J3: bandcampUrlSlug sanitizes and length-caps the PREFERRED subdomain branch too, not just the bare-domain fallback — two distinct bare-bandcamp.com URLs sharing a long common prefix do not collide, and an over-cap subdomain label does not collide with a different one sharing its visible prefix", () => {
+  // Bare `bandcamp.com/...` branch: two distinct paths agreeing on their
+  // first 100+ characters must still diverge after the 80-char cap, because
+  // truncation now appends a digest of the FULL string rather than a bare
+  // slice() — a bare slice() collapsed exactly this shape (round-2 review).
+  const sharedPrefix = "z".repeat(100);
+  const bareA = `https://bandcamp.com/${sharedPrefix}-artist-alpha`;
+  const bareB = `https://bandcamp.com/${sharedPrefix}-artist-beta`;
+  const bareAName = bandcampInstanceName("find-missing", undefined, bareA);
+  const bareBName = bandcampInstanceName("find-missing", undefined, bareB);
+  assertNotEquals(
+    bareAName,
+    bareBName,
+    "two distinct bare-bandcamp.com URLs sharing a long common prefix must not collide after truncation",
+  );
+  assert(
+    bareAName.length <= "find-missing-bc-".length + 80,
+    `bareAName must respect the length cap, got ${bareAName.length} chars`,
+  );
+
+  // Preferred subdomain branch: previously returned the raw WHATWG-parsed
+  // label with NO cap at all. A several-hundred-character subdomain label
+  // must now be capped just like the fallback branch is.
+  const longSub = "q".repeat(300);
+  const longSubName = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    `https://${longSub}.bandcamp.com/`,
+  );
+  assert(
+    longSubName.length <= "find-missing-bc-".length + 80,
+    `a several-hundred-char subdomain label must be capped, got ${longSubName.length} chars`,
+  );
+});
+
+Deno.test("GUARD J4: the bc- marker keeps the URL-derived suffix namespace DISJOINT from the MBID-derived one — a UUID-shaped subdomain never collides with that MBID's resolved instance, and unknown.bandcamp.com never collides with an explicit artistMbid literally 'unknown'", () => {
+  const uuid = "550e8400-e29b-41d4-a716-446655440000";
+  const resolvedName = bandcampInstanceName(
+    "find-missing",
+    uuid,
+    "https://irrelevant.bandcamp.com",
+  );
+  const uuidSubdomainName = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    `https://${uuid}.bandcamp.com`,
+  );
+  assertEquals(resolvedName, `find-missing-${uuid}`);
+  assertEquals(uuidSubdomainName, `find-missing-bc-${uuid}`);
+  assertNotEquals(
+    resolvedName,
+    uuidSubdomainName,
+    "a UUID-shaped Bandcamp subdomain must not collide with that same MBID's resolved instance",
+  );
+
+  const explicitUnknownName = bandcampInstanceName(
+    "find-missing",
+    "unknown",
+    "https://irrelevant.bandcamp.com",
+  );
+  const unknownSubdomainName = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    "https://unknown.bandcamp.com",
+  );
+  assertEquals(explicitUnknownName, "find-missing-unknown");
+  assertEquals(unknownSubdomainName, "find-missing-bc-unknown");
+  assertNotEquals(
+    explicitUnknownName,
+    unknownSubdomainName,
+    "unknown.bandcamp.com must not collide with an explicit artistMbid of the literal string 'unknown'",
+  );
+
+  // Empty-label degenerate (https://.bandcamp.com/, an unroutable but
+  // parseable host) still yields a defined, non-dangling-hyphen answer.
+  const emptyLabelName = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    "https://.bandcamp.com/",
+  );
+  assertEquals(emptyLabelName, "find-missing-bc-unknown");
+  assert(!emptyLabelName.endsWith("-"), "must not be a dangling-hyphen name");
+});
+
+Deno.test("GUARD J4 (reverse direction, round-4 review): the bc- marker's disjointness is ONE-DIRECTIONAL — a real (UUID) artistMbid can never collide with a URL-derived fallback, but this factory does not shape-validate artistMbid, so a hand-passed artistMbid that itself starts \"bc-\" DOES collide with the URL-derived fallback for the matching subdomain. Pinned here as a known, accepted residual (see bandcampInstanceName's doc comment) rather than left as a silent gap — a future fix that closes it (schema validation, or a guard inside this factory) should turn this assertEquals into an assertNotEquals / assertThrows, not delete it.", () => {
+  const explicitBcMbid = bandcampInstanceName(
+    "find-missing",
+    "bc-obscurealpha",
+    "https://irrelevant.bandcamp.com",
+  );
+  const urlDerivedFallback = bandcampInstanceName(
+    "find-missing",
+    undefined,
+    "https://obscurealpha.bandcamp.com",
+  );
+  assertEquals(explicitBcMbid, "find-missing-bc-obscurealpha");
+  assertEquals(urlDerivedFallback, "find-missing-bc-obscurealpha");
+  assertEquals(
+    explicitBcMbid,
+    urlDerivedFallback,
+    'known residual: a hand-passed artistMbid starting "bc-" collides with the URL-derived fallback for the subdomain it names — the forward direction (GUARD J4 above) holds, this reverse direction does not',
+  );
+});
+
+Deno.test("bandcampInstanceName throws on every unrecognized method key, including every OWN-ENUMERABLE-INHERITED Object.prototype member — the round-2 regression: a truthiness check on a bracket read into BANDCAMP_INSTANCE_PREFIXES (whose prototype is still Object.prototype) let 8 of 12 unrecognized keys bypass the guard and return a stringified native-code function instead of throwing", () => {
+  const unrecognizedKeys = [
+    "bogus",
+    "seed-single",
+    "",
+    "find-Missing",
+    "__proto__",
+    "toString",
+    "valueOf",
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "__defineGetter__",
+  ];
+  for (const key of unrecognizedKeys) {
+    assertThrows(
+      () =>
+        bandcampInstanceName(
+          key as unknown as BandcampCompareMethod,
+          "abc",
+          "https://irrelevant.bandcamp.com",
+        ),
+      Error,
+      `unrecognized method "${key}"`,
+      `bandcampInstanceName must throw on unrecognized method key ${
+        JSON.stringify(key)
+      }, not return a value derived from an inherited Object.prototype member`,
+    );
+  }
+});
+
+// Round 7: moved off Deno.test onto the module "unload" event, which Deno
+// fires once per module after every SELECTED test (including every
+// fast-check-generated iteration) has run — under any --shuffle permutation
+// and any --filter — so this no longer depends on declaration order or on
+// which tests were selected. An exception thrown from this handler is
+// reported as an uncaught module error that fails the run. See the
+// FUNNEL_VIOLATIONS comment near WRITE_SHAPE.
+addEventListener("unload", () => {
+  if (FUNNEL_VIOLATIONS.length !== 0) {
+    throw new Error(
+      `FUNNEL: ${FUNNEL_VIOLATIONS.length} write-invariant violation(s) were recorded by run() but swallowed by a bare assertRejects: ${
+        JSON.stringify(FUNNEL_VIOLATIONS)
+      }`,
+    );
+  }
 });
