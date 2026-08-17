@@ -202,7 +202,9 @@ export function buildReferences(
   const clone = structuredClone(graph);
   const consumer = clone[cfg.consumerNodeId];
   if (consumer === undefined) {
-    throw new Error(`reference consumer node '${cfg.consumerNodeId}' not found`);
+    throw new Error(
+      `reference consumer node '${cfg.consumerNodeId}' not found`,
+    );
   }
   for (const id of cfg.placeholderNodeIds) delete clone[id];
 

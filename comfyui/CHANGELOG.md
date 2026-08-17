@@ -1,5 +1,77 @@
 # Changelog
 
+## 2026.08.12.13
+
+Adds a **MiniMax H3 reference-to-video** pipeline as a third bundled template,
+then builds it out to long-form video, clothes/style transfer and a node-aware
+speed stack. This ships the work developed as `2026.08.11.1` through
+`2026.08.12.13`; those intermediate versions were never published, so this is
+one registry release covering the whole arc.
+
+`manifest.yaml` had been left at `2026.08.12.8` while the model's own `version`
+and its `upgrades[]` chain had moved on to `2026.08.12.13` — the last five bumps
+never reached the manifest. The manifest now matches the model, which is the
+source of truth for what the code actually is.
+
+### Added
+
+- **`minimax_h3` template** — plain-text prompt plus one or two references to an
+  mp4, from a bundled API-format graph (`workflows/minimax_h3_r2v.api.json`)
+  whose node classes the contract suite pins.
+- **Video references.** `buildReferences()` injects one loader per reference:
+  `LoadImage` for stills, `LoadVideo` → `GetVideoComponents` for video (frames →
+  `ref_videos`, audio → `ref_video_audios`). New `refVideo`/`refVideos`; local
+  paths upload via `/upload/image`.
+- **`generate_long`** — a `totalDuration` video built from `fragmentDuration`
+  (default 5s) clips: slice the reference video into per-fragment windows,
+  render each carrying the previous fragment forward, ffmpeg-stitch the result.
+  Every `generate` option applies per fragment. New `long` resource; `generate`
+  and each fragment now share one `renderClip()`.
+- **`ref2i`** — clothes/style transfer onto a still: drives the reference graph
+  with `styleImage` (garment → `<Picture 1>`) and `targetImage` (person →
+  `<Picture 2>`), renders the shortest clip and saves frame 0 as a PNG. The
+  default caption keeps face, pose and background and replaces only the outfit.
+- **Speed patcher chain.** `chainModelPatchers()` splices MODEL→MODEL patchers
+  between the `UNETLoader` and the sampler; the template declares the registry
+  in recommended order and reads every schema live from `/object_info`. Applied
+  by default when `speed` is omitted (measured ~43% faster); `speed: []`
+  disables it, an explicit list picks a subset.
+- **`turbo`** — the 4-step distillation-LoRA fast path (turboLora +
+  firstBlockCache + sage + sigmaShift at 8 sampler steps rather than 20).
+  Requires the turbo LoRA present in the server's `loras/`. Measured: a 5s
+  render in 1m29s against 2m31s.
+- **`upscale`** — splices SeedVR2 super-resolution between the decoded frames
+  and `CreateVideo` (`upscaleResolution`, default 1080; `upscaleModel`). Errors
+  when the SeedVR2 node is absent.
+- **`keepRefAudio`** — carries the reference video's own audio instead of the
+  generated track. Throws when there is no reference video.
+- **`megapixels`** (ResolutionSelector output size), **`unetModel`** (swap the
+  diffusion checkpoint on generate/generate_long/ref2i) and **`refImageSize`**
+  (`match`|`max`; `max` feeds references at 2048px for markedly stronger
+  identity/garment adherence, several times slower).
+
+### Changed
+
+- Speed injection is **node-aware**. An explicit `speed`/`turbo` naming a
+  patcher the server lacks now fails with a clear message instead of a raw
+  ComfyUI `missing_node_type` 400, while the default stack skips missing
+  patchers so a churning node set cannot break a plain render. Adds
+  `ComfyClient.fetchInstalledClasses()`.
+- `collectFiles()` collects outputs under any key, so `SaveVideo` mp4 output is
+  picked up like `SaveImage`; `waitForResult()` keys done/errored off it.
+
+### Fixed
+
+- `generate_long` no longer overwrites its own output: `nextFreePath` takes the
+  base name when free, else the next `_2`/`_3` sibling, so runs accumulate.
+- Seam jump-cuts between fragments. The continuation carries the previous
+  fragment's last ~0.5s forward as a reference VIDEO rather than a frozen still,
+  so the model sees subject velocity and camera trajectory at the cut
+  (`continuationSeconds: 0` restores the still). Fragment boundaries also snap
+  to the lowest-motion frame within `seamWindow` of nominal, so cuts land on
+  held poses instead of mid-turn, and the continuation caption binds
+  head/face/gaze orientation to `<Video 2>`.
+
 ## 2026.08.02.1
 
 Real-fixes the four latent bugs the adversarial suite characterized in the prior

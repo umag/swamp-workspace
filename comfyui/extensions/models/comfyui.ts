@@ -719,7 +719,9 @@ async function applyReferences(
     : [];
   if (images.length === 0 && videos.length === 0) {
     throw new Error(
-      `template '${args.template ?? DEFAULT_TEMPLATE}' needs a reference; pass ` +
+      `template '${
+        args.template ?? DEFAULT_TEMPLATE
+      }' needs a reference; pass ` +
         "`refImage`/`refImages` or `refVideo`/`refVideos` (a local path or a " +
         "server-side input filename)",
     );
@@ -797,7 +799,8 @@ function applyKeepRefAudio(
   if (!args.keepRefAudio || !tpl?.audio || !tpl.references) return graph;
   const clone = structuredClone(graph);
   const refConsumer = clone[tpl.references.consumerNodeId];
-  const audioSource = refConsumer?.inputs[`${tpl.references.videoAudioPrefix}0`];
+  const audioSource = refConsumer
+    ?.inputs[`${tpl.references.videoAudioPrefix}0`];
   if (audioSource === undefined) {
     throw new Error(
       "keepRefAudio needs a reference video to take audio from; pass " +
@@ -810,7 +813,10 @@ function applyKeepRefAudio(
       `keepRefAudio: CreateVideo node '${tpl.audio.createVideoNodeId}' not found`,
     );
   }
-  createVideo.inputs = { ...createVideo.inputs, [tpl.audio.audioKey]: audioSource };
+  createVideo.inputs = {
+    ...createVideo.inputs,
+    [tpl.audio.audioKey]: audioSource,
+  };
   delete clone[tpl.audio.decodeNodeId];
   return clone;
 }
@@ -909,7 +915,9 @@ function applySpeed(
   if (selected.length === 0) return graph;
   if (!tpl?.speed) {
     throw new Error(
-      `template '${args.template ?? DEFAULT_TEMPLATE}' has no speed patchers; ` +
+      `template '${
+        args.template ?? DEFAULT_TEMPLATE
+      }' has no speed patchers; ` +
         "speed is only available on templates that declare them (e.g. 'minimax_h3')",
     );
   }
@@ -1017,7 +1025,11 @@ async function renderClip(
     ? seed
     : undefined;
   const patched = appliedSeed !== undefined
-    ? applyIdeogramOverrides(base, { seed: appliedSeed, seedNodeId, seedInputKey })
+    ? applyIdeogramOverrides(base, {
+      seed: appliedSeed,
+      seedNodeId,
+      seedInputKey,
+    })
     : base;
 
   const promptId = await client.queuePrompt(patched);
@@ -1053,16 +1065,38 @@ function ffmpegSlice(
   dst: string,
 ): Promise<void> {
   return runFfmpeg([
-    "-i", src, "-ss", String(start), "-t", String(dur),
-    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16",
-    "-c:a", "aac", "-movflags", "+faststart", dst,
+    "-i",
+    src,
+    "-ss",
+    String(start),
+    "-t",
+    String(dur),
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-crf",
+    "16",
+    "-c:a",
+    "aac",
+    "-movflags",
+    "+faststart",
+    dst,
   ]);
 }
 
 /** Write the last frame of `src` to `dst` (a PNG). */
 function ffmpegLastFrame(src: string, dst: string): Promise<void> {
   return runFfmpeg([
-    "-sseof", "-0.15", "-i", src, "-update", "1", "-frames:v", "1", dst,
+    "-sseof",
+    "-0.15",
+    "-i",
+    src,
+    "-update",
+    "1",
+    "-frames:v",
+    "1",
+    dst,
   ]);
 }
 
@@ -1079,9 +1113,20 @@ function ffmpegFirstFrame(src: string, dst: string): Promise<void> {
  */
 function ffmpegTail(src: string, seconds: number, dst: string): Promise<void> {
   return runFfmpeg([
-    "-sseof", String(-Math.abs(seconds)), "-i", src,
-    "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16",
-    "-movflags", "+faststart", dst,
+    "-sseof",
+    String(-Math.abs(seconds)),
+    "-i",
+    src,
+    "-an",
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-crf",
+    "16",
+    "-movflags",
+    "+faststart",
+    dst,
   ]);
 }
 
@@ -1096,7 +1141,9 @@ export async function nextFreePath(path: string): Promise<string> {
   const stem = m ? m[1] : path;
   const ext = m ? m[2] : "";
   let candidate = path;
-  for (let i = 2; await exists(candidate); i++) candidate = `${stem}_${i}${ext}`;
+  for (let i = 2; await exists(candidate); i++) {
+    candidate = `${stem}_${i}${ext}`;
+  }
   return candidate;
 }
 
@@ -1108,9 +1155,23 @@ async function ffmpegConcat(parts: string[], dst: string): Promise<void> {
     parts.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n") + "\n",
   );
   await runFfmpeg([
-    "-f", "concat", "-safe", "0", "-i", list,
-    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16",
-    "-c:a", "aac", "-movflags", "+faststart", dst,
+    "-f",
+    "concat",
+    "-safe",
+    "0",
+    "-i",
+    list,
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-crf",
+    "16",
+    "-c:a",
+    "aac",
+    "-movflags",
+    "+faststart",
+    dst,
   ]);
 }
 
@@ -1137,11 +1198,15 @@ async function ffmpegMotionProfile(
 ): Promise<{ t: number; m: number }[]> {
   const cmd = new Deno.Command("ffmpeg", {
     args: [
-      "-y", "-i", src,
+      "-y",
+      "-i",
+      src,
       "-vf",
       "format=gray,scale=64:-2,tblend=all_mode=difference," +
       "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-",
-      "-f", "null", "-",
+      "-f",
+      "null",
+      "-",
     ],
     stdout: "piped",
     stderr: "null",
@@ -1215,7 +1280,10 @@ export function alignSeams(
  * Append a continuation instruction to a caption, telling H3 that the given
  * `<Picture N>` is the last frame of the previous clip to continue from.
  */
-export function continuationCaption(caption: string, pictureIndex: number): string {
+export function continuationCaption(
+  caption: string,
+  pictureIndex: number,
+): string {
   return `${caption.trimEnd()}\n\ncontinuation:\n<Picture ${pictureIndex}> is ` +
     `the exact last frame of the immediately preceding clip; begin this clip ` +
     `from it and continue the same motion, camera, and pacing seamlessly, ` +
@@ -1728,7 +1796,12 @@ export const model = {
         if (args.seamAlign && motionLocal) {
           const profile = await ffmpegMotionProfile(motionRef!);
           if (profile.length > 0) {
-            plan = alignSeams(args.totalDuration, frag, profile, args.seamWindow);
+            plan = alignSeams(
+              args.totalDuration,
+              frag,
+              profile,
+              args.seamWindow,
+            );
           }
         }
 
@@ -1760,7 +1833,10 @@ export const model = {
               );
             } else if (lastFrameName !== undefined) {
               refImages.push(lastFrameName);
-              caption = continuationCaption(args.caption ?? "", refImages.length);
+              caption = continuationCaption(
+                args.caption ?? "",
+                refImages.length,
+              );
             }
           }
 
@@ -1779,7 +1855,12 @@ export const model = {
             seamWindow: undefined,
           } as unknown as GenArgs;
 
-          const { paths } = await renderClip(clipArgs, context, client, installed);
+          const { paths } = await renderClip(
+            clipArgs,
+            context,
+            client,
+            installed,
+          );
           const mp4 = paths.find((p) => p.toLowerCase().endsWith(".mp4")) ??
             paths[0];
           if (mp4 === undefined) {
@@ -1800,7 +1881,9 @@ export const model = {
               `h3long_last_${f.index}.png`,
               { overwrite: true },
             );
-            lastFrameName = up.subfolder ? `${up.subfolder}/${up.name}` : up.name;
+            lastFrameName = up.subfolder
+              ? `${up.subfolder}/${up.name}`
+              : up.name;
           }
         }
 
