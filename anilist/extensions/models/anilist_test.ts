@@ -578,11 +578,12 @@ Deno.test("METADATA_INGEST_QUERY covers every anilist_metadata source field (17 
 // Sanity
 // ---------------------------------------------------------------------------
 
-Deno.test("sanity: model exposes exactly the 11 documented methods", () => {
+Deno.test("sanity: model exposes exactly the 12 documented methods", () => {
   const methodNames = Object.keys(model.methods).sort();
   assertEquals(methodNames, [
     "get",
     "ingest-scores",
+    "lookup",
     "recent-activity",
     "refresh-metadata",
     "search",

@@ -8,6 +8,11 @@
 # `2026.08.02.1`, AL1-AL4 (see CHANGELOG.md) are real fixes to gql()'s
 # request/retry path; the adversarial suite's six re-pinned assertions now
 # verify the fixed behavior instead of characterizing the bug.
+#
+# `2026.08.17.1` reconciled the forked main-repo copy back into this package.
+# The adversarial suite is what CAUGHT the fork: its six AL1-AL4 pins failed
+# against the main-repo source, proving production never had those guards. Keep
+# running the full battery against any imported copy before trusting it.
 schemaVersion: 1
 extension: anilist
 tests:
@@ -52,4 +57,4 @@ docs:
 ratchet:
   rubricVersion: 3
   baselinePercentage: 100
-  label: "100% (14/14, allPassed) — measured via `swamp extension quality anilist/manifest.yaml --json` after the 2026.08.02.1 AL1-AL4 fix; symbols-docs earned by JSDoc'ing the ~23 exported symbols in anilist.ts"
+  label: "100% (14/14, allPassed) — measured via `swamp extension quality anilist/manifest.yaml --json` after the 2026.08.17.1 fork reconcile; symbols-docs earned by JSDoc'ing the exported symbols in anilist.ts, including the status-change helpers added in 2026.08.17.1"

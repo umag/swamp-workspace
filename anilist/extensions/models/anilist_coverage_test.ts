@@ -19,6 +19,7 @@
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
+  ACTIVITY_HEADING,
   advanceCursor,
   buildMetadataRow,
   buildRichMessage,
@@ -31,9 +32,14 @@ import {
   formatDate,
   hasReachedOldActivities,
   isConsumptionActivity,
+  isReportableActivity,
+  isStatusChangeActivity,
   isValidModelName,
   mergeActivities,
+  mergeStatusChanges,
   parseUsernamesFile,
+  partitionActivities,
+  STATUS_CHANGE_HEADING,
   TELEGRAM_MESSAGE_LIMIT,
 } from "./anilist.ts";
 
@@ -535,14 +541,18 @@ Deno.test("buildRichMessage never emits an image/photo block", () => {
   assert(!rich.blocks.some((b) => b.type === "photo"));
 });
 
-Deno.test("buildRichMessage opens with an 'AniList activity' header", () => {
+Deno.test("buildRichMessage opens with a '#AniList activity' header", () => {
+  // The heading carries ACTIVITY_HASHTAG (since 2026.07.30.2) so the chat's
+  // posts are searchable by tag; the tag REPLACES the word rather than
+  // sitting beside it, so the name is never repeated.
   const rich = buildRichMessage(merged1()) as {
     blocks: Array<Record<string, unknown>>;
   };
   assertEquals(
     JSON.stringify(rich.blocks[0].text),
-    JSON.stringify({ type: "bold", text: "AniList activity" }),
+    JSON.stringify({ type: "bold", text: ACTIVITY_HEADING }),
   );
+  assertEquals(ACTIVITY_HEADING, "#AniList activity");
 });
 
 Deno.test("buildRichMessage groups a user's shows under one linked heading (no orphaned lines)", () => {
@@ -635,6 +645,219 @@ Deno.test("buildRichMessage ends with a footer summarising users and titles", ()
 Deno.test("buildRichMessage contains no emoji", () => {
   const rich = buildRichMessage(merged1());
   assert(!/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(JSON.stringify(rich)));
+});
+
+// ---------- status changes (completed / dropped verdict detection) ----------
+
+const verdict = (
+  id: number,
+  user: string,
+  extra: Record<string, unknown> = {},
+) =>
+  act(id, user, 1000, {
+    status: "dropped",
+    progress: null,
+    mediaId: 90042,
+    title: "Abandoned Signal",
+    siteUrl: "https://anilist.co/anime/90042",
+    ...extra,
+  });
+
+Deno.test("isStatusChangeActivity recognises completed and dropped, nothing else", () => {
+  assert(isStatusChangeActivity(act(1, "u", 1, { status: "dropped" })));
+  assert(isStatusChangeActivity(act(1, "u", 1, { status: "completed" })));
+  // Case-insensitive: AniList status casing has drifted before.
+  assert(isStatusChangeActivity(act(1, "u", 1, { status: "Dropped" })));
+  assert(
+    !isStatusChangeActivity(act(1, "u", 1, { status: "watched episode" })),
+  );
+  assert(
+    !isStatusChangeActivity(act(1, "u", 1, { status: "paused watching" })),
+  );
+  assert(!isStatusChangeActivity(act(1, "u", 1, { status: "plans to watch" })));
+});
+
+Deno.test("isReportableActivity adds exactly 'dropped' to the consumption set", () => {
+  // The single status whose verdict differs between the two predicates —
+  // this is what had been silently discarding real drops.
+  assert(!isConsumptionActivity(act(1, "u", 1, { status: "dropped" })));
+  assert(isReportableActivity(act(1, "u", 1, { status: "dropped" })));
+  for (
+    const status of [
+      "watched episode",
+      "rewatched episode",
+      "read chapter",
+      "reread chapter",
+      "completed",
+      "plans to watch",
+      "paused watching",
+      "",
+    ]
+  ) {
+    const a = act(1, "u", 1, { status });
+    assertEquals(
+      isReportableActivity(a),
+      isConsumptionActivity(a),
+      `disagreed on "${status}"`,
+    );
+  }
+});
+
+Deno.test("partitionActivities routes verdicts out of the progress rows, order preserved", () => {
+  const { progress, statusChanges } = partitionActivities([
+    act(1, "fixture_watcher", 1000, { mediaId: 90001 }),
+    verdict(2, "fixture_reader"),
+    act(3, "fixture_watcher", 1200, {
+      mediaId: 90002,
+      status: "completed",
+      progress: null,
+    }),
+    act(4, "fixture_reader", 1300, { mediaId: 90003 }),
+  ]);
+  assertEquals(progress.map((a) => a.id), [1, 4]);
+  assertEquals(statusChanges.map((a) => a.id), [2, 3]);
+});
+
+Deno.test("mergeStatusChanges collapses a repeated verdict and keeps the best score", () => {
+  // AniList re-fires the activity when the entry is edited, and score
+  // enrichment is best-effort so one copy can carry a null score.
+  const rows = mergeStatusChanges([
+    verdict(1, "fixture_reader", { score: null }),
+    verdict(2, "fixture_reader", { score: 4 }),
+  ]);
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].score, 4);
+  assertEquals(rows[0].status, "dropped");
+});
+
+Deno.test("mergeStatusChanges keeps completed and dropped for the same show apart", () => {
+  const rows = mergeStatusChanges([
+    verdict(1, "fixture_reader", { status: "completed" }),
+    verdict(2, "fixture_reader", { status: "dropped" }),
+  ]);
+  assertEquals(rows.map((r) => r.status), ["completed", "dropped"]);
+});
+
+Deno.test("mergeStatusChanges keeps different users and shows separate, in first-seen order", () => {
+  const rows = mergeStatusChanges([
+    verdict(1, "fixture_reader", { mediaId: 90042, title: "A" }),
+    verdict(2, "fixture_watcher", { mediaId: 90042, title: "A" }),
+    verdict(3, "fixture_reader", { mediaId: 90043, title: "B" }),
+  ]);
+  assertEquals(rows.map((r) => `${r.userName}:${r.title}`), [
+    "fixture_reader:A",
+    "fixture_watcher:A",
+    "fixture_reader:B",
+  ]);
+});
+
+Deno.test("mergeStatusChanges recovers a siteUrl that an earlier duplicate lacked", () => {
+  const rows = mergeStatusChanges([
+    verdict(1, "fixture_reader", { siteUrl: null }),
+    verdict(2, "fixture_reader", { siteUrl: "https://anilist.co/anime/90042" }),
+  ]);
+  assertEquals(rows[0].siteUrl, "https://anilist.co/anime/90042");
+});
+
+Deno.test("buildRichMessage adds a Status changes paragraph with linked user and title", () => {
+  const rich = buildRichMessage(
+    merged1(),
+    mergeStatusChanges([verdict(1, "fixture_reader", { score: 4 })]),
+  ) as { blocks: Array<Record<string, unknown>> };
+  const json = JSON.stringify(rich);
+  assert(json.includes(STATUS_CHANGE_HEADING));
+  assert(json.includes("dropped: "));
+  assert(json.includes("https://anilist.co/user/fixture_reader"));
+  assert(json.includes("https://anilist.co/anime/90042"));
+  assert(json.includes("score 4"));
+  // Still a plain block digest — no HTML, no imagery.
+  assert(!json.includes("<b>"));
+  assert(!rich.blocks.some((b) => b.type === "photo"));
+});
+
+Deno.test("buildRichMessage omits the Status changes paragraph when there are none", () => {
+  const rich = buildRichMessage(merged1()) as {
+    blocks: Array<Record<string, unknown>>;
+  };
+  assert(!JSON.stringify(rich).includes(STATUS_CHANGE_HEADING));
+});
+
+Deno.test("buildRichMessage footer counts status changes alongside titles", () => {
+  const rich = buildRichMessage(
+    merged1(),
+    mergeStatusChanges([
+      verdict(1, "fixture_reader"),
+      verdict(2, "fixture_reader", { mediaId: 90043, title: "B" }),
+    ]),
+  ) as { blocks: Array<Record<string, unknown>> };
+  const footer = rich.blocks[rich.blocks.length - 1];
+  assertEquals(footer.type, "footer");
+  // fixture_reader has no progress rows, so the user count must span both
+  // sections or a drop-only user would go uncounted.
+  assertEquals(footer.text, "2 users · 1 title · 2 status changes");
+});
+
+Deno.test("buildRichMessage footer drops the title clause when only verdicts landed", () => {
+  const rich = buildRichMessage(
+    [],
+    mergeStatusChanges([verdict(1, "fixture_reader")]),
+  ) as { blocks: Array<Record<string, unknown>> };
+  const footer = rich.blocks[rich.blocks.length - 1];
+  assertEquals(footer.text, "1 user · 1 status change");
+});
+
+Deno.test("buildRichMessage keeps the old footer shape when nothing is passed at all", () => {
+  const rich = buildRichMessage([]) as {
+    blocks: Array<Record<string, unknown>>;
+  };
+  const footer = rich.blocks[rich.blocks.length - 1];
+  assertEquals(footer.text, "0 users · 0 titles");
+});
+
+Deno.test("buildRichMessage status section contains no emoji", () => {
+  const json = JSON.stringify(
+    buildRichMessage(
+      merged1(),
+      mergeStatusChanges([verdict(1, "fixture_reader")]),
+    ),
+  );
+  assert(!/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(json));
+});
+
+Deno.test("formatActivityMessages appends an HTML Status changes section", () => {
+  const [msg] = formatActivityMessages(
+    [
+      act(1, "fixture_watcher", 1000, {
+        siteUrl: "https://anilist.co/anime/90001",
+      }),
+    ],
+    mergeStatusChanges([verdict(2, "fixture_reader", { score: 4 })]),
+  );
+  assert(msg.includes(`<b>${STATUS_CHANGE_HEADING}</b>`));
+  assert(msg.includes("<b>fixture_reader</b> dropped:"));
+  assert(
+    msg.includes(
+      '<a href="https://anilist.co/anime/90042">Abandoned Signal</a>',
+    ),
+  );
+  assert(msg.includes("(score 4)"));
+});
+
+Deno.test("formatActivityMessages HTML-escapes the status section", () => {
+  const [msg] = formatActivityMessages(
+    [],
+    mergeStatusChanges([
+      verdict(1, "a&b", { title: "<script>", siteUrl: null }),
+    ]),
+  );
+  assert(msg.includes("a&amp;b"));
+  assert(msg.includes("&lt;script&gt;"));
+  assert(!msg.includes("<script>"));
+});
+
+Deno.test("formatActivityMessages omits the status section when there are none", () => {
+  const [msg] = formatActivityMessages([act(1, "fixture_watcher", 1000)]);
+  assert(!msg.includes(STATUS_CHANGE_HEADING));
 });
 
 // ---------- buildScoreRows ----------

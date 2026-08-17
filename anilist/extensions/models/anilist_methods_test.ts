@@ -112,6 +112,10 @@ type MethodMap = Record<string, {
   execute: (a: unknown, c: unknown) => Promise<unknown>;
 }>;
 
+type ResourceMap = Record<string, {
+  schema: { parse: (a: unknown) => unknown };
+}>;
+
 function run(name: string, args: Record<string, unknown>, ctx: unknown) {
   const method = (model.methods as MethodMap)[name];
   assert(method, `method ${name} must exist on the model`);
@@ -1079,6 +1083,57 @@ Deno.test("recent-activity: schema defaults — lookbackMinutes=120, maxPages=6,
   assertEquals(parsed.format, "rich");
   assertEquals(parsed.telegramModel, "");
   assertEquals(parsed.dryRun, false);
+});
+
+Deno.test("recent-activity: includeStatusChanges defaults ON, and is the no-redeploy rollback lever", () => {
+  const method = (model.methods as MethodMap)["recent-activity"];
+  assertEquals(
+    (method.arguments.parse({ usernames: ["x"] }) as {
+      includeStatusChanges: boolean;
+    }).includeStatusChanges,
+    true,
+  );
+  assertEquals(
+    (method.arguments.parse({
+      usernames: ["x"],
+      includeStatusChanges: false,
+    }) as { includeStatusChanges: boolean }).includeStatusChanges,
+    false,
+  );
+});
+
+Deno.test("activityFeed resource schema accepts the statusChanges payload recent-activity writes", () => {
+  // The spec schema strips unknown keys, so a field the method writes but the
+  // schema omits is silently lost on the stored resource — the digest would
+  // still show the verdicts while they stayed unqueryable.
+  const parsed = (model.resources as ResourceMap).activityFeed.schema.parse({
+    checkedAt: "2026-08-17T00:00:00.000Z",
+    usernamesSource: "inline",
+    usersChecked: ["fixture_reader"],
+    usersFailed: [],
+    newCount: 1,
+    activities: [],
+    statusChanges: [{
+      userName: "fixture_reader",
+      mediaId: 90042,
+      status: "dropped",
+      title: "Abandoned Signal",
+      siteUrl: "https://anilist.co/anime/90042",
+      score: 4,
+    }],
+    statusChangeCount: 1,
+    messages: [],
+    sent: true,
+    sendError: null,
+    pageCapHit: false,
+    dryRun: false,
+  }) as {
+    statusChangeCount: number;
+    statusChanges: Array<{ status: string; score: number | null }>;
+  };
+  assertEquals(parsed.statusChangeCount, 1);
+  assertEquals(parsed.statusChanges[0].status, "dropped");
+  assertEquals(parsed.statusChanges[0].score, 4);
 });
 
 Deno.test("ingest-scores: schema defaults — perChunk=500, maxChunks=20, metadataBatchSize=50", () => {

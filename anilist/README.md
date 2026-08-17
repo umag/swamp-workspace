@@ -4,19 +4,19 @@ A swamp model that wraps the public [AniList](https://anilist.co) GraphQL API
 ([`https://graphql.anilist.co`](https://graphql.anilist.co)) to search
 anime/manga, fetch details and user lists, track trending/seasonal titles,
 update your own list via mutations, notify a Telegram chat of tracked users'
-recent activity, and feed a ClickHouse-backed charting pipeline. It exposes **11
+recent activity, and feed a ClickHouse-backed charting pipeline. It exposes **12
 methods** — `search`, `get`, `userlist`, `trending`, `watching`, `seasonal`,
-`update-progress`, `set-score`, `recent-activity`, `ingest-scores`, and
-`refresh-metadata` — each writing structured results into the swamp data model
-so you can query them later with CEL expressions. The model respects AniList's
-published rate limits (it reads the `X-RateLimit-*` response headers and backs
-off automatically on `429`, retrying transparently).
+`update-progress`, `set-score`, `recent-activity`, `lookup`, `ingest-scores`,
+and `refresh-metadata` — each writing structured results into the swamp data
+model so you can query them later with CEL expressions. The model respects
+AniList's published rate limits (it reads the `X-RateLimit-*` response headers
+and backs off automatically on `429`, retrying transparently).
 
 ## Configuration
 
 ```yaml
 type: "@magistr/anilist"
-typeVersion: "2026.07.27.1"
+typeVersion: "2026.08.17.1"
 id: 00000000-0000-0000-0000-000000000000
 name: anilist
 version: 1
@@ -88,18 +88,34 @@ swamp model method run anilist set-score --input title="Frieren" --input score=8
 
 ### recent-activity — notifier fan-out
 
-Fetches new list activity (episodes watched, completions) since the last run for
-a set of tracked users, dedupes with a persisted per-user cursor, and optionally
-posts a digest to Telegram via a `@magistr/telegram/send` model instance (Bot
-API 10.2 Rich Message by default, or legacy HTML). The cursor only advances
-after a **confirmed** delivery — a failed send or `dryRun` holds it so the next
-run retries (at-least-once).
+Fetches new list activity since the last run for a set of tracked users, dedupes
+with a persisted per-user cursor, and optionally posts a digest to Telegram via
+a `@magistr/telegram/send` model instance (Bot API 10.2 Rich Message by default,
+or legacy HTML). The cursor only advances after a **confirmed** delivery — a
+failed send or `dryRun` holds it so the next run retries (at-least-once).
+
+Two kinds of event are reported. **Progress** (episodes watched, chapters read)
+is grouped per user, with consecutive episodes compacted into honest ranges.
+**Verdicts** — a title `completed` or `dropped` — are pulled into their own
+`Status changes` section instead of being folded into a watch range or, in the
+case of `dropped`, discarded as list housekeeping. Verdicts are also written to
+the `activityFeed` resource as `statusChanges`, so "who dropped what" is a
+`swamp data query` away rather than something to re-derive from raw statuses.
 
 ```bash
 swamp model method run anilist recent-activity \
   --input usernamesFile=/path/to/usernames.txt \
   --input telegramModel=tg-bot \
   --input format=rich
+```
+
+Set `includeStatusChanges=false` to restore the progress-only digest, which
+folds completions inline and drops `dropped` entirely:
+
+```bash
+swamp model method run anilist recent-activity \
+  --input usernamesFile=/path/to/usernames.txt \
+  --input includeStatusChanges=false
 ```
 
 ### Charting pipeline (requires `clickhouseUrl`)
@@ -129,8 +145,17 @@ swamp model method run anilist refresh-metadata
 | `seasonal`                       | `seasonal`                     | 6h            |
 | `watchProgress`                  | `update-progress`, `set-score` | 1h            |
 | `activityFeed`, `activityCursor` | `recent-activity`              | 7d / infinite |
+| `lookupResult`                   | `lookup`                       | 1h            |
 | `userlistScored`, `ingestRun`    | `ingest-scores`                | 30d / 90d     |
 | `metadataRefresh`                | `refresh-metadata`             | 90d           |
+
+`activityFeed` carries `statusChanges` alongside `activities`, so a verdict
+history query needs no re-derivation from raw activity statuses:
+
+```bash
+swamp data query 'modelName == "anilist" && specName == "activityFeed"' \
+  --select 'content.statusChanges' --json
+```
 
 Results are written as swamp data artifacts with the lifetimes above, so
 subsequent CEL lookups can read them without re-fetching from the API.

@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026.08.17.1
+
+Reconciles this package with the main-repo copy that had forked away from it,
+and adds completed/dropped verdict detection to the activity notifier.
+
+**The fork.** `~/dev_tmp/swamp/extensions/models/anilist.ts` — not a
+`swamp extension source` of this package, just a parallel copy — is what
+actually runs and what is deployed to `swamp serve`. The two diverged from a
+common ancestor at `2026.07.27.1`: this package gained the AL1-AL4 hardening,
+JSDoc and the `upgrades` chain, while the main repo independently gained the
+`#AniList` heading hashtag (`2026.07.30.2`) and the ClickHouse `lookup` method
+(`2026.08.16.1`). Neither side ever had the other's work. Resolved as a real
+three-way merge against the `2026.07.27.1` ancestor; the four conflicts were all
+"both sides added code next to the same comment". **Consequence worth stating
+plainly: production had been running without the AL1-AL4 hostile-response guards
+this package shipped on 2026-08-02.** This release is the first time they reach
+the deployed notifier.
+
+### Added
+
+- **Completed/dropped verdict detection** on `recent-activity`. `dropped`
+  activity was filtered out entirely by `isConsumptionActivity` (commented as
+  "list housekeeping … noise") and `completed` was folded into a watch range by
+  `mergeActivities`, so neither was ever a visible event — a 7-day sample over
+  the live tracked users surfaced three real drops that had been silently
+  discarded. New `isStatusChangeActivity` / `isReportableActivity` (which widens
+  the consumption set by exactly one status), `partitionActivities` (splits
+  verdicts out of the progress rows) and `mergeStatusChanges` (dedupes per
+  `(user, mediaId, status)`; best known score wins, since score enrichment is
+  best-effort and a duplicate may carry `null`).
+- Both renderers grew an optional trailing status-changes section:
+  `buildRichMessage` adds a `Status changes` paragraph (bold profile-linked
+  user, verb, linked title, score) and `formatActivityMessages` the HTML
+  equivalent. The footer became `N users · M titles · K status changes`, with
+  users counted across BOTH sections so a drop from someone with no progress
+  rows is not uncounted, and the titles clause dropped when only verdicts
+  landed.
+- `statusChanges` + `statusChangeCount` on the `activityFeed` resource — added
+  to the resource SCHEMA as well as the write, since the schema strips unknown
+  keys and would otherwise have made the verdicts unqueryable while the digest
+  still displayed them.
+- **`includeStatusChanges`** method argument (default `true`) — set it `false`
+  to restore the previous progress-only digest with no redeploy, since it is a
+  workflow step input rather than anything baked into the extension.
+
+### Changed
+
+- Both renderers take the status list as an OPTIONAL second parameter, so every
+  pre-existing call site and assertion is untouched.
+- `buildRichMessage opens with a '#AniList activity' header` and
+  `sanity: model exposes exactly the N documented methods` updated — they had
+  been asserting pre-fork behavior (no hashtag, 11 methods) that the main repo
+  superseded long ago.
+
 ## 2026.08.02.1
 
 Real fixes for the four latent bugs (AL1-AL4) filed against `gql()`'s

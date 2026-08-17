@@ -549,6 +549,48 @@ async function clickhouseDistinctMediaIds(
   return ids;
 }
 
+// Read-only SELECT against ClickHouse, parsing a JSONEachRow body. Values are
+// bound as ClickHouse query parameters ({name:Type} placeholders) and NEVER
+// interpolated into the statement, so a hostile title string cannot alter the
+// query. Only the database name is interpolated — it comes from
+// globalArguments (operator-controlled), same as the insert path above.
+async function clickhouseSelect(
+  cfg: ClickHouseConfig,
+  sql: string,
+  params: Record<string, string> = {},
+): Promise<Array<Record<string, unknown>>> {
+  const search = new URLSearchParams({ query: sql });
+  for (const [k, v] of Object.entries(params)) search.set(`param_${k}`, v);
+  const headers: Record<string, string> = {};
+  if (cfg.user) headers["X-ClickHouse-User"] = cfg.user;
+  if (cfg.password) headers["X-ClickHouse-Key"] = cfg.password;
+  const resp = await fetch(`${cfg.url}/?${search}`, {
+    method: "POST",
+    headers,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!resp.ok) {
+    throw new Error(
+      `ClickHouse query failed: ${resp.status} ${
+        (await resp.text()).slice(0, 300)
+      }`,
+    );
+  }
+  const rows: Array<Record<string, unknown>> = [];
+  for (const line of (await resp.text()).split("\n")) {
+    const t = line.trim();
+    if (t) rows.push(JSON.parse(t) as Record<string, unknown>);
+  }
+  return rows;
+}
+
+/** ClickHouse returns nullable numerics as null and may quote wide ints. */
+function asNum(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 type DateParts = {
   year?: number | null;
   month?: number | null;
@@ -796,8 +838,7 @@ export function parseUsernamesFile(
 }
 
 // The notifier reports consumption (episodes watched, chapters read,
-// completions) — list housekeeping like "plans to watch" / "paused" /
-// "dropped" is noise.
+// completions) — list housekeeping like "plans to watch" / "paused" is noise.
 const CONSUMPTION_STATUSES = [
   "watched episode",
   "rewatched episode",
@@ -810,6 +851,41 @@ const CONSUMPTION_STATUSES = [
  * not list housekeeping (planning/paused/dropped). */
 export function isConsumptionActivity(a: ActivityItem): boolean {
   return CONSUMPTION_STATUSES.includes(a.status.toLowerCase());
+}
+
+// A list *verdict*: the user reached the end of a title or gave up on it.
+// These are rare next to episode-by-episode progress and say something the
+// progress lines cannot, so the digest pulls them into their own section
+// instead of burying "dropped" as housekeeping or folding "completed" into a
+// watch range. "completed" is deliberately in both sets — it is consumption
+// AND a verdict; `partitionActivities` decides where it is rendered.
+const STATUS_CHANGE_STATUSES = ["completed", "dropped"];
+
+/** True when an activity is a list verdict — the user completed a title or
+ * dropped it — as opposed to episode/chapter progress. */
+export function isStatusChangeActivity(a: ActivityItem): boolean {
+  return STATUS_CHANGE_STATUSES.includes(a.status.toLowerCase());
+}
+
+/** Everything the notifier delivers. Widens `isConsumptionActivity` by
+ * exactly one status ("dropped") — the rest of the union already qualified. */
+export function isReportableActivity(a: ActivityItem): boolean {
+  return isConsumptionActivity(a) || isStatusChangeActivity(a);
+}
+
+/** Split a delivered batch into the progress rows (rendered per user) and the
+ * status changes (rendered in their own section). Order is preserved within
+ * each side, so both keep the caller's chronological ordering. */
+export function partitionActivities(
+  activities: ActivityItem[],
+): { progress: ActivityItem[]; statusChanges: ActivityItem[] } {
+  const progress: ActivityItem[] = [];
+  const statusChanges: ActivityItem[] = [];
+  for (const a of activities) {
+    if (isStatusChangeActivity(a)) statusChanges.push(a);
+    else progress.push(a);
+  }
+  return { progress, statusChanges };
 }
 
 /** Model names reach a `swamp` subprocess argv — must not look like a CLI
@@ -891,14 +967,29 @@ export function advanceCursor(
 }
 
 /**
+ * Hashtag stamped on every digest so the chat's posts are searchable by tag.
+ * Telegram auto-detects a bare `#tag` in message text, so it needs no markup
+ * — but it must sit in plain (non-linked) text to be picked up. It stands in
+ * for the word in the digest heading ("#AniList activity") rather than
+ * sitting in a second place, so the name is never repeated.
+ */
+export const ACTIVITY_HASHTAG = "#AniList";
+
+/** The digest heading, tag included. Shared by both message formats. */
+export const ACTIVITY_HEADING = `${ACTIVITY_HASHTAG} activity`;
+
+/**
  * Render activities as Telegram HTML messages, grouped by user, chunked at
  * the Telegram limit. Every interpolated field is HTML-escaped; titles link
  * to their AniList page when known. Score is shown only when set (> 0).
  * ASCII-only chrome (no emoji, plain dashes) and compact lines so the
- * common case is a single chunk.
+ * common case is a single chunk. The hashtag rides in the header, so it
+ * survives chunking — every chunk is independently searchable. Status
+ * changes, when present, follow the per-user blocks under their own heading.
  */
 export function formatActivityMessages(
   activities: ActivityItem[],
+  statusChanges: StatusChange[] = [],
 ): string[] {
   const byUser = new Map<string, ActivityItem[]>();
   for (const a of activities) {
@@ -921,7 +1012,25 @@ export function formatActivityMessages(
     lines.push("");
   }
 
-  const header = "<b>AniList activity</b>";
+  // Verdicts last, under their own heading — one flat, user-attributed list
+  // so a drop is never mistaken for a progress line.
+  if (statusChanges.length > 0) {
+    lines.push(`<b>${escapeHtml(STATUS_CHANGE_HEADING)}</b>`);
+    for (const c of statusChanges) {
+      const title = c.siteUrl
+        ? `<a href="${escapeHtml(c.siteUrl)}">${escapeHtml(c.title)}</a>`
+        : escapeHtml(c.title);
+      const scoreSuffix = c.score && c.score > 0 ? ` (score ${c.score})` : "";
+      lines.push(
+        `- <b>${escapeHtml(c.userName)}</b> ${
+          escapeHtml(c.status)
+        }: ${title}${scoreSuffix}`,
+      );
+    }
+    lines.push("");
+  }
+
+  const header = `<b>${ACTIVITY_HEADING}</b>`;
   const chunks: string[] = [];
   let current = header;
   for (const line of lines) {
@@ -951,6 +1060,61 @@ export type MergedShow = {
   // "completed, episodes 1-12". Title/score are appended by the renderer.
   line: string;
 };
+
+/** One display row per (user, show, verdict) for the status-changes
+ * section. */
+export type StatusChange = {
+  userName: string;
+  mediaId: number;
+  // Lower-cased AniList status, used verbatim as the verb ("completed",
+  // "dropped").
+  status: string;
+  title: string;
+  siteUrl: string | null;
+  score: number | null;
+};
+
+/**
+ * Collapse status-change activities into one row per (user, show, verdict).
+ * AniList can emit the same transition twice (an edit re-fires the
+ * activity), and a re-watch can complete a title the user already completed
+ * inside one window — both would otherwise print twice. The best known score
+ * wins, since score enrichment is best-effort and may be null on some of the
+ * duplicates. Preserves first-appearance order, so the section reads
+ * chronologically.
+ */
+export function mergeStatusChanges(
+  activities: ActivityItem[],
+): StatusChange[] {
+  const order: string[] = [];
+  const rows = new Map<string, StatusChange>();
+  for (const a of activities) {
+    const status = a.status.toLowerCase();
+    const key = `${a.userName} ${a.mediaId} ${status}`;
+    const prev = rows.get(key);
+    if (!prev) {
+      order.push(key);
+      rows.set(key, {
+        userName: a.userName,
+        mediaId: a.mediaId,
+        status,
+        title: a.title,
+        siteUrl: a.siteUrl ?? null,
+        score: a.score != null && a.score > 0 ? a.score : null,
+      });
+      continue;
+    }
+    if (a.score != null && a.score > 0) {
+      prev.score = Math.max(prev.score ?? 0, a.score);
+    }
+    // A later duplicate may carry the siteUrl an earlier one lacked.
+    if (!prev.siteUrl && a.siteUrl) prev.siteUrl = a.siteUrl;
+  }
+  return order.map((k) => rows.get(k)!);
+}
+
+/** Heading for the status-changes section, in both message formats. */
+export const STATUS_CHANGE_HEADING = "Status changes";
 
 // Parse an AniList progress string ("5", "1 - 12", "68 - 70") to the inclusive
 // integer set it covers. Non-numeric progress yields nothing.
@@ -1108,16 +1272,37 @@ function showLine(show: MergedShow): unknown[] {
   return parts;
 }
 
+// The RichText fragment for one status change: "<user> <verb>: <title> (score
+// N)". Unlike a progress row the user is named inline — the section is a flat
+// chronological list, not grouped by user, so nothing is orphaned.
+function statusChangeLine(change: StatusChange): unknown[] {
+  const titleNode = change.siteUrl
+    ? { type: "url", text: change.title, url: change.siteUrl }
+    : change.title;
+  const parts: unknown[] = [
+    userNode(change.userName),
+    ` ${change.status}: `,
+    titleNode,
+  ];
+  if (change.score != null && change.score > 0) {
+    parts.push(` (score ${change.score})`);
+  }
+  return parts;
+}
+
 /**
  * Build a Bot API 10.2 Rich Message (InputRichMessage) as a plain text
  * digest grouped by user — one paragraph per user holding the bold,
  * profile-linked username followed by their merged activity lines
  * (bulleted, titles linked). No imagery: the grouped heading keeps every
- * line attributed without banners splitting them. Returns the
- * InputRichMessage object (caller stringifies it).
+ * line attributed without banners splitting them. The heading carries
+ * ACTIVITY_HASHTAG so the post is searchable by tag. Status changes, when
+ * present, get their own trailing paragraph. Returns the InputRichMessage
+ * object (caller stringifies it).
  */
 export function buildRichMessage(
   merged: MergedShow[],
+  statusChanges: StatusChange[] = [],
 ): Record<string, unknown> {
   // Group by user, first-appearance order.
   const byUser = new Map<string, MergedShow[]>();
@@ -1128,7 +1313,7 @@ export function buildRichMessage(
   }
 
   const blocks: Record<string, unknown>[] = [
-    { type: "paragraph", text: { type: "bold", text: "AniList activity" } },
+    { type: "paragraph", text: { type: "bold", text: ACTIVITY_HEADING } },
   ];
   for (const [user, shows] of byUser) {
     const text: unknown[] = [userNode(user)];
@@ -1138,14 +1323,40 @@ export function buildRichMessage(
     blocks.push({ type: "paragraph", text });
   }
 
-  const userCount = byUser.size;
+  // Verdicts get their own paragraph, shaped like a user block (bold heading,
+  // then bulleted lines) so it reads as one more section rather than a
+  // different kind of message.
+  if (statusChanges.length > 0) {
+    const text: unknown[] = [
+      { type: "bold", text: STATUS_CHANGE_HEADING },
+    ];
+    for (const change of statusChanges) {
+      text.push("\n• ", ...statusChangeLine(change));
+    }
+    blocks.push({ type: "paragraph", text });
+  }
+
+  // Users counted across both sections — a run can hold a drop from someone
+  // with no progress rows at all.
+  const users = new Set<string>([
+    ...merged.map((m) => m.userName),
+    ...statusChanges.map((c) => c.userName),
+  ]);
+  const userCount = users.size;
   const showCount = merged.length;
-  blocks.push({
-    type: "footer",
-    text: `${userCount} user${userCount === 1 ? "" : "s"} · ${showCount} title${
-      showCount === 1 ? "" : "s"
-    }`,
-  });
+  const changeCount = statusChanges.length;
+  const parts = [`${userCount} user${userCount === 1 ? "" : "s"}`];
+  // Drop the titles clause only when there is nothing to count and the status
+  // section is carrying the digest on its own.
+  if (showCount > 0 || changeCount === 0) {
+    parts.push(`${showCount} title${showCount === 1 ? "" : "s"}`);
+  }
+  if (changeCount > 0) {
+    parts.push(
+      `${changeCount} status change${changeCount === 1 ? "" : "s"}`,
+    );
+  }
+  blocks.push({ type: "footer", text: parts.join(" · ") });
 
   return { blocks };
 }
@@ -1275,13 +1486,19 @@ const ActivityItemSchema = z.object({
  */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.08.02.1",
+  version: "2026.08.17.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
       toVersion: "2026.08.02.1",
       description:
         "hostile-200 crash guards (null-data + non-JSON-body) + robust 429-in-body detection + per-invocation rate-limit state; no globalArguments schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.17.1",
+      description:
+        "reconciled the main-repo fork (#AniList hashtag, ClickHouse `lookup`) with the AL1-AL4 hardening, and added completed/dropped verdict detection: `includeStatusChanges` + a Status changes digest section + statusChanges on the activityFeed resource; no globalArguments schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1405,7 +1622,7 @@ export const model = {
     },
     activityFeed: {
       description:
-        "Recent list activity across tracked users, with formatted Telegram messages and delivery outcome",
+        "Recent list activity across tracked users, with detected completed/dropped verdicts, formatted Telegram messages and delivery outcome",
       schema: z.object({
         checkedAt: z.string(),
         usernamesSource: z.string(),
@@ -1416,6 +1633,18 @@ export const model = {
         })),
         newCount: z.number(),
         activities: z.array(ActivityItemSchema),
+        // Verdicts (completed / dropped) split out of `activities` for the
+        // digest's status-changes section — queryable on their own so
+        // "who dropped what" needs no re-derivation from raw statuses.
+        statusChanges: z.array(z.object({
+          userName: z.string(),
+          mediaId: z.number(),
+          status: z.string(),
+          title: z.string(),
+          siteUrl: z.string().nullable(),
+          score: z.number().nullable(),
+        })),
+        statusChangeCount: z.number(),
         messages: z.array(z.string()),
         sent: z.boolean(),
         sendError: z.string().nullable(),
@@ -1486,8 +1715,149 @@ export const model = {
       lifetime: "90d",
       garbageCollection: 10,
     },
+    lookupResult: {
+      description:
+        "Local title lookup against the ClickHouse mirror: which media matched and who scored them",
+      schema: z.object({
+        query: z.string(),
+        userName: z.string().nullable(),
+        matches: z.number(),
+        results: z.array(z.object({
+          mediaId: z.number(),
+          romaji: z.string(),
+          english: z.string(),
+          native: z.string(),
+          format: z.string(),
+          startYear: z.number().nullable(),
+          episodes: z.number().nullable(),
+          averageScore: z.number().nullable(),
+          userScore: z.number().nullable(),
+          seenByUser: z.boolean().nullable(),
+          scores: z.array(
+            z.object({ userName: z.string(), score: z.number() }),
+          ),
+        })),
+        timestamp: z.string(),
+      }),
+      lifetime: "7d",
+      garbageCollection: 10,
+    },
   },
   methods: {
+    lookup: {
+      description:
+        "Answer 'have I seen X, and what did I score it' from the LOCAL ClickHouse mirror instead of the AniList API — works while AniList is down or rate-limiting. Matches a title substring case-insensitively across romaji/english/native. Only covers what ingest-scores has mirrored (COMPLETED + CURRENT entries that carry a score), so an unscored or never-ingested entry reads as not-found rather than not-watched.",
+      arguments: z.object({
+        title: z.string().min(1).describe(
+          "Title substring, matched case-insensitively against romaji/english/native",
+        ),
+        userName: z.string().optional().describe(
+          "Restrict scores to this user (case-sensitive — user_scores ORDER BY is). Omit to show every user who scored the match.",
+        ),
+        limit: z.number().min(1).max(100).default(10).describe(
+          "Max distinct media to return, most popular first",
+        ),
+      }),
+      execute: async (
+        args: { title: string; userName?: string; limit: number },
+        context: {
+          globalArgs: z.infer<typeof GlobalArgsSchema>;
+          writeResource: (n: string, k: string, v: unknown) => Promise<unknown>;
+        },
+      ) => {
+        const cfg = clickhouseConfig(context.globalArgs);
+        const db = cfg.database;
+
+        // Media first, capped by `limit`, so a title matched by many users
+        // cannot crowd out other matches the way a joined LIMIT would.
+        const media = await clickhouseSelect(
+          cfg,
+          `SELECT media_id, title_romaji, title_english, title_native,
+                  format, start_year, episodes, average_score, popularity
+             FROM ${db}.anilist_metadata FINAL
+            WHERE positionCaseInsensitive(title_romaji, {q:String}) > 0
+               OR positionCaseInsensitive(title_english, {q:String}) > 0
+               OR positionCaseInsensitive(title_native, {q:String}) > 0
+            ORDER BY popularity DESC
+            LIMIT {n:UInt32}
+           FORMAT JSONEachRow`,
+          { q: args.title, n: String(args.limit) },
+        );
+
+        const ids = media.map((m) => asNum(m.media_id)).filter((
+          n,
+        ): n is number => n != null);
+
+        // Scores for exactly those ids. Skipped entirely on no match so an
+        // empty IN () never reaches ClickHouse.
+        const scoreRows = ids.length
+          ? await clickhouseSelect(
+            cfg,
+            `SELECT user_name, media_id, score
+               FROM ${db}.user_scores FINAL
+              WHERE media_id IN ({ids:Array(UInt32)})
+                ${args.userName ? "AND user_name = {u:String}" : ""}
+             FORMAT JSONEachRow`,
+            {
+              ids: `[${ids.join(",")}]`,
+              ...(args.userName ? { u: args.userName } : {}),
+            },
+          )
+          : [];
+
+        const byMedia = new Map<
+          number,
+          Array<{ userName: string; score: number }>
+        >();
+        for (const r of scoreRows) {
+          const id = asNum(r.media_id);
+          const score = asNum(r.score);
+          if (id == null || score == null) continue;
+          const list = byMedia.get(id) ?? [];
+          list.push({ userName: String(r.user_name ?? ""), score });
+          byMedia.set(id, list);
+        }
+
+        const results = media.map((m) => {
+          const id = asNum(m.media_id) ?? 0;
+          const scores = (byMedia.get(id) ?? []).sort((a, b) =>
+            b.score - a.score
+          );
+          const mine = args.userName
+            ? scores.find((s) => s.userName === args.userName) ?? null
+            : null;
+          return {
+            mediaId: id,
+            romaji: String(m.title_romaji ?? ""),
+            english: String(m.title_english ?? ""),
+            native: String(m.title_native ?? ""),
+            format: String(m.format ?? ""),
+            startYear: asNum(m.start_year),
+            episodes: asNum(m.episodes),
+            averageScore: asNum(m.average_score),
+            userScore: mine ? mine.score : null,
+            // null (not false) when no user was named — absence of a score
+            // for an unspecified user is not evidence of not having seen it.
+            seenByUser: args.userName ? mine != null : null,
+            scores,
+          };
+        });
+
+        const handle = await context.writeResource(
+          "lookupResult",
+          args.title.slice(0, 60) || "lookup",
+          {
+            query: args.title,
+            userName: args.userName ?? null,
+            matches: results.length,
+            results,
+            timestamp: new Date().toISOString(),
+          },
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
     search: {
       description:
         "Search for anime or manga by title. Set fetchAll to paginate through all results automatically.",
@@ -2061,7 +2431,7 @@ export const model = {
 
     "recent-activity": {
       description:
-        "Fan-out: fetch new list activity (episodes watched, completions) for a set of users since the last run, enrich with each user's list score, optionally post to Telegram via a @magistr/telegram/send model instance. Dedupe cursor advances ONLY after confirmed delivery (at-least-once); dryRun never advances it.",
+        "Fan-out: fetch new list activity (episodes watched, plus completed/dropped verdicts) for a set of users since the last run, enrich with each user's list score, optionally post to Telegram via a @magistr/telegram/send model instance. Verdicts are reported in a dedicated 'Status changes' digest section and stored on the feed resource. Dedupe cursor advances ONLY after confirmed delivery (at-least-once); dryRun never advances it.",
       arguments: z.object({
         usernames: z.array(z.string()).default([]).describe(
           "AniList usernames to track (fallback when usernamesFile is absent/unreadable)",
@@ -2084,6 +2454,9 @@ export const model = {
         format: z.enum(["rich", "html"]).default("rich").describe(
           "Message format: 'rich' = Bot API 10.2 block digest (bold profile-linked usernames + linked titles, via sendRichMessage); 'html' = the legacy plain HTML digest (via sendMessage)",
         ),
+        includeStatusChanges: z.boolean().default(true).describe(
+          "Detect list verdicts: report 'dropped' titles (otherwise filtered out) and lift 'completed' into a dedicated 'Status changes' digest section. Set false to restore the progress-only digest that folds completions inline.",
+        ),
         dryRun: z.boolean().default(false).describe(
           "Compute and store the feed but never send or advance the cursor",
         ),
@@ -2100,6 +2473,7 @@ export const model = {
           telegramModel: string;
           telegramChatId: string;
           format: "rich" | "html";
+          includeStatusChanges: boolean;
           dryRun: boolean;
           floorReset: boolean;
         },
@@ -2295,10 +2669,15 @@ export const model = {
         }
 
         // Oldest-first so the Telegram message reads chronologically. Only
-        // consumption activity is reported; filtered-out items still advance
-        // the cursor via the id ordering of what remains new.
+        // reportable activity is delivered; filtered-out items still advance
+        // the cursor via the id ordering of what remains new. With verdict
+        // detection off, "dropped" is dropped again and the filter is exactly
+        // the old consumption-only one.
+        const keep = args.includeStatusChanges
+          ? isReportableActivity
+          : isConsumptionActivity;
         const fresh = filterNewActivities(rawActivities, cursor, lookbackCutoff)
-          .filter(isConsumptionActivity)
+          .filter(keep)
           .sort((x, y) => x.id - y.id);
 
         // Enrich with the user's list score for the media (best effort —
@@ -2326,12 +2705,25 @@ export const model = {
           }
         }
 
+        // Split verdicts out of the progress rows before rendering, so a
+        // completion is stated once (in its own section) rather than folded
+        // into a watch range. With detection off nothing is split and
+        // `mergeActivities` folds completions inline as before.
+        const { progress, statusChanges } = args.includeStatusChanges
+          ? partitionActivities(fresh)
+          : { progress: fresh, statusChanges: [] as ActivityItem[] };
+        const changes = mergeStatusChanges(statusChanges);
+
         // Render both formats: HTML chunks (legacy / fallback) and the Bot API
         // 10.2 block digest. The `format` arg picks which one is delivered;
         // both are stored on the feed resource for debugging and rollback.
-        const messages = fresh.length ? formatActivityMessages(fresh) : [];
-        const merged = fresh.length ? mergeActivities(fresh) : [];
-        const richMessage = fresh.length ? buildRichMessage(merged) : null;
+        const messages = fresh.length
+          ? formatActivityMessages(progress, changes)
+          : [];
+        const merged = progress.length ? mergeActivities(progress) : [];
+        const richMessage = fresh.length
+          ? buildRichMessage(merged, changes)
+          : null;
 
         // Deliver, then decide cursor policy:
         // - nothing new            → keep ids, bump createdAt floors
@@ -2400,6 +2792,8 @@ export const model = {
             usersFailed,
             newCount: fresh.length,
             activities: fresh,
+            statusChanges: changes,
+            statusChangeCount: changes.length,
             messages,
             richMessage: richMessage ? JSON.stringify(richMessage) : "",
             format: args.format,
