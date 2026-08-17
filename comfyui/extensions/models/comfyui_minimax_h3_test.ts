@@ -388,7 +388,8 @@ Deno.test("uploadImage: POSTs multipart to /upload/image and returns the server 
 
 Deno.test("minimax_h3 bundled graph matches the template's node wiring", async () => {
   const path =
-    new URL("../../workflows/minimax_h3_r2v.api.json", import.meta.url).pathname;
+    new URL("../../workflows/minimax_h3_r2v.api.json", import.meta.url)
+      .pathname;
   const graph = JSON.parse(await Deno.readTextFile(path)) as Record<
     string,
     { class_type: string; inputs: Record<string, unknown> }
@@ -569,7 +570,9 @@ Deno.test("generate template='minimax_h3': speed splices the selected patchers (
           // deliberately out of template order — injection still follows the
           // template's declared order (attentionBackend before spectrum)
           speed: ["spectrum", "attentionBackend"],
-          speedOptions: { attentionBackend: { attention: "pytorch attention" } },
+          speedOptions: {
+            attentionBackend: { attention: "pytorch attention" },
+          },
         });
         await model.methods.generate.execute(args, context);
       },
@@ -646,7 +649,9 @@ async function postedFor(
     const videoHistory = {
       status: { completed: true },
       outputs: {
-        "92": { videos: [{ filename: "v.mp4", subfolder: "", type: "output" }] },
+        "92": {
+          videos: [{ filename: "v.mp4", subfolder: "", type: "output" }],
+        },
       },
     };
     const objectInfo = Object.fromEntries(
@@ -654,8 +659,7 @@ async function postedFor(
     );
     await withFetchStub(
       [
-        (req) =>
-          pathOf(req) === "/object_info" ? json(objectInfo) : undefined,
+        (req) => pathOf(req) === "/object_info" ? json(objectInfo) : undefined,
         (req) => {
           if (pathOf(req) !== "/prompt") return undefined;
           return req.text().then((text) => {
@@ -709,8 +713,14 @@ Deno.test("generate template='minimax_h3': omitting speed applies the full defau
     posted["speed_0_ApplyMiniMaxH3FirstBlockCache"].inputs.model,
     ["127", 0],
   );
-  assertEquals(posted["124"].inputs.model, ["speed_6_MiniMaxH3FusedModulation", 0]);
-  assertEquals(posted["126"].inputs.model, ["speed_6_MiniMaxH3FusedModulation", 0]);
+  assertEquals(posted["124"].inputs.model, [
+    "speed_6_MiniMaxH3FusedModulation",
+    0,
+  ]);
+  assertEquals(posted["126"].inputs.model, [
+    "speed_6_MiniMaxH3FusedModulation",
+    0,
+  ]);
 });
 
 Deno.test("generate template='minimax_h3': an explicit empty speed:[] disables the default stack", async () => {
@@ -759,7 +769,9 @@ Deno.test("generate: an explicit speed patcher whose node is NOT installed error
     () =>
       postedFor(
         { speed: ["attentionBackend", "solAttention"] },
-        ALL_SPEED_CLASSES.filter((c) => c !== "MiniMaxH3ScheduledSolAttentionPatch"),
+        ALL_SPEED_CLASSES.filter((c) =>
+          c !== "MiniMaxH3ScheduledSolAttentionPatch"
+        ),
       ),
     Error,
     "not installed on the ComfyUI server",
@@ -768,18 +780,26 @@ Deno.test("generate: an explicit speed patcher whose node is NOT installed error
 
 Deno.test("generate: the DEFAULT speed stack silently skips patchers whose node is missing", async () => {
   // only attentionBackend + sage installed; default also lists the missing ones
-  const posted = await postedFor({}, ["ModelAttentionBackend", "PathchSageAttentionKJ"]);
+  const posted = await postedFor({}, [
+    "ModelAttentionBackend",
+    "PathchSageAttentionKJ",
+  ]);
   assert(posted["speed_0_ModelAttentionBackend"], "installed one injected");
   assert(posted["speed_1_PathchSageAttentionKJ"], "installed one injected");
   // the missing spectrum/sol/etc. are simply absent — no error
   assertEquals("speed_2_SpectrumApplyMiniMaxH3" in posted, false);
   // consumers still repointed at the last INSTALLED patcher
-  assertEquals(posted["124"].inputs.model, ["speed_1_PathchSageAttentionKJ", 0]);
+  assertEquals(posted["124"].inputs.model, [
+    "speed_1_PathchSageAttentionKJ",
+    0,
+  ]);
 });
 
 Deno.test("generate template='minimax_h3': upscale splices SeedVR2 between the frames and CreateVideo", async () => {
-  const posted = await postedFor({ upscale: true, upscaleResolution: 1440 }) as
-    Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+  const posted = await postedFor({
+    upscale: true,
+    upscaleResolution: 1440,
+  }) as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
   assertEquals(posted["upscale_dit"].class_type, "SeedVR2LoadDiTModel");
   assertEquals(posted["upscale_vae"].class_type, "SeedVR2LoadVAEModel");
   assertEquals(posted["upscale_seedvr2"].class_type, "SeedVR2VideoUpscaler");
@@ -894,7 +914,10 @@ Deno.test("continuationCaption: appends the last-frame continuation instruction 
 });
 
 Deno.test("continuationCaptionTail: tags <Video N> as the moving tail anchor", () => {
-  const out = continuationCaptionTail("subject_definitions:\n<Subject 1> ...", 2);
+  const out = continuationCaptionTail(
+    "subject_definitions:\n<Subject 1> ...",
+    2,
+  );
   assert(out.includes("<Video 2> is the"));
   assert(out.includes("final ~0.5 seconds"));
   // continuity language: no cut, camera trajectory, identity from <Picture 1>
