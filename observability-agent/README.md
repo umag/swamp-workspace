@@ -56,3 +56,37 @@ swamp model method run do-observability install
 swamp model method run do-observability configure
 swamp model method run do-observability status
 ```
+
+### Instance definition
+
+`bindAddress` is the field worth thinking about: it is what the exporters listen
+on, so pointing it at a tunnel address is what keeps them off the public
+interface. `logsEndpoint` is optional — leave it unset and `configure` skips
+Vector entirely, installing metrics only.
+
+```yaml
+type: "@magistr/observability/agent"
+typeVersion: "2026.08.01.1"
+id: 00000000-0000-0000-0000-000000000000
+name: do-observability
+version: 1
+tags: {}
+globalArguments:
+  sshHost: observability-target.example.com
+  sshUser: root
+  bindAddress: 192.0.2.4 # WireGuard tunnel IP, not the public NIC
+  logsEndpoint: "http://192.0.2.42:9428/insert/elasticsearch/"
+  hostLabel: do-edge
+methods: {}
+```
+
+`configure` takes the log files to ship, so a re-run with a different list is
+how you add or drop a source:
+
+```bash
+swamp model method run do-observability configure \
+  --input logFiles='["/var/log/syslog","/var/log/nginx/access.log"]'
+
+# then confirm all three services are up and answering
+swamp model method run do-observability status --json
+```

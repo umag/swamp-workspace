@@ -265,6 +265,21 @@ sinks:
 `;
 }
 
+/**
+ * The `@magistr/observability/agent` model — installs and configures a
+ * host-native metrics + logs agent on a remote Debian/Ubuntu host over SSH,
+ * for a VictoriaMetrics (pull) + VictoriaLogs (push via Vector) backend.
+ *
+ * Three methods: `install` (apt node-exporter + blackbox-exporter, Vector from
+ * a pinned `.deb`; idempotent), `configure` (exporter defaults bound to
+ * `bindAddress`, blackbox modules, `CAP_NET_RAW` for ICMP probes, Vector →
+ * VictoriaLogs, enable + restart) and `status` (systemd state plus whether
+ * each exporter actually answers on its bound address).
+ *
+ * Nothing runs on the swamp host itself — there is no agent daemon and no
+ * compose stack, only SSH. Point `bindAddress` at a WireGuard tunnel IP to
+ * keep the exporters off the public interface.
+ */
 export const model = {
   type: "@magistr/observability/agent",
   version: "2026.08.01.1",

@@ -52,5 +52,5 @@ docs:
     justification: observability-agent bundles no Claude skill — a bare SSH installer, nothing to document as a skill
 ratchet:
   rubricVersion: 3
-  baselinePercentage: 85
-  label: "honest 85% (12/14, rubricV3) — CLI exits 1 per Lab #1481 (rich-readme + symbols-docs gaps); score_ratchet SKIPS, does not fail"
+  baselinePercentage: 100
+  label: "100% (12/12 client-earnable, allPassed, rubricV3) — measured via `swamp extension quality observability-agent/manifest.yaml --json` with cacheHit:false. The two Lab #1481 gaps are now CLOSED: rich-readme earned by adding an instance-definition YAML block and a configure/status example (the README had ONE fenced block and the factor needs two), symbols-docs by JSDoc'ing `export const model` (the sole export, so coverage was 0% with nothing else to average against). The old 85% baseline was recorded as 12/14 — counting the 2 provisional repository-verified points the client cannot earn — so the ratchet later read the same package as 10/12 = 83% and FAILED it as a regression that never happened. Baselines here are client-earnable percentage; do not record a maxEarnablePoints-based figure."
