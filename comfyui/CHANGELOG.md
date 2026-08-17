@@ -1,12 +1,17 @@
 # Changelog
 
-## 2026.08.12.8
+## 2026.08.12.13
 
 Adds a **MiniMax H3 reference-to-video** pipeline as a third bundled template,
 then builds it out to long-form video, clothes/style transfer and a node-aware
 speed stack. This ships the work developed as `2026.08.11.1` through
-`2026.08.12.7`; those intermediate versions were never published, so this is one
-registry release covering the whole arc.
+`2026.08.12.13`; those intermediate versions were never published, so this is
+one registry release covering the whole arc.
+
+`manifest.yaml` had been left at `2026.08.12.8` while the model's own `version`
+and its `upgrades[]` chain had moved on to `2026.08.12.13` — the last five bumps
+never reached the manifest. The manifest now matches the model, which is the
+source of truth for what the code actually is.
 
 ### Added
 
