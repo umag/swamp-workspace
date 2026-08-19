@@ -1486,7 +1486,7 @@ const ActivityItemSchema = z.object({
  */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.08.17.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -1499,6 +1499,11 @@ export const model = {
       toVersion: "2026.08.17.1",
       description:
         "reconciled the main-repo fork (#AniList hashtag, ClickHouse `lookup`) with the AL1-AL4 hardening, and added completed/dropped verdict detection: `includeStatusChanges` + a Status changes digest section + statusChanges on the activityFeed resource; no globalArguments schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

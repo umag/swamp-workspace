@@ -128,13 +128,18 @@ function stats(values) {
  */
 export const model = {
   type: "@magistr/victoriametrics",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
       toVersion: "2026.08.02.1",
       description:
         "Fix all 11 victoriametrics-latent-bugs (multi-series aggregation, resultType dispatch, response/series shape guards, absence+boot flags, negative-topN clamp); no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

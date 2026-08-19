@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/lastfm"
-version: "2026.07.27.1"
+version: "2026.08.19.1"
 description: |
   Last.fm for swamp — read a user's scrobble history and listening statistics
   from the Last.fm 2.0 web API. Read-only: every method used here is an

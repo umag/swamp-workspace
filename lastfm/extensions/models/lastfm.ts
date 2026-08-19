@@ -667,7 +667,7 @@ const chartArgs = z.object({
  */
 export const model = {
   type: "@magistr/lastfm",
-  version: "2026.07.27.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     profile: {

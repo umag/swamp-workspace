@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 All notable changes to `@magistr/reading-list`.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.17.1
 
 Reconciles this package with the main-repo copy that had forked away from it,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.01.1
 
 Fixes the HIGH device-reuse fail-open guard in `createZfsPool`

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.1
 
 Fixes the remaining seven latent bugs -- LB1, LB3, LB4, LB5, LB6, LB7, LB8 --

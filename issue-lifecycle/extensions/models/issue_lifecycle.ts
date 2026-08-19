@@ -888,7 +888,7 @@ async function readState(
  */
 export const model = {
   type: "@magistr/issue-lifecycle",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -899,6 +899,11 @@ export const model = {
         "now block on a FAIL reviewer verdict), IL-4 (resolutions keyed " +
         "per-reviewer), IL-7 (record_review reviewer dedup). No " +
         "globalArguments or resource-schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

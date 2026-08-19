@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.1
 
 Real-fix wave for the eight GP-1..GP-8 bugs pinned by the prior release's

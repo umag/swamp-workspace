@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/observability-agent"
-version: "2026.08.01.1"
+version: "2026.08.19.1"
 description: |
   Install and configure a host-native metrics + logs agent on a remote
   Debian/Ubuntu host over SSH, for a VictoriaMetrics (pull) + VictoriaLogs

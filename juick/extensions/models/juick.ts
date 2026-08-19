@@ -274,13 +274,18 @@ async function juickApi(
 /** Juick.com microblogging model: fetch feed messages, threads, user profiles, and import a user's full post history (with comments) as Obsidian-ready markdown. */
 export const model = {
   type: "@magistr/juick",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
       toVersion: "2026.08.02.1",
       description:
         "SSRF host-allowlist + private-IP/scheme backstop + redirect re-validation, fetch AbortController timeout + Retry-After surfacing, bounded pagination -- adds allowedHosts/timeout/maxPages global args (all defaulted, no resource schema change)",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

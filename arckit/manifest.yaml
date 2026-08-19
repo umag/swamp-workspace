@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/arckit"
-version: "2026.08.14.1"
+version: "2026.08.19.1"
 description: |
   Standalone swamp port of ArcKit (https://github.com/tractorjuice/arc-kit —
   the Enterprise Architecture Governance Harness): a skill-driven governance

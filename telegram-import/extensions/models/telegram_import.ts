@@ -527,7 +527,7 @@ async function safeCopyMedia(
  */
 export const model = {
   type: "@magistr/telegram/import",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     result: {
@@ -583,6 +583,11 @@ export const model = {
       toVersion: "2026.08.02.1",
       description:
         "Real-fix all eight remaining latent bugs (telegram-import-latent-bugs LB-2..LB-9): note-slug path-traversal guard (LB-2), YAML frontmatter escaping (LB-3), per-message error isolation so one malformed message no longer aborts the whole import (LB-4), top-level export shape validation (LB-5), a bounded+success-checked `find` subprocess (LB-6), code-point-safe 500-unit text truncation (LB-7), a result.json size guard (LB-8), and leading-dash zipPath normalization (LB-9). No resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

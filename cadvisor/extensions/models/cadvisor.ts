@@ -187,13 +187,18 @@ async function vmQuery(host, port, path) {
 /** Swamp model that deploys cAdvisor and queries container resource metrics from cAdvisor and VictoriaMetrics. */
 export const model = {
   type: "@magistr/cadvisor",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.08.01.1",
       toVersion: "2026.08.02.1",
       description:
         "Fix all six remaining cadvisor-latent-bugs (job-scoped teardown, per-core cpuPercent, empty-aliases name fallback, counter-reset clamp, README typeVersion, configurable vmPort); adds a backward-compatible defaulted vmPort global arg, no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

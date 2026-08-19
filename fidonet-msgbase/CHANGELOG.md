@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.1
 
 Real fix for all 9 latent bugs found and pinned by the prior test backfill

@@ -868,7 +868,7 @@ done
  */
 export const model = {
   type: "@magistr/firecracker",
-  version: "2026.07.31.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {

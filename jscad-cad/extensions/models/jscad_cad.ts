@@ -9,13 +9,18 @@ import { ScriptEvaluator } from "./jscad/script_evaluator.ts";
 /** The @magistr/jscad-cad model — evaluates a JSCAD v2 CadScript main() and serializes the result to STL/DXF/SVG/OBJ/3MF. */
 export const model = {
   type: "@magistr/jscad-cad",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.08.01.1",
       toVersion: "2026.08.02.1",
       description:
         "B3/B4/B5 latent-bug fixes (script_evaluator.ts eval-subprocess seam); no globalArguments/schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

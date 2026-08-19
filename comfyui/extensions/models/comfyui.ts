@@ -1382,7 +1382,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.08.12.13",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -1480,6 +1480,11 @@ export const model = {
       toVersion: "2026.08.12.13",
       description:
         "minimax_h3: expose `refImageSize` ('match'|'max') on the H3 ref node (136, applyRefImageSize) — 'max' feeds references at 2048px for markedly STRONGER reference/clothes/identity adherence (several× slower). Fixes weak transfer where a subtle outfit loses to the target's own clothing (esp. with the quality-tuned b30-49 hybrid). No globalArguments or resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.07.2
 
 Fixes `musicbrainz-missing-seed-instance-collision`. `model.version` and

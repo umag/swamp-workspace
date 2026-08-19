@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.01.1
 
 Fixes two HIGH latent bugs characterized (pinned, not fixed) by the wave-2b test

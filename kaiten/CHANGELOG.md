@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## Unreleased (test backfill, no version bump)
 
 Quality backfill (`ext-quality-test-backfill`, wave 2a gap-check): brought

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## Unreleased
 
 Test backfill to the STANDARD.md five-suite quality bar (wave-1 full-build,

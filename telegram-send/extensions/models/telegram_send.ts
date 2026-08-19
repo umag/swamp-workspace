@@ -204,7 +204,7 @@ export function isLocalPath(s: string): boolean {
  */
 export const model = {
   type: "@magistr/telegram/send",
-  version: "2026.08.01.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     botInfo: {

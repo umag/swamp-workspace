@@ -913,7 +913,7 @@ async function loadStoredFeeds(
 /** Model definition for the curated reading list. */
 export const model = {
   type: "@magistr/reading-list",
-  version: "2026.08.07.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     "feed": {

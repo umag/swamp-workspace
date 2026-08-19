@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.1
 
 Fixes all six remaining bugs tracked in the local `cadvisor-latent-bugs`

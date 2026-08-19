@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.1
 
 Real fix for all 8 latent bugs below (LB1–LB8, tracked locally under

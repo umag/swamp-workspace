@@ -68,7 +68,7 @@ async function apiRequest(
  */
 export const model = {
   type: "@magistr/dawarich",
-  version: "2026.08.01.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     "health": {

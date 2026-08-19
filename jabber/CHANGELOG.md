@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.1
 
 Fixes the eight latent bugs (#1-4, #6-9) that were tracked, unfixed, in the

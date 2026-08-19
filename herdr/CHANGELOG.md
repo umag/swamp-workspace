@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 All notable changes to `@magistr/herdr` are documented here.
 
 ## 2026.08.08.1

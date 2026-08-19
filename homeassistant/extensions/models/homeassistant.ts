@@ -228,7 +228,7 @@ async function haFetch(host, token, path, protocol, options: RequestInit = {}) {
  */
 export const model = {
   type: "@magistr/homeassistant",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   globalArguments: InputSchema,
   upgrades: [
     {
@@ -247,6 +247,11 @@ export const model = {
         "missing-key/empty distinction, defaulted wsTimeoutMs global arg + " +
         "surfaced close errors. Additive schema + defaulted global arg " +
         "only; no data migration.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

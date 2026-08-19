@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.01.1
 
 Two changes are bundled into this first version bump since `2026.07.16.2`: the

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.1
 
 The remaining seven of the nine latent bugs pinned in `2026.07.16.2`'s test

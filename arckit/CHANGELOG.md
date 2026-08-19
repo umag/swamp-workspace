@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.14.1
 
 Ports three verified upstream arc-kit defects in the EU Cloud Sovereignty

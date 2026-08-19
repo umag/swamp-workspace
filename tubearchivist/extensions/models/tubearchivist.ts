@@ -126,7 +126,7 @@ const BackupSchema = z.object({
 /** TubeArchivist model: manage videos, channels, downloads, and search via the API. */
 export const model = {
   type: "@magistr/tubearchivist",
-  version: "2026.08.08.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     videos: {

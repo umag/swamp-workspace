@@ -134,7 +134,7 @@ type Ctx = {
 /** @internal — call via the CLI / driver loop. */
 export const model = {
   type: "@magistr/swamp-go-brr/docker-verify",
-  version: "2026.08.07.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -148,6 +148,11 @@ export const model = {
       toVersion: "2026.08.07.1",
       description:
         "Version-aligned with the other four swamp-go-brr models for the preflight privacy fix (real homelab sshUser/jjPath/fcHost defaults replaced with neutral placeholders). docker_verify.ts itself is unchanged, no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

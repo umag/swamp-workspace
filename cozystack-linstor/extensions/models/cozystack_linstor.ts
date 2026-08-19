@@ -161,7 +161,7 @@ const ResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/cozystack-linstor",
-  version: "2026.08.01.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgs,
   checks: {
     "cluster-reachable": {

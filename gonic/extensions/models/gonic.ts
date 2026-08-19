@@ -304,7 +304,7 @@ async function sshExecSql(
  */
 export const model = {
   type: "@magistr/gonic",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -314,6 +314,11 @@ export const model = {
         "change count, network-error redaction, dbResult name " +
         "disambiguation, surfaced warning-only SSH failures). No " +
         "globalArguments/schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

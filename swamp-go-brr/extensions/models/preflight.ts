@@ -326,7 +326,7 @@ function substrateFrom(g: z.infer<typeof GlobalArgs>): SubstrateOpts {
 /** @internal — the preflight model definition; invoke its methods via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/preflight",
-  version: "2026.08.07.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -340,6 +340,11 @@ export const model = {
       toVersion: "2026.08.07.1",
       description:
         "Privacy fix: GlobalArgs.sshUser/jjPath/fcHost defaulted to this homelab's REAL ssh username, home-directory path, and Firecracker fabric hostname — any installer who didn't override them inherited that disclosure. Defaults are now neutral placeholders (`runner`, `jj` (PATH-relative, matching source-integration's own jjPath default), `firecracker.example.com`). An existing instance that already pins explicit globalArguments is unaffected; only the un-set defaults change. No resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

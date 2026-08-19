@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.2
 
 Relocates the `@magistr/seadex-upgrades` report from the main `swamp` repo into

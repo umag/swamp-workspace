@@ -341,7 +341,7 @@ function itemId(item: Record<string, unknown>): number | null {
 /** Read-only Kaiten REST API model: spaces, boards, columns, and cards. */
 export const model = {
   type: "@magistr/kaiten",
-  version: "2026.06.21.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     space: {

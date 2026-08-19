@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.01.1
 
 Dependency bump: `mppx@0.8.12 → 0.8.14` (patch, preview channel, bundled runtime

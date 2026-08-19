@@ -1643,7 +1643,7 @@ const TEMPLATES_DIR = "templates";
  */
 export const model = {
   type: "@magistr/arckit/workspace",
-  version: "2026.08.14.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1678,6 +1678,11 @@ export const model = {
       toVersion: "2026.08.14.1",
       description:
         'Ports three verified upstream arc-kit defects in the EU Cloud Sovereignty Framework v1.2.1 implementation, found against the Commission\'s own Implementation guidance PDF and Annex calculator XLSX, plus one related backward-compatible widening: (1) SOV_WEIGHTS had three wrong values — SOV-1 15->20, SOV-5 20->10, SOV-7 10->15 — that happened to still sum to 100, which is exactly why this survived review; PREVIOUSLY-WRITTEN sovereigntyAssessment records were scored against the wrong weights and are NOT recomputed by this upgrade (that resource is lifetime "infinite" — re-run euSovereigntyScore for any assessment that still matters). (2) SEAL_LABELS.SEAL3.en corrected "Digital resilience" -> "Technological sovereignty" (guidance p.2-3, p.10); SEAL_LABELS.SEAL3.nl is UNCHANGED — "Digitale veerkracht" is a verified, deliberate divergence from the Commission\'s English name, quoted verbatim from the NDS Cloudprogramma notitie, not a bug. (3) computeSovereigntyScore now also returns overallSeal (the minimum SEAL across all eight objectives — the framework\'s actual rejection gate, guidance p.9 — undefined, never fabricated as SEAL0, when any objective lacks a recorded SEAL) and overallSealGovernedBy (which objective(s) achieve that minimum); SovereigntyAssessmentSchema gains both fields. (4) objectives[].maxScore is now optional, defaulting per-objective to the new exported SOV_MAX_SCORES (the calculator\'s actual per-objective ceiling, 1000-1002 depending on objective, due to workbook rounding) for the accept/reject guard, while the contribution divisor stays the calculator\'s flat nominal 1000 unless maxScore is supplied explicitly — reproducing the calculator\'s own documented behaviour that a maximal response scores 100.0756%, not 100%. All four changes are additive/corrective to the resource shape, not a data-shape break — identity migration; no data transformation needed.',
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

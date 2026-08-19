@@ -309,7 +309,7 @@ const TaskResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/headphones",
-  version: "2026.08.01.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     artists: {

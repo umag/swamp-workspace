@@ -2340,7 +2340,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.08.07.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2375,6 +2375,11 @@ export const model = {
       toVersion: "2026.08.07.1",
       description:
         "Fixes music-wanted-workflow-packaging: ships the music-wanted workflow body as extensions/workflows/music-wanted.yaml (registered under the new manifest workflows: key as @magistr/music-wanted-sequence), so a 464-line artefact that previously existed in exactly one copy, in a tree with neither .git nor .jj, gets version control, review and diffability. wanted's missing-browse-cache throw no longer says 'Repo-local: the homelab repo wires the whole sequence as a workflow' — it names the shipped file and the create-and-paste procedure, while keeping the substring 'swamp workflow run music-wanted' for the author's own homelab copy. No schema or resource shape change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

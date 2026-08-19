@@ -971,7 +971,7 @@ const nowIso = () => new Date().toISOString();
 /** Obsidian vault model: notes, search, tags, links, daily notes, frontmatter, and a corpus digest, over either the Obsidian CLI or a mounted vault directory. */
 export const model = {
   type: "@magistr/obsidian/vault",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",
@@ -999,6 +999,11 @@ export const model = {
       description:
         "Fix eight latent bugs: CRLF-frontmatter data loss, ReDoS alternation guard, backslash traversal, digest/search byte + signalHits bounds, digest backend enforcement, calendar-date validation, trash overwrite, real setProperties/propertyRemove action",
       upgradeAttributes: (old) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
   globalArguments: GlobalArgsSchema,

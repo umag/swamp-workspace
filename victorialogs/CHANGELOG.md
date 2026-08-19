@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.01.1
 
 Two HIGH monitoring blind-spots (both false all-clears/storms) are now FIXED,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.2
 
 Real fixes for the six remaining latent bugs tracked in the LOCAL

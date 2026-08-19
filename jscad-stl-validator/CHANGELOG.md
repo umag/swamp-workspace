@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.1
 
 Real-fixes the four remaining latent bugs (LB2–LB5) tracked in the LOCAL

@@ -141,7 +141,7 @@ async function seanimeRequest(
  */
 export const model = {
   type: "@magistr/seanime",
-  version: "2026.07.16.2",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.04.05.1",
@@ -173,6 +173,11 @@ export const model = {
         "with manifest.yaml's package version after it had drifted; " +
         "seanime.ts's schemas are byte-identical before and after that " +
         "commit. Version-alignment-only bump, not a data migration.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

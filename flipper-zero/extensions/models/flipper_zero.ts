@@ -321,7 +321,7 @@ async function closeRunningApp(globalArgs: GlobalArgs): Promise<{
 /** The @magistr/flipper-zero model. */
 export const model = {
   type: "@magistr/flipper-zero",
-  version: "2026.07.24.1",
+  version: "2026.08.19.1",
   globalArguments: InputSchema,
   resources: {
     "device-port": {

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/cadvisor"
-version: "2026.08.02.1"
+version: "2026.08.19.1"
 description: |
   cAdvisor container metrics for swamp — deploy a cAdvisor container over SSH,
   wire it in as a VictoriaMetrics scrape target, and query live and historical

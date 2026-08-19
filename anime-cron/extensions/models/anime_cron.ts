@@ -700,7 +700,7 @@ async function sendTg(modelName: string, text: string): Promise<void> {
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.08.08.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     fetchResult: {

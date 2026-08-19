@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.12.13
 
 Adds a **MiniMax H3 reference-to-video** pipeline as a third bundled template,

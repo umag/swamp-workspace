@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.08.19.1
+
+- Version bump and smoke test
+
 ## 2026.08.02.1
 
 Real-fixes the seven remaining MED/LOW findings (LB3–LB9) that the 2026.08.01.1

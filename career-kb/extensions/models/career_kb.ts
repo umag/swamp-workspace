@@ -612,13 +612,18 @@ export function tokenize(q) {
  */
 export const model = {
   type: "@magistr/career-kb",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.08.01.1",
       toVersion: "2026.08.02.1",
       description:
         "LB2 no-valid-CARINAS state (nullable mean); LB3 collision-resistant resource names; LB4 skip+warn on unreadable source; LB5 empty clusters:[] returns zero sources; LB6 adds defaulted maxFileBytes size cap (global arg); LB7 documents content as untrusted-must-sanitize. Only defaulted global arg added, no resource schema field added -> identity attribute upgrade.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

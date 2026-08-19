@@ -778,13 +778,18 @@ function normalizePerfumeUrl(
  */
 export const model = {
   type: "@magistr/fragrantica",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.31.1",
       toVersion: "2026.08.02.1",
       description:
         "Real-fix LB4–LB12; adds defaulted globalArgs timeoutMs/maxNotes/imageBaseUrl + injective instanceSlug; no resource-schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

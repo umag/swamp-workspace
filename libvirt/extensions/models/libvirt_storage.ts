@@ -104,7 +104,7 @@ const ActionResultSchema = z.object({
  */
 export const model = {
   type: "@bad-at-naming/libvirt/storage",
-  version: "2026.08.01.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     pool: {

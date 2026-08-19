@@ -613,7 +613,7 @@ const TaskResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/bandcamp",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   upgrades: [
     {
       fromVersion: "2026.07.31.1",
@@ -622,6 +622,11 @@ export const model = {
         "No-op: internal robustness fixes (TralbumData parse recovery, " +
         "parse-failure warnings, fetch timeouts, hashed resource names, " +
         "code-point-safe truncation); no globalArguments/schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

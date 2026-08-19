@@ -347,7 +347,7 @@ function configFrom(g: Record<string, unknown>): ClickHouseConfig | null {
  */
 export const model = {
   type: "@magistr/anilist-chart",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -356,6 +356,11 @@ export const model = {
       description:
         "Real-fix LB1-LB7; adds two DEFAULTED global args (sshTimeoutMs, " +
         "clickhouseMaxResponseBytes) whose defaults preserve every existing config",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

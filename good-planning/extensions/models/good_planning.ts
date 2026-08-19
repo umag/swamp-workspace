@@ -1061,7 +1061,7 @@ async function readState(ctx: ReadWriteCtx): Promise<PlanState | null> {
  */
 export const model = {
   type: "@magistr/good-planning",
-  version: "2026.08.02.1",
+  version: "2026.08.19.1",
 
   upgrades: [
     {
@@ -1072,6 +1072,11 @@ export const model = {
         "strict ISO byDate, evaluate mismatched-payload guard, broken-" +
         "assumption-aware gate/score, pullbackRung bounds-check, add_* " +
         "dedup, NaN/Infinity guards); no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.19.1",
+      description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

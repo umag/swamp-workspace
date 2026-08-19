@@ -2215,7 +2215,7 @@ async function writeContainer(
 
 export const model = {
   type: "@magistr/herdr",
-  version: "2026.08.08.1",
+  version: "2026.08.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     status: {
