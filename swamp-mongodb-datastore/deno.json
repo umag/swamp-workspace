@@ -1,0 +1,19 @@
+{
+  "fmt": {
+    "include": ["**/*.ts", "**/*.md", "**/*.json", "**/*.jsonc"],
+    "exclude": [".swamp/", "node_modules/"]
+  },
+  "lint": {
+    "include": ["extensions/"],
+    "exclude": [".swamp/"],
+    "rules": {
+      "exclude": ["no-import-prefix"]
+    }
+  },
+  "tasks": {
+    "check": "deno check extensions/datastores/mongodb/mod.ts",
+    "fmt": "deno fmt",
+    "lint": "deno lint",
+    "test": "deno test"
+  }
+}

@@ -1,0 +1,28 @@
+# BEGIN swamp managed section - DO NOT EDIT
+
+# Runtime data (not needed in version control)
+.swamp/
+
+# Local extension sources (developer-specific, not shared)
+.swamp-sources.yaml
+
+# Claude Code configuration (managed by swamp)
+.claude/
+# END swamp managed section
+
+# Local secrets for the mongodb datastore extension
+.env
+
+# Extension npm deps are bundled at build time, not lockfile-tracked
+# (per SWAMP.md rule 7). Deno writes deno.lock locally; we don't ship it.
+deno.lock
+
+# Author's working notes and auto-memory copies; not for public release
+design/
+issues/
+.vscode/
+
+# This is an extension repo, not a consumer swamp repo. A local .swamp.yaml
+# is needed for `swamp extension push` but isn't shipped; contributors
+# regenerate with `swamp init` on clone.
+.swamp.yaml

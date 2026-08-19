@@ -1,0 +1,10 @@
+name: mongodb-datastore
+type: datastore
+collective: "@magistr"
+version: 0.2.1
+description: |
+  MongoDB-backed swamp datastore. Distributed locks with TTL + heartbeat +
+  nonce fencing, plus GridFS-backed byte sync of the datastore tier between
+  a local cache and MongoDB. Scoped by tenant + repo namespace. Requires
+  MongoDB 4.0+ running as a replica set.
+entrypoint: mod.ts
