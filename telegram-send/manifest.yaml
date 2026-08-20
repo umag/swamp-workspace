@@ -1,15 +1,17 @@
 manifestVersion: 1
 name: "@magistr/telegram-send"
-version: "2026.08.19.1"
+version: "2026.08.20.1"
 description: |
-  Send messages, photos, and documents to Telegram chats and channels via the
-  Telegram Bot API.
+  Send messages, photos, documents, and videos to Telegram chats and channels
+  via the Telegram Bot API.
 
   Methods:
   - `getMe` — verify the bot token and fetch bot identity (smoke test)
   - `sendMessage` — text with optional MarkdownV2 / HTML formatting
   - `sendPhoto` — image by URL, Telegram `file_id`, or local file path
   - `sendDocument` — arbitrary file (PDF, ZIP, …) up to 50 MB
+  - `sendVideo` — video by URL, Telegram `file_id`, or local file path, with
+    optional `width`/`height` so Telegram sizes the player correctly
 
   The `botToken` is stored as a sensitive `globalArgument` and routed to a
   vault automatically. Set `defaultChatId` on the model instance to avoid

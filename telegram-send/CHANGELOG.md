@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026.08.20.1
+
+### Added
+
+- `sendVideo` — send a video by https URL, Telegram `file_id`, or local file
+  path (multipart upload), with optional `width`/`height` so Telegram sizes the
+  player correctly instead of guessing the aspect ratio. Mirrors `sendDocument`
+  exactly: same local-vs-remote branch via `isLocalPath`, the same `sentMessage`
+  resource mapping, and the same token-redacting error path.
+
+  This closes a drift rather than inventing a feature: the method had been
+  running in the homelab's own in-repo copy of the model (the printer-timelapse
+  workflow calls it) but was never carried back into this published package, so
+  registry consumers could not send video at all.
+
+- Fixture `fixtures/sendVideo.json` plus two tests — a contract test pinning the
+  `sentMessage` mapping, and one asserting `width`/`height` actually reach the
+  wire and are omitted when not supplied. The fixture is doc-derived like every
+  other file in `fixtures/`; no live capture (see `PROVENANCE.md`).
+
+- Test helper `withEnvelopeCapturing` — records each request's decoded JSON body
+  so a test can assert what went ON THE WIRE, not just what came back. The
+  existing `withEnvelope` discards the request, which would have let a dropped
+  `width` pass unnoticed.
+
+### Still missing
+
+- `sendRichMessage` remains un-ported from the in-repo copy — tracked as
+  `telegram-send-hardening-richmessage-port`. It is a much larger surface
+  (block-based `article` formatting plus multipart `attach://` media) and is
+  deliberately left to its own change.
+
 ## 2026.08.19.1
 
 - Version bump and smoke test

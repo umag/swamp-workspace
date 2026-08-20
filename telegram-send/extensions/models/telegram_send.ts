@@ -185,14 +185,16 @@ export function isLocalPath(s: string): boolean {
 }
 
 /**
- * `@magistr/telegram/send` — send messages, photos, and documents to Telegram
- * chats via the Bot API.
+ * `@magistr/telegram/send` — send messages, photos, documents, and videos to
+ * Telegram chats via the Bot API.
  *
  * Methods:
  * - `getMe` — verify the token and fetch bot identity (use as smoke test)
  * - `sendMessage` — text message with optional MarkdownV2/HTML formatting
  * - `sendPhoto` — image by URL, file_id, or local path (multipart upload)
  * - `sendDocument` — arbitrary file by URL, file_id, or local path
+ * - `sendVideo` — video by URL, file_id, or local path, with optional
+ *   width/height so Telegram sizes the player correctly
  *
  * The bot token is stored as a sensitive `globalArgument` and routed to a
  * vault. Set `defaultChatId` on the instance to avoid repeating it on every
@@ -204,7 +206,7 @@ export function isLocalPath(s: string): boolean {
  */
 export const model = {
   type: "@magistr/telegram/send",
-  version: "2026.08.19.1",
+  version: "2026.08.20.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     botInfo: {
@@ -374,6 +376,65 @@ export const model = {
             document: args.document,
             caption: args.caption,
             parse_mode: args.parseMode,
+            disable_notification: args.disableNotification,
+          });
+        }
+        const handle = await context.writeResource(
+          "sentMessage",
+          `msg-${r.message_id}`,
+          {
+            messageId: r.message_id,
+            chatId: r.chat?.id ?? chatId,
+            date: r.date,
+            caption: r.caption,
+            timestamp: new Date().toISOString(),
+          },
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    sendVideo: {
+      description:
+        "Send a video. `video` may be an https URL, a Telegram file_id, or a local file path.",
+      arguments: z.object({
+        chatId: z.string().optional(),
+        video: z
+          .string()
+          .describe("https URL, Telegram file_id, or local file path"),
+        caption: z.string().optional(),
+        parseMode: ParseMode.optional(),
+        width: z.number().optional().describe("Video width"),
+        height: z.number().optional().describe("Video height"),
+        disableNotification: z.boolean().optional(),
+      }),
+      execute: async (args, context) => {
+        const { botToken } = context.globalArgs;
+        const chatId = resolveChatId(args, context);
+        let r;
+        if (isLocalPath(args.video)) {
+          r = await telegramMultipart(
+            botToken,
+            "sendVideo",
+            {
+              chat_id: chatId,
+              caption: args.caption,
+              parse_mode: args.parseMode,
+              width: args.width,
+              height: args.height,
+              disable_notification: args.disableNotification,
+            },
+            "video",
+            args.video,
+          );
+        } else {
+          r = await telegramJson(botToken, "sendVideo", {
+            chat_id: chatId,
+            video: args.video,
+            caption: args.caption,
+            parse_mode: args.parseMode,
+            width: args.width,
+            height: args.height,
             disable_notification: args.disableNotification,
           });
         }
