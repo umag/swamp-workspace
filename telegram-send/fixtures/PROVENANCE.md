@@ -3,11 +3,11 @@
 Every JSON file in this directory is **pure doc-derived** — hand-authored from
 the published
 [Telegram Bot API documentation](https://core.telegram.org/bots/api) (`getMe`,
-`sendMessage`, `sendPhoto`, `sendDocument`, the `Message`/`User`/
-`Chat`/`PhotoSize`/`Document` object shapes, and the generic error envelope),
-never captured from a live call. This mirrors the `porkbun`/`pihole` wave-1
-precedent (synthetic fixtures, no live capture) and is a deliberate security
-decision, not an oversight.
+`sendMessage`, `sendPhoto`, `sendDocument`, `sendVideo`, the `Message`/`User`/
+`Chat`/`PhotoSize`/`Document`/`Video` object shapes, and the generic error
+envelope), never captured from a live call. This mirrors the `porkbun`/`pihole`
+wave-1 precedent (synthetic fixtures, no live capture) and is a deliberate
+security decision, not an oversight.
 
 ## What was NOT done (explicit prohibition)
 

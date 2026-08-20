@@ -1,0 +1,30 @@
+{
+  "ok": true,
+  "result": {
+    "message_id": 1004,
+    "from": {
+      "id": 987654321,
+      "is_bot": true,
+      "first_name": "SwampNotifyBot",
+      "username": "swamp_notify_bot"
+    },
+    "chat": {
+      "id": 555000111,
+      "first_name": "Jordan",
+      "username": "jordan_example",
+      "type": "private"
+    },
+    "date": 1752600180,
+    "video": {
+      "file_id": "BAACAgIAAxkDAAIBA2EXAMPLEVID1",
+      "file_unique_id": "AgADEXAMPLEVID1",
+      "width": 1280,
+      "height": 720,
+      "duration": 12,
+      "file_name": "timelapse.mp4",
+      "mime_type": "video/mp4",
+      "file_size": 812430
+    },
+    "caption": "print timelapse"
+  }
+}
