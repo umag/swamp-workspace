@@ -26,6 +26,9 @@ import sendPhotoFixture from "../../fixtures/sendPhoto.json" with {
 import sendDocumentFixture from "../../fixtures/sendDocument.json" with {
   type: "json",
 };
+import sendVideoFixture from "../../fixtures/sendVideo.json" with {
+  type: "json",
+};
 import errorFixture from "../../fixtures/error.json" with { type: "json" };
 
 // ---------------------------------------------------------------------------
@@ -139,6 +142,31 @@ function withEnvelope(envelope: unknown, fn: () => Promise<unknown>) {
   });
 }
 
+/** As withEnvelope, but also records each request's decoded JSON body so a test
+ * can assert what actually went ON THE WIRE, not just what came back. */
+function withEnvelopeCapturing(
+  envelope: unknown,
+  sink: Array<Record<string, unknown>>,
+  fn: () => Promise<unknown>,
+) {
+  const original = globalThis.fetch;
+  globalThis.fetch = ((_url: string, init?: RequestInit) => {
+    const raw = init?.body;
+    if (typeof raw === "string") {
+      sink.push(JSON.parse(raw) as Record<string, unknown>);
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify(envelope), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  }) as typeof globalThis.fetch;
+  return fn().finally(() => {
+    globalThis.fetch = original;
+  });
+}
+
 Deno.test("this suite's botToken sentinel is provably non-token-shaped (consistency check with the methods/adversarial suites)", () => {
   // Mirrors the equivalent self-check in telegram_send_adversarial_test.ts —
   // any token sentinel used across ANY suite must be structurally incapable
@@ -243,6 +271,54 @@ Deno.test("contract: sendDocument.json (URL branch) — messageId/chatId/date/ca
     !("text" in res.payload) || res.payload.text === undefined,
     "sendDocument's mapper never sets text",
   );
+});
+
+Deno.test("contract: sendVideo.json (URL branch) — messageId/chatId/date/caption mapped, text absent", async () => {
+  const { ctx, written } = makeCtx();
+  await withEnvelope(
+    sendVideoFixture,
+    () =>
+      run(
+        "sendVideo",
+        { video: "https://example.com/timelapse.mp4" },
+        ctx,
+      ),
+  );
+  const res = written.find((w) => w.spec === "sentMessage")!;
+  const r = sendVideoFixture.result;
+  assertEquals(res.name, `msg-${r.message_id}`);
+  assertEquals(res.payload.messageId, r.message_id);
+  assertEquals(res.payload.chatId, r.chat.id);
+  assertEquals(res.payload.date, r.date);
+  assertEquals(res.payload.caption, r.caption);
+  assert(
+    !("text" in res.payload) || res.payload.text === undefined,
+    "sendVideo's mapper never sets text",
+  );
+});
+
+Deno.test("sendVideo: width/height ride the wire on the URL branch, and are omitted when not given", async () => {
+  // width/height are the only fields sendVideo adds over sendDocument, so they
+  // are the part a copy-paste port is most likely to drop.
+  const seen: Array<Record<string, unknown>> = [];
+  const { ctx } = makeCtx();
+  await withEnvelopeCapturing(sendVideoFixture, seen, () =>
+    run("sendVideo", {
+      video: "https://example.com/timelapse.mp4",
+      width: 1280,
+      height: 720,
+    }, ctx));
+  assertEquals(seen[0]?.width, 1280);
+  assertEquals(seen[0]?.height, 720);
+  assertEquals(seen[0]?.video, "https://example.com/timelapse.mp4");
+
+  const { ctx: ctx2 } = makeCtx();
+  await withEnvelopeCapturing(sendVideoFixture, seen, () =>
+    run("sendVideo", {
+      video: "https://example.com/timelapse.mp4",
+    }, ctx2));
+  assertEquals(seen[1]?.width, undefined);
+  assertEquals(seen[1]?.height, undefined);
 });
 
 // ---------------------------------------------------------------------------
