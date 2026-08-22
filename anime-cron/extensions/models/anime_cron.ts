@@ -707,6 +707,16 @@ const FetchResultSchema = z.object({
     torrentName: z.string().optional(),
     reason: z.string().optional(),
   })),
+  // Where the watch list came from. "cache" means AniList was unreachable and
+  // the run proceeded from the last good list, so every airing time below is
+  // projected rather than observed.
+  listSource: z.enum(["anilist", "cache"]).default("anilist"),
+  listAgeSeconds: z.number().default(0).describe(
+    "Age of the cached list in seconds; 0 when AniList answered directly",
+  ),
+  alertsSuppressed: z.number().default(0).describe(
+    "Overdue not-found alerts withheld because the airing time was inferred from a cached list rather than read from AniList",
+  ),
   timestamp: z.string(),
 });
 
@@ -857,7 +867,7 @@ async function sendTg(modelName: string, text: string): Promise<void> {
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.08.22.1",
+  version: "2026.08.22.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     fetchResult: {
@@ -1048,6 +1058,7 @@ export const model = {
         }
         const outcomes: z.infer<typeof FetchResultSchema>["outcomes"] = [];
         let queued = 0, duplicates = 0, notFound = 0, skipped = 0;
+        let alertsSuppressed = 0;
 
         // Pre-load Transmission torrent list once. Build a set of (title, episode)
         // pairs already present so we never re-queue an episode whose torrent was
@@ -1200,7 +1211,21 @@ export const model = {
               }
               const isOverdue = airedAtSec == null ||
                 (nowSec - airedAtSec) > GRACE_SECS;
-              if (tg && isOverdue) {
+              // An INFERRED airing time must never drive an alert. When the
+              // watch list came from the cache, nextAiringAt is either the
+              // capture instant (a seeded list, which knows no real schedule)
+              // or a weekly projection from one — so `airedAtSec` measures the
+              // age of the CACHE, not of the episode. Left ungated this fires
+              // for every show on every run: a seeded list produced identical
+              // "Aired 298min ago" alerts hourly across 13 shows, 298min being
+              // simply how old the seed was.
+              //
+              // The not-found outcome is still recorded either way, so the run
+              // report shows exactly what was missing; only the page is held
+              // back until AniList is answering and the times are real again.
+              const airingTimeIsReal = listSource === "anilist";
+              if (isOverdue && !airingTimeIsReal) alertsSuppressed++;
+              if (tg && isOverdue && airingTimeIsReal) {
                 const agoMin = airedAtSec
                   ? Math.round((nowSec - airedAtSec) / 60)
                   : null;
@@ -1284,6 +1309,7 @@ export const model = {
 
         const handle = await context.writeResource("fetchResult", "current", {
           listSource,
+          alertsSuppressed,
           listAgeSeconds,
           checked: watching.length,
           skipped,

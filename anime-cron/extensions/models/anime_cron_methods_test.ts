@@ -1239,3 +1239,102 @@ Deno.test("fetch-airing: an empty cache is treated as no cache", async () => {
     },
   );
 });
+
+// ─── overdue alerts must not fire off an inferred airing time ─────────────────
+
+/** Route Nyaa so nothing is ever found — every show becomes a not-found. */
+function nyaaNeverFinds(): Route {
+  return (req) =>
+    new URL(req.url).hostname === "nyaa.si"
+      ? new Response("<rss><channel></channel></rss>", {
+        headers: { "content-type": "application/xml" },
+      })
+      : undefined;
+}
+
+Deno.test("fetch-airing: a cache-backed run SUPPRESSES the overdue alert; an AniList-backed one does not", async () => {
+  // The seeded cache sets nextAiringAt to the CAPTURE instant, so airedAtSec
+  // measures the age of the cache, not of the episode. Ungated this paged for
+  // every show every hour with an identical "Aired 298min ago" — 298min being
+  // simply how old the seed was.
+  //
+  // Asserted via the alertsSuppressed COUNTER rather than by intercepting the
+  // send: sendTg spawns `swamp` through Deno.Command, so a fake context
+  // runModel observes nothing and the test would pass vacuously.
+  const captured = Math.floor(Date.now() / 1000) - 298 * 60;
+  const entry = {
+    mediaId: 1,
+    romaji: "Cached Show",
+    english: null,
+    synonyms: [],
+    progress: 7,
+    episodes: null,
+    mediaStatus: "RELEASING",
+    nextAiringEp: 8,
+    nextAiringAt: captured,
+  };
+  const anilist403: Route = (req) =>
+    new URL(req.url).hostname === "graphql.anilist.co"
+      ? new Response("forbidden", { status: 403 })
+      : undefined;
+
+  // (a) cache path — withheld
+  const cached = ctxWithCache({
+    user: "fixture-user",
+    capturedAt: new Date(captured * 1000).toISOString(),
+    seeded: true,
+    entries: [entry],
+  });
+  await withFetchStub(
+    [anilist403, txRoute({ torrentGet: () => [] }), nyaaNeverFinds()],
+    async () => {
+      await run("fetch-airing", {}, cached.ctx);
+    },
+  );
+  const viaCache = cached.written.find((w) => w.spec === "fetchResult")!;
+  assertEquals(viaCache.payload.listSource, "cache");
+  assertEquals(viaCache.payload.alertsSuppressed, 1);
+  // The not-found is still RECORDED — only the page is withheld.
+  assertEquals(
+    (viaCache.payload.outcomes as Array<{ status: string }>)
+      .filter((o) => o.status === "not-found").length,
+    1,
+  );
+
+  // (b) POSITIVE CONTROL: same overdue episode straight from AniList must NOT
+  // be suppressed, or (a) would pass simply because nothing ever alerts.
+  const live = makeCtx();
+  await withFetchStub(
+    [
+      aniListRoute({
+        watching: () => ({
+          data: {
+            MediaListCollection: {
+              lists: [{
+                entries: [{
+                  progress: 7,
+                  media: {
+                    id: 1,
+                    title: { romaji: "Cached Show", english: null },
+                    synonyms: [],
+                    episodes: null,
+                    status: "RELEASING",
+                    nextAiringEpisode: { episode: 8, airingAt: captured },
+                  },
+                }],
+              }],
+            },
+          },
+        }),
+      }),
+      txRoute({ torrentGet: () => [] }),
+      nyaaNeverFinds(),
+    ],
+    async () => {
+      await run("fetch-airing", {}, live.ctx);
+    },
+  );
+  const viaAniList = live.written.find((w) => w.spec === "fetchResult")!;
+  assertEquals(viaAniList.payload.listSource, "anilist");
+  assertEquals(viaAniList.payload.alertsSuppressed, 0);
+});
