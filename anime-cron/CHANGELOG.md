@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026.08.22.2
+
+- **An inferred airing time no longer drives an alert.** The not-found branch
+  derives `airedAtSec` from `nextAiringAt`, but on a cache-backed run that
+  timestamp is projected — and on a SEEDED list it is simply the capture
+  instant. With `epsBehind = 0` it therefore measured the age of the cache
+  rather than of the episode, so past the 30-minute grace every show read as
+  overdue on every run: 13 shows produced an identical "Aired 298min ago — not
+  yet on Nyaa" every hour.
+
+  The overdue Telegram alert is now gated on `listSource === "anilist"`. The
+  not-found outcome is still recorded, so the run report shows exactly what was
+  missing; only the page is withheld until AniList answers and the times are
+  real again. The "queued" alert is deliberately NOT gated — a started download
+  is a fact regardless of where the list came from.
+- **New `alertsSuppressed` count on `fetchResult`**, so a withheld page is
+  visible rather than silent. It is incremented independently of whether
+  `telegramModel` is configured, which is also what makes the behaviour
+  testable: `sendTg` spawns `swamp` via `Deno.Command`, so a fake
+  `context.runModel` observes nothing and such a test passes vacuously. The new
+  test pairs the cache case with an AniList-path positive control.
+- **`listSource` and `listAgeSeconds` are now declared in `FetchResultSchema`.**
+  They shipped in 2026.08.22.1 and worked — undeclared keys pass through — but
+  carried no schema or description.
+
 ## 2026.08.22.1
 
 - **Merged the two divergent copies of this model into one.** The main repo's
