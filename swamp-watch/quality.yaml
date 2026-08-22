@@ -1,0 +1,68 @@
+# Quality declaration for @magistr/swamp-watch — see ../STANDARD.md.
+#
+# Built new (not backfilled), so all five suites shipped with the first
+# commit: a new extension cannot join the shrink-only quality-allowlist.txt.
+#
+# No suite spawns a process or opens a socket. `scriptedRunner` answers by
+# matching argv and records every call; `fakeContext` round-trips resource
+# writes. The one injected clock is the retry `Sleeper`, so backoff is asserted
+# without real waiting.
+schemaVersion: 1
+extension: swamp-watch
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/swamp_watch_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/swamp_watch_methods_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/swamp_watch_adversarial_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/swamp_watch_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/swamp_watch_property_test.ts
+watch:
+  state: backlog
+  justification: >-
+    No upstream release to watch — this model wraps the swamp CLI that ships it,
+    so the contract-fixture suite is what catches a swamp release changing the
+    workflow-list or run-history wire format.
+canary:
+  state: backlog
+  justification: >-
+    The live canary shape is exactly what ext-canary-nightly provides, and that
+    workflow is itself undeployed — the finding this extension exists to catch.
+    Wire this up once the canary is running on the server.
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: na
+    justification: >-
+      swamp-watch bundles no Claude skill — two read-only introspection methods
+      whose whole interface is documented in the README and the alert rules.
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: >-
+    Grade A on first release. `swamp extension quality manifest.yaml --json`
+    reports 100%, rubricVersion 3, allPassed true. The only unearned factor is
+    repository-verified (2 pts), which the registry awards on publish and which
+    no local run can earn. Stamped from that tool output, not guessed.
+    Caveat: scored IN PLACE, not from a fresh worktree — the package cache can
+    mask validation failures, so re-score from a clean checkout before publish.

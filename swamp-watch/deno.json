@@ -1,0 +1,25 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/swamp_watch.ts extensions/models/lib/cli.ts extensions/models/lib/testing.ts extensions/models/swamp_watch_test.ts extensions/models/swamp_watch_methods_test.ts extensions/models/swamp_watch_adversarial_test.ts extensions/models/swamp_watch_coverage_test.ts extensions/models/swamp_watch_property_test.ts",
+    "test": "deno test --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/swamp_watch_property_test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": { "zod": "npm:zod@4" },
+  // lock:false because serve mounts /sources READ-ONLY and deno bundle tries to
+  // WRITE deno.lock during load, failing with "Read-only file system (os error
+  // 30)". Shipping a lockfile is not enough — deno rewrites it anyway. Per
+  // CLAUDE.md rule 7 the lockfile does not cover extension model deps in any
+  // case: versions are pinned in the npm: specifiers themselves.
+  "lock": false,
+  "compilerOptions": { "noImplicitAny": false },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": { "rules": { "tags": ["recommended"] } }
+}

@@ -1,0 +1,41 @@
+manifestVersion: 1
+name: "@magistr/swamp-watch"
+version: "2026.08.21.1"
+description: |
+  Per-workflow observability for a swamp repo's own scheduled work.
+
+  swamp serve's scheduler is only observable in aggregate: "did ANY scheduled
+  workflow fire recently" is satisfied forever by one chatty two-minute
+  workflow, so a workflow that dies — or was never deployed at all — produces
+  no signal.
+
+  Model:
+  - `@magistr/swamp-watch` — reads what a repo DECLARES (`trigger.schedule`)
+    and what actually HAPPENED (run history), and emits Prometheus exposition
+    for `@magistr/victoriametrics` `push`. Methods: `scan` (per-workflow
+    expected period, staleness budget and last success) and `drift` (which
+    declared workflows a server is actually missing).
+
+  Staleness budgets are derived from the LONGEST gap a cron can produce, not
+  its average, so an unevenly spaced schedule like `0 9,20 * * *` does not
+  alert every night.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/swamp_watch.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - observability
+  - monitoring
+  - swamp
+  - prometheus
+  - scheduling

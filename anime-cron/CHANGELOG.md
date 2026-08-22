@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026.08.22.1
+
+- **Merged the two divergent copies of this model into one.** The main repo's
+  `extensions/models/anime_cron.ts` was the LIVE file and this package was
+  inert; each had work the other lacked. Reconciled with the repo behaviour kept
+  where they conflicted: `pickBest` restores the HARD resolution floor
+  (`h.resolution >= targetRes`) rather than the soft ranking tried here, and the
+  `"varyg": 7` preferred-group score is back. The property test's oracle now
+  applies the same floor — mirroring only the scoring made it nominate winners
+  pickBest had already discarded.
+- **New `seed-watchlist` method.** Rebuilds the watch-list cache from the most
+  recent `fetchResult` for the case the cache cannot cover: AniList went down
+  BEFORE any run had cached the real list. Progress per show comes from the
+  strongest signal available (`duplicate` means that episode is already in
+  Transmission, anything else means it is still owed), taking the highest across
+  outcomes. Airing times are INFERRED from the capture, so the payload is
+  flagged `seeded: true` and the next successful AniList read replaces it.
+  Refuses to overwrite an existing cache without `force`.
+- **Resource instances renamed to `watchlist-current`.** `writeResource` takes
+  (spec, INSTANCE) but `readResource` takes the INSTANCE — so the cache both
+  read the wrong key and collided with `fetchResult`, which already owns the
+  instance name `current`.
+
+- **`fetch-airing` keeps working while AniList is down.** Every successful run
+  now caches the CURRENT list to a `watchlist` resource, and a failed AniList
+  read falls back to it instead of aborting the run. On 2026-08-22 three
+  consecutive hourly runs failed on `AniList 403` and nothing downloaded for
+  three hours; nothing about downloading needs AniList reachable, only knowing
+  what is being watched.
+- **The cached list is projected forward, not replayed.** `lastAiredEp` is
+  derived as `nextAiringEp - 1`, so a raw snapshot would conclude nothing new
+  had aired and download nothing — the very failure it exists to fix. TV anime
+  airs weekly, so episodes aired since the capture are the whole weeks elapsed
+  since `nextAiringAt`, plus the one airing at that instant. Capped at the
+  season total so a finished show is never projected past its last episode.
+- **New `maxCacheAgeDays` global argument (default 14).** Past that the run
+  fails as before: shows end and new ones start, so downloading against a
+  month-old list is worse than failing loudly. A cache with an unparseable
+  timestamp counts as infinitely old.
+- **`fetchResult` gains `listSource` and `listAgeSeconds`**, so a run served
+  from a stale list is visible rather than looking identical to a healthy one.
+- No behaviour change when AniList is reachable, and AniList-down with no cache
+  still rejects exactly as before.
+
 ## 2026.08.19.1
 
 - Version bump and smoke test

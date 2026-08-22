@@ -17,7 +17,12 @@
  * anime_cron.ts is UNMODIFIED; every test PINS existing behavior.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { model } from "./anime_cron.ts";
+import {
+  cacheAgeSeconds,
+  model,
+  projectEntry,
+  seedEntriesFromOutcomes,
+} from "./anime_cron.ts";
 import anilistCompleted from "../../fixtures/anilist-completed.json" with {
   type: "json",
 };
@@ -909,5 +914,173 @@ Deno.test("overdue grace: no nextAiringEp/nextAiringAt at all (episodes-fallback
     cmdStub.invocations.length,
     1,
     "airedAtSec==null unconditionally counts as overdue",
+  );
+});
+
+// ─── watchlist cache / airing projection ──────────────────────────────────────
+// The consumer derives `lastAiredEp = nextAiringEp - 1`, so every off-by-one
+// here is either a missed episode or a download of something not yet aired.
+
+Deno.test("projection: at the exact airing instant, that episode counts as aired", () => {
+  const at = 1_700_000_000;
+  const e = { episodes: 12, nextAiringEp: 5, nextAiringAt: at };
+  const p = projectEntry(e, at);
+  // nextAiringEp becomes 6, so lastAiredEp = 5 = the episode that just aired.
+  assertEquals(p.nextAiringEp, 6);
+});
+
+Deno.test("projection: before the airing instant nothing changes", () => {
+  const at = 1_700_000_000;
+  const e = { episodes: 12, nextAiringEp: 5, nextAiringAt: at };
+  assertEquals(projectEntry(e, at - 1).nextAiringEp, 5);
+  assertEquals(projectEntry(e, at - 86400).nextAiringAt, at);
+});
+
+Deno.test("projection: six days later is still one episode, eight days is two", () => {
+  const at = 1_700_000_000;
+  const e = { episodes: 24, nextAiringEp: 5, nextAiringAt: at };
+  assertEquals(projectEntry(e, at + 6 * 86400).nextAiringEp, 6);
+  assertEquals(projectEntry(e, at + 8 * 86400).nextAiringEp, 7);
+  assertEquals(projectEntry(e, at + 21 * 86400).nextAiringEp, 9);
+});
+
+Deno.test("projection: never runs past the end of the season", () => {
+  const at = 1_700_000_000;
+  const e = { episodes: 12, nextAiringEp: 11, nextAiringAt: at };
+  // A year later it must still stop at 12 aired, not invent episode 60.
+  const p = projectEntry(e, at + 365 * 86400);
+  assertEquals(p.nextAiringEp, 13);
+  assertEquals((p.nextAiringEp as number) - 1, 12);
+});
+
+Deno.test("projection: an entry with no airing data is returned untouched", () => {
+  const e = { episodes: 12, nextAiringEp: null, nextAiringAt: null };
+  assertEquals(projectEntry(e, 1_700_000_000), e);
+  const e2 = { episodes: null, nextAiringEp: 3, nextAiringAt: null };
+  assertEquals(projectEntry(e2, 1_700_000_000), e2);
+});
+
+Deno.test("projection: an unknown episode count is projected without a ceiling", () => {
+  const at = 1_700_000_000;
+  const e = { episodes: null, nextAiringEp: 5, nextAiringAt: at };
+  assertEquals(projectEntry(e, at + 14 * 86400).nextAiringEp, 8);
+});
+
+Deno.test("projection: a zero or negative week cannot divide by zero or loop", () => {
+  const at = 1_700_000_000;
+  const e = { episodes: 12, nextAiringEp: 5, nextAiringAt: at };
+  assertEquals(projectEntry(e, at + 86400, 0).nextAiringEp, 5);
+  assertEquals(projectEntry(e, at + 86400, -7).nextAiringEp, 5);
+});
+
+Deno.test("cacheAgeSeconds: unparseable capture time is infinitely old", () => {
+  // Must be Infinity, not 0 or NaN: a NaN comparison is false, so a corrupt
+  // timestamp would silently pass the max-age guard and be used forever.
+  assertEquals(cacheAgeSeconds("not a date", 1_700_000_000), Infinity);
+  assertEquals(
+    cacheAgeSeconds(
+      new Date(1_699_999_000 * 1000).toISOString(),
+      1_700_000_000,
+    ),
+    1000,
+  );
+});
+
+// ─── seed-watchlist ───────────────────────────────────────────────────────────
+
+Deno.test("seed: duplicate means we HAVE that episode, anything else means we do not", () => {
+  const [e] = seedEntriesFromOutcomes(
+    [{ mediaId: 1, title: "S", episode: 8, status: "duplicate" }],
+    1_700_000_000,
+  );
+  assertEquals(e.progress, 8);
+  const [s] = seedEntriesFromOutcomes(
+    [{ mediaId: 1, title: "S", episode: 8, status: "skipped" }],
+    1_700_000_000,
+  );
+  // skipped = not yet aired, so episode 8 is still owed.
+  assertEquals(s.progress, 7);
+});
+
+Deno.test("seed: a show with several outcomes collapses to its furthest episode", () => {
+  // Real data: Tenmaku no Jaadugar appeared three times as duplicate 6, 7, 8.
+  const out = seedEntriesFromOutcomes([
+    {
+      mediaId: 190569,
+      title: "Tenmaku no Jaadugar",
+      episode: 6,
+      status: "duplicate",
+    },
+    {
+      mediaId: 190569,
+      title: "Tenmaku no Jaadugar",
+      episode: 8,
+      status: "duplicate",
+    },
+    {
+      mediaId: 190569,
+      title: "Tenmaku no Jaadugar",
+      episode: 7,
+      status: "duplicate",
+    },
+  ], 1_700_000_000);
+  assertEquals(out.length, 1);
+  assertEquals(out[0].progress, 8);
+  assertEquals(out[0].nextAiringEp, 9);
+});
+
+Deno.test("seed: episodes total is left null rather than guessed", () => {
+  // A wrong total either caps projection early or trips the
+  // all-eps-downloaded skip on a show that is still airing.
+  const [e] = seedEntriesFromOutcomes(
+    [{ mediaId: 1, title: "S", episode: 3, status: "skipped" }],
+    1_700_000_000,
+  );
+  assertEquals(e.episodes, null);
+  assertEquals(e.mediaStatus, "RELEASING");
+});
+
+Deno.test("seed: nextAiringEp is always one past progress, so the owed episode is fetched", () => {
+  for (const status of ["duplicate", "skipped", "not-found", "queued"]) {
+    const [e] = seedEntriesFromOutcomes(
+      [{ mediaId: 1, title: "S", episode: 5, status }],
+      1_700_000_000,
+    );
+    assertEquals(e.nextAiringEp, e.progress + 1, `status=${status}`);
+  }
+});
+
+Deno.test("seed: malformed outcomes are dropped, not turned into episode 0 entries", () => {
+  const out = seedEntriesFromOutcomes(
+    [
+      { mediaId: 1, title: "ok", episode: 4, status: "skipped" },
+      { mediaId: 2, title: "bad", episode: 0, status: "skipped" },
+      { mediaId: 3, title: "nan", episode: NaN, status: "skipped" },
+    ],
+    1_700_000_000,
+  );
+  assertEquals(out.map((e) => e.mediaId), [1]);
+});
+
+Deno.test("seed: progress never goes negative", () => {
+  const [e] = seedEntriesFromOutcomes(
+    [{ mediaId: 1, title: "S", episode: 1, status: "skipped" }],
+    1_700_000_000,
+  );
+  assertEquals(e.progress, 0);
+  assertEquals(e.nextAiringEp, 1);
+});
+
+Deno.test("seed: a seeded cache projected forward one week owes the next episode too", () => {
+  const at = 1_700_000_000;
+  const [e] = seedEntriesFromOutcomes(
+    [{ mediaId: 1, title: "S", episode: 8, status: "duplicate" }],
+    at,
+  );
+  // Same day: episode 9 is owed. Eight days on: 9 and 10.
+  assertEquals((projectEntry(e, at).nextAiringEp as number) - 1, 9);
+  assertEquals(
+    (projectEntry(e, at + 8 * 86400).nextAiringEp as number) - 1,
+    10,
   );
 });

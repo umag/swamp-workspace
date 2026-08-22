@@ -152,9 +152,11 @@ const PREFERRED_GROUPS: Record<string, number> = {
   "erai-raws": 9,
   "ember": 8,
   "asw": 7,
+  "varyg": 7,
   "judas": 6,
 };
 
+/** Vertical resolution parsed out of a release title; 0 when absent. */
 export function parseResolution(title: string): number {
   if (/4k|2160p/i.test(title)) return 2160;
   if (/1080p/i.test(title)) return 1080;
@@ -162,11 +164,14 @@ export function parseResolution(title: string): number {
   return 0;
 }
 
+/** Score a release title by its bracketed group credit; 0 when unrecognised. */
 export function groupScore(title: string): number {
   const m = title.toLowerCase().match(/^\[([^\]]+)\]/);
   return PREFERRED_GROUPS[m?.[1] ?? ""] ?? 1;
 }
 
+/** Build a magnet URI from an infoHash plus a display name and the trackers
+ *  nyaa releases rely on. */
 export function buildMagnet(infoHash: string, title: string): string {
   return (
     `magnet:?xt=urn:btih:${infoHash}` +
@@ -175,6 +180,7 @@ export function buildMagnet(infoHash: string, title: string): string {
   );
 }
 
+/** One parsed nyaa RSS entry, normalised into the fields ranking needs. */
 export interface NyaaHit {
   title: string;
   viewUrl: string;
@@ -348,12 +354,20 @@ export function baseTitle(title: string): string | null {
   return t !== title && t.length > 0 ? t : null;
 }
 
+/** Choose the best release for an episode: hard resolution floor first, then
+ *  rank by preferred group, seeders and an exact-resolution bonus. */
 export function pickBest(
   hits: NyaaHit[],
   episode: number,
   targetRes = 1080,
 ): NyaaHit | null {
-  const matching = hits.filter((h) => h.episode === episode);
+  // Resolution is a HARD floor, not a ranking bonus: a preferred group at
+  // 720p must never beat an acceptable 1080p release. Soft-ranking it was
+  // tried and rejected — below targetRes we would rather download nothing and
+  // retry next hour than fill the library with the wrong master.
+  const matching = hits.filter(
+    (h) => h.episode === episode && h.resolution >= targetRes,
+  );
   if (!matching.length) return null;
   return matching.sort((a, b) => {
     const sa = groupScore(a.title) * 10 +
@@ -537,6 +551,146 @@ export function extractShowTitle(torrentName: string): string {
   return t.trim();
 }
 
+// ─── watchlist cache ──────────────────────────────────────────────────────────
+//
+// AniList goes down. Its 403/429 outages are routine and self-healing, but
+// `fetch-airing` queried it FIRST, so an outage stopped every download for its
+// duration — on 2026-08-22 three consecutive hourly runs failed and nothing was
+// fetched for three hours. Nothing about downloading actually needs AniList to
+// be reachable: it needs to know WHAT is being watched, which barely changes.
+//
+// So every successful fetch caches the CURRENT list, and a failed one falls
+// back to that cache.
+//
+// A raw snapshot is not enough. `lastAiredEp` is derived as `nextAiringEp - 1`,
+// so replaying yesterday's snapshot would conclude that nothing new has aired
+// and download nothing — the exact failure it is meant to fix. The cache is
+// therefore PROJECTED forward: TV anime airs weekly, so from the cached
+// `nextAiringAt` the number of episodes since is simply the number of whole
+// weeks elapsed, plus the one airing at that instant.
+
+/** One cached watch entry plus how it was derived. */
+const CachedEntrySchema = z.object({
+  mediaId: z.number(),
+  romaji: z.string(),
+  english: z.string().nullable(),
+  synonyms: z.array(z.string()),
+  progress: z.number(),
+  episodes: z.number().nullable(),
+  mediaStatus: z.string().nullable(),
+  nextAiringEp: z.number().nullable(),
+  nextAiringAt: z.number().nullable(),
+});
+
+const WatchlistCacheSchema = z.object({
+  user: z.string(),
+  capturedAt: z.string().describe("ISO time this list came from AniList"),
+  seeded: z.boolean().default(false).describe(
+    "True when reconstructed from a past fetchResult rather than read from AniList — airing times are INFERRED, not observed",
+  ),
+  entries: z.array(CachedEntrySchema),
+});
+
+/** Seconds in the weekly cadence essentially all airing TV anime follows. */
+export const WEEK_SECONDS = 604800;
+
+/**
+ * Advance one cached entry's airing pointer to now.
+ *
+ * `nextAiringEp` airs AT `nextAiringAt`, so once that instant has passed the
+ * episode is out: episodes aired since = whole weeks elapsed + 1. Capped at the
+ * season's total so a finished show is never projected past its last episode.
+ *
+ * Entries with no airing data (finished shows) are returned untouched — their
+ * `episodes` total already tells the caller everything.
+ */
+export function projectEntry<
+  T extends {
+    episodes: number | null;
+    nextAiringEp: number | null;
+    nextAiringAt: number | null;
+  },
+>(entry: T, nowSec: number, weekSeconds = WEEK_SECONDS): T {
+  const { nextAiringEp, nextAiringAt } = entry;
+  if (nextAiringEp == null || nextAiringAt == null) return entry;
+  if (nowSec < nextAiringAt) return entry;
+  if (weekSeconds <= 0) return entry;
+  const airedSince = Math.floor((nowSec - nextAiringAt) / weekSeconds) + 1;
+  let projectedEp = nextAiringEp + airedSince;
+  // episodes+1 is the correct ceiling: it makes lastAiredEp === episodes.
+  if (entry.episodes != null && projectedEp > entry.episodes + 1) {
+    projectedEp = entry.episodes + 1;
+  }
+  return {
+    ...entry,
+    nextAiringEp: projectedEp,
+    nextAiringAt: nextAiringAt + airedSince * weekSeconds,
+  };
+}
+
+/**
+ * Rebuild a watch list from a past `fetchResult`.
+ *
+ * A stopgap for the case the cache cannot cover: AniList went down BEFORE any
+ * successful run had cached anything, so there is nothing to fall back to. A
+ * previous fetchResult still records which shows were being watched and which
+ * episode each was up to, which is enough to keep downloading.
+ *
+ * What it cannot recover is the airing SCHEDULE — `nextAiringAt` is inferred as
+ * the capture time, i.e. "assume the pending episode was due then". The result
+ * is marked `seeded` so this guess is never mistaken for observed data, and the
+ * first successful AniList read overwrites it with the real thing.
+ *
+ * Progress is derived per show from the strongest signal available:
+ *   `duplicate` — that episode is already in Transmission, so progress >= it
+ *   anything else — it was not obtained, so progress is one below
+ * taking the highest across every outcome for that show.
+ */
+export function seedEntriesFromOutcomes(
+  outcomes: ReadonlyArray<
+    { mediaId: number; title: string; episode: number; status: string }
+  >,
+  capturedAtSec: number,
+): Array<z.infer<typeof CachedEntrySchema>> {
+  const byShow = new Map<number, { title: string; progress: number }>();
+  for (const o of outcomes) {
+    if (typeof o.mediaId !== "number" || typeof o.episode !== "number") {
+      continue;
+    }
+    if (!Number.isFinite(o.episode) || o.episode < 1) continue;
+    const progress = o.status === "duplicate" ? o.episode : o.episode - 1;
+    const prev = byShow.get(o.mediaId);
+    if (prev === undefined || progress > prev.progress) {
+      byShow.set(o.mediaId, { title: o.title ?? "", progress });
+    } else if (prev.title === "" && o.title) {
+      prev.title = o.title;
+    }
+  }
+  return [...byShow.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([mediaId, v]) => ({
+      mediaId,
+      romaji: v.title,
+      english: null,
+      synonyms: [],
+      progress: Math.max(0, v.progress),
+      // Unknown from a fetchResult. Left null deliberately rather than guessed:
+      // a wrong total would either cap projection early or trigger the
+      // "all-eps-downloaded" skip on a show that is still airing.
+      episodes: null,
+      mediaStatus: "RELEASING",
+      nextAiringEp: v.progress + 1,
+      nextAiringAt: capturedAtSec,
+    }));
+}
+
+/** Age of a cache capture in seconds; Infinity when unparseable. */
+export function cacheAgeSeconds(capturedAt: string, nowSec: number): number {
+  const ms = Date.parse(capturedAt);
+  if (Number.isNaN(ms)) return Infinity;
+  return nowSec - Math.floor(ms / 1000);
+}
+
 // ─── schemas ──────────────────────────────────────────────────────────────────
 
 const FetchResultSchema = z.object({
@@ -652,6 +806,9 @@ const TX_STATUS: Record<number, string> = {
 
 const GlobalArgsSchema = z.object({
   anilistUser: z.string().describe("AniList username"),
+  maxCacheAgeDays: z.number().default(14).describe(
+    "How stale the cached watch list may be before fetch-airing fails instead of falling back to it",
+  ),
   anilistToken: z.string().meta({ sensitive: true }).optional().describe(
     "AniList personal access token — required for update-progress. Get at: https://anilist.co/settings/developer",
   ),
@@ -700,7 +857,7 @@ async function sendTg(modelName: string, text: string): Promise<void> {
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.08.19.1",
+  version: "2026.08.22.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     fetchResult: {
@@ -708,6 +865,13 @@ export const model = {
       schema: FetchResultSchema,
       lifetime: "7d",
       garbageCollection: 10,
+    },
+    watchlist: {
+      description:
+        "Last CURRENT list successfully read from AniList, used to keep downloading while AniList is unreachable",
+      schema: WatchlistCacheSchema,
+      lifetime: "infinite",
+      garbageCollection: 5,
     },
     markResult: {
       description:
@@ -737,6 +901,85 @@ export const model = {
     },
   },
   methods: {
+    "seed-watchlist": {
+      description:
+        "Reconstruct the watch-list cache from the most recent fetch-airing result, so downloads can continue when AniList went down before any run had cached the real list. Airing times are INFERRED; the next successful AniList read replaces this.",
+      arguments: z.object({
+        force: z.boolean().default(false).describe(
+          "Overwrite an existing cache. Refused by default so a real AniList capture is never replaced by an inferred one.",
+        ),
+      }),
+      execute: async (
+        args: { force: boolean },
+        context: {
+          globalArgs: z.infer<typeof GlobalArgsSchema>;
+          writeResource: (n: string, k: string, v: unknown) => Promise<unknown>;
+          readResource?: (name: string) => Promise<unknown>;
+        },
+      ) => {
+        const { anilistUser } = context.globalArgs;
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        const existing =
+          await context.readResource?.("watchlist-current").catch(() => null) ??
+            null;
+        const ex = existing as z.infer<typeof WatchlistCacheSchema> | null;
+        if (ex && Array.isArray(ex.entries) && ex.entries.length > 0) {
+          // A real capture outranks anything reconstructed. Refusing keeps this
+          // method safe to re-run without silently downgrading good data.
+          if (!args.force) {
+            throw new Error(
+              `a watchlist cache already exists (${ex.entries.length} entries, captured ${ex.capturedAt}${
+                ex.seeded ? ", seeded" : ", from AniList"
+              }) — pass force:true to overwrite it`,
+            );
+          }
+        }
+
+        const prior =
+          // readResource keys on the INSTANCE name, not the spec: fetch-airing
+          // writes its result as instance "current".
+          await context.readResource?.("current").catch(() => null) ?? null;
+        const p = prior as
+          | {
+            timestamp?: string;
+            outcomes?: Array<
+              {
+                mediaId: number;
+                title: string;
+                episode: number;
+                status: string;
+              }
+            >;
+          }
+          | null;
+        if (!p || !Array.isArray(p.outcomes) || p.outcomes.length === 0) {
+          throw new Error(
+            "no previous fetch-airing result to seed from — nothing records what was being watched",
+          );
+        }
+        const capturedAtSec =
+          p.timestamp && !Number.isNaN(Date.parse(p.timestamp))
+            ? Math.floor(Date.parse(p.timestamp) / 1000)
+            : nowSec;
+        const entries = seedEntriesFromOutcomes(p.outcomes, capturedAtSec);
+        if (entries.length === 0) {
+          throw new Error("previous result contained no usable show outcomes");
+        }
+        const payload = {
+          user: anilistUser,
+          capturedAt: new Date(capturedAtSec * 1000).toISOString(),
+          seeded: true,
+          entries,
+        };
+        await context.writeResource("watchlist", "watchlist-current", payload);
+        return {
+          seeded: entries.length,
+          capturedAt: payload.capturedAt,
+          shows: entries.map((e) => `${e.romaji} @ep${e.progress}`),
+        };
+      },
+    },
     "fetch-airing": {
       description:
         "Check AniList CURRENT list → search Nyaa for next episode of each airing show → add to Transmission. Skips episodes not yet aired.",
@@ -753,10 +996,12 @@ export const model = {
         context: {
           globalArgs: z.infer<typeof GlobalArgsSchema>;
           writeResource: (n: string, k: string, v: unknown) => Promise<unknown>;
+          readResource?: (name: string) => Promise<unknown>;
         },
       ) => {
         const {
           anilistUser,
+          maxCacheAgeDays,
           transmissionRpcUrl,
           transmissionUser,
           transmissionPass,
@@ -769,8 +1014,38 @@ export const model = {
           ? (text: string) => sendTg(telegramModel, text)
           : null;
 
-        const watching = await getCurrentList(anilistUser);
         const nowSec = Math.floor(Date.now() / 1000);
+
+        // AniList first; its list is authoritative when reachable.
+        let watching: WatchEntry[];
+        let listSource: "anilist" | "cache" = "anilist";
+        let listAgeSeconds = 0;
+        try {
+          watching = await getCurrentList(anilistUser);
+          await context.writeResource("watchlist", "watchlist-current", {
+            user: anilistUser,
+            capturedAt: new Date(nowSec * 1000).toISOString(),
+            entries: watching,
+          });
+        } catch (err) {
+          // Downloading does not need AniList reachable, only knowing WHAT is
+          // watched — so fall back rather than losing the hour entirely.
+          const cached =
+            await context.readResource?.("watchlist-current").catch(() =>
+              null
+            ) ?? null;
+          const c = cached as z.infer<typeof WatchlistCacheSchema> | null;
+          if (!c || !Array.isArray(c.entries) || c.entries.length === 0) {
+            throw err;
+          }
+          listAgeSeconds = cacheAgeSeconds(c.capturedAt, nowSec);
+          // Past this the projection is guesswork: shows end, new ones start,
+          // and silently downloading against a month-old list is worse than
+          // failing loudly.
+          if (listAgeSeconds > maxCacheAgeDays * 86400) throw err;
+          watching = c.entries.map((e) => projectEntry(e, nowSec));
+          listSource = "cache";
+        }
         const outcomes: z.infer<typeof FetchResultSchema>["outcomes"] = [];
         let queued = 0, duplicates = 0, notFound = 0, skipped = 0;
 
@@ -1008,6 +1283,8 @@ export const model = {
         }
 
         const handle = await context.writeResource("fetchResult", "current", {
+          listSource,
+          listAgeSeconds,
           checked: watching.length,
           skipped,
           queued,

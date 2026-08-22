@@ -351,3 +351,28 @@ Deno.test("creditsGroup: a below-MIN_STEM token cannot wildcard onto every group
   assertStrictEquals(creditsGroup("[Kineko Video] Foo", ["K"]), null);
   assertStrictEquals(creditsGroup("[K] Foo", ["Kineko Video"]), null);
 });
+
+Deno.test("pickBest: a below-target resolution is rejected outright, not ranked down", () => {
+  // The hard floor is the point: a top-scoring group at 720p must lose to
+  // nothing at all, so the run reports not-found and retries next hour rather
+  // than permanently filling the library with the wrong master.
+  const only720 = makeHit({
+    episode: 1,
+    title: "[SubsPlease] Show - 01 [720p].mkv",
+    seeders: 100,
+    resolution: 720,
+  });
+  assertStrictEquals(pickBest([only720], 1, 1080), null);
+});
+
+Deno.test("pickBest: a resolution ABOVE the target is still eligible", () => {
+  // The floor is >=, not ==: 2160p must remain downloadable when 1080p is asked
+  // for, or every 4K-only release would silently never be fetched.
+  const uhd = makeHit({
+    episode: 1,
+    title: "[SubsPlease] Show - 01 [2160p].mkv",
+    seeders: 10,
+    resolution: 2160,
+  });
+  assertEquals(pickBest([uhd], 1, 1080), uhd);
+});
