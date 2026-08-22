@@ -1,9 +1,33 @@
 {
   "query": "fleet-health",
   "results": [
-    { "runId": "r1", "startedAt": "2026-08-20T22:20:00.804Z", "status": "succeeded", "workflowId": "6af4c761-e4f3-44aa-8c34-a13bd9357900", "workflowName": "fleet-health" },
-    { "runId": "r2", "startedAt": "2026-08-20T22:18:00.602Z", "status": "succeeded", "workflowId": "6af4c761-e4f3-44aa-8c34-a13bd9357900", "workflowName": "fleet-health" },
-    { "runId": "r3", "startedAt": "2026-08-20T20:56:00.557Z", "status": "failed", "workflowId": "6af4c761-e4f3-44aa-8c34-a13bd9357900", "workflowName": "fleet-health" },
-    { "runId": "r4", "startedAt": "2026-08-20T00:08:00.663Z", "status": "cancelled", "workflowId": "6af4c761-e4f3-44aa-8c34-a13bd9357900", "workflowName": "fleet-health" }
+    {
+      "runId": "r1",
+      "startedAt": "2026-08-20T22:20:00.804Z",
+      "status": "succeeded",
+      "workflowId": "6af4c761-e4f3-44aa-8c34-a13bd9357900",
+      "workflowName": "fleet-health"
+    },
+    {
+      "runId": "r2",
+      "startedAt": "2026-08-20T22:18:00.602Z",
+      "status": "succeeded",
+      "workflowId": "6af4c761-e4f3-44aa-8c34-a13bd9357900",
+      "workflowName": "fleet-health"
+    },
+    {
+      "runId": "r3",
+      "startedAt": "2026-08-20T20:56:00.557Z",
+      "status": "failed",
+      "workflowId": "6af4c761-e4f3-44aa-8c34-a13bd9357900",
+      "workflowName": "fleet-health"
+    },
+    {
+      "runId": "r4",
+      "startedAt": "2026-08-20T00:08:00.663Z",
+      "status": "cancelled",
+      "workflowId": "6af4c761-e4f3-44aa-8c34-a13bd9357900",
+      "workflowName": "fleet-health"
+    }
   ]
 }

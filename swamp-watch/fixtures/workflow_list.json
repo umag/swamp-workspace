@@ -1,10 +1,39 @@
 {
   "query": "",
   "results": [
-    { "id": "6af4c761-e4f3-44aa-8c34-a13bd9357900", "name": "fleet-health", "jobCount": 1, "hasInputs": false, "trigger": { "schedule": "*/2 * * * *" } },
-    { "id": "fe11036e-0000-4000-8000-000000000001", "name": "daily-health", "jobCount": 1, "hasInputs": false, "trigger": { "schedule": "0 9,20 * * *" } },
-    { "id": "7da9c90f-0980-4e64-808a-9e35cf8c8bfa", "name": "eod-steward", "jobCount": 1, "hasInputs": false, "trigger": { "schedule": "0 19 * * *" } },
-    { "id": "aaaa0000-0000-4000-8000-000000000002", "name": "ext-canary-nightly", "jobCount": 1, "hasInputs": false, "trigger": { "schedule": "0 3 * * *" } },
-    { "id": "bbbb0000-0000-4000-8000-000000000003", "name": "pihole-dns-list", "jobCount": 1, "hasInputs": false }
+    {
+      "id": "6af4c761-e4f3-44aa-8c34-a13bd9357900",
+      "name": "fleet-health",
+      "jobCount": 1,
+      "hasInputs": false,
+      "trigger": { "schedule": "*/2 * * * *" }
+    },
+    {
+      "id": "fe11036e-0000-4000-8000-000000000001",
+      "name": "daily-health",
+      "jobCount": 1,
+      "hasInputs": false,
+      "trigger": { "schedule": "0 9,20 * * *" }
+    },
+    {
+      "id": "7da9c90f-0980-4e64-808a-9e35cf8c8bfa",
+      "name": "eod-steward",
+      "jobCount": 1,
+      "hasInputs": false,
+      "trigger": { "schedule": "0 19 * * *" }
+    },
+    {
+      "id": "aaaa0000-0000-4000-8000-000000000002",
+      "name": "ext-canary-nightly",
+      "jobCount": 1,
+      "hasInputs": false,
+      "trigger": { "schedule": "0 3 * * *" }
+    },
+    {
+      "id": "bbbb0000-0000-4000-8000-000000000003",
+      "name": "pihole-dns-list",
+      "jobCount": 1,
+      "hasInputs": false
+    }
   ]
 }

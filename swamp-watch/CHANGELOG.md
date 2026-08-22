@@ -16,8 +16,8 @@ Design decisions worth keeping:
 - **Budgets come from the longest legal gap, not the average.** `0 9,20 * * *`
   fires twice daily but can go 13h between fires; a 12h budget pages nightly.
 - **Day-of-month and day-of-week are ORed** when both are restricted, per
-  Vixie-cron. ANDing them makes `0 0 1 * 0` look monthly and inflates its
-  budget roughly thirtyfold.
+  Vixie-cron. ANDing them makes `0 0 1 * 0` look monthly and inflates its budget
+  roughly thirtyfold.
 - **No last-success state is kept.** swamp retains run history for about a day,
   so a weekly workflow's last success is already evicted. Each scan pushes what
   it can see (`0` for none) and the alert reads it back with `max_over_time`,

@@ -15,6 +15,11 @@
   // case: versions are pinned in the npm: specifiers themselves.
   "lock": false,
   "compilerOptions": { "noImplicitAny": false },
-  "fmt": { "lineWidth": 80, "indentWidth": 2, "semiColons": true, "singleQuote": false },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
   "lint": { "rules": { "tags": ["recommended"] } }
 }

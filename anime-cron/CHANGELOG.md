@@ -1,23 +1,22 @@
 # Changelog
 
-
 ## 2026.08.22.1
 
 - **Merged the two divergent copies of this model into one.** The main repo's
   `extensions/models/anime_cron.ts` was the LIVE file and this package was
-  inert; each had work the other lacked. Reconciled with the repo behaviour
-  kept where they conflicted: `pickBest` restores the HARD resolution floor
-  (`h.resolution >= targetRes`) rather than the soft ranking tried here, and
-  the `"varyg": 7` preferred-group score is back. The property test's oracle
-  now applies the same floor — mirroring only the scoring made it nominate
-  winners pickBest had already discarded.
+  inert; each had work the other lacked. Reconciled with the repo behaviour kept
+  where they conflicted: `pickBest` restores the HARD resolution floor
+  (`h.resolution >= targetRes`) rather than the soft ranking tried here, and the
+  `"varyg": 7` preferred-group score is back. The property test's oracle now
+  applies the same floor — mirroring only the scoring made it nominate winners
+  pickBest had already discarded.
 - **New `seed-watchlist` method.** Rebuilds the watch-list cache from the most
   recent `fetchResult` for the case the cache cannot cover: AniList went down
   BEFORE any run had cached the real list. Progress per show comes from the
   strongest signal available (`duplicate` means that episode is already in
-  Transmission, anything else means it is still owed), taking the highest
-  across outcomes. Airing times are INFERRED from the capture, so the payload
-  is flagged `seeded: true` and the next successful AniList read replaces it.
+  Transmission, anything else means it is still owed), taking the highest across
+  outcomes. Airing times are INFERRED from the capture, so the payload is
+  flagged `seeded: true` and the next successful AniList read replaces it.
   Refuses to overwrite an existing cache without `force`.
 - **Resource instances renamed to `watchlist-current`.** `writeResource` takes
   (spec, INSTANCE) but `readResource` takes the INSTANCE — so the cache both

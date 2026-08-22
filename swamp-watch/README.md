@@ -4,19 +4,19 @@ Per-workflow observability for a swamp repo's own scheduled work.
 
 ## Why
 
-`swamp serve`'s scheduler is only observable in aggregate. A rule that asks
-"did *any* scheduled workflow fire in the last 6h" is satisfied forever by a
-single two-minute workflow, so a workflow that dies — or was never deployed to
-the server at all — produces no signal whatsoever. Alerting on log text does
-not close the gap either: a rule that needs two identical failures inside 2h is
+`swamp serve`'s scheduler is only observable in aggregate. A rule that asks "did
+_any_ scheduled workflow fire in the last 6h" is satisfied forever by a single
+two-minute workflow, so a workflow that dies — or was never deployed to the
+server at all — produces no signal whatsoever. Alerting on log text does not
+close the gap either: a rule that needs two identical failures inside 2h is
 structurally blind to every daily and weekly schedule.
 
 This model publishes the two facts an alert actually needs, per workflow:
 
-| | |
-|---|---|
-| **intent** | what the repo declares via `trigger.schedule` |
-| **reality** | when that workflow last actually succeeded |
+|             |                                               |
+| ----------- | --------------------------------------------- |
+| **intent**  | what the repo declares via `trigger.schedule` |
+| **reality** | when that workflow last actually succeeded    |
 
 ## Methods
 
@@ -26,15 +26,15 @@ Reads every workflow declaring a `trigger.schedule`, then its run history, in
 one execution. Emits Prometheus exposition on the `scan` resource's `lines`
 attribute, ready for `@magistr/victoriametrics` `push`.
 
-| Series | Meaning |
-|---|---|
-| `swamp_workflow_declared{workflow,repo,schedule}` | this repo declares the schedule |
-| `swamp_workflow_expected_period_seconds{workflow,repo}` | longest legal gap between two fires |
-| `swamp_workflow_stale_after_seconds{workflow,repo}` | age at which a missing success should alert |
-| `swamp_workflow_last_success_timestamp_seconds{workflow,repo}` | last success seen, `0` if none |
-| `swamp_workflow_last_run_timestamp_seconds{workflow,repo}` | last run of any status |
-| `swamp_workflow_runs{workflow,repo,status}` | runs by status in retained history |
-| `swamp_watch_scan_timestamp_seconds{repo}` | when this scan completed |
+| Series                                                         | Meaning                                     |
+| -------------------------------------------------------------- | ------------------------------------------- |
+| `swamp_workflow_declared{workflow,repo,schedule}`              | this repo declares the schedule             |
+| `swamp_workflow_expected_period_seconds{workflow,repo}`        | longest legal gap between two fires         |
+| `swamp_workflow_stale_after_seconds{workflow,repo}`            | age at which a missing success should alert |
+| `swamp_workflow_last_success_timestamp_seconds{workflow,repo}` | last success seen, `0` if none              |
+| `swamp_workflow_last_run_timestamp_seconds{workflow,repo}`     | last run of any status                      |
+| `swamp_workflow_runs{workflow,repo,status}`                    | runs by status in retained history          |
+| `swamp_watch_scan_timestamp_seconds{repo}`                     | when this scan completed                    |
 
 ### `drift`
 
@@ -79,9 +79,9 @@ reported.
 average.** `0 9,20 * * *` fires twice a day but legally goes 13h between fires;
 a budget built on 12h pages every single night.
 
-**History is read per workflow, not from one global search.** The global
-history response is capped, and a two-minute workflow emits enough records to
-push every daily and weekly run out of the window.
+**History is read per workflow, not from one global search.** The global history
+response is capped, and a two-minute workflow emits enough records to push every
+daily and weekly run out of the window.
 
 **Intent can only be read from a repo directory.** `swamp workflow list` accepts
 no `--server`, and `workflow get --server` omits the `trigger` field, so a
@@ -99,7 +99,7 @@ The first half is "no success within the budget". The second is "we have been
 watching this workflow for longer than the budget".
 
 Both are needed because run history is retained for about a day, so on the very
-first scan a perfectly healthy *weekly* workflow has no visible success — its
+first scan a perfectly healthy _weekly_ workflow has no visible success — its
 last one was evicted days ago. Without the second half every weekly and monthly
 schedule would page the moment this model was switched on, which is precisely
 the kind of alert people learn to ignore.
@@ -112,12 +112,12 @@ catches that case immediately anyway, without waiting.
 ## Usage
 
 Define an instance pointing at the repo whose declared schedules you want to
-publish. `repoLabel` becomes the `repo` label on every series, so a laptop and
-a server can both report without colliding.
+publish. `repoLabel` becomes the `repo` label on every series, so a laptop and a
+server can both report without colliding.
 
 ```yaml
 # models/@magistr/swamp-watch/watch-serve.yaml
-type: '@magistr/swamp-watch'
+type: "@magistr/swamp-watch"
 typeVersion: 2026.08.21.1
 name: watch-serve
 globalArguments:
@@ -127,8 +127,8 @@ globalArguments:
 methods: {}
 ```
 
-To publish from a laptop while reading the *server's* run history, add
-`server` (and `token` if the server requires one):
+To publish from a laptop while reading the _server's_ run history, add `server`
+(and `token` if the server requires one):
 
 ```yaml
 globalArguments:
@@ -150,9 +150,9 @@ swamp data get watch-serve drift-current --json | jq -r '.content.missing'
 ### Wiring it to VictoriaMetrics
 
 `scan` and `drift` do not push. They write exposition to their resource's
-`lines` attribute, and a workflow step hands that to
-`@magistr/victoriametrics` `push` — so the push endpoint stays configured in
-one place rather than duplicated here.
+`lines` attribute, and a workflow step hands that to `@magistr/victoriametrics`
+`push` — so the push endpoint stays configured in one place rather than
+duplicated here.
 
 ```yaml
 jobs:
@@ -202,18 +202,18 @@ longer of its two legs — not the 43200s a naive "twice daily" reading gives.
 
 ## Global arguments
 
-| Argument | Default | Purpose |
-|---|---|---|
-| `repoDir` | `.` | repository to read declared workflows from |
-| `repoLabel` | `local` | value of the `repo` label on every series |
-| `swampBinary` | `swamp` | path to the swamp CLI |
-| `server` | — | serve URL to read run history from; omit for a local read |
-| `token` | — | server token, used only with `server` |
-| `graceFactor` | `0.5` | extra budget as a fraction of the longest gap |
-| `minGraceSeconds` | `1800` | floor on the extra budget |
-| `concurrency` | `2` | concurrent server probes during `drift` |
-| `retryBackoffMs` | `1500` | pause before re-probing after a non-404 failure |
-| `timeoutMs` | `120000` | per-CLI-call timeout |
+| Argument          | Default  | Purpose                                                   |
+| ----------------- | -------- | --------------------------------------------------------- |
+| `repoDir`         | `.`      | repository to read declared workflows from                |
+| `repoLabel`       | `local`  | value of the `repo` label on every series                 |
+| `swampBinary`     | `swamp`  | path to the swamp CLI                                     |
+| `server`          | —        | serve URL to read run history from; omit for a local read |
+| `token`           | —        | server token, used only with `server`                     |
+| `graceFactor`     | `0.5`    | extra budget as a fraction of the longest gap             |
+| `minGraceSeconds` | `1800`   | floor on the extra budget                                 |
+| `concurrency`     | `2`      | concurrent server probes during `drift`                   |
+| `retryBackoffMs`  | `1500`   | pause before re-probing after a non-404 failure           |
+| `timeoutMs`       | `120000` | per-CLI-call timeout                                      |
 
 ## Limitations
 
