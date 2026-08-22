@@ -68,7 +68,10 @@
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
-import { checkUpgradeChain } from "./check_upgrade_chain.ts";
+import {
+  checkUpgradeChain,
+  readManifestModels,
+} from "./check_upgrade_chain.ts";
 import { listExtensions } from "./extensions.ts";
 
 // ============================================================================
@@ -1234,4 +1237,86 @@ Deno.test("scripts/deno.json defines a 'quality:upgrades' task that grants --all
     task!.includes("--allow-write"),
     `'quality:upgrades' task must grant --allow-write (CI passes --json), got: ${task}`,
   );
+});
+
+// ─── discovery: extensions that legitimately ship no models ───────────────────
+
+Deno.test("readManifestModels: a datastore-only manifest contributes zero paths and NO violation", async () => {
+  // swamp-mongodb-datastore's real shape. Demanding a `models:` list from it
+  // reddened the whole gate for an extension that has no model files at all.
+  const root = await Deno.makeTempDir();
+  const ext = "datastore-only";
+  await Deno.mkdir(join(root, ext), { recursive: true });
+  await Deno.writeTextFile(
+    join(root, ext, "manifest.yaml"),
+    'manifestVersion: 1\nname: "@x/ds"\nversion: "1.0.0"\ndatastores:\n  - mongodb/mod.ts\n',
+  );
+  const got = await readManifestModels(root, ext);
+  assertEquals(got.paths, []);
+  assertEquals(got.violation, null);
+});
+
+Deno.test("readManifestModels: vault-only and report-only manifests are equally fine", async () => {
+  const root = await Deno.makeTempDir();
+  for (const [ext, key] of [["v", "vaults"], ["r", "reports"]]) {
+    await Deno.mkdir(join(root, ext), { recursive: true });
+    await Deno.writeTextFile(
+      join(root, ext, "manifest.yaml"),
+      `manifestVersion: 1\nname: "@x/${ext}"\nversion: "1.0.0"\n${key}:\n  - a/mod.ts\n`,
+    );
+    const got = await readManifestModels(root, ext);
+    assertEquals(got.violation, null, `${key} should be accepted`);
+    assertEquals(got.paths, []);
+  }
+});
+
+Deno.test("readManifestModels: a manifest with NO content of any kind still fails closed", async () => {
+  // The fail-closed intent survives: this is a genuinely broken manifest, and
+  // treating it as "no models" is the silent shrink the gate exists to stop.
+  const root = await Deno.makeTempDir();
+  const ext = "contentless";
+  await Deno.mkdir(join(root, ext), { recursive: true });
+  await Deno.writeTextFile(
+    join(root, ext, "manifest.yaml"),
+    'manifestVersion: 1\nname: "@x/nothing"\nversion: "1.0.0"\n',
+  );
+  const got = await readManifestModels(root, ext);
+  assertEquals(got.paths, []);
+  assertEquals(got.violation?.rule, "manifest-models-unreadable");
+});
+
+Deno.test("readManifestModels: an EMPTY datastores list does not excuse a missing models key", async () => {
+  // `datastores: []` declares nothing, so it must not buy an exemption.
+  const root = await Deno.makeTempDir();
+  const ext = "empty-datastores";
+  await Deno.mkdir(join(root, ext), { recursive: true });
+  await Deno.writeTextFile(
+    join(root, ext, "manifest.yaml"),
+    'manifestVersion: 1\nname: "@x/e"\nversion: "1.0.0"\ndatastores: []\n',
+  );
+  const got = await readManifestModels(root, ext);
+  assertEquals(got.violation?.rule, "manifest-models-unreadable");
+});
+
+Deno.test("readManifestModels: a PRESENT but malformed models key still fails closed", async () => {
+  const root = await Deno.makeTempDir();
+  for (
+    const [ext, body] of [
+      ["empty-list", "models: []\ndatastores:\n  - a/mod.ts\n"],
+      ["not-a-list", "models: nope\n"],
+      ["non-string", "models:\n  - 42\n"],
+    ]
+  ) {
+    await Deno.mkdir(join(root, ext), { recursive: true });
+    await Deno.writeTextFile(
+      join(root, ext, "manifest.yaml"),
+      `manifestVersion: 1\nname: "@x/${ext}"\nversion: "1.0.0"\n${body}`,
+    );
+    const got = await readManifestModels(root, ext);
+    assertEquals(
+      got.violation?.rule,
+      "manifest-models-unreadable",
+      `${ext} must still fail closed`,
+    );
+  }
 });

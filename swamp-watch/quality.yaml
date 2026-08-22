@@ -33,15 +33,18 @@ tests:
 watch:
   state: backlog
   justification: >-
-    No upstream release to watch — this model wraps the swamp CLI that ships it,
-    so the contract-fixture suite is what catches a swamp release changing the
-    workflow-list or run-history wire format.
+    Seeded offender at CI-gate rollout — backfill tracked in
+    ext-quality-test-backfill. No upstream release to watch either: this model
+    wraps the swamp CLI that ships it, so the contract-fixture suite is what
+    catches a swamp release changing the workflow-list or run-history wire
+    format.
 canary:
   state: backlog
   justification: >-
-    The live canary shape is exactly what ext-canary-nightly provides, and that
-    workflow is itself undeployed — the finding this extension exists to catch.
-    Wire this up once the canary is running on the server.
+    Seeded offender at CI-gate rollout — backfill tracked in
+    ext-quality-test-backfill. The live canary shape is exactly what
+    ext-canary-nightly provides; wire this up once that canary has been running
+    on the server long enough to trust.
 docs:
   readme:
     state: present
