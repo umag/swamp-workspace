@@ -55,16 +55,17 @@ docs:
     justification: anime-cron bundles no Claude skill — a bare fetch/cron pipeline model, nothing to document as a skill
 ratchet:
   rubricVersion: 3
-  baselinePercentage: 0
+  baselinePercentage: 100
   label: >-
-    UNSCORABLE — `swamp extension quality manifest.yaml --json` prints a
-    valid 92% (13/14, rubricVersion 3) score to stdout but exits 1 because
-    symbols-docs is unearned (50% of exported symbols carry JSDoc, below the
-    80% threshold); score_ratchet.ts's readScoreViaSwamp throws on the
-    non-zero exit, so runRatchet reports anime-cron SKIPPED, not a CI
-    failure. The 50%->80% JSDoc remediation across the pre-existing exports
-    remains out of scope; 2026.08.08.1's new exports all carry JSDoc, so the
-    ratio moves in the right direction but is not re-baselined here (still
-    UNSCORABLE, still SKIPPED — no CI behavior change). Tracked in
-    workspace-ratchet-scorer-blockers (a distinct cause from seanime's
-    broken-upgrade-chain unscorability — do not conflate the two).
+    Grade A as of 2026.08.22.1 — NOW SCORABLE. `swamp extension quality
+    manifest.yaml --json` reports 100%, rubricVersion 3, allPassed true,
+    exit 0. The long-standing symbols-docs blocker described in the previous
+    label is CLOSED: the remaining undocumented exports (parseResolution,
+    groupScore, buildMagnet, NyaaHit, pickBest) gained JSDoc in this release,
+    taking the ratio past the 80% threshold. score_ratchet.ts's
+    readScoreViaSwamp no longer throws, so anime-cron is scored rather than
+    SKIPPED. The only unearned factor is repository-verified (2 pts), which
+    the registry awards on publish and no local run can earn. Stamped from
+    the tool's own output, not guessed. Caveat: scored IN PLACE, not from a
+    fresh worktree — the package cache can mask validation failures, so
+    re-score from a clean checkout if this ever regresses.

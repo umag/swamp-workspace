@@ -390,13 +390,18 @@ Deno.test("property: pickBest's winner is invariant to input ORDER for any permu
       fc.array(arbHitSpec, { minLength: 2, maxLength: 6 }),
       (specs) => {
         const hits = specs.map((s, i) => makeHitFromSpec(s, i));
-        const scores = hits.map((h) => computeScore(h, 1080));
+        // pickBest applies a HARD resolution floor before ranking, so the
+        // oracle must too — otherwise it nominates a winner pickBest already
+        // discarded and the property fails for the wrong reason.
+        const eligible = hits.filter((h) => h.resolution >= 1080);
+        if (eligible.length === 0) return true;
+        const scores = eligible.map((h) => computeScore(h, 1080));
         const maxScore = Math.max(...scores);
         if (scores.filter((s) => s === maxScore).length > 1) {
           return true; // tie — winner is order-dependent by design, skip
         }
         const winnerIdx = scores.indexOf(maxScore);
-        const winnerHash = hits[winnerIdx].infoHash;
+        const winnerHash = eligible[winnerIdx].infoHash;
         const forward = pickBest(hits, 1, 1080);
         const reversed = pickBest([...hits].reverse(), 1, 1080);
         return forward?.infoHash === winnerHash &&

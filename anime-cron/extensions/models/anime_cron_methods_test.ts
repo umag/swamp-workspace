@@ -1084,13 +1084,158 @@ Deno.test("fetch-archive: an empty group list is rejected rather than sweeping a
   );
 });
 
-Deno.test("sanity: model exposes exactly the 5 documented methods", () => {
+Deno.test("sanity: model exposes exactly the 6 documented methods", () => {
   const methodNames = Object.keys(model.methods).sort();
   assertEquals(methodNames, [
     "disk-stats",
     "fetch-airing",
     "fetch-archive",
     "mark-watched",
+    "seed-watchlist",
     "upgrade-bd",
   ]);
+});
+
+/** Nyaa route that finds nothing, so the cache test exercises list resolution
+ * rather than torrent search. */
+function nyaaEmptyRoute(): Route {
+  return (req) =>
+    new URL(req.url).hostname === "nyaa.si"
+      ? new Response("<rss><channel></channel></rss>", {
+        headers: { "content-type": "application/xml" },
+      })
+      : undefined;
+}
+
+// ─── watchlist cache fallback ─────────────────────────────────────────────────
+// AniList 403s are routine and self-healing, and used to stop downloads for
+// their whole duration. Downloading needs to know WHAT is watched, not that
+// AniList is up, so a failed read falls back to the last good list.
+
+/** A context whose readResource returns a canned watchlist cache. */
+function ctxWithCache(cache: unknown, globalArgs = GLOBAL_ARGS) {
+  const base = makeCtx(globalArgs);
+  return {
+    ...base,
+    ctx: {
+      ...base.ctx,
+      readResource: (_name: string) => Promise.resolve(cache),
+    },
+  };
+}
+
+const CACHE_AT = 1_700_000_000;
+
+function cachePayload(capturedAtSec: number) {
+  return {
+    user: "fixture-user",
+    capturedAt: new Date(capturedAtSec * 1000).toISOString(),
+    entries: [{
+      mediaId: 1,
+      romaji: "Cached Show",
+      english: null,
+      synonyms: [],
+      progress: 3,
+      episodes: 12,
+      mediaStatus: "RELEASING",
+      nextAiringEp: 4,
+      nextAiringAt: capturedAtSec,
+    }],
+  };
+}
+
+Deno.test("fetch-airing: a successful AniList read caches the watch list", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [
+      aniListRoute({ watching: () => anilistWatching }),
+      txRoute({ torrentGet: () => [] }),
+    ],
+    async () => {
+      await run("fetch-airing", { dryRun: true }, ctx);
+    },
+  );
+  const cache = written.find((w) => w.spec === "watchlist");
+  assert(cache, "a successful run must write the watchlist cache");
+  // NOT "current": fetchResult already owns that instance name, and resource
+  // instances are keyed per MODEL — sharing it makes the two overwrite each other.
+  assertEquals(cache.name, "watchlist-current");
+  assert(Array.isArray(cache.payload.entries));
+  assert((cache.payload.entries as unknown[]).length > 0);
+  // Recorded so staleness can be judged later rather than guessed at.
+  assert(typeof cache.payload.capturedAt === "string");
+});
+
+Deno.test("fetch-airing: AniList down + fresh cache -> the run still completes from cache", async () => {
+  const { ctx, written } = ctxWithCache(cachePayload(CACHE_AT));
+  const anilist403: Route = (req) =>
+    new URL(req.url).hostname === "graphql.anilist.co"
+      ? new Response("forbidden", { status: 403 })
+      : undefined;
+  await withFetchStub(
+    [anilist403, txRoute({ torrentGet: () => [] }), nyaaEmptyRoute()],
+    async () => {
+      await run("fetch-airing", {}, ctx);
+    },
+  );
+  const res = written.find((w) => w.spec === "fetchResult");
+  assert(res, "the run must produce a result instead of rejecting");
+  assertEquals(res.payload.listSource, "cache");
+  assert(
+    (res.payload.listAgeSeconds as number) > 0,
+    "cache age must be reported so a stale-list run is visible",
+  );
+  // It must NOT re-cache what it just read back, or the cache would refresh
+  // its own timestamp on every failure and never look stale.
+  assertEquals(written.find((w) => w.spec === "watchlist"), undefined);
+});
+
+Deno.test("fetch-airing: AniList down + NO cache still rejects", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse({}, 500, async () => {
+    await assertRejects(() => run("fetch-airing", {}, ctx), Error);
+  });
+  assertEquals(written.find((w) => w.spec === "fetchResult"), undefined);
+});
+
+Deno.test("fetch-airing: AniList down + cache older than maxCacheAgeDays rejects", async () => {
+  // Silently downloading against a month-old list is worse than failing: shows
+  // end and new ones start, so the projection stops meaning anything.
+  const ancient = Math.floor(Date.now() / 1000) - 40 * 86400;
+  const { ctx, written } = ctxWithCache(
+    cachePayload(ancient),
+    {
+      ...GLOBAL_ARGS,
+      maxCacheAgeDays: 14,
+    } as unknown as typeof GLOBAL_ARGS,
+  );
+  const anilist403: Route = (req) =>
+    new URL(req.url).hostname === "graphql.anilist.co"
+      ? new Response("forbidden", { status: 403 })
+      : undefined;
+  await withFetchStub(
+    [anilist403, txRoute({ torrentGet: () => [] })],
+    async () => {
+      await assertRejects(() => run("fetch-airing", {}, ctx), Error);
+    },
+  );
+  assertEquals(written.find((w) => w.spec === "fetchResult"), undefined);
+});
+
+Deno.test("fetch-airing: an empty cache is treated as no cache", async () => {
+  const { ctx } = ctxWithCache({
+    user: "u",
+    capturedAt: new Date().toISOString(),
+    entries: [],
+  });
+  const anilist403: Route = (req) =>
+    new URL(req.url).hostname === "graphql.anilist.co"
+      ? new Response("forbidden", { status: 403 })
+      : undefined;
+  await withFetchStub(
+    [anilist403, txRoute({ torrentGet: () => [] })],
+    async () => {
+      await assertRejects(() => run("fetch-airing", {}, ctx), Error);
+    },
+  );
 });
