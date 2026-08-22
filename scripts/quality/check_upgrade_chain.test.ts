@@ -1300,11 +1300,13 @@ Deno.test("readManifestModels: an EMPTY datastores list does not excuse a missin
 
 Deno.test("readManifestModels: a PRESENT but malformed models key still fails closed", async () => {
   const root = await Deno.makeTempDir();
-  for (const [ext, body] of [
-    ["empty-list", "models: []\ndatastores:\n  - a/mod.ts\n"],
-    ["not-a-list", "models: nope\n"],
-    ["non-string", "models:\n  - 42\n"],
-  ]) {
+  for (
+    const [ext, body] of [
+      ["empty-list", "models: []\ndatastores:\n  - a/mod.ts\n"],
+      ["not-a-list", "models: nope\n"],
+      ["non-string", "models:\n  - 42\n"],
+    ]
+  ) {
     await Deno.mkdir(join(root, ext), { recursive: true });
     await Deno.writeTextFile(
       join(root, ext, "manifest.yaml"),
