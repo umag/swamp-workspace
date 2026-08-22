@@ -19,12 +19,17 @@
  * (telegram-import's `*_test_helpers.ts`, shipped by no manifest) — scanning
  * that file would be scanning something swamp itself never reads as a model.
  * DISCOVERY ITSELF FAILS CLOSED, one layer above checkModelFile's five
- * rules: a missing/unparseable manifest, an absent/non-list/non-string-list
+ * rules: a missing/unparseable manifest, a non-list/non-string-list
  * `models:` key, a manifest entry that escapes the extension directory
  * (`../../../etc/hosts`), and a listed path that does not resolve to a
  * readable file all raise `manifest-models-unreadable` rather than
  * silently shrinking the file set while the extension still counts as
- * checked — see readManifestModels() and isContainedIn() below.
+ * checked — see readManifestModels() and isContainedIn() below. The ONE
+ * legitimate no-models shape is a datastore-, vault- or report-only
+ * extension (swamp-mongodb-datastore declares `datastores:` and nothing
+ * else): it has no model files to drop, so it contributes zero paths and
+ * zero violations. A manifest declaring NO content of any kind still fails
+ * closed.
  *
  * THREAT MODEL. This gate exists because a broken chain is otherwise
  * invisible everywhere except swamp's own client-side push validator: fmt,
@@ -161,7 +166,9 @@ function manifestUnreadable(extension: string, why: string): ManifestModels {
  * matching) is still a different gate's job — ci.yml's "Check model
  * version matches manifest" step; this only asserts the manifest is
  * readable enough to name files at all. */
-async function readManifestModels(
+/** Exported for the discovery tests: the no-models shapes this gate accepts
+ * versus the ones it must still fail closed on. */
+export async function readManifestModels(
   root: string,
   extension: string,
 ): Promise<ManifestModels> {
@@ -186,6 +193,32 @@ async function readManifestModels(
     );
   }
   const models = (parsed as Record<string, unknown>).models;
+  if (models === undefined) {
+    // A datastore-, vault- or report-only extension ships no models at all —
+    // swamp-mongodb-datastore declares `datastores:` and nothing else. That is
+    // a legitimate manifest shape with nothing for THIS gate to check, not an
+    // unreadable one, and there are no model files to silently drop.
+    //
+    // Still fail closed when the manifest declares no content of any kind:
+    // that manifest really is broken, and treating it as "no models" would be
+    // exactly the silent-shrink this gate exists to prevent.
+    const OTHER_CONTENT_KEYS = [
+      "datastores",
+      "vaults",
+      "reports",
+      "workflows",
+    ];
+    const declaresOtherContent = OTHER_CONTENT_KEYS.some((key) => {
+      const value = (parsed as Record<string, unknown>)[key];
+      return Array.isArray(value) && value.length > 0;
+    });
+    if (declaresOtherContent) return { paths: [], violation: null };
+    return manifestUnreadable(
+      extension,
+      "manifest declares no content at all: no 'models:', and no non-empty " +
+        "'datastores:', 'vaults:', 'reports:' or 'workflows:' either",
+    );
+  }
   if (!Array.isArray(models) || models.length === 0) {
     return manifestUnreadable(
       extension,
