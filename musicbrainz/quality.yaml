@@ -34,8 +34,23 @@ tests:
     files:
       - "extensions/models/musicbrainz_property_test.ts"
 watch:
-  state: backlog
-  justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+  # Owned by Phase B (ext-quality-release-watch-soak): the executable
+  # contract is scripts/lib/watch_schema.ts, consumed by the generic
+  # .github/workflows/release-watch.yml. musicbrainz's only versioned
+  # upstream dependency is the linkedom HTML-parser pin in musicbrainz.ts —
+  # the musicbrainz.org/bandcamp.com wire APIs it wraps have no version to
+  # watch.
+  state: present
+  issueLabel: musicbrainz-release-watch
+  sources:
+    - kind: npm
+      package: linkedom
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/musicbrainz.ts
+        pattern: 'npm:linkedom@([0-9][^/"]*)'
+        required: true
 canary:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill

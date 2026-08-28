@@ -41,8 +41,23 @@ tests:
     files:
       - "extensions/models/music_library_property_test.ts"
 watch:
-  state: backlog
-  justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+  # Owned by Phase B (ext-quality-release-watch-soak): the executable
+  # contract is scripts/lib/watch_schema.ts, consumed by the generic
+  # .github/workflows/release-watch.yml. music-library's only versioned
+  # upstream dependency is the jschardet charset-detection pin in
+  # music_library.ts — the ssh-driven gonic-index catalog it wraps has no
+  # version to watch.
+  state: present
+  issueLabel: music-library-release-watch
+  sources:
+    - kind: npm
+      package: jschardet
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/music_library.ts
+        pattern: 'npm:jschardet@([0-9][^/"]*)'
+        required: true
 canary:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill

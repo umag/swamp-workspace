@@ -681,7 +681,11 @@ export async function resolveExtensionWatch(
   opts: ResolveOpts & { extensionDir?: string } = {},
 ): Promise<ExtensionDriftReport> {
   const issueTitle = issueTitleFor(extension);
-  if (declaration.state === "na") {
+  // "backlog" (not triaged yet — nothing to watch) is treated exactly like
+  // "na" (permanently not applicable): skipped, no sources to resolve, never
+  // a load error. See watch_schema.ts's WatchDeclarationSchema doc for why
+  // the two states exist separately despite behaving identically here.
+  if (declaration.state === "na" || declaration.state === "backlog") {
     return {
       extension,
       issueLabel: "",
@@ -797,10 +801,25 @@ function parseArgs(args: string[]): { root: string; out?: string } {
   return { root, out };
 }
 
-async function main(): Promise<void> {
-  const { root, out } = parseArgs(Deno.args);
-  const githubToken = Deno.env.get("GITHUB_TOKEN");
-  const reports = await buildDriftReports(root, { githubToken });
+/**
+ * The whole run, minus argv/env parsing: resolve every extension's watch
+ * declaration, write (or print) the JSON report, and log a summary. Kept
+ * separate from `main()` so tests can drive it directly with a fake `fetch`
+ * — a `deno run` subprocess can't inject one — and assert on the returned
+ * report set rather than on process exit code + stdout scraping.
+ *
+ * Never calls `Deno.exit` itself: a per-extension `loadError` (malformed
+ * quality.yaml) is isolated by `buildDriftReports` and must NOT fail the
+ * run — see the comment at the `main()` call site below for why. A genuine
+ * crash (unreadable `root`, a rethrown non-isolated error) propagates as a
+ * normal rejection, which is exactly what should abort the process.
+ */
+export async function runReleaseWatch(
+  root: string,
+  out: string | undefined,
+  opts: ResolveOpts = {},
+): Promise<ExtensionDriftReport[]> {
+  const reports = await buildDriftReports(root, opts);
   const json = JSON.stringify(
     { generatedAt: new Date().toISOString(), extensions: reports },
     null,
@@ -825,12 +844,28 @@ async function main(): Promise<void> {
   for (const r of loadErrors) {
     console.error(`  error: ${r.extension}: ${r.loadError}`);
   }
-  // Every OTHER extension was still fully processed above (error isolation);
-  // fail the job at the end so a broken quality.yaml stays visible in CI
-  // without blocking drift detection for the rest of the fleet.
-  if (loadErrors.length > 0) {
-    Deno.exit(1);
-  }
+  return reports;
+}
+
+async function main(): Promise<void> {
+  const { root, out } = parseArgs(Deno.args);
+  const githubToken = Deno.env.get("GITHUB_TOKEN");
+  await runReleaseWatch(root, out, { githubToken });
+  // Every extension with a broken quality.yaml is isolated by
+  // buildDriftReports and surfaced above as a `loadError` — printed as an
+  // error and present in the report JSON's `loadError` field, but NOT fatal.
+  // A malformed quality.yaml is Phase A/ci.yml's concern at PR time (that CI
+  // gate already blocks the PR that introduced it); by the time
+  // release-watch runs against `main`, failing the whole job here would
+  // stop it from reaching the "Raise or update per-extension drift issues"
+  // step in release-watch.yml (a GitHub Actions step with no `if:` guard is
+  // skipped when the previous step fails) — silently discarding every OTHER
+  // extension's real, detected drift along with it. Detection already
+  // isolates the failure; exiting non-zero here would only block reporting
+  // it. A genuine crash (unreadable `root`, bad CLI args, or any error NOT
+  // isolated per-extension) still propagates out of runReleaseWatch as an
+  // uncaught rejection, which Deno reports and exits non-zero for on its
+  // own — no explicit Deno.exit needed for that case either.
 }
 
 if (import.meta.main) {

@@ -7,10 +7,19 @@
  * `quality.yaml` `watch:` block:
  *
  *   watch:
- *     state: present | na
+ *     state: present | na | backlog
  *     sources: [<WatchSource>, ...]   # required when state=present
  *     issueLabel: string              # required when state=present
- *     justification: string           # required when state=na
+ *     justification: string           # required when state=na or backlog
+ *
+ * `backlog` means "not triaged yet — nothing to watch": scripts/quality/
+ * scaffold.ts seeds every newly-scaffolded extension's `watch:` block at
+ * `backlog` (it cannot know whether an extension has anything watchable),
+ * and 51 of the 52 extensions in this repo are still there. release_watch.ts
+ * treats `backlog` exactly like `na` — skipped, not a load error — so the
+ * common "not triaged yet" state never breaks the weekly run. It differs
+ * from `na` only in connotation (temporary/undecided vs. permanent/decided);
+ * both carry a `justification` and neither carries `sources`.
  *
  * Phase A (ext-quality-standard-ci-gate) owns the REST of quality.yaml
  * (schemaVersion, extension name, other CI-gate keys) and treats
@@ -261,6 +270,10 @@ export function isResolverDeferred(kind: WatchSourceKind): boolean {
 export const WatchDeclarationSchema = z.discriminatedUnion("state", [
   z.object({
     state: z.literal("na"),
+    justification: z.string().min(1),
+  }),
+  z.object({
+    state: z.literal("backlog"),
     justification: z.string().min(1),
   }),
   z.object({

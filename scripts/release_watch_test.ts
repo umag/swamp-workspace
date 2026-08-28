@@ -20,6 +20,7 @@ import {
   resolveHttpFingerprintSource,
   resolveNpmSource,
   resolveOpenapiHashSource,
+  runReleaseWatch,
 } from "./release_watch.ts";
 
 function fakeFetch(
@@ -742,6 +743,21 @@ Deno.test("resolveExtensionWatch: state=na produces a report with no results and
   assertEquals(report.results.length, 0);
 });
 
+Deno.test("resolveExtensionWatch: state=backlog is skipped exactly like na — no results, no drift", async () => {
+  const report = await resolveExtensionWatch(
+    "demo-ext",
+    { state: "backlog", justification: "not triaged yet" },
+    {
+      fetchImpl: () => {
+        throw new Error("must not fetch for a backlog extension");
+      },
+    },
+  );
+  assertEquals(report.hasDrift, false);
+  assertEquals(report.results.length, 0);
+  assertEquals(report.justification, "not triaged yet");
+});
+
 Deno.test("resolveExtensionWatch: aggregates multiple sources and flags hasDrift", async () => {
   const fetchImpl = fakeFetch(() => ({
     ok: true,
@@ -872,6 +888,89 @@ Deno.test("buildDriftReports: one extension's malformed quality.yaml does not ab
       "ext-broken must carry a loadError explaining why it could not be resolved",
     );
     assertEquals(broken.hasDrift, false);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// runReleaseWatch — load errors must never fail the run (Phase B fix: a
+// broken quality.yaml previously made the whole job exit 1, which SKIPS
+// release-watch.yml's un-guarded "Raise or update per-extension drift
+// issues" step and silently discards every OTHER extension's real drift).
+// ---------------------------------------------------------------------------
+
+Deno.test("runReleaseWatch: a malformed quality.yaml alongside a healthy drifting extension resolves without throwing (exit 0) and still reports the drift", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    // ext-broken: invalid watch: block (state=present with no issueLabel) —
+    // fails to load entirely.
+    await Deno.mkdir(`${root}/ext-broken`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/ext-broken/quality.yaml`,
+      "watch:\n  state: present\n  sources:\n    - kind: npm\n      package: x\n      pin: {from: source, file: x.ts, pattern: 'x@([0-9]+)'}\n",
+    );
+
+    // ext-drift: valid, state=present, and its pin is genuinely behind
+    // upstream — a real drift that must survive ext-broken's load failure.
+    await Deno.mkdir(`${root}/ext-drift/extensions/models`, {
+      recursive: true,
+    });
+    await Deno.writeTextFile(
+      `${root}/ext-drift/extensions/models/demo.ts`,
+      'import x from "npm:demo@1.0.0";\n',
+    );
+    await Deno.writeTextFile(
+      `${root}/ext-drift/quality.yaml`,
+      [
+        "watch:",
+        "  state: present",
+        "  issueLabel: ext-drift-release-watch",
+        "  sources:",
+        "    - kind: npm",
+        "      package: demo",
+        "      channel: latest",
+        "      pin:",
+        "        from: source",
+        "        file: extensions/models/demo.ts",
+        "        pattern: 'npm:demo@([0-9][^\"]*)'",
+        "        required: true",
+        "",
+      ].join("\n"),
+    );
+
+    const out = `${root}/report.json`;
+    const fetchImpl = fakeFetch(() => ({
+      ok: true,
+      status: 200,
+      json: { "dist-tags": { latest: "2.0.0" } },
+    }));
+
+    // The point of this test: this call must resolve, not reject/throw —
+    // that IS "exit 0" at the unit level, since main() does nothing but
+    // await this and let a genuine rejection propagate as a process crash.
+    const reports = await runReleaseWatch(root, out, { fetchImpl });
+
+    const broken = reports.find((r) => r.extension === "ext-broken");
+    const drift = reports.find((r) => r.extension === "ext-drift");
+    assert(broken?.loadError, "ext-broken must carry a loadError");
+    assert(drift, "ext-drift must still be resolved and reported");
+    assertEquals(drift.hasDrift, true);
+
+    // The report JSON on disk (what release-watch.yml's github-script step
+    // actually reads) must carry the same loadError + drift.
+    const written = JSON.parse(await Deno.readTextFile(out));
+    const writtenBroken = written.extensions.find(
+      (r: { extension: string }) => r.extension === "ext-broken",
+    );
+    const writtenDrift = written.extensions.find(
+      (r: { extension: string }) => r.extension === "ext-drift",
+    );
+    assert(
+      typeof writtenBroken.loadError === "string" &&
+        writtenBroken.loadError.length > 0,
+    );
+    assertEquals(writtenDrift.hasDrift, true);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

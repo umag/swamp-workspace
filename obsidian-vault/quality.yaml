@@ -37,8 +37,23 @@ tests:
     files:
       - extensions/models/obsidian_vault_property_test.ts
 watch:
-  state: backlog
-  justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+  # Owned by Phase B (ext-quality-release-watch-soak): the executable
+  # contract is scripts/lib/watch_schema.ts, consumed by the generic
+  # .github/workflows/release-watch.yml. obsidian-vault's only versioned
+  # upstream dependency is the yaml frontmatter-parser pin in
+  # obsidian_vault.ts — the local vault filesystem it operates on has no
+  # version to watch.
+  state: present
+  issueLabel: obsidian-vault-release-watch
+  sources:
+    - kind: npm
+      package: yaml
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/obsidian_vault.ts
+        pattern: 'npm:yaml@([0-9][^/"]*)'
+        required: true
 canary:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill

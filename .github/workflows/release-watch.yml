@@ -55,10 +55,33 @@ jobs:
             release_watch.ts --root .. --out ../release-watch-report.json
 
       - name: Raise or update per-extension drift issues
+        # Defense in depth: run even if an earlier step in this job failed
+        # (e.g. a future bug in the resolver step above), so a fatal crash
+        # upstream of this step can never again silently swallow drift
+        # reporting for the rest of the fleet — which is exactly what
+        # happened here before: release_watch.ts used to exit 1 whenever ANY
+        # single extension's quality.yaml failed to load, and this step had
+        # no `if:`, so it was SKIPPED — discarding every OTHER extension's
+        # real, already-detected drift along with it. release_watch.ts no
+        # longer exits non-zero for an isolated per-extension load error (see
+        # its runReleaseWatch), so this `always()` is belt-and-suspenders for
+        # a genuine crash (unreadable root, bad args) rather than the normal
+        # path. A genuine crash can leave release-watch-report.json missing
+        # entirely, so guard the read below instead of letting a bare
+        # readFileSync throw ENOENT.
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require("fs");
+            if (!fs.existsSync("release-watch-report.json")) {
+              core.warning(
+                "release-watch-report.json not found — the resolver step " +
+                "must have crashed before writing it (see its job logs " +
+                "above); skipping drift-issue filing for this run.",
+              );
+              return;
+            }
             const report = JSON.parse(
               fs.readFileSync("release-watch-report.json", "utf8"),
             );

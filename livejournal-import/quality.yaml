@@ -63,8 +63,31 @@ tests:
     files:
       - extensions/models/livejournal_import_property_test.ts
 watch:
-  state: backlog
-  justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+  # Owned by Phase B (ext-quality-release-watch-soak): the executable
+  # contract is scripts/lib/watch_schema.ts, consumed by the generic
+  # .github/workflows/release-watch.yml. Two versioned upstream deps pinned
+  # in livejournal_import.ts: cheerio (HTML parsing) and domhandler (its
+  # node-type imports) — the LiveJournal export format itself has no release
+  # channel.
+  state: present
+  issueLabel: livejournal-import-release-watch
+  sources:
+    - kind: npm
+      package: cheerio
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/livejournal_import.ts
+        pattern: 'npm:cheerio@([0-9][^/"]*)'
+        required: true
+    - kind: npm
+      package: domhandler
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/livejournal_import.ts
+        pattern: 'npm:domhandler@([0-9][^/"]*)'
+        required: true
 canary:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
