@@ -41,12 +41,25 @@ tests:
     files:
       - extensions/models/reading_list_property_test.ts
 watch:
-  state: backlog
-  justification: >-
-    release-watch not yet wired — the "upstream" here is a dozen independent
-    third-party feeds plus LinkedIn's unversioned public markup, none of which
-    publish a release channel to subscribe to, so the source shape needs
-    deciding alongside Phase B; tracked in ext-quality-test-backfill
+  # Owned by Phase B (ext-quality-release-watch-soak): the executable
+  # contract is scripts/lib/watch_schema.ts, consumed by the generic
+  # .github/workflows/release-watch.yml. The dozen independent third-party
+  # feeds plus LinkedIn's unversioned public markup that this note previously
+  # flagged as having "no release channel to subscribe to" are still true —
+  # nothing there is watchable. What IS watchable, and was missed by that
+  # earlier framing, is reading-list's own versioned upstream dependency: the
+  # linkedom HTML-parser pin in reading_list.ts.
+  state: present
+  issueLabel: reading-list-release-watch
+  sources:
+    - kind: npm
+      package: linkedom
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/reading_list.ts
+        pattern: 'npm:linkedom@([0-9][^/"]*)'
+        required: true
 canary:
   state: backlog
   justification: >-

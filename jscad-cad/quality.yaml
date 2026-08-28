@@ -47,8 +47,63 @@ tests:
     files:
       - extensions/models/jscad/jscad_cad_property_test.ts
 watch:
-  state: backlog
-  justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+  # Owned by Phase B (ext-quality-release-watch-soak): the executable
+  # contract is scripts/lib/watch_schema.ts, consumed by the generic
+  # .github/workflows/release-watch.yml. Six versioned upstream deps: the
+  # @jscad/modeling geometry library (jscad/script_evaluator.ts's top-level
+  # import) plus the five per-format @jscad/*-serializer packages
+  # (serializerPackage's switch — one npm: specifier per OutputFormat).
+  state: present
+  issueLabel: jscad-cad-release-watch
+  sources:
+    - kind: npm
+      package: "@jscad/modeling"
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/jscad/script_evaluator.ts
+        pattern: 'npm:@jscad/modeling@([0-9][^/"]*)'
+        required: true
+    - kind: npm
+      package: "@jscad/stl-serializer"
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/jscad/script_evaluator.ts
+        pattern: 'npm:@jscad/stl-serializer@([0-9][^/"]*)'
+        required: true
+    - kind: npm
+      package: "@jscad/dxf-serializer"
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/jscad/script_evaluator.ts
+        pattern: 'npm:@jscad/dxf-serializer@([0-9][^/"]*)'
+        required: true
+    - kind: npm
+      package: "@jscad/obj-serializer"
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/jscad/script_evaluator.ts
+        pattern: 'npm:@jscad/obj-serializer@([0-9][^/"]*)'
+        required: true
+    - kind: npm
+      package: "@jscad/3mf-serializer"
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/jscad/script_evaluator.ts
+        pattern: 'npm:@jscad/3mf-serializer@([0-9][^/"]*)'
+        required: true
+    - kind: npm
+      package: "@jscad/svg-serializer"
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/jscad/script_evaluator.ts
+        pattern: 'npm:@jscad/svg-serializer@([0-9][^/"]*)'
+        required: true
 canary:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill

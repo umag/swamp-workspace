@@ -39,8 +39,22 @@ tests:
     files:
       - extensions/models/bandcamp_property_test.ts
 watch:
-  state: backlog
-  justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+  # Owned by Phase B (ext-quality-release-watch-soak): the executable
+  # contract is scripts/lib/watch_schema.ts, consumed by the generic
+  # .github/workflows/release-watch.yml. bandcamp's only versioned upstream
+  # dependency is the linkedom HTML-parser pin in bandcamp.ts — everything
+  # else here is scraped third-party markup with no release channel.
+  state: present
+  issueLabel: bandcamp-release-watch
+  sources:
+    - kind: npm
+      package: linkedom
+      channel: latest
+      pin:
+        from: source
+        file: extensions/models/bandcamp.ts
+        pattern: 'npm:linkedom@([0-9][^/"]*)'
+        required: true
 canary:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
