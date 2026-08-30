@@ -169,7 +169,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       - name: Format check
         working-directory: ${{ matrix.extension }}
@@ -237,7 +237,7 @@ jobs:
           fetch-depth: 0
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
       - name: Check the section that will ship fits the cap
         working-directory: scripts
         env:
@@ -271,7 +271,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       - name: Test (scripts)
         working-directory: scripts
@@ -389,7 +389,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       # Skill markdown used to be format-checked incidentally by the parent
       # extension's `deno task fmt:check`. Now that a skill-only change no longer
@@ -448,7 +448,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -521,7 +521,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       - name: Download all gate artifacts
         uses: actions/download-artifact@v8
@@ -575,7 +575,7 @@ jobs:
 
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       - name: Detect manifest version changes
         id: manifest-changed
@@ -710,7 +710,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       - name: Setup swamp
         uses: ./.github/actions/setup-swamp

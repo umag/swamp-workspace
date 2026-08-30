@@ -17,7 +17,10 @@
     "lineWidth": 80,
     "indentWidth": 2,
     "semiColons": true,
-    "singleQuote": false
+    "singleQuote": false,
+    "exclude": [
+      "fixtures/"
+    ]
   },
   "lint": {
     "rules": {

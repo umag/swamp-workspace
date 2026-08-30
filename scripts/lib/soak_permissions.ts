@@ -75,8 +75,9 @@ function parseScope(scopeStr: string | undefined): string[] | null {
 /**
  * Merges one more occurrence's scope into a same-kind flag's accumulated
  * scope, matching deno's REAL CLI behavior for a repeated --allow-X/--deny-X
- * flag — empirically verified against deno 2.7.13 (the same major/minor
- * family as the 2.8.3 pinned in these workflows):
+ * flag — empirically re-verified against deno 2.9.6, the version pinned in
+ * these workflows (repeated --allow-read=/tmp --allow-read=/var still grants
+ * BOTH, unchanged from the 2.7.13 behaviour this was first written against):
  *
  *   deno run --allow-read=/tmp --allow-read=/var f.ts   -> BOTH granted
  *     (disjoint scopes union: {"/tmp","/var"})

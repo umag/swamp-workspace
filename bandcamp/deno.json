@@ -19,8 +19,7 @@
     "semiColons": true,
     "singleQuote": false,
     "exclude": [
-      "fixtures/album_tralbum_dirty.html",
-      "fixtures/album_tralbum_fallback.html"
+      "fixtures/"
     ]
   },
   "lint": {

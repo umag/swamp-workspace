@@ -15,9 +15,7 @@
     "semiColons": true,
     "singleQuote": false,
     "exclude": [
-      "fixtures/post_full.html",
-      "fixtures/post_bad_comments.html",
-      "fixtures/post_injection.html"
+      "fixtures/"
     ]
   },
   "lint": { "rules": { "tags": ["recommended"] } }

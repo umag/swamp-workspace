@@ -53,7 +53,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       - id: schedule
         working-directory: scripts
@@ -108,7 +108,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       - name: Type-check ${{ matrix.pair.extension }}
         working-directory: ${{ matrix.pair.extension }}

@@ -175,8 +175,9 @@ Deno.test("parsePermissionSet: talm-cluster's real test task — --deny-write=$H
 // ============================================================================
 // parsePermissionSet — REPEATED same-kind flags UNION (never last-wins),
 // matching deno's REAL CLI semantics. Empirically verified against the
-// installed deno 2.7.13 binary (same major/minor family as the 2.8.3 pinned
-// in these workflows) — see each test's comment for the exact command run.
+// installed deno 2.9.6 binary, which is also the version pinned in these
+// workflows — see each test's comment for the exact command run. Re-verified
+// on the 2.8.3 -> 2.9.6 pin bump: repeated same-kind flags still UNION.
 // This is the CRITICAL gate-bypass fix: parsePermissionSet used to store
 // each --allow-X/--deny-X occurrence in a Map keyed by kind, so a SECOND
 // occurrence silently overwrote the first ("last wins"), while deno itself

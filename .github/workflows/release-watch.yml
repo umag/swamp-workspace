@@ -36,7 +36,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.8.3
+          deno-version: v2.9.6
 
       - name: Resolve upstream drift for every extension
         working-directory: scripts
