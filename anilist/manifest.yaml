@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/anilist"
-version: "2026.08.19.1"
+version: "2026.08.30.1"
 description: "AniList GraphQL API — search and fetch anime/manga, media details, user lists, trending, and a Telegram activity notifier with completed/dropped detection"
 repository: "https://github.com/umag/swamp-workspace"
 paths:

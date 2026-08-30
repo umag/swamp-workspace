@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026.08.30.1
+
+### Added
+
+- **`repeat` on `update-progress`** — AniList's rewatch counter. This is how a
+  FINISHED rewatch is actually recorded: the entry stays `COMPLETED` and the
+  counter goes up. Setting `status: REPEATING` instead means "currently
+  rewatching" and leaves `repeat` at 0, so it was not a substitute. The argument
+  is ABSOLUTE, not an increment — read the current value and pass `value + 1`.
+
+  The mutation now declares `$repeat: Int`, forwards it to `SaveMediaListEntry`,
+  and reads it back in the selection set; a declared-but-unforwarded variable is
+  silently ignored by AniList, so `UPDATE_PROGRESS_MUTATION` is exported and
+  pinned by a test. `watchProgress` gained a `repeat` field.
+
+  Omitting `repeat` omits it from the variables entirely rather than sending
+  `null`, which would CLEAR an existing count; `repeat: 0` is still sent, since
+  0 is the meaningful "reset my rewatches" value and a truthiness check would
+  swallow it. Both are pinned by tests.
+
+- **`repeat` is now SELECTED by `USERLIST_QUERY`** and carried on the userlist
+  entry schema. Without it the field read back as absent whether or not the
+  write landed — a write you cannot read back is indistinguishable from one that
+  failed, which is exactly how this was caught in use. A test pins the
+  selection. 167 tests pass.
+
 ## 2026.08.19.1
 
 - Version bump and smoke test

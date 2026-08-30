@@ -209,6 +209,9 @@ const MediaListEntrySchema = z.object({
   status: z.string().nullable(),
   score: z.number().nullable(),
   progress: z.number().nullable(),
+  repeat: z.number().nullable().describe(
+    "Times rewatched. Selected by USERLIST_QUERY so a `repeat` written via update-progress can actually be read back — without it the field reads as absent whether or not the write landed.",
+  ),
   media: MediaSchema,
 }).passthrough();
 
@@ -271,7 +274,7 @@ query ($userName: String!, $type: MediaType, $status: MediaListStatus) {
     lists {
       name status
       entries {
-        id status score progress updatedAt
+        id status score progress repeat updatedAt
         media {
           id
           title { romaji english native }
@@ -373,10 +376,13 @@ query ($season: MediaSeason!, $seasonYear: Int!, $type: MediaType, $page: Int, $
   }
 }`;
 
-const UPDATE_PROGRESS_MUTATION = `
-mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus) {
-  SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status) {
-    id mediaId status progress updatedAt
+/** Mutation behind `update-progress`. Exported so tests can pin that $repeat is
+ * both declared and forwarded — a declared-but-unforwarded variable is silently
+ * ignored by AniList. */
+export const UPDATE_PROGRESS_MUTATION = `
+mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus, $repeat: Int) {
+  SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, repeat: $repeat) {
+    id mediaId status progress repeat updatedAt
   }
 }`;
 
@@ -1486,7 +1492,7 @@ const ActivityItemSchema = z.object({
  */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.08.19.1",
+  version: "2026.08.30.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -1504,6 +1510,12 @@ export const model = {
     {
       toVersion: "2026.08.19.1",
       description: "Version bump and smoke test",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.30.1",
+      description:
+        "update-progress gained an optional `repeat` argument — AniList's rewatch counter, which is how a FINISHED rewatch is recorded (entry stays COMPLETED, counter goes up); setting status REPEATING instead means 'currently rewatching' and leaves repeat at 0. The mutation now declares and forwards $repeat and reads it back, and watchProgress carries a `repeat` field. No globalArguments schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1620,6 +1632,7 @@ export const model = {
         progress: z.number().nullable(),
         score: z.number().nullable(),
         status: z.string().nullable(),
+        repeat: z.number().nullable(),
         updatedAt: z.number().nullable(),
       }),
       lifetime: "1h",
@@ -2233,12 +2246,16 @@ export const model = {
         ]).optional().describe(
           "List status override (omit to keep existing status)",
         ),
+        repeat: z.number().int().min(0).optional().describe(
+          "Times REWATCHED. This is how AniList records a finished rewatch: the entry stays COMPLETED and this counter goes up. Setting status REPEATING instead means 'currently rewatching' and leaves this at 0. Absolute, not an increment — read the current value first and pass value+1.",
+        ),
       }),
       execute: async (
         args: {
           mediaId: number;
           progress: number;
           status?: string;
+          repeat?: number;
         },
         context: {
           globalArgs: z.infer<typeof GlobalArgsSchema>;
@@ -2262,6 +2279,9 @@ export const model = {
           progress: args.progress,
         };
         if (args.status) variables.status = args.status;
+        // 0 is meaningful (clears the rewatch count), so test for undefined
+        // rather than falsiness.
+        if (args.repeat !== undefined) variables.repeat = args.repeat;
 
         const resp = await fetch("https://graphql.anilist.co", {
           method: "POST",
@@ -2282,6 +2302,7 @@ export const model = {
               mediaId: number;
               status: string;
               progress: number;
+              repeat?: number;
               updatedAt: number;
             };
           };
@@ -2301,6 +2322,7 @@ export const model = {
             progress: entry?.progress ?? args.progress,
             score: null,
             status: entry?.status ?? null,
+            repeat: entry?.repeat ?? args.repeat ?? null,
             updatedAt: entry?.updatedAt ?? null,
           },
         );
@@ -2427,6 +2449,7 @@ export const model = {
             progress: null,
             score: entry?.score ?? args.score,
             status: entry?.status ?? null,
+            repeat: null,
             updatedAt: entry?.updatedAt ?? null,
           },
         );

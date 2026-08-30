@@ -38,7 +38,7 @@ import {
   assertRejects,
   assertThrows,
 } from "jsr:@std/assert@1";
-import { model } from "./anilist.ts";
+import { model, UPDATE_PROGRESS_MUTATION } from "./anilist.ts";
 import searchFixture from "../../fixtures/search.json" with { type: "json" };
 import mediaDetailsFixture from "../../fixtures/media-details.json" with {
   type: "json",
@@ -594,6 +594,135 @@ Deno.test("update-progress: GraphQL errors[] at 200 rejects with 'AniList errors
       );
       assert((err as Error).message.includes("Invalid mediaId"));
     },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// update-progress — `repeat` (rewatch counter)
+// ---------------------------------------------------------------------------
+
+/** Capture the mutation variables update-progress sends for `args`. */
+async function captureUpdateVars(
+  args: Record<string, unknown>,
+  ctx: unknown,
+): Promise<Record<string, unknown>> {
+  let vars: Record<string, unknown> = {};
+  await withFetchStub(
+    [(req, body) => {
+      if (!isAniListHost(req) || !body.query.includes("$progress: Int!")) {
+        return undefined;
+      }
+      vars = body.variables as Record<string, unknown>;
+      return jsonRes({
+        data: {
+          SaveMediaListEntry: {
+            id: 1,
+            mediaId: 90001,
+            status: "COMPLETED",
+            progress: 12,
+            repeat: (body.variables as { repeat?: number }).repeat ?? 0,
+            updatedAt: 1700000000,
+          },
+        },
+      });
+    }],
+    async () => {
+      await run("update-progress", args, ctx);
+    },
+  );
+  return vars;
+}
+
+Deno.test("update-progress: the mutation declares and forwards $repeat", () => {
+  // The variable has to be declared on the operation AND passed to
+  // SaveMediaListEntry, or AniList silently ignores it and the rewatch is lost.
+  const src = (model.methods as MethodMap)["update-progress"];
+  assert(src, "update-progress must exist");
+  assert(
+    UPDATE_PROGRESS_MUTATION.includes("$repeat: Int"),
+    "operation must declare $repeat",
+  );
+  assert(
+    /SaveMediaListEntry\([^)]*repeat:\s*\$repeat/.test(
+      UPDATE_PROGRESS_MUTATION,
+    ),
+    "SaveMediaListEntry must receive repeat: $repeat",
+  );
+  assert(
+    /\brepeat\b/.test(UPDATE_PROGRESS_MUTATION.split("{").slice(-1)[0]),
+    "selection set must read repeat back",
+  );
+});
+
+Deno.test("update-progress: repeat is omitted from variables when not given", async () => {
+  const { ctx } = makeCtx(AUTH_GLOBAL_ARGS);
+  const vars = await captureUpdateVars({ mediaId: 90001, progress: 12 }, ctx);
+  assert(
+    !("repeat" in vars),
+    "an absent repeat must not be sent — sending null would CLEAR the user's rewatch count",
+  );
+});
+
+Deno.test("update-progress: repeat 0 is still sent (not swallowed by falsiness)", async () => {
+  // 0 is a meaningful value: it clears the counter. A truthiness check here
+  // would make "reset my rewatches" silently do nothing.
+  const { ctx } = makeCtx(AUTH_GLOBAL_ARGS);
+  const vars = await captureUpdateVars(
+    { mediaId: 90001, progress: 12, repeat: 0 },
+    ctx,
+  );
+  assertEquals(vars.repeat, 0);
+});
+
+Deno.test("update-progress: repeat is forwarded and written onto watchProgress", async () => {
+  const { ctx, written } = makeCtx(AUTH_GLOBAL_ARGS);
+  await withFetchStub(
+    [(req, body) => {
+      if (!isAniListHost(req) || !body.query.includes("$progress: Int!")) {
+        return undefined;
+      }
+      assertEquals((body.variables as { repeat?: number }).repeat, 2);
+      return jsonRes({
+        data: {
+          SaveMediaListEntry: {
+            id: 1,
+            mediaId: 90001,
+            status: "COMPLETED",
+            progress: 12,
+            repeat: 2,
+            updatedAt: 1700000000,
+          },
+        },
+      });
+    }],
+    async () => {
+      await run(
+        "update-progress",
+        { mediaId: 90001, progress: 12, status: "COMPLETED", repeat: 2 },
+        ctx,
+      );
+    },
+  );
+  const res = written.find((w) =>
+    w.spec === "watchProgress" && w.name === "90001"
+  )!;
+  assertEquals(res.payload.repeat, 2);
+  assertEquals(res.payload.status, "COMPLETED");
+});
+
+Deno.test("update-progress: repeat rejects negatives and non-integers (schema guard)", () => {
+  const method = (model.methods as MethodMap)["update-progress"];
+  assertThrows(() =>
+    method.arguments.parse({ mediaId: 1, progress: 1, repeat: -1 })
+  );
+  assertThrows(() =>
+    method.arguments.parse({ mediaId: 1, progress: 1, repeat: 1.5 })
+  );
+  assertEquals(
+    (method.arguments.parse({ mediaId: 1, progress: 1, repeat: 3 }) as {
+      repeat: number;
+    }).repeat,
+    3,
   );
 });
 

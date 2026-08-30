@@ -541,6 +541,9 @@ Deno.test("LIST_INGEST_QUERY selects the decimal score + status over MediaListCo
 Deno.test("USERLIST_QUERY (notifier/userlist) keeps a bare score, never the ingest decimal format", () => {
   assert(!USERLIST_QUERY.includes("score(format:"));
   assert(/\bscore\b/.test(USERLIST_QUERY));
+  // repeat must be SELECTED or a rewatch written by update-progress reads back
+  // as absent — indistinguishable from the write having failed.
+  assert(/\brepeat\b/.test(USERLIST_QUERY));
 });
 
 Deno.test("METADATA_INGEST_QUERY covers every anilist_metadata source field (17 columns)", () => {
