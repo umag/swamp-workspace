@@ -1,0 +1,36 @@
+manifestVersion: 1
+name: "@magistr/diskio"
+version: "2026.08.31.1"
+description: |
+  Answer "what is actually reading this disk?" on a Linux host whose storage
+  sits behind device-mapper and FUSE — where the obvious tools all lie.
+
+  Model:
+  - `@magistr/diskio` — probes a host over SSH. Methods: `device-map` (resolve
+    every dm/md/loop layer to its physical spindle and Unraid array slot, plus
+    the alias groups a per-device metric would double-count), `readers` (rank
+    processes by disk I/O from /proc/<pid>/io, container-attributed, reporting
+    requested bytes and block I/O separately), `open-files` (walk /proc/*/fd
+    and re-attribute FUSE-held descriptors to the containers that really hold
+    them), and `attribute` (all three for one disk, plus a one-line summary).
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/diskio.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - storage
+  - unraid
+  - homelab
+  - observability
+  - fuse
+  - device-mapper
+  - troubleshooting
