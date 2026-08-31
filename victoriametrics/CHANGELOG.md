@@ -13,13 +13,13 @@ watch item: `dm-3` = `md4p1` = `disk4` = `/dev/sdl`, one 14.6TB drive, and
 neither layer was near saturation (7d mean 20%, peak 52%).
 
 - `DISK_IO_QUERY` (new export) adds
-  `{device!~"(dm-|md|loop|sr|zram|ram|nbd|drbd|zd).*"}` so VictoriaMetrics
-  drops the virtual layers at query time.
+  `{device!~"(dm-|md|loop|sr|zram|ram|nbd|drbd|zd).*"}` so VictoriaMetrics drops
+  the virtual layers at query time.
 - `isPhysicalDiskDevice()` (new export) re-checks each returned series
   client-side, so a server that ignores the matcher still cannot double-count.
 - Both derive from one `VIRTUAL_DISK_PREFIXES` list, so the PromQL string and
-  the client-side check cannot drift apart. Tests import `DISK_IO_QUERY`
-  instead of restating it.
+  the client-side check cannot drift apart. Tests import `DISK_IO_QUERY` instead
+  of restating it.
 - Unlabelled series still normalise to `"unknown"` and are kept — an
   unattributable series must not be silently dropped.
 
