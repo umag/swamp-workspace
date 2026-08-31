@@ -8,6 +8,7 @@ import {
   blobsCollectionName,
   type MongoDatastoreConfig,
   pathsCollectionName,
+  tierRoot,
 } from "./config.ts";
 import { Sidecar, type SidecarState } from "./sidecar.ts";
 
@@ -158,8 +159,14 @@ export function createSyncService(
   cfg: MongoDatastoreConfig,
   getClient: (repoDir: string) => Promise<ClientHandle>,
   repoDir: string,
-  cachePath: string,
+  bareCachePath: string,
 ): DatastoreSyncService {
+  // Core passes the bare, un-namespaced cache path; the tier actually lives one
+  // segment deeper. Every local read/write below is rooted here so push walks
+  // and pull writes land where core's reader looks. See tierRoot() in config.ts.
+  const cachePath = tierRoot(cfg, bareCachePath);
+  // The sidecar tracks paths relative to the tier root, so it belongs beside the
+  // tier it describes — not at the cache root shared with other namespaces.
   const sidecar = new Sidecar(cachePath);
   let updatedAtIndexEnsured = false;
 
