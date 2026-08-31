@@ -15,6 +15,7 @@
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint",
-    "test": "deno test --allow-read --allow-write --allow-env"
+    "test": "deno test --allow-read --allow-write --allow-env",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-read --allow-write --allow-env=FC_NUM_RUNS extensions/models/sync_property_test.ts"
   }
 }

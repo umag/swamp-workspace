@@ -12,8 +12,11 @@
  */
 import { assertEquals } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
-import { ConfigSchema, tierRoot } from "./config.ts";
-import { isSafeRelPath, resolveWithinCache } from "./sync.ts";
+import { ConfigSchema, tierRoot } from "../datastores/mongodb/config.ts";
+import {
+  isSafeRelPath,
+  resolveWithinCache,
+} from "../datastores/mongodb/sync.ts";
 
 const ENV_RUNS = Deno.env.get("FC_NUM_RUNS");
 const NIGHT = (n: number): number => (ENV_RUNS ? Number(ENV_RUNS) : n);
