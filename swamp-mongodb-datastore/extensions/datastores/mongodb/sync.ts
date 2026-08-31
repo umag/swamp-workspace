@@ -8,6 +8,7 @@ import {
   blobsCollectionName,
   type MongoDatastoreConfig,
   pathsCollectionName,
+  tierRoot,
 } from "./config.ts";
 import { Sidecar, type SidecarState } from "./sidecar.ts";
 
@@ -154,12 +155,54 @@ export function isSecretsPath(relPath: string): boolean {
   return relPath === "secrets" || relPath.startsWith("secrets/");
 }
 
+/**
+ * Join a remote-supplied tier-relative path onto the cache root, refusing
+ * anything that would land outside it.
+ *
+ * Pull takes its local target straight from a remote `_id`. One MongoDB
+ * database is shared by every repo and tenant (isolation is only a collection
+ * prefix), so a `_id` is untrusted input: a doc named
+ * `../../../../.ssh/authorized_keys` would otherwise be written through — and,
+ * when carrying `deletedAt`, unlinked — anywhere the process can reach.
+ *
+ * Rejects absolute paths, `.`/`..` segments, empty segments, backslashes (a
+ * Windows separator that survives a POSIX `split("/")` untouched), and NUL.
+ * Legitimate tier paths keep dots inside a segment (`192.168.88.18`), spaces,
+ * and `@` (`data/@magistr/...`) — only a segment that IS `.` or `..` is unsafe.
+ */
+export function resolveWithinCache(cachePath: string, relPath: string): string {
+  if (!isSafeRelPath(relPath)) {
+    throw new Error(
+      `Refusing unsafe datastore path from remote: ${JSON.stringify(relPath)}`,
+    );
+  }
+  return `${cachePath}/${relPath}`;
+}
+
+/** Pure predicate behind resolveWithinCache — exported for the guard's tests. */
+export function isSafeRelPath(relPath: string): boolean {
+  if (relPath.length === 0) return false;
+  if (relPath.startsWith("/")) return false;
+  if (relPath.includes("\\")) return false;
+  if (relPath.includes("\0")) return false;
+  for (const segment of relPath.split("/")) {
+    if (segment === "" || segment === "." || segment === "..") return false;
+  }
+  return true;
+}
+
 export function createSyncService(
   cfg: MongoDatastoreConfig,
   getClient: (repoDir: string) => Promise<ClientHandle>,
   repoDir: string,
-  cachePath: string,
+  bareCachePath: string,
 ): DatastoreSyncService {
+  // Core passes the bare, un-namespaced cache path; the tier actually lives one
+  // segment deeper. Every local read/write below is rooted here so push walks
+  // and pull writes land where core's reader looks. See tierRoot() in config.ts.
+  const cachePath = tierRoot(cfg, bareCachePath);
+  // The sidecar tracks paths relative to the tier root, so it belongs beside the
+  // tier it describes — not at the cache root shared with other namespaces.
   const sidecar = new Sidecar(cachePath);
   let updatedAtIndexEnsured = false;
 
@@ -248,6 +291,18 @@ export function createSyncService(
       // Advance the watermark past the doc (above) so it isn't re-scanned,
       // but don't write or delete it locally.
       if (isSecretsPath(doc._id)) continue;
+      // A `_id` that escapes the cache root is dropped here rather than thrown
+      // on: the database is shared, and letting one malformed or planted doc
+      // abort every future pull would turn a rejected write into a sync outage.
+      // resolveWithinCache still guards the write sites as defence in depth.
+      if (!isSafeRelPath(doc._id)) {
+        console.warn(
+          `mongodb-datastore: skipping remote path outside the cache root: ${
+            JSON.stringify(doc._id)
+          }`,
+        );
+        continue;
+      }
       pathDocs.push(doc);
     }
 
@@ -256,7 +311,11 @@ export function createSyncService(
 
     const deletes = pathDocs.filter((d) => d.deletedAt !== null);
     await runPool(deletes, concurrency, async (doc) => {
-      if (await removeSilentlyExisting(`${cachePath}/${doc._id}`)) changes++;
+      if (
+        await removeSilentlyExisting(resolveWithinCache(cachePath, doc._id))
+      ) {
+        changes++;
+      }
     });
 
     const needs = pathDocs.filter((d) => d.deletedAt === null);
@@ -265,7 +324,9 @@ export function createSyncService(
       for (const doc of needs) addToBucket(pathsByHash, doc.hash, doc);
     } else {
       await runPool(needs, concurrency, async (doc) => {
-        const local = await readFileOrNull(`${cachePath}/${doc._id}`);
+        const local = await readFileOrNull(
+          resolveWithinCache(cachePath, doc._id),
+        );
         if (local !== null && (await sha256Hex(local)) === doc.hash) return;
         addToBucket(pathsByHash, doc.hash, doc);
       });
@@ -295,7 +356,7 @@ export function createSyncService(
         }
       }
       await runPool(writeJobs, concurrency, async ({ relPath, bytes }) => {
-        await writeFileAtomic(`${cachePath}/${relPath}`, bytes);
+        await writeFileAtomic(resolveWithinCache(cachePath, relPath), bytes);
         changes++;
       });
     }
@@ -473,7 +534,7 @@ export function createSyncService(
     // Belt-and-suspenders: markDirty already drops secrets, so this only
     // fires if a dirty path slipped through. Never push the vault tier.
     if (isSecretsPath(relPath)) return 0;
-    const absPath = `${cachePath}/${relPath}`;
+    const absPath = resolveWithinCache(cachePath, relPath);
     let stat: Deno.FileInfo | null = null;
     try {
       stat = await Deno.stat(absPath);
@@ -661,7 +722,7 @@ export function createSyncService(
       const doc = await paths.findOne({ _id: relPath });
       if (doc === null || doc.deletedAt !== null) return false;
 
-      const absPath = `${cachePath}/${relPath}`;
+      const absPath = resolveWithinCache(cachePath, relPath);
       const local = await readFileOrNull(absPath);
       if (local !== null && (await sha256Hex(local)) === doc.hash) return true;
 
