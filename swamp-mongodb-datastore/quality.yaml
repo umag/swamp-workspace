@@ -10,17 +10,24 @@ tests:
       - extensions/datastores/mongodb/config_test.ts
       - extensions/datastores/mongodb/sidecar_test.ts
   methods:
-    state: backlog
-    justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+    state: na
+    justification: >-
+      this package ships a datastore provider, not a model — it declares no
+      model methods for a methods suite to exercise. Its provider surface
+      (locks, verifier, sync) is covered by the contract-fixture, adversarial
+      and coverage suites instead.
   adversarial:
-    state: backlog
-    justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+    state: present
+    files:
+      - extensions/datastores/mongodb/sync_adversarial_test.ts
   coverage:
-    state: backlog
-    justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+    state: present
+    files:
+      - extensions/datastores/mongodb/sync_coverage_test.ts
   property-invariant-flow:
-    state: backlog
-    justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
+    state: present
+    files:
+      - extensions/datastores/mongodb/sync_property_test.ts
 watch:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill
