@@ -19,7 +19,7 @@
  */
 import { assertEquals } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
-import { model } from "./victoriametrics.ts";
+import { DISK_IO_QUERY, model } from "./victoriametrics.ts";
 import systemOverviewFixture from "../../fixtures/system_overview.json" with {
   type: "json",
 };
@@ -108,7 +108,7 @@ const CPU_QUERY = '100-avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))*100';
 const MEM_QUERY =
   "(1-node_memory_MemAvailable_bytes/node_memory_MemTotal_bytes)*100";
 const LOAD_QUERY = "node_load1";
-const DISK_QUERY = "rate(node_disk_io_time_seconds_total[5m])*100";
+const DISK_QUERY = DISK_IO_QUERY;
 const NET_QUERY = 'rate(node_network_receive_bytes_total{device="br0"}[5m])*8';
 
 function systemOverviewRoute(overrides: Record<string, unknown> = {}): Route {

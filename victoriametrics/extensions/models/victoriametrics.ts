@@ -122,13 +122,58 @@ function stats(values) {
 }
 
 /**
+ * Virtual block layers node_exporter exports alongside the real hardware.
+ * On Unraid an encrypted array slot stacks `dm-N` -> `mdXp1` -> one physical
+ * `sdX`, so counting every layer reports one spindle up to three times, and a
+ * dm/sd pair showing the same utilisation reads as two independent disks
+ * corroborating each other when it is one device seen twice. That is an
+ * identity, not a signal (Tower, 2026-08-30: dm-3 = md4p1 = disk4 = sdl).
+ * Keep exactly one layer — the physical device — wherever disk I/O is
+ * reported. Plain prefixes, no `\d`: nothing real begins with any of them,
+ * and the PromQL string then needs no backslash escaping to stay in sync
+ * with the client-side check.
+ */
+const VIRTUAL_DISK_PREFIXES = [
+  "dm-",
+  "md",
+  "loop",
+  "sr",
+  "zram",
+  "ram",
+  "nbd",
+  "drbd",
+  "zd",
+] as const;
+
+/**
+ * True for a device name that is a real spindle/namespace rather than a
+ * mapper/RAID/loop layer. An unlabelled series normalises to `"unknown"`
+ * upstream and is kept: it cannot be attributed to a layer, so dropping it
+ * would silently lose a genuinely busy disk.
+ */
+export function isPhysicalDiskDevice(device: string): boolean {
+  return device.length > 0 &&
+    !VIRTUAL_DISK_PREFIXES.some((p) => device.startsWith(p));
+}
+
+/**
+ * Disk-utilisation series for `system-overview`. The negative matcher drops
+ * the virtual layers at query time so VictoriaMetrics never ships them;
+ * `isPhysicalDiskDevice` re-checks client-side so a server that ignores the
+ * matcher (or a name the matcher misses) still cannot double-count.
+ */
+export const DISK_IO_QUERY = `rate(node_disk_io_time_seconds_total{device!~"(${
+  VIRTUAL_DISK_PREFIXES.join("|")
+}).*"}[5m])*100`;
+
+/**
  * VictoriaMetrics query model: instant/range PromQL, scrape-target health, a
  * node-exporter system overview, and container memory rankings over the HTTP
  * query API (`/api/v1/query`, `/api/v1/query_range`).
  */
 export const model = {
   type: "@magistr/victoriametrics",
-  version: "2026.08.19.1",
+  version: "2026.08.30.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -140,6 +185,12 @@ export const model = {
     {
       toVersion: "2026.08.19.1",
       description: "Version bump and smoke test",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.08.30.1",
+      description:
+        "system-overview counts each physical disk once — dm-*/md*/loop*/etc are excluded in PromQL and re-checked client-side; no resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -297,7 +348,7 @@ export const model = {
             rangeQuery(
               host,
               port,
-              "rate(node_disk_io_time_seconds_total[5m])*100",
+              DISK_IO_QUERY,
               start,
               end,
               step,
@@ -323,6 +374,7 @@ export const model = {
         // Disk I/O per device
         const diskDevices = (diskData.data?.result || [])
           .filter((r) => Array.isArray(r.values) && r.values.length > 0)
+          .filter((r) => isPhysicalDiskDevice(r.metric.device || "unknown"))
           .map((r) => {
             const vals = r.values.map((v) => parseFloat(v[1]));
             const mx = Math.max(...vals);
