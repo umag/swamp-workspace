@@ -89,7 +89,7 @@ transformation:
 1. `100-avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))*100`
 2. `(1-node_memory_MemAvailable_bytes/node_memory_MemTotal_bytes)*100`
 3. `node_load1`
-4. `rate(node_disk_io_time_seconds_total[5m])*100`
+4. `rate(node_disk_io_time_seconds_total{device!~"(dm-|md|loop|sr|zram|ram|nbd|drbd|zd).*"}[5m])*100`
 5. `rate(node_network_receive_bytes_total{device="br0"}[5m])*8`
 6. `node_boot_time_seconds`
 

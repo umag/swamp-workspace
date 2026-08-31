@@ -25,7 +25,11 @@
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
-import { model } from "./victoriametrics.ts";
+import {
+  DISK_IO_QUERY,
+  isPhysicalDiskDevice,
+  model,
+} from "./victoriametrics.ts";
 import queryVector from "../../fixtures/query_vector.json" with {
   type: "json",
 };
@@ -128,7 +132,7 @@ const CPU_QUERY = '100-avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))*100';
 const MEM_QUERY =
   "(1-node_memory_MemAvailable_bytes/node_memory_MemTotal_bytes)*100";
 const LOAD_QUERY = "node_load1";
-const DISK_QUERY = "rate(node_disk_io_time_seconds_total[5m])*100";
+const DISK_QUERY = DISK_IO_QUERY;
 const BOOT_QUERY = "node_boot_time_seconds";
 
 /** Router over the six exact PromQL strings system-overview issues, with
@@ -1115,5 +1119,83 @@ Deno.test("fixtures-secret/real-infra-scan: poison sanity — the scanner actual
   assert(
     violations.some((v) => v.includes("100.64.1.5")),
     "sanity: scanner must flag the CGNAT address",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * Virtual block-layer double-counting (2026-08-30 Tower false positive).
+ *
+ * On Unraid an encrypted array slot stacks dm-N -> mdXp1 -> one physical sdX,
+ * and node_exporter exports EVERY layer. `system-overview` therefore listed
+ * dm-3 and sdl as two busy disks when they are one 14.6TB spindle, and the
+ * pair reading the same number was mistaken for two devices corroborating
+ * each other. Only physical devices may reach `disk`/`anomalies`.
+ * ------------------------------------------------------------------------ */
+
+Deno.test("isPhysicalDiskDevice: keeps real spindles, drops every virtual layer", () => {
+  for (const d of ["sda", "sdl", "sdaa", "nvme0n1", "vda", "hdb", "xvdf"]) {
+    assert(isPhysicalDiskDevice(d), `${d} should be kept`);
+  }
+  for (
+    const d of [
+      "dm-0",
+      "dm-3",
+      "dm-10",
+      "md1p1",
+      "md4",
+      "loop2",
+      "sr0",
+      "zram0",
+      "ram3",
+      "dm-name-md4p1",
+      "",
+    ]
+  ) {
+    assert(!isPhysicalDiskDevice(d), `${d} should be dropped`);
+  }
+});
+
+Deno.test("DISK_IO_QUERY excludes virtual layers server-side", () => {
+  assert(
+    DISK_IO_QUERY.includes("node_disk_io_time_seconds_total"),
+    "must still read the io_time counter",
+  );
+  assert(
+    /device!~/.test(DISK_IO_QUERY),
+    "must carry a negative device matcher so VM drops the layers at query time",
+  );
+  for (const layer of ["dm-", "md", "loop", "sr", "zram", "ram"]) {
+    assert(
+      DISK_IO_QUERY.includes(layer),
+      `matcher must name the ${layer} layer`,
+    );
+  }
+});
+
+Deno.test("system-overview drops dm-*/md* series even when the server returns them", async () => {
+  using _time = new FakeTime(FIXED_NOW_MS);
+  // dm-3 IS sdl (md4p1 over disk4). A server that ignores the matcher, or an
+  // older VM, still must not produce two entries for one spindle.
+  const doubleCounted = matrixBody([
+    { metric: { device: "dm-3" }, values: [[FIXED_EPOCH_S, "95"]] },
+    { metric: { device: "md4p1" }, values: [[FIXED_EPOCH_S, "95"]] },
+    { metric: { device: "sdl" }, values: [[FIXED_EPOCH_S, "94"]] },
+    { metric: { device: "loop2" }, values: [[FIXED_EPOCH_S, "99"]] },
+  ]);
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [systemOverviewRoute({ [DISK_QUERY]: doubleCounted })],
+    async () => {
+      await run("system-overview", {}, ctx);
+    },
+  );
+  const payload = written.find((w) => w.spec === "overview")!.payload;
+  assertEquals(
+    (payload.disk as Array<{ device: string }>).map((d) => d.device),
+    ["sdl"],
+  );
+  assertEquals(
+    (payload.anomalies as string[]).filter((a) => a.includes("saturated")),
+    ["Disk sdl saturated at 94%"],
   );
 });

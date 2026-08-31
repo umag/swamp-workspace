@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026.08.30.1
+
+`system-overview` now counts each physical disk **once**.
+
+node_exporter exports every layer of the block stack. On Unraid an encrypted
+array slot is `dm-N` -> `mdXp1` -> one physical `sdX`, so the disk view listed
+the same spindle two or three times and a `dm-*`/`sd*` pair reporting the same
+utilisation looked like two independent disks corroborating each other. On
+Tower, 2026-08-30, `dm-3` and `sdl` were flagged together as a disk-saturation
+watch item: `dm-3` = `md4p1` = `disk4` = `/dev/sdl`, one 14.6TB drive, and
+neither layer was near saturation (7d mean 20%, peak 52%).
+
+- `DISK_IO_QUERY` (new export) adds
+  `{device!~"(dm-|md|loop|sr|zram|ram|nbd|drbd|zd).*"}` so VictoriaMetrics
+  drops the virtual layers at query time.
+- `isPhysicalDiskDevice()` (new export) re-checks each returned series
+  client-side, so a server that ignores the matcher still cannot double-count.
+- Both derive from one `VIRTUAL_DISK_PREFIXES` list, so the PromQL string and
+  the client-side check cannot drift apart. Tests import `DISK_IO_QUERY`
+  instead of restating it.
+- Unlabelled series still normalise to `"unknown"` and are kept — an
+  unattributable series must not be silently dropped.
+
+No resource schema change; identity `upgrades[]` entry appended.
+
 ## 2026.08.19.1
 
 - Version bump and smoke test
