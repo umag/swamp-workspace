@@ -11,6 +11,9 @@ import {
 
 import {
   allMatrixReviewersRecorded,
+  AttestationSchema,
+  type CommandRunner,
+  type ControlSpec,
   type Finding,
   findingSignature,
   hasBlockingFindings,
@@ -21,6 +24,7 @@ import {
   type ReviewMatrix,
   type ReviewResult,
   StateEnum,
+  verifyImpl,
 } from "./issue_lifecycle.ts";
 
 // ============================================================================
@@ -77,6 +81,8 @@ function createHarness(initial?: StoredRecord): Harness {
             "summary write must include a `state` field (compact summary)",
           );
         }
+      } else if (spec === "attestation") {
+        AttestationSchema.parse(data);
       } else {
         throw new Error(`Unknown resource spec: ${spec}`);
       }
@@ -106,6 +112,48 @@ async function run(method: string, args: any, ctx: FakeCtx): Promise<void> {
   const m = (model.methods as any)[method];
   if (!m) throw new Error(`unknown method: ${method}`);
   await m.execute(args, ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Verification helpers — scripted CommandRunner, nothing is ever spawned
+// ---------------------------------------------------------------------------
+
+/** Every control exits 0. */
+const okRunner: CommandRunner = () =>
+  Promise.resolve({ code: 0, stdout: "", stderr: "" });
+
+/** Every control exits non-zero with diagnostic output. */
+const failRunner: CommandRunner = () =>
+  Promise.resolve({ code: 1, stdout: "", stderr: "control rejected the tree" });
+
+/** A minimal required local control. */
+const TEST_CONTROLS: ControlSpec[] = [
+  {
+    name: "test",
+    command: "deno",
+    args: ["task", "test"],
+    cwd: ".",
+    tier: "local",
+    required: true,
+  },
+];
+
+/** Drive `implementing` → `verifying` with every control green. */
+function passVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    okRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
+}
+
+/** Drive `implementing` → `verifying` with a failing control. */
+function failVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    failRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
 }
 
 // Build a minimal passing plan for tests that need a plan in place
@@ -918,6 +966,7 @@ Deno.test("iterate from code_reviewing bumps iteration and snapshots", async () 
   const h = createHarness();
   await withApprovedPlan(h);
   await implementWithTestsApproved(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run(
     "record_review",
@@ -950,6 +999,7 @@ Deno.test("iterate from resolved does not double-snapshot", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
   await implementWithTestsApproved(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -973,6 +1023,7 @@ Deno.test("harvest transitions resolved → harvested", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
   await implementWithTestsApproved(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -996,6 +1047,7 @@ Deno.test("complete works from resolved (harvest skipped)", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
   await implementWithTestsApproved(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -1008,6 +1060,7 @@ Deno.test("complete works from harvested", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
   await implementWithTestsApproved(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -1230,6 +1283,7 @@ Deno.test("end-to-end: filed → auto-reject → re-plan → approve → review_
 
   // Implement: write tests → review_tests (clean) → write code → review_code (clean)
   await implementWithTestsApproved(h, "feat/retry-fix");
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -1298,3 +1352,48 @@ Deno.test("fake harness rejects invalid writes to the state spec", async () => {
 // assertNotEquals is imported for future use in hydrate assertions.
 // Silence unused-import lint if any future refactor drops its usage.
 const _kept = assertNotEquals;
+
+// ============================================================================
+// Verification gate contract
+// ============================================================================
+
+Deno.test("verification is the only path from implementing to code_reviewing", async () => {
+  const h = createHarness();
+  await filedAndTriaged(h);
+  await run("plan", defaultPlanArgs(), h.ctx);
+  await run("review_plan", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("approve_plan", {}, h.ctx);
+  await run("implement", { branch: "feat/x", description: "" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("tests_approved", {}, h.ctx);
+  assertEquals(h.getState()!.state, "implementing");
+
+  // Direct attempt is refused.
+  await assertRejects(
+    () => run("review_code", {}, h.ctx),
+    Error,
+    "Expected: verifying",
+  );
+
+  // A FAILING round still enters `verifying`, but review_code from there is
+  // the skill's call — the model records the failure and lets the loop drive.
+  await failVerification(h);
+  assertEquals(h.getState()!.state, "verifying");
+  const failed = h.getState()!.verification!.controls[0];
+  assertEquals(failed.status, "fail");
+
+  // Iterate back, fix, re-verify clean, then review_code succeeds.
+  await run(
+    "iterate_verification",
+    { reason: "control failed", source: "auto" },
+    h.ctx,
+  );
+  assertEquals(h.getState()!.state, "implementing");
+  await passVerification(h);
+  await run("review_code", {}, h.ctx);
+  assertEquals(h.getState()!.state, "code_reviewing");
+});

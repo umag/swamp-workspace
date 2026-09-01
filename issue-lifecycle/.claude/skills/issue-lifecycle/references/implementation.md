@@ -7,7 +7,7 @@
 - The branch in `state.branch` carries the approved failing tests
 
 Phase 4b writes the code that makes the approved tests pass, then hands off to
-Phase 5 (code review).
+Phase 4c (verification), which is the only route onward to code review.
 
 ## Step 1: Confirm where you are
 
@@ -116,34 +116,38 @@ build. Record the outcome:
 If the triage said `could-not-reproduce`, you can't verify here — note that
 explicitly and proceed with extra caution.
 
-## Step 5: Record PR (optional)
+## Step 5: Do NOT open a PR yet
 
-When a PR is opened, append a `## PR` section to the plan summary so
-`swamp data get <issue-name> current --json` shows the provenance. The magistr
-model has no first-class `link_pr` method, so the skill uses the plan summary
-convention instead.
+The PR comes after verification and attestation, not here. Opening it now means
+CI discovers failures the verification loop was about to catch — the exact round
+trip Phase 4c exists to eliminate.
 
-There's no model method for this — edit the plan's summary text via a new `plan`
-call only if the PR is opened during a re-plan round. Otherwise, track the PR
-externally (in your issue tracker) and mention it in the human-facing review
-summary in Phase 5.
+The PR URL has a first-class home: the `prUrl` argument on `attest`
+([attestation.md](attestation.md)). The old convention of appending a `## PR`
+section to the plan summary is obsolete; do not use it.
 
-## Step 6: Hand off to code review
+## Step 6: Hand off to verification
 
 Once implementation is complete — state is `implementing` (reached via
-`tests_approved`), all plan steps are executed, the approved test suite passes,
-and the reproduction (if any) verifies the fix:
+`tests_approved` or an `iterate` from code review), all plan steps are executed,
+the approved test suite passes, and the reproduction (if any) verifies the fix —
+run the repository's mechanical controls:
 
 ```bash
-swamp model method run <issue-name> review_code
+swamp model method run <issue-name> verify --input '{"controls": [...], "repoDir": "<abs path>", "runner": "local"}'
 ```
 
-State transitions from `implementing` → `code_reviewing`. The model bumps
-`codeReviewIteration` on each `review_code` call, so the autonomous loop can
-track how many rounds of code review have happened.
+State transitions from `implementing` → `verifying`. Read
+[verification.md](verification.md) for the control declarations, the outcome
+statuses, and the loop.
+
+**`review_code` cannot be called from `implementing`.** It is guarded on
+`verifying`. If you find yourself reaching for it here, you are skipping the
+controls.
 
 ## Next phase
 
-Read [code-review.md](code-review.md) for the post-implementation review phase,
-which uses the same autonomous loop pattern as Phases 3 and 4a but applied to
-the code rather than the plan or the tests.
+Read [verification.md](verification.md). Code review
+([code-review.md](code-review.md)) follows it, using the same autonomous loop
+pattern as Phases 3 and 4a but applied to the code rather than the plan or the
+tests.

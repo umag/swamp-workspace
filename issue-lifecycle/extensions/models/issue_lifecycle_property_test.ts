@@ -40,6 +40,9 @@ import fc from "npm:fast-check@4.8.0";
 import { FakeTime } from "jsr:@std/testing@1/time";
 
 import {
+  AttestationSchema,
+  type CommandRunner,
+  type ControlSpec,
   failingReviewers,
   type Finding,
   hasBlockingFindings,
@@ -48,6 +51,7 @@ import {
   model,
   type ReviewResult,
   StateEnum,
+  verifyImpl,
 } from "./issue_lifecycle.ts";
 
 // ============================================================================
@@ -97,6 +101,8 @@ function createHarness(initial?: StoredRecord): Harness {
             "summary write must include a `state` field (compact summary)",
           );
         }
+      } else if (spec === "attestation") {
+        AttestationSchema.parse(data);
       } else {
         throw new Error(`Unknown resource spec: ${spec}`);
       }
@@ -130,6 +136,48 @@ async function run(
   const m = (model.methods as MethodMap)[method];
   if (!m) throw new Error(`unknown method: ${method}`);
   await m.execute(args, ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Verification helpers — scripted CommandRunner, nothing is ever spawned
+// ---------------------------------------------------------------------------
+
+/** Every control exits 0. */
+const okRunner: CommandRunner = () =>
+  Promise.resolve({ code: 0, stdout: "", stderr: "" });
+
+/** Every control exits non-zero with diagnostic output. */
+const failRunner: CommandRunner = () =>
+  Promise.resolve({ code: 1, stdout: "", stderr: "control rejected the tree" });
+
+/** A minimal required local control. */
+const TEST_CONTROLS: ControlSpec[] = [
+  {
+    name: "test",
+    command: "deno",
+    args: ["task", "test"],
+    cwd: ".",
+    tier: "local",
+    required: true,
+  },
+];
+
+/** Drive `implementing` → `verifying` with every control green. */
+function passVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    okRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
+}
+
+/** Drive `implementing` → `verifying` with a failing control. */
+function failVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    failRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
 }
 
 function passReview(reviewer: string): Record<string, unknown> {
@@ -207,7 +255,28 @@ const GUARD_TABLE: Record<string, { allowed: string[]; args: unknown }> = {
     args: { reason: "x", source: "human" },
   },
   tests_approved: { allowed: ["reviewing_tests"], args: {} },
-  review_code: { allowed: ["implementing"], args: {} },
+  verify: {
+    allowed: ["implementing"],
+    args: {
+      controls: [
+        {
+          name: "test",
+          command: "deno",
+          args: ["task", "test"],
+          cwd: ".",
+          tier: "local",
+          required: true,
+        },
+      ],
+      repoDir: "/repo",
+      runner: "local",
+    },
+  },
+  iterate_verification: {
+    allowed: ["verifying"],
+    args: { reason: "x", source: "human" },
+  },
+  review_code: { allowed: ["verifying"], args: {} },
   resolve_findings: {
     allowed: ["code_reviewing"],
     args: { resolutions: {} },
@@ -216,11 +285,23 @@ const GUARD_TABLE: Record<string, { allowed: string[]; args: unknown }> = {
     allowed: ["resolved", "code_reviewing"],
     args: { reason: "x", source: "human" },
   },
-  harvest: {
+  attest: {
     allowed: ["resolved"],
+    args: {
+      commitSha: "0".repeat(40),
+      repoDir: "/repo",
+      configPaths: [],
+      producedBy: "test",
+    },
+  },
+  harvest: {
+    allowed: ["resolved", "attested"],
     args: { uatProposals: [], kbProposals: [] },
   },
-  complete: { allowed: ["resolved", "harvested"], args: { summary: "" } },
+  complete: {
+    allowed: ["resolved", "attested", "harvested"],
+    args: { summary: "" },
+  },
 };
 
 function minimalState(state: string): StoredRecord {
@@ -317,19 +398,32 @@ Deno.test("P2: hasBlockingFindings total is monotone non-decreasing under additi
 // throughout
 // ============================================================================
 
-// Four independent yes/no branch points along the one legal skeleton:
+// Six independent yes/no branch points along the one legal skeleton:
 // filed -> triaged -> planned -> [reject once?] -> reviewing -> approved
 //       -> writing_tests -> [iterate_tests once?] -> reviewing_tests
-//       -> implementing -> [iterate once?] -> code_reviewing -> resolved
+//       -> implementing -> [verification fails once?] -> verifying
+//       -> [iterate once?] -> code_reviewing -> resolved -> [attest?]
 //       -> [harvest?] -> complete
+//
+// `verifying` is on the only path from `implementing` to `code_reviewing`,
+// so every walk exercises it — that is the invariant the state added.
 Deno.test("P3: a randomized legal walk always ends in complete, schema-valid throughout", async () => {
   await fc.assert(
     fc.asyncProperty(
       fc.boolean(), // rejectPlanOnce
       fc.boolean(), // iterateTestsOnce
+      fc.boolean(), // verifyFailsOnce
       fc.boolean(), // iterateCodeOnce
+      fc.boolean(), // attestBeforeFinish
       fc.boolean(), // harvestBeforeComplete
-      async (rejectPlanOnce, iterateTestsOnce, iterateCodeOnce, harvest) => {
+      async (
+        rejectPlanOnce,
+        iterateTestsOnce,
+        verifyFailsOnce,
+        iterateCodeOnce,
+        attest,
+        harvest,
+      ) => {
         const h = createHarness();
 
         await run(
@@ -409,6 +503,17 @@ Deno.test("P3: a randomized legal walk always ends in complete, schema-valid thr
         await run("record_review", passReview("review-adversarial"), h.ctx);
         await run("tests_approved", {}, h.ctx);
 
+        // --- verification round(s) ---
+        if (verifyFailsOnce) {
+          await failVerification(h);
+          await run(
+            "iterate_verification",
+            { reason: "walk verify fail", source: "auto" },
+            h.ctx,
+          );
+        }
+        await passVerification(h);
+
         // --- code review round(s) ---
         await run("review_code", {}, h.ctx);
         if (iterateCodeOnce) {
@@ -432,12 +537,28 @@ Deno.test("P3: a randomized legal walk always ends in complete, schema-valid thr
             { reason: "walk iterate code", source: "auto" },
             h.ctx,
           );
+          // `iterate` lands back in `implementing`, so the walk must pass
+          // through verification again — there is no other way to reach
+          // `code_reviewing`.
+          await passVerification(h);
           await run("review_code", {}, h.ctx);
         }
         await run("record_review", passReview("review-code"), h.ctx);
         await run("record_review", passReview("review-adversarial"), h.ctx);
         await run("resolve_findings", { resolutions: {} }, h.ctx);
 
+        if (attest) {
+          await run(
+            "attest",
+            {
+              commitSha: "0".repeat(40),
+              repoDir: "/repo",
+              configPaths: [],
+              producedBy: "walk",
+            },
+            h.ctx,
+          );
+        }
         if (harvest) {
           await run(
             "harvest",
@@ -459,10 +580,18 @@ Deno.test("P3: a randomized legal walk always ends in complete, schema-valid thr
         const codeRounds = s.reviewHistory.filter((r) =>
           r.phase === "code_review"
         );
+        const verifyRounds = s.reviewHistory.filter((r) =>
+          r.phase === "verification"
+        );
         return (
           planRounds.length === (rejectPlanOnce ? 2 : 1) &&
           testRounds.length === (iterateTestsOnce ? 2 : 1) &&
           codeRounds.length === (iterateCodeOnce ? 2 : 1) &&
+          // Only a FAILED verification snapshots a round; a clean pass
+          // flows straight into review_code.
+          verifyRounds.length === (verifyFailsOnce ? 1 : 0) &&
+          s.verification !== undefined &&
+          (attest ? s.attestation !== undefined : true) &&
           (harvest ? s.harvest !== undefined : true)
         );
       },
@@ -667,5 +796,12 @@ Deno.test("P1 fixture sanity: every GUARD_TABLE allowed state is a real StateEnu
       );
     }
   }
-  assertEquals(Object.keys(GUARD_TABLE).length, 17);
+  // Enumerated from the model rather than hardcoded: a new guarded method
+  // must be added to GUARD_TABLE or P1 silently stops covering it. The three
+  // exclusions are the methods with no state guard at all.
+  const UNGUARDED = new Set(["start", "close", "hydrate"]);
+  const guardedMethods = Object.keys(model.methods).filter(
+    (m) => !UNGUARDED.has(m),
+  ).sort();
+  assertEquals(Object.keys(GUARD_TABLE).sort(), guardedMethods);
 });

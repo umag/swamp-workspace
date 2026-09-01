@@ -2,37 +2,49 @@
 
 This file describes the generic autonomous iteration loop used by **Phase 3**
 (plan review, [adversarial-review.md](adversarial-review.md)), **Phase 4a**
-(test review, [test-review.md](test-review.md)), and **Phase 5** (code review,
+(test review, [test-review.md](test-review.md)), **Phase 4c** (verification,
+[verification.md](verification.md)), and **Phase 5** (code review,
 [code-review.md](code-review.md)). Read this file alongside whichever phase is
 active.
 
 The loop runs autonomously: the skill iterates through reject → revise →
 re-review rounds **without human interaction** until the current round produces
 zero CRITICAL and zero HIGH findings. For Phases 3 and 5 the clean result is
-then presented for human approval; for Phase 4a the clean exit itself is
+then presented for human approval; for Phases 4a and 4c the clean exit itself is
 autonomous (see "Phase 4a clean exit" below). Safeguards prevent infinite loops
 and escape to the human when the machine gets stuck.
+
+**Phase 4c differs in one respect: its exit condition is mechanical, not a
+judgement.** A control passed or it did not; there are no findings to weigh and
+no severities to argue about. Everything below applies, but read "zero CRITICAL
+and zero HIGH" as "every required control is `pass`" when the active phase is
+verification.
 
 ## Phase-specific mapping
 
 The loop body is identical; only the methods called differ between phases.
 
-| Action                  | Phase 3 (plan review)               | Phase 4a (test review)                  | Phase 5 (code review)           |
-| ----------------------- | ----------------------------------- | --------------------------------------- | ------------------------------- |
-| Enter review state      | `review_plan`                       | `review_tests`                          | `review_code`                   |
-| Target state            | `reviewing`                         | `reviewing_tests`                       | `code_reviewing`                |
-| Auto-reject             | `reject_plan --input source=auto`   | `iterate_tests --input source=auto`     | `iterate --input source=auto`   |
-| State after auto-reject | `planned`                           | `writing_tests`                         | `implementing`                  |
-| Revise                  | Write new plan YAML, call `plan`    | Rewrite tests (still RED, right reason) | Edit code + re-run tests        |
-| Re-enter review         | `review_plan`                       | `review_tests`                          | `review_code`                   |
-| Final acceptance        | `approve_plan` (human-gated)        | `tests_approved` (**AUTONOMOUS**)       | `resolve_findings` + `complete` |
-| Iteration cap env var   | `MAX_PLAN_ITERATIONS`               | `MAX_TEST_ITERATIONS`                   | `MAX_CODE_ITERATIONS`           |
-| History phase tag       | `plan_review`                       | `test_review`                           | `code_review`                   |
-| Iteration counter       | `hydrate.planIterationsThisVersion` | `hydrate.testReviewIteration`           | `hydrate.codeReviewIteration`   |
+| Action                  | Phase 3 (plan review)               | Phase 4a (test review)                  | Phase 4c (verification)                    | Phase 5 (code review)         |
+| ----------------------- | ----------------------------------- | --------------------------------------- | ------------------------------------------ | ----------------------------- |
+| Enter review state      | `review_plan`                       | `review_tests`                          | `verify`                                   | `review_code`                 |
+| Target state            | `reviewing`                         | `reviewing_tests`                       | `verifying`                                | `code_reviewing`              |
+| Auto-reject             | `reject_plan --input source=auto`   | `iterate_tests --input source=auto`     | `iterate_verification --input source=auto` | `iterate --input source=auto` |
+| State after auto-reject | `planned`                           | `writing_tests`                         | `implementing`                             | `implementing`                |
+| Revise                  | Write new plan YAML, call `plan`    | Rewrite tests (still RED, right reason) | Fix the failing control in context         | Edit code + re-run tests      |
+| Re-enter review         | `review_plan`                       | `review_tests`                          | `verify`                                   | `review_code`                 |
+| Final acceptance        | `approve_plan` (human-gated)        | `tests_approved` (**AUTONOMOUS**)       | `review_code` (**AUTONOMOUS**)             | `resolve_findings` + `attest` |
+| Iteration cap env var   | `MAX_PLAN_ITERATIONS`               | `MAX_TEST_ITERATIONS`                   | `MAX_VERIFY_ITERATIONS`                    | `MAX_CODE_ITERATIONS`         |
+| History phase tag       | `plan_review`                       | `test_review`                           | `verification`                             | `code_review`                 |
+| Iteration counter       | `hydrate.planIterationsThisVersion` | `hydrate.testReviewIteration`           | `hydrate.verificationIteration`            | `hydrate.codeReviewIteration` |
+| Exit condition          | 0 CRIT + 0 HIGH, full matrix        | 0 CRIT + 0 HIGH, full matrix            | `hydrate.controls.blocking` is empty       | 0 CRIT + 0 HIGH, full matrix  |
 
-All three caps default to `5` and are skill-enforced against the hydrate
-counters (the model reads no env vars). Override via
+All four caps default to `5` and are skill-enforced against the hydrate counters
+(the model reads no env vars). Override via
 `agent-constraints/iteration-limits.md`.
+
+Phase 4c reads `hydrate.controls` rather than `hydrate.blocking`: a control
+round produces no findings, only statuses. A clean round has
+`controls.blocking == []`.
 
 ## Prerequisite
 

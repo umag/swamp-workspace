@@ -1,5 +1,62 @@
 # Changelog
 
+## 2026.08.31.1 — pre-PR verification + attestation
+
+**Model behavior change — model type version bumped to `2026.08.31.1`.** Adds
+the mechanical half of the verification loop and the evidence artifact CI
+validates in place of re-running it. Ships as an identity `upgrades[]`
+migration: existing records gain `verificationIteration: 1` from the schema
+default, and `verification` / `attestation` stay unset until the new methods
+run.
+
+### Added
+
+- **`verifying` state** between `implementing` and `code_reviewing`.
+  `review_code` is now guarded on `verifying`, so no path reaches code review
+  without running the repository's declared controls. Every `iterate` from the
+  code-review loop lands in `implementing` and must pass through it again.
+- **`attested` state** between `resolved` and `harvested`/`complete`.
+- **`verify`** — runs every declared control (fmt, lint, typecheck, tests) in
+  one fan-out pass, recording per-control status, exit code, duration, runner
+  and a bounded stderr tail. Control specs are supplied by the caller from
+  `agent-constraints/verification-controls.md`; the model hardcodes no build
+  command. A control that cannot be spawned is `error`, and a `managed`-tier
+  control on a `local` runner is `skipped` — both block exactly as `fail` does,
+  because "the tool could not evaluate this" is not evidence of a clean tree.
+- **`iterate_verification`** — returns to `implementing` on a failing control,
+  snapshotting a `verification` round to `reviewHistory` and bumping
+  `verificationIteration`. Mirrors `iterate` / `iterate_tests`.
+- **`attest`** — emits the attestation manifest: commit sha, SHA-256 checksums
+  of every declared config input, control results, and per-reviewer open-finding
+  counts by severity. Written both onto `state` and to a dedicated `attestation`
+  resource keyed by commit sha. It re-asserts every gate before writing
+  (verification round exists, every required control passed, no FAIL verdict,
+  zero open CRITICAL/HIGH, every config path readable) and refuses otherwise —
+  it asserts, it does not approve.
+- **`attestation` resource** and the `AttestationSchema` / `ControlSpecSchema` /
+  `ControlResultSchema` / `VerificationSchema` public types.
+- **`hydrate`** now reports `verificationIteration` and
+  `controls: {ran, total, blocking[]}` so the autonomous loop can see control
+  state without parsing the full blob.
+- **`agent-constraints/verification-controls.md`** — the control declaration
+  this repo runs, mirroring the `deno-check` CI job step for step.
+- Skill references **`verification.md`** (Phase 4c) and **`attestation.md`**
+  (Phase 5b); `SKILL.md`, `state-machine.md`, `implementation.md`,
+  `code-review.md` and `autonomous-loop.md` updated to match.
+
+### Changed
+
+- `harvest` accepts `resolved` and `attested`; `complete` accepts `resolved`,
+  `attested` and `harvested`.
+- `implementation.md` Step 5 no longer tells you to track the PR externally —
+  `attest` carries a first-class `prUrl`, and the PR is opened _after_
+  attesting, not before.
+- **The model is no longer pure logic.** `verify` spawns subprocesses and
+  `attest` reads files. Both effects are injected (`CommandRunner`,
+  `FileReader`) so tests never spawn anything, and the adversarial suite covers
+  the new surface: control `cwd` escaping the repo root, absolute `cwd`, spawn
+  failure, denied `allow-run`, stderr truncation, and every `attest` refusal.
+
 ## 2026.08.19.1
 
 - Version bump and smoke test

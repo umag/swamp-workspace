@@ -21,14 +21,23 @@
 // new suite file carries its own harness copy rather than importing a
 // shared test-only module).
 
-import { assertEquals, assertExists, assertRejects } from "jsr:@std/assert@1";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "jsr:@std/assert@1";
 
 import {
+  AttestationSchema,
+  type CommandRunner,
+  type ControlSpec,
   type Finding,
   type IssueState,
   IssueStateSchema,
   model,
   type ReviewMatrix,
+  verifyImpl,
 } from "./issue_lifecycle.ts";
 
 // ============================================================================
@@ -81,6 +90,8 @@ function createHarness(initial?: StoredRecord): Harness {
             "summary write must include a `state` field (compact summary)",
           );
         }
+      } else if (spec === "attestation") {
+        AttestationSchema.parse(data);
       } else {
         throw new Error(`Unknown resource spec: ${spec}`);
       }
@@ -116,6 +127,48 @@ async function run(
   const m = (model.methods as MethodMap)[method];
   if (!m) throw new Error(`unknown method: ${method}`);
   await m.execute(args, ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Verification helpers — scripted CommandRunner, nothing is ever spawned
+// ---------------------------------------------------------------------------
+
+/** Every control exits 0. */
+const okRunner: CommandRunner = () =>
+  Promise.resolve({ code: 0, stdout: "", stderr: "" });
+
+/** Every control exits non-zero with diagnostic output. */
+const failRunner: CommandRunner = () =>
+  Promise.resolve({ code: 1, stdout: "", stderr: "control rejected the tree" });
+
+/** A minimal required local control. */
+const TEST_CONTROLS: ControlSpec[] = [
+  {
+    name: "test",
+    command: "deno",
+    args: ["task", "test"],
+    cwd: ".",
+    tier: "local",
+    required: true,
+  },
+];
+
+/** Drive `implementing` → `verifying` with every control green. */
+function passVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    okRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
+}
+
+/** Drive `implementing` → `verifying` with a failing control. */
+function failVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    failRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
 }
 
 function defaultPlanArgs(overrides?: {
@@ -212,6 +265,7 @@ async function withImplementing(h: Harness): Promise<void> {
 
 async function withCodeReviewing(h: Harness): Promise<void> {
   await withImplementing(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
 }
 
@@ -532,6 +586,7 @@ Deno.test("methods: tests_approved guardState-throws from writing_tests", async 
 Deno.test("methods: review_code succeeds from implementing", async () => {
   const h = createHarness();
   await withImplementing(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   assertEquals(h.getState()!.state, "code_reviewing");
 });
@@ -542,8 +597,179 @@ Deno.test("methods: review_code guardState-throws from reviewing_tests", async (
   await assertRejects(
     () => run("review_code", {}, h.ctx),
     Error,
-    "Cannot call 'review_code' in state 'reviewing_tests'. Expected: implementing",
+    "Cannot call 'review_code' in state 'reviewing_tests'. Expected: verifying",
   );
+});
+
+// ============================================================================
+// verify / iterate_verification — the pre-PR verification gate
+// ============================================================================
+
+Deno.test("methods: verify succeeds from implementing and records controls", async () => {
+  const h = createHarness();
+  await withImplementing(h);
+  await passVerification(h);
+
+  const st = h.getState()!;
+  assertEquals(st.state, "verifying");
+  assertEquals(st.verification!.controls.length, 1);
+  assertEquals(st.verification!.controls[0].status, "pass");
+  assertEquals(st.verification!.controls[0].runner, "local");
+  assertEquals(st.verification!.controls[0].command, "deno task test");
+});
+
+Deno.test("methods: verify records a non-zero exit as fail, not error", async () => {
+  const h = createHarness();
+  await withImplementing(h);
+  await failVerification(h);
+
+  const c = h.getState()!.verification!.controls[0];
+  assertEquals(c.status, "fail");
+  assertEquals(c.exitCode, 1);
+  assertStringIncludes(c.stderrTail, "control rejected the tree");
+});
+
+Deno.test("methods: verify guardState-throws from code_reviewing", async () => {
+  const h = createHarness();
+  await withCodeReviewing(h);
+  await assertRejects(
+    () => passVerification(h),
+    Error,
+    "Cannot call 'verify' in state 'code_reviewing'. Expected: implementing",
+  );
+});
+
+Deno.test("methods: iterate_verification returns to implementing and bumps the cursor", async () => {
+  const h = createHarness();
+  await withImplementing(h);
+  await failVerification(h);
+  await run(
+    "iterate_verification",
+    { reason: "lint failed", source: "auto" },
+    h.ctx,
+  );
+
+  const st = h.getState()!;
+  assertEquals(st.state, "implementing");
+  assertEquals(st.verificationIteration, 2);
+  const round = st.reviewHistory.at(-1)!;
+  assertEquals(round.phase, "verification");
+  assertEquals(round.outcome, "rejected_auto");
+  assertEquals(round.rejectReason, "lint failed");
+});
+
+Deno.test("methods: iterate_verification guardState-throws from implementing", async () => {
+  const h = createHarness();
+  await withImplementing(h);
+  await assertRejects(
+    () => run("iterate_verification", { reason: "x", source: "auto" }, h.ctx),
+    Error,
+    "Cannot call 'iterate_verification' in state 'implementing'. Expected: verifying",
+  );
+});
+
+Deno.test("methods: review_code is unreachable from implementing — verification is the only path", async () => {
+  const h = createHarness();
+  await withImplementing(h);
+  await assertRejects(
+    () => run("review_code", {}, h.ctx),
+    Error,
+    "Cannot call 'review_code' in state 'implementing'. Expected: verifying",
+  );
+});
+
+// ============================================================================
+// attest — the manifest CI validates in place of re-execution
+// ============================================================================
+
+Deno.test("methods: attest succeeds from resolved and writes the attestation resource", async () => {
+  const h = createHarness();
+  await withResolved(h);
+  await run(
+    "attest",
+    {
+      commitSha: "a".repeat(40),
+      repoDir: "/repo",
+      configPaths: [],
+      producedBy: "test-host",
+    },
+    h.ctx,
+  );
+
+  const st = h.getState()!;
+  assertEquals(st.state, "attested");
+  assertEquals(st.attestation!.commitSha, "a".repeat(40));
+  assertEquals(st.attestation!.attestationVersion, 1);
+  assertEquals(st.attestation!.controls.length, 1);
+  assertEquals(st.attestation!.producedBy, "test-host");
+  assertEquals(st.attestation!.modelVersion, model.version);
+
+  // Written to its own resource, keyed by commit — not only onto state.
+  const written = h.writes.filter((w) => w.spec === "attestation");
+  assertEquals(written.length, 1);
+  assertEquals(written[0].name, "a".repeat(40));
+});
+
+Deno.test("methods: attest summarizes each reviewer's open findings by severity", async () => {
+  const h = createHarness();
+  await withCodeReviewing(h);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run(
+    "record_review",
+    {
+      reviewer: "review-adversarial",
+      verdict: "SUGGEST_CHANGES",
+      findings: [
+        finding("review-adversarial", "MEDIUM", "rename this"),
+        finding("review-adversarial", "LOW", "typo"),
+        finding("review-adversarial", "HIGH", "already handled", "resolved"),
+      ],
+    },
+    h.ctx,
+  );
+  await run("resolve_findings", { resolutions: {} }, h.ctx);
+  await run(
+    "attest",
+    { commitSha: "b".repeat(40), repoDir: "/repo", configPaths: [] },
+    h.ctx,
+  );
+
+  const reviews = h.getState()!.attestation!.reviews;
+  const adv = reviews.find((r) => r.reviewer === "review-adversarial")!;
+  assertEquals(adv.verdict, "SUGGEST_CHANGES");
+  assertEquals(adv.medium, 1);
+  assertEquals(adv.low, 1);
+  // The resolved HIGH is not evidence of an unverified tree.
+  assertEquals(adv.high, 0);
+});
+
+Deno.test("methods: attest guardState-throws from code_reviewing", async () => {
+  const h = createHarness();
+  await withCodeReviewing(h);
+  await assertRejects(
+    () =>
+      run(
+        "attest",
+        { commitSha: "c".repeat(40), repoDir: "/repo", configPaths: [] },
+        h.ctx,
+      ),
+    Error,
+    "Cannot call 'attest' in state 'code_reviewing'. Expected: resolved",
+  );
+});
+
+Deno.test("methods: harvest and complete both accept attested", async () => {
+  const h = createHarness();
+  await withResolved(h);
+  await run(
+    "attest",
+    { commitSha: "d".repeat(40), repoDir: "/repo", configPaths: [] },
+    h.ctx,
+  );
+  await run("harvest", { uatProposals: [], kbProposals: [] }, h.ctx);
+  assertEquals(h.getState()!.state, "harvested");
+  await run("complete", { summary: "" }, h.ctx);
+  assertEquals(h.getState()!.state, "complete");
 });
 
 // ============================================================================
@@ -651,7 +877,7 @@ Deno.test("methods: complete guardState-throws from code_reviewing", async () =>
   await assertRejects(
     () => run("complete", { summary: "" }, h.ctx),
     Error,
-    "Cannot call 'complete' in state 'code_reviewing'. Expected: resolved, harvested",
+    "Cannot call 'complete' in state 'code_reviewing'. Expected: resolved, attested, harvested",
   );
 });
 
@@ -708,9 +934,30 @@ const VALID_ARGS_BY_METHOD: Record<string, Record<string, unknown>> = {
   review_tests: {},
   iterate_tests: { reason: "x", source: "human" },
   tests_approved: {},
+  verify: {
+    controls: [
+      {
+        name: "test",
+        command: "deno",
+        args: ["task", "test"],
+        cwd: ".",
+        tier: "local",
+        required: true,
+      },
+    ],
+    repoDir: "/repo",
+    runner: "local",
+  },
+  iterate_verification: { reason: "x", source: "human" },
   review_code: {},
   resolve_findings: { resolutions: {} },
   iterate: { reason: "x", source: "human" },
+  attest: {
+    commitSha: "0".repeat(40),
+    repoDir: "/repo",
+    configPaths: [],
+    producedBy: "test",
+  },
   harvest: { uatProposals: [], kbProposals: [] },
   complete: { summary: "" },
   close: { reason: "x" },

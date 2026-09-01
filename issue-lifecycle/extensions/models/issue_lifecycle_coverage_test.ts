@@ -24,7 +24,13 @@ import { assertEquals, assertExists } from "jsr:@std/assert@1";
 
 import {
   allMatrixReviewersRecorded,
+  AttestationSchema,
+  blockingControls,
+  type CommandRunner,
+  computeChecksums,
+  type ControlSpec,
   failingReviewers,
+  type FileReader,
   type Finding,
   hasBlockingFindings,
   type IssueState,
@@ -32,6 +38,10 @@ import {
   model,
   type ReviewMatrix,
   type ReviewResult,
+  sha256Hex,
+  stderrTail,
+  summarizeReviews,
+  verifyImpl,
 } from "./issue_lifecycle.ts";
 
 // ============================================================================
@@ -54,6 +64,7 @@ interface FakeCtx {
 interface Harness {
   ctx: FakeCtx;
   getState(): IssueState | null;
+  getSummary(): StoredRecord | null;
 }
 
 function createHarness(initial?: StoredRecord): Harness {
@@ -80,6 +91,8 @@ function createHarness(initial?: StoredRecord): Harness {
             "summary write must include a `state` field (compact summary)",
           );
         }
+      } else if (spec === "attestation") {
+        AttestationSchema.parse(data);
       } else {
         throw new Error(`Unknown resource spec: ${spec}`);
       }
@@ -93,6 +106,9 @@ function createHarness(initial?: StoredRecord): Harness {
     getState(): IssueState | null {
       const raw = store.get("state::current");
       return raw ? IssueStateSchema.parse(raw) : null;
+    },
+    getSummary(): StoredRecord | null {
+      return store.get("summary::hydrate") ?? null;
     },
   };
 }
@@ -110,6 +126,48 @@ async function run(
   const m = (model.methods as MethodMap)[method];
   if (!m) throw new Error(`unknown method: ${method}`);
   await m.execute(args, ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Verification helpers — scripted CommandRunner, nothing is ever spawned
+// ---------------------------------------------------------------------------
+
+/** Every control exits 0. */
+const okRunner: CommandRunner = () =>
+  Promise.resolve({ code: 0, stdout: "", stderr: "" });
+
+/** Every control exits non-zero with diagnostic output. */
+const failRunner: CommandRunner = () =>
+  Promise.resolve({ code: 1, stdout: "", stderr: "control rejected the tree" });
+
+/** A minimal required local control. */
+const TEST_CONTROLS: ControlSpec[] = [
+  {
+    name: "test",
+    command: "deno",
+    args: ["task", "test"],
+    cwd: ".",
+    tier: "local",
+    required: true,
+  },
+];
+
+/** Drive `implementing` → `verifying` with every control green. */
+function passVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    okRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
+}
+
+/** Drive `implementing` → `verifying` with a failing control. */
+function failVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    failRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
 }
 
 function defaultPlanArgs(overrides?: {
@@ -177,6 +235,15 @@ async function withApprovedPlan(h: Harness): Promise<void> {
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("approve_plan", {}, h.ctx);
+}
+
+async function withImplementingCoverage(h: Harness): Promise<void> {
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x", description: "" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("tests_approved", {}, h.ctx);
 }
 
 async function implementWithTestsApproved(
@@ -379,6 +446,7 @@ Deno.test("coverage: iterate from code_reviewing appends exactly one new reviewH
   const h = createHarness();
   await withApprovedPlan(h);
   await implementWithTestsApproved(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   const before = h.getState()!.reviewHistory.length;
   await run(
@@ -396,6 +464,7 @@ Deno.test("coverage: iterate from resolved appends zero new reviewHistory entrie
   const h = createHarness();
   await withApprovedPlan(h);
   await implementWithTestsApproved(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -531,6 +600,7 @@ Deno.test("coverage: complete's summary argument is validated but silently disca
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("approve_plan", {}, h.ctx);
   await implementWithTestsApproved(h);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -552,4 +622,136 @@ Deno.test("coverage: complete's summary argument is validated but silently disca
     (s as unknown as Record<string, unknown>).summary,
     undefined,
   );
+});
+
+// ============================================================================
+// Verification + attestation guard coverage
+// ============================================================================
+//
+// One test per guard added in 2026.08.31.1: delete the guard, a test goes red.
+
+Deno.test("coverage: blockingControls counts fail, error and skipped — only 'pass' clears", () => {
+  const base = {
+    name: "c",
+    command: "c",
+    exitCode: 0,
+    durationMs: 0,
+    runner: "local",
+    required: true,
+    stderrTail: "",
+  };
+  const statuses = ["pass", "fail", "error", "skipped"] as const;
+  const results = statuses.map((status) => ({ ...base, status }));
+  assertEquals(
+    blockingControls(results).map((c: { status: string }) => c.status).sort(),
+    ["error", "fail", "skipped"],
+  );
+});
+
+Deno.test("coverage: blockingControls ignores non-required controls whatever their status", () => {
+  const optional = {
+    name: "c",
+    command: "c",
+    status: "error" as const,
+    exitCode: null,
+    durationMs: 0,
+    runner: "local",
+    required: false,
+    stderrTail: "",
+  };
+  assertEquals(blockingControls([optional]).length, 0);
+});
+
+Deno.test("coverage: stderrTail keeps the END of the output, where the summary lives", () => {
+  assertEquals(stderrTail("abcdef", 3), "def");
+  assertEquals(stderrTail("ab", 10), "ab");
+});
+
+Deno.test("coverage: sha256Hex is the standard digest, lowercase hex", async () => {
+  // Known-answer test: SHA-256 of the empty input.
+  assertEquals(
+    await sha256Hex(new Uint8Array()),
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  );
+});
+
+Deno.test("coverage: computeChecksums is key-sorted and records an unreadable path as MISSING", async () => {
+  const reader: FileReader = (path: string) => {
+    if (path.endsWith("gone.md")) throw new Deno.errors.NotFound("gone");
+    return Promise.resolve(new TextEncoder().encode(path));
+  };
+  const out = await computeChecksums(reader, "/repo", [
+    "z.md",
+    "gone.md",
+    "a.md",
+  ]);
+  // Sorted so the manifest is byte-stable across machines.
+  assertEquals(Object.keys(out), ["a.md", "gone.md", "z.md"]);
+  // Recorded, not omitted — a silently absent entry would let a deleted
+  // config file pass validation.
+  assertEquals(out["gone.md"], "MISSING");
+});
+
+Deno.test("coverage: summarizeReviews counts only OPEN findings", () => {
+  const summary = summarizeReviews([{
+    reviewer: "review-code",
+    verdict: "SUGGEST_CHANGES",
+    timestamp: new Date().toISOString(),
+    findings: [
+      finding("review-code", "CRITICAL", "open crit"),
+      finding("review-code", "HIGH", "accepted high", "accepted"),
+      finding("review-code", "MEDIUM", "open med"),
+      finding("review-code", "LOW", "wontfix low", "wontfix"),
+    ],
+  }]);
+  assertEquals(summary.length, 1);
+  assertEquals(summary[0].critical, 1);
+  assertEquals(summary[0].high, 0);
+  assertEquals(summary[0].medium, 1);
+  assertEquals(summary[0].low, 0);
+});
+
+Deno.test("coverage: verify snapshots nothing to reviewHistory — only a FAILED round does", async () => {
+  const h = createHarness();
+  await withImplementingCoverage(h);
+  const before = h.getState()!.reviewHistory.length;
+  await passVerification(h);
+  assertEquals(h.getState()!.reviewHistory.length, before);
+
+  await run("review_code", {}, h.ctx);
+  assertEquals(h.getState()!.state, "code_reviewing");
+});
+
+Deno.test("coverage: iterate_verification appends exactly one verification round", async () => {
+  const h = createHarness();
+  await withImplementingCoverage(h);
+  const before = h.getState()!.reviewHistory.length;
+  await failVerification(h);
+  await run("iterate_verification", { reason: "x", source: "auto" }, h.ctx);
+  const history = h.getState()!.reviewHistory;
+  assertEquals(history.length, before + 1);
+  assertEquals(history.at(-1)!.phase, "verification");
+  assertEquals(history.at(-1)!.iteration, 1);
+});
+
+Deno.test("coverage: hydrate reports verification control status for the loop", async () => {
+  const h = createHarness();
+  await withImplementingCoverage(h);
+
+  await run("hydrate", {}, h.ctx);
+  const before = h.getSummary() as Record<string, unknown>;
+  assertEquals((before.controls as { ran: boolean }).ran, false);
+  assertEquals(before.verificationIteration, 1);
+
+  await failVerification(h);
+  await run("hydrate", {}, h.ctx);
+  const after = h.getSummary() as Record<string, unknown>;
+  const controls = after.controls as {
+    ran: boolean;
+    total: number;
+    blocking: string[];
+  };
+  assertEquals(controls.ran, true);
+  assertEquals(controls.total, 1);
+  assertEquals(controls.blocking, ["test"]);
 });
