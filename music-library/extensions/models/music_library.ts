@@ -2378,6 +2378,7 @@ export const model = {
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
     {
+      fromVersion: "2026.08.07.1",
       toVersion: "2026.08.19.1",
       description: "Version bump and smoke test",
       upgradeAttributes: (old: Record<string, unknown>) => old,
