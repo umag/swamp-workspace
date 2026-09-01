@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/music-library"
-version: "2026.08.19.1"
+version: "2026.08.19.2"
 description: |
   Multidimensional music library catalog built WITHOUT touching the
   filesystem: the inventory and raw tags come from an existing gonic scan
@@ -48,7 +48,7 @@ description: |
   this name exists until you create it yourself with `swamp workflow
   create` and paste the body in from
   `extensions/workflows/music-wanted.yaml`. See that file's own
-  description for the eight gates, the required dry run, and the portable
+  description for the nine gates, the required dry run, and the portable
   three-command form.
 
 repository: "https://github.com/umag/swamp-workspace"

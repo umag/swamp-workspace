@@ -2340,7 +2340,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.08.19.1",
+  version: "2026.08.19.2",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2380,6 +2380,13 @@ export const model = {
     {
       toVersion: "2026.08.19.1",
       description: "Version bump and smoke test",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.19.1",
+      toVersion: "2026.08.19.2",
+      description:
+        "Fixes music-wanted-headphones-instance-implicit: the music-wanted workflow's resolve step passed only refresh to resolve-artists, so its headphonesInstance/musicbrainzInstance arguments bound silently to their model-side defaults ('headphones'/'musicbrainz') while two gate recovery messages told the operator to check 'the headphones seed instance' -- an instance the workflow never named, passed or verified. The resolve step now passes headphonesInstance and musicbrainzInstance explicitly (same default values, so behaviour is unchanged on this instance), the wanted step now passes musicbrainzInstance explicitly, and a new preflight-seed gate asserts the headphones seed is present and non-empty before the ~35-minute sync is committed to -- BREAKING for any operator whose headphones instance is not literally named 'headphones', who will now hit this gate instead of silently seeding from nothing. No schema or resource shape change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
