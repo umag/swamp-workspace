@@ -212,6 +212,9 @@ const MediaListEntrySchema = z.object({
   repeat: z.number().nullable().describe(
     "Times rewatched. Selected by USERLIST_QUERY so a `repeat` written via update-progress can actually be read back — without it the field reads as absent whether or not the write landed.",
   ),
+  customLists: z.record(z.string(), z.boolean()).nullable().describe(
+    "Custom-list membership as {listName: isOn}. Selected because customLists is an ABSOLUTE set on write — you must read the current membership before changing it or you silently drop the entry from every other custom list.",
+  ),
   media: MediaSchema,
 }).passthrough();
 
@@ -274,7 +277,7 @@ query ($userName: String!, $type: MediaType, $status: MediaListStatus) {
     lists {
       name status
       entries {
-        id status score progress repeat updatedAt
+        id status score progress repeat customLists updatedAt
         media {
           id
           title { romaji english native }
@@ -380,9 +383,9 @@ query ($season: MediaSeason!, $seasonYear: Int!, $type: MediaType, $page: Int, $
  * both declared and forwarded — a declared-but-unforwarded variable is silently
  * ignored by AniList. */
 export const UPDATE_PROGRESS_MUTATION = `
-mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus, $repeat: Int) {
-  SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, repeat: $repeat) {
-    id mediaId status progress repeat updatedAt
+mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus, $repeat: Int, $customLists: [String]) {
+  SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, repeat: $repeat, customLists: $customLists) {
+    id mediaId status progress repeat customLists updatedAt
   }
 }`;
 
@@ -1492,7 +1495,7 @@ const ActivityItemSchema = z.object({
  */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.08.30.1",
+  version: "2026.09.01.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -1516,6 +1519,13 @@ export const model = {
       toVersion: "2026.08.30.1",
       description:
         "update-progress gained an optional `repeat` argument — AniList's rewatch counter, which is how a FINISHED rewatch is recorded (entry stays COMPLETED, counter goes up); setting status REPEATING instead means 'currently rewatching' and leaves repeat at 0. The mutation now declares and forwards $repeat and reads it back, and watchProgress carries a `repeat` field. No globalArguments schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.30.1",
+      toVersion: "2026.09.01.1",
+      description:
+        "update-progress gained an optional `customLists` argument, and userlist now selects `customLists` so the current membership can be read first. AniList treats customLists as an ABSOLUTE set on write: it replaces the entry's ENTIRE custom-list membership with whatever is passed, so an omitted field would silently drop the entry from every custom list. The argument is therefore forwarded ONLY when the caller explicitly supplies one, and `[]` is the documented way to remove an entry from all custom lists. Purely additive — no stored resource is reshaped",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -2246,6 +2256,9 @@ export const model = {
         ]).optional().describe(
           "List status override (omit to keep existing status)",
         ),
+        customLists: z.array(z.string()).optional().describe(
+          "Custom lists this entry should belong to, by name. ABSOLUTE, not additive: AniList replaces the entry's ENTIRE custom-list membership with what you pass, so read the current membership (userlist now selects `customLists`) and pass the full set you want kept. `[]` removes it from every custom list.",
+        ),
         repeat: z.number().int().min(0).optional().describe(
           "Times REWATCHED. This is how AniList records a finished rewatch: the entry stays COMPLETED and this counter goes up. Setting status REPEATING instead means 'currently rewatching' and leaves this at 0. Absolute, not an increment — read the current value first and pass value+1.",
         ),
@@ -2256,6 +2269,7 @@ export const model = {
           progress: number;
           status?: string;
           repeat?: number;
+          customLists?: string[];
         },
         context: {
           globalArgs: z.infer<typeof GlobalArgsSchema>;
@@ -2282,6 +2296,11 @@ export const model = {
         // 0 is meaningful (clears the rewatch count), so test for undefined
         // rather than falsiness.
         if (args.repeat !== undefined) variables.repeat = args.repeat;
+        // Absolute set: only send it when the caller explicitly chose one,
+        // otherwise an omitted field would wipe existing membership.
+        if (args.customLists !== undefined) {
+          variables.customLists = args.customLists;
+        }
 
         const resp = await fetch("https://graphql.anilist.co", {
           method: "POST",

@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026.09.01.1
+
+### Added
+
+- `update-progress` gained an optional `customLists` argument, and `userlist`
+  now selects `customLists` so the current membership can be read first.
+
+AniList treats `customLists` as an **absolute set** on write: it replaces the
+entry's entire custom-list membership with whatever is passed. Sending an
+omitted or partial list therefore silently drops the entry from every other
+custom list.
+
+Two consequences are baked into the implementation rather than left to the
+caller to remember:
+
+- the argument is forwarded **only** when the caller explicitly supplies one, so
+  an ordinary progress update cannot wipe membership as a side effect;
+- `[]` is the documented way to remove an entry from all custom lists.
+
+`model.version`/`manifest.yaml` move `2026.08.30.1` -> `2026.09.01.1`. Purely
+additive — no stored resource is reshaped.
+
 ## 2026.08.30.1
 
 ### Added
