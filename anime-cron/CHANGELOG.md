@@ -2,15 +2,15 @@
 
 ## 2026.09.01.2
 
-- **`groupScore` reads dash-suffixed scene credits.** It only ever looked for
-  a leading `[Group]`, so scene-style rips that hang the credit off the end
+- **`groupScore` reads dash-suffixed scene credits.** It only ever looked for a
+  leading `[Group]`, so scene-style rips that hang the credit off the end
   (`H.264-VARYG`, `H.264-VARYG.mkv`, `H.264-VARYG (Romaji, Multi-Subs)`) always
   scored the default 1 — VARYG has sat at 7 in `PREFERRED_GROUPS` since
   2026.08.13.1 without a single release ever receiving it. On 2026-09-01 that
   sent Koukaku Kidoutai (2026) ep 9 to Judas (6) although VARYG had posted an
   hour earlier. The suffix is consulted only when no bracket credit exists and
-  must be terminated by `.mkv`, a parenthesised tail or the end of the title,
-  so body dashes (`WEB-DL DUAL`, `Dual-Audio]`, `x265-10bit`) never read as a
+  must be terminated by `.mkv`, a parenthesised tail or the end of the title, so
+  body dashes (`WEB-DL DUAL`, `Dual-Audio]`, `x265-10bit`) never read as a
   group.
 
 ## 2026.09.01.1
