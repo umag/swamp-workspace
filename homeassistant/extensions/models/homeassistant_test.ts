@@ -174,6 +174,7 @@ class FakeWebSocket {
   #closeListeners: CloseListener[] = [];
   #steps: WSStep[];
   #cursor = 0;
+  #armed = false;
 
   constructor(url: string, steps: WSStep[]) {
     this.url = url;
@@ -181,7 +182,7 @@ class FakeWebSocket {
     // The model does `new WebSocket(url)` THEN `addEventListener(...)` — a
     // REAL microtask (not a synchronous call, not a FakeTime timer)
     // guarantees listeners are attached before this fires.
-    queueMicrotask(() => this.#deliver());
+    this.#schedule();
   }
 
   get closeListenerCount(): number {
@@ -199,12 +200,14 @@ class FakeWebSocket {
     } else {
       this.#closeListeners.push(listener as CloseListener);
     }
+    // Re-arm: a premature attempt (see #deliver) left the step unconsumed.
+    this.#schedule();
   }
 
   send(raw: string) {
     const frame = JSON.parse(raw) as WSFrame;
     this.sentFrames.push(frame);
-    queueMicrotask(() => this.#deliver());
+    this.#schedule();
   }
 
   close() {
@@ -214,9 +217,37 @@ class FakeWebSocket {
     // close listener at all; see closeListenerCount above).
   }
 
+  /** Queue one delivery attempt, coalescing multiple requests into a single
+   * microtask so re-arming from each addEventListener call cannot over-deliver. */
+  #schedule() {
+    if (this.#armed) return;
+    this.#armed = true;
+    queueMicrotask(() => {
+      this.#armed = false;
+      this.#deliver();
+    });
+  }
+
+  /** True once the listener this step needs has been attached. */
+  #canDeliver(step: WSStep): boolean {
+    if (step.kind === "message" || step.kind === "raw") {
+      return this.#messageListeners.length > 0;
+    }
+    if (step.kind === "error") return this.#errorListeners.length > 0;
+    if (step.kind === "close") return this.#closeListeners.length > 0;
+    return true;
+  }
+
   #deliver() {
     const step = this.#steps[this.#cursor];
     if (!step) return;
+    // Never consume a step no one can receive yet: the constructor's microtask
+    // can land BEFORE the caller attaches its listeners, because Deno 2.9
+    // drains the microtask queue while lazy-loading the `setTimeout` global —
+    // which the model touches between `new WebSocket()` and addEventListener.
+    // Consuming here dropped the frame into the void and stalled the socket
+    // until the model's own 60s timeout fired.
+    if (!this.#canDeliver(step)) return;
     this.#cursor++;
     if (step.kind === "none") return;
     if (step.kind === "message") {
