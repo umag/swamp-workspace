@@ -25,7 +25,7 @@
 
 import { assert, assertStringIncludes } from "jsr:@std/assert@1";
 
-import { model, StateEnum } from "./issue_lifecycle.ts";
+import { model, MODEL_VERSION, StateEnum } from "./issue_lifecycle.ts";
 
 // ============================================================================
 // Helpers
@@ -148,5 +148,21 @@ Deno.test("every model state and method is documented in state-machine.md", asyn
       `${states.length} states + ${methods.length} methods). Bare prose ` +
       `mentions do not count — each identifier must appear as a ` +
       `backticked token.`,
+  );
+});
+
+// ============================================================================
+// Version pinning
+// ============================================================================
+
+Deno.test("MODEL_VERSION equals the declaration's literal version", () => {
+  // These are two separate literals on purpose: the quality checker and
+  // swamp's push validator both require `version:` to be a plain quoted
+  // string, so it cannot reference the constant. This test is what keeps
+  // them from drifting — an attestation stamped with a stale modelVersion
+  // would misattribute the evidence.
+  assert(
+    MODEL_VERSION === model.version,
+    `MODEL_VERSION '${MODEL_VERSION}' != model.version '${model.version}'`,
   );
 });

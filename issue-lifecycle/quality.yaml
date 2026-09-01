@@ -4,8 +4,18 @@
 #
 # Five-suite compliance shipped by ext-quality-bf-issue-lifecycle (wave-4
 # batch-4d) and carried forward by the 2026.08.02.1 latent-bug real-fix.
-# issue_lifecycle.ts (1881 LOC, pure logic — no fetch/subprocess/file I/O; a
-# 13-state x 20-method state machine) now ships four real fixes (IL-1, IL-2,
+#
+# NOTE (2026.08.31.1): issue_lifecycle.ts is NO LONGER pure logic. `verify`
+# spawns subprocesses (`Deno.Command`) and `attest` reads files for SHA-256
+# config checksums, so the model now has a real I/O attack surface: control
+# specs come from a repo file an agent edits. Both effects are injected
+# (`CommandRunner`, `FileReader`) so every test drives them with a scripted
+# fake and nothing is ever spawned; the adversarial suite covers cwd escape,
+# absolute cwd, spawn failure classified as `error` rather than a skip, a
+# denied allow-run permission, stderr truncation, and every `attest` refusal
+# path. The state machine is now 15 states x 23 methods.
+#
+# issue_lifecycle.ts previously shipped four real fixes (IL-1, IL-2,
 # IL-4, IL-7) with model version bumped 2026.07.16.2 -> 2026.08.02.1 via an
 # identity `upgrades[]` entry (no globalArguments/resource-schema change).
 # Three latent bugs (IL-3, IL-5, IL-6) are explicitly re-affirmed as

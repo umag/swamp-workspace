@@ -1,7 +1,7 @@
 # State machine + methods reference
 
 Complete state transition diagram and method table for
-`@magistr/issue-lifecycle` v2026.08.02.1.
+`@magistr/issue-lifecycle` v2026.08.31.1.
 
 ## State diagram
 
@@ -37,15 +37,24 @@ Complete state transition diagram and method table for
 │         └────┬────────────┘
 │              │ tests_approved() (autonomous gate; override after cap)
 │         ┌────▼──────────┐
-│         │ implementing  │◀───── iterate() (source=auto|human)
-│         └────┬──────────┘             ▲
-│              │ review_code()          │
-│         ┌────▼─────────────┐          │
-│         │ code_reviewing   │──────────┘
+│         │ implementing  │◀──┬── iterate() (source=auto|human)
+│         └────┬──────────┘   │        ▲
+│              │ verify()     │        │
+│         ┌────▼──────────┐   │        │
+│         │  verifying    │───┘        │  iterate_verification()
+│         └────┬──────────┘            │  (source=auto|human)
+│              │ review_code()         │
+│              │ (the only path on)    │
+│         ┌────▼─────────────┐         │
+│         │ code_reviewing   │─────────┘
 │         └────┬─────────────┘
 │              │ resolve_findings() (human-gated)
 │         ┌────▼────────┐
 │         │  resolved   │───── complete() ────┐
+│         └────┬────────┘                      │
+│              │ attest()                      │
+│         ┌────▼────────┐                      │
+│         │  attested   │───── complete() ─────┤
 │         └────┬────────┘                      │
 │              │ harvest()                     │
 │         ┌────▼────────┐                      │
@@ -65,21 +74,33 @@ Key features of the current machine:
   `reviewing_tests`, and code may only be written after `tests_approved()`.
   `tests_approved` is the lifecycle's **single autonomous acceptance** — the
   model enforces full matrix coverage + zero open CRITICAL/HIGH itself.
+- **Verification gate** between `implementing` and `code_reviewing`: `verify()`
+  runs the repository's declared mechanical controls (fmt, lint, typecheck,
+  tests) and enters `verifying`. `review_code()` is guarded on `verifying`, so
+  there is **no path from `implementing` to `code_reviewing` that skips the
+  controls** — the gate is structural, not a convention. A failing control
+  returns to `implementing` via `iterate_verification()`.
+- **`attested` state** between `resolved` and `harvested`/`complete` — optional,
+  set by `attest()`, which emits the attestation manifest CI validates in place
+  of re-executing the controls. `attest()` asserts (every required control
+  passed, no FAIL verdict, zero open CRITICAL/HIGH); it does **not** approve,
+  and cannot wave through work that failed a gate.
 - **`harvested` state** between `resolved` and `complete` — optional, set by
-  `harvest()`. `complete()` accepts both `resolved` and `harvested`.
+  `harvest()`. `complete()` accepts `resolved`, `attested` and `harvested`.
 - **`iterate()` accepts both `resolved` and `code_reviewing`** as source, so
   autonomous code-review loops can bounce directly without double-snapshotting.
-- **`reject_plan()`, `iterate_tests()`, and `iterate()` take a `source` arg**
-  (`auto` | `human`) that tags the `reviewHistory` outcome as `rejected_auto` or
-  `rejected_human`, so audits can distinguish autonomous rejections from human
-  rejections.
+- **`reject_plan()`, `iterate_tests()`, `iterate_verification()` and `iterate()`
+  take a `source` arg** (`auto` | `human`) that tags the `reviewHistory` outcome
+  as `rejected_auto` or `rejected_human`, so audits can distinguish autonomous
+  rejections from human rejections.
 
 ## Autonomous loop visualization
 
-The skill drives autonomous iteration in three places — `planned ↔ reviewing`
-(plan review), `writing_tests ↔ reviewing_tests` (test review), and
-`implementing ↔ code_reviewing` (code review) — until zero CRITICAL and zero
-HIGH findings remain:
+The skill drives autonomous iteration in four places — `planned ↔ reviewing`
+(plan review), `writing_tests ↔ reviewing_tests` (test review),
+`implementing ↔ verifying` (verification), and `implementing ↔ code_reviewing`
+(code review) — until zero CRITICAL and zero HIGH findings remain and every
+required control passes:
 
 ```
 planned ──[review_plan]──▶ reviewing
@@ -135,11 +156,38 @@ writing_tests ──[review_tests]──▶ reviewing_tests
          implementing
 ```
 
+The verification loop has the same shape again, but the exit condition is
+mechanical rather than a judgement — controls either passed or they did not:
+
+```
+implementing ──[verify]──▶ verifying
+                              │
+         ┌── autonomous ──────┤
+         │                    │
+         ▼                    │
+   [run every declared control in one pass]
+         │                    │
+         ▼                    │
+   any required control not `pass`?
+         │                    │
+    yes  ├── iterate_verification ──┤ fix the failure IN CONTEXT
+         │      (source=auto)       │ → verify
+         │                          │
+    no   └── review_code ───────────┘ (no trigger phrase; nothing to judge)
+              │
+              ▼
+        code_reviewing
+```
+
+Because `review_code` is guarded on `verifying`, this loop is not optional:
+`implementing` has exactly one exit toward review, and it runs the controls.
+
 Safeguards (skill-enforced, not model-enforced):
 
 - **MAX_PLAN_ITERATIONS** (default 5) — cap on autonomous plan-review rounds per
   plan version
 - **MAX_TEST_ITERATIONS** (default 5) — cap on autonomous test-review rounds
+- **MAX_VERIFY_ITERATIONS** (default 5) — cap on autonomous verification rounds
 - **MAX_CODE_ITERATIONS** (default 5) — cap on autonomous code-review rounds
 - **Loop detection** — two identical finding signatures in a row triggers
   handover
@@ -150,28 +198,31 @@ See [autonomous-loop.md](autonomous-loop.md) for the full loop logic.
 
 ## Transition guards
 
-| Method                | Guard                                                                                                                                                             | Error if violated                                                                                                      |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `start`               | none if no `current` yet, or `current.state` in [`complete`, `closed`]; otherwise requires `force: true`                                                          | "Cannot start: an issue already exists in state 'X'. Pass force:true..."                                               |
-| `triage`              | state == `filed`                                                                                                                                                  | "Cannot call 'triage' in state 'X'"                                                                                    |
-| `record_prior_art`    | state in [`triaged`, `planned`]                                                                                                                                   | "Cannot call 'record_prior_art' in state 'X'"                                                                          |
-| `record_reproduction` | state in [`triaged`, `planned`]                                                                                                                                   | "Cannot call 'record_reproduction' in state 'X'"                                                                       |
-| `plan`                | state in [`triaged`, `planned`]                                                                                                                                   | "Cannot call 'plan' in state 'X'"                                                                                      |
-| `review_plan`         | state == `planned`                                                                                                                                                | "Cannot call 'review_plan' in state 'X'"                                                                               |
-| `record_review`       | state in [`reviewing`, `reviewing_tests`, `code_reviewing`]                                                                                                       | "Cannot call 'record_review' in state 'X'"                                                                             |
-| `approve_plan`        | state == `reviewing` **AND** every active matrix reviewer has recorded a result **AND** 0 open CRITICAL + 0 open HIGH **AND** no reviewer verdict == FAIL         | "missing reviews from ..." or "N CRITICAL and M HIGH findings still open" or "reviewer(s) ... recorded a FAIL verdict" |
-| `reject_plan`         | state == `reviewing`                                                                                                                                              | "Cannot call 'reject_plan' in state 'X'"                                                                               |
-| `implement`           | state == `approved`                                                                                                                                               | "Cannot call 'implement' in state 'X'"                                                                                 |
-| `review_tests`        | state == `writing_tests`                                                                                                                                          | "Cannot call 'review_tests' in state 'X'"                                                                              |
-| `iterate_tests`       | state == `reviewing_tests`                                                                                                                                        | "Cannot call 'iterate_tests' in state 'X'"                                                                             |
-| `tests_approved`      | state == `reviewing_tests` **AND** full matrix coverage **AND** ((0 open CRITICAL + 0 open HIGH AND no reviewer verdict == FAIL), OR non-empty `override_reason`) | "missing reviews from ..." or "N CRITICAL and M HIGH findings still open" or "reviewer(s) ... recorded a FAIL verdict" |
-| `review_code`         | state == `implementing`                                                                                                                                           | "Cannot call 'review_code' in state 'X'"                                                                               |
-| `resolve_findings`    | state == `code_reviewing`                                                                                                                                         | "Cannot call 'resolve_findings' in state 'X'"                                                                          |
-| `iterate`             | state in [`resolved`, `code_reviewing`]                                                                                                                           | "Cannot call 'iterate' in state 'X'"                                                                                   |
-| `harvest`             | state == `resolved`                                                                                                                                               | "Cannot call 'harvest' in state 'X'"                                                                                   |
-| `complete`            | state in [`resolved`, `harvested`]                                                                                                                                | "Cannot call 'complete' in state 'X'"                                                                                  |
-| `close`               | (any state) — transitions to `closed`                                                                                                                             | never errors                                                                                                           |
-| `hydrate`             | (any state)                                                                                                                                                       | never errors; read-only (writes the `summary` spec, not `state`)                                                       |
+| Method                 | Guard                                                                                                                                                                                                                 | Error if violated                                                                                                                                                                      |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start`                | none if no `current` yet, or `current.state` in [`complete`, `closed`]; otherwise requires `force: true`                                                                                                              | "Cannot start: an issue already exists in state 'X'. Pass force:true..."                                                                                                               |
+| `triage`               | state == `filed`                                                                                                                                                                                                      | "Cannot call 'triage' in state 'X'"                                                                                                                                                    |
+| `record_prior_art`     | state in [`triaged`, `planned`]                                                                                                                                                                                       | "Cannot call 'record_prior_art' in state 'X'"                                                                                                                                          |
+| `record_reproduction`  | state in [`triaged`, `planned`]                                                                                                                                                                                       | "Cannot call 'record_reproduction' in state 'X'"                                                                                                                                       |
+| `plan`                 | state in [`triaged`, `planned`]                                                                                                                                                                                       | "Cannot call 'plan' in state 'X'"                                                                                                                                                      |
+| `review_plan`          | state == `planned`                                                                                                                                                                                                    | "Cannot call 'review_plan' in state 'X'"                                                                                                                                               |
+| `record_review`        | state in [`reviewing`, `reviewing_tests`, `code_reviewing`]                                                                                                                                                           | "Cannot call 'record_review' in state 'X'"                                                                                                                                             |
+| `approve_plan`         | state == `reviewing` **AND** every active matrix reviewer has recorded a result **AND** 0 open CRITICAL + 0 open HIGH **AND** no reviewer verdict == FAIL                                                             | "missing reviews from ..." or "N CRITICAL and M HIGH findings still open" or "reviewer(s) ... recorded a FAIL verdict"                                                                 |
+| `reject_plan`          | state == `reviewing`                                                                                                                                                                                                  | "Cannot call 'reject_plan' in state 'X'"                                                                                                                                               |
+| `implement`            | state == `approved`                                                                                                                                                                                                   | "Cannot call 'implement' in state 'X'"                                                                                                                                                 |
+| `review_tests`         | state == `writing_tests`                                                                                                                                                                                              | "Cannot call 'review_tests' in state 'X'"                                                                                                                                              |
+| `iterate_tests`        | state == `reviewing_tests`                                                                                                                                                                                            | "Cannot call 'iterate_tests' in state 'X'"                                                                                                                                             |
+| `tests_approved`       | state == `reviewing_tests` **AND** full matrix coverage **AND** ((0 open CRITICAL + 0 open HIGH AND no reviewer verdict == FAIL), OR non-empty `override_reason`)                                                     | "missing reviews from ..." or "N CRITICAL and M HIGH findings still open" or "reviewer(s) ... recorded a FAIL verdict"                                                                 |
+| `verify`               | state == `implementing`                                                                                                                                                                                               | "Cannot call 'verify' in state 'X'"                                                                                                                                                    |
+| `iterate_verification` | state == `verifying`                                                                                                                                                                                                  | "Cannot call 'iterate_verification' in state 'X'"                                                                                                                                      |
+| `review_code`          | state == `verifying`                                                                                                                                                                                                  | "Cannot call 'review_code' in state 'X'"                                                                                                                                               |
+| `resolve_findings`     | state == `code_reviewing`                                                                                                                                                                                             | "Cannot call 'resolve_findings' in state 'X'"                                                                                                                                          |
+| `iterate`              | state in [`resolved`, `code_reviewing`]                                                                                                                                                                               | "Cannot call 'iterate' in state 'X'"                                                                                                                                                   |
+| `attest`               | state == `resolved` **AND** a verification round exists **AND** every required control passed **AND** 0 open CRITICAL + 0 open HIGH **AND** no reviewer verdict == FAIL **AND** every `configPaths` entry is readable | "no verification round recorded" / "N required control(s) did not pass" / "N CRITICAL and M HIGH findings still open" / "recorded a FAIL verdict" / "config path(s) could not be read" |
+| `harvest`              | state in [`resolved`, `attested`]                                                                                                                                                                                     | "Cannot call 'harvest' in state 'X'"                                                                                                                                                   |
+| `complete`             | state in [`resolved`, `attested`, `harvested`]                                                                                                                                                                        | "Cannot call 'complete' in state 'X'"                                                                                                                                                  |
+| `close`                | (any state) — transitions to `closed`                                                                                                                                                                                 | never errors                                                                                                                                                                           |
+| `hydrate`              | (any state)                                                                                                                                                                                                           | never errors; read-only (writes the `summary` spec, not `state`)                                                                                                                       |
 
 **Note on the acceptance gates:** `approve_plan` blocks on CRITICAL or HIGH,
 **and** on any reviewer FAIL verdict (even with zero/non-blocking findings —
@@ -187,28 +238,31 @@ acceptance even if the skill itself has a bug.
 
 ## Method reference
 
-| Method                | Args                                                                                                                         | Output                                                             | Description                                                                        |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `start`               | `title`, `description`, `labels?`, `force?`                                                                                  | `state` resource (name: `current`)                                 | File a new issue (refuses to overwrite an in-flight issue unless `force`)          |
-| `triage`              | `priority`, `category`, `affectedAreas`, `confidence?`, `reasoning?`, `isRegression?`, `clarifyingQuestions?`, `reproduced?` | updates `current`                                                  | Triage with optional classification detail                                         |
-| `record_prior_art`    | `uatScenarios`, `kbEntries`                                                                                                  | updates `current`                                                  | Record pre-planning knowledge lookup results                                       |
-| `record_reproduction` | `status`, `notes?`                                                                                                           | updates `current`, merges `triageDetail.reproduced`                | Record/update bug-reproduction outcome (optional; second call overwrites)          |
-| `plan`                | `summary`, `steps`, `dddAnalysis`, `testStrategy`, `reviewMatrix?`, `potentialChallenges?`                                   | updates `current`, bumps `planVersion`                             | Create or revise implementation plan                                               |
-| `review_plan`         | —                                                                                                                            | updates `current`, sets `reviewRoundStartedAt`                     | Enter plan review phase                                                            |
-| `record_review`       | `reviewer`, `verdict`, `findings?`                                                                                           | updates `current`, appends to (or replaces within) `reviews`       | Record one reviewer's findings (a second submission this round replaces the first) |
-| `approve_plan`        | —                                                                                                                            | updates `current`, snapshots to `reviewHistory`                    | Human-gated plan approval                                                          |
-| `reject_plan`         | `reason`, `source?`                                                                                                          | updates `current`, snapshots to `reviewHistory`, resets `reviews`  | Reject and return to `planned`                                                     |
-| `implement`           | `branch`, `description?`                                                                                                     | updates `current`                                                  | Start TDD on a branch — enters `writing_tests`                                     |
-| `review_tests`        | —                                                                                                                            | updates `current`, sets `reviewRoundStartedAt`                     | Enter test review phase                                                            |
-| `iterate_tests`       | `reason`, `source?`                                                                                                          | updates `current`, snapshots, bumps `testReviewIteration`          | Return to `writing_tests` for another test-review round                            |
-| `tests_approved`      | `override_reason?`                                                                                                           | updates `current`, snapshots to `reviewHistory`                    | Autonomous test-gate acceptance → `implementing` (override after cap)              |
-| `review_code`         | —                                                                                                                            | updates `current`, sets `reviewRoundStartedAt`                     | Enter code review phase                                                            |
-| `resolve_findings`    | `resolutions`                                                                                                                | updates `current`, snapshots to `reviewHistory`                    | Merge resolutions (keyed per matching reviewer), transition to `resolved`          |
-| `iterate`             | `reason`, `source?`                                                                                                          | updates `current`, snapshots, bumps `codeReviewIteration`          | Return to `implementing` for another code-review round                             |
-| `harvest`             | `uatProposals`, `kbProposals`                                                                                                | updates `current`, writes `harvest` field                          | Record UAT/KB harvest proposals                                                    |
-| `complete`            | `summary?`                                                                                                                   | updates `current`, sets `completedAt`                              | Mark issue complete                                                                |
-| `close`               | `reason`                                                                                                                     | updates `current`, sets `closedReason`                             | Abandon from any state                                                             |
-| `hydrate`             | —                                                                                                                            | writes **separate** `hydrate` resource (does NOT mutate `current`) | Compact decision summary for autonomous loop                                       |
+| Method                 | Args                                                                                                                         | Output                                                                | Description                                                                        |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `start`                | `title`, `description`, `labels?`, `force?`                                                                                  | `state` resource (name: `current`)                                    | File a new issue (refuses to overwrite an in-flight issue unless `force`)          |
+| `triage`               | `priority`, `category`, `affectedAreas`, `confidence?`, `reasoning?`, `isRegression?`, `clarifyingQuestions?`, `reproduced?` | updates `current`                                                     | Triage with optional classification detail                                         |
+| `record_prior_art`     | `uatScenarios`, `kbEntries`                                                                                                  | updates `current`                                                     | Record pre-planning knowledge lookup results                                       |
+| `record_reproduction`  | `status`, `notes?`                                                                                                           | updates `current`, merges `triageDetail.reproduced`                   | Record/update bug-reproduction outcome (optional; second call overwrites)          |
+| `plan`                 | `summary`, `steps`, `dddAnalysis`, `testStrategy`, `reviewMatrix?`, `potentialChallenges?`                                   | updates `current`, bumps `planVersion`                                | Create or revise implementation plan                                               |
+| `review_plan`          | —                                                                                                                            | updates `current`, sets `reviewRoundStartedAt`                        | Enter plan review phase                                                            |
+| `record_review`        | `reviewer`, `verdict`, `findings?`                                                                                           | updates `current`, appends to (or replaces within) `reviews`          | Record one reviewer's findings (a second submission this round replaces the first) |
+| `approve_plan`         | —                                                                                                                            | updates `current`, snapshots to `reviewHistory`                       | Human-gated plan approval                                                          |
+| `reject_plan`          | `reason`, `source?`                                                                                                          | updates `current`, snapshots to `reviewHistory`, resets `reviews`     | Reject and return to `planned`                                                     |
+| `implement`            | `branch`, `description?`                                                                                                     | updates `current`                                                     | Start TDD on a branch — enters `writing_tests`                                     |
+| `review_tests`         | —                                                                                                                            | updates `current`, sets `reviewRoundStartedAt`                        | Enter test review phase                                                            |
+| `iterate_tests`        | `reason`, `source?`                                                                                                          | updates `current`, snapshots, bumps `testReviewIteration`             | Return to `writing_tests` for another test-review round                            |
+| `tests_approved`       | `override_reason?`                                                                                                           | updates `current`, snapshots to `reviewHistory`                       | Autonomous test-gate acceptance → `implementing` (override after cap)              |
+| `verify`               | `controls`, `repoDir`, `runner?`                                                                                             | updates `current`, writes `verification`, sets `reviewRoundStartedAt` | Run every declared mechanical control in one pass → `verifying`                    |
+| `iterate_verification` | `reason`, `source?`                                                                                                          | updates `current`, snapshots, bumps `verificationIteration`           | Return to `implementing` after a failing control                                   |
+| `review_code`          | —                                                                                                                            | updates `current`, sets `reviewRoundStartedAt`                        | Enter code review phase                                                            |
+| `resolve_findings`     | `resolutions`                                                                                                                | updates `current`, snapshots to `reviewHistory`                       | Merge resolutions (keyed per matching reviewer), transition to `resolved`          |
+| `iterate`              | `reason`, `source?`                                                                                                          | updates `current`, snapshots, bumps `codeReviewIteration`             | Return to `implementing` for another code-review round                             |
+| `attest`               | `commitSha`, `repoDir`, `configPaths?`, `prUrl?`, `producedBy?`                                                              | writes the `attestation` resource **and** updates `current`           | Emit the attestation manifest → `attested`                                         |
+| `harvest`              | `uatProposals`, `kbProposals`                                                                                                | updates `current`, writes `harvest` field                             | Record UAT/KB harvest proposals                                                    |
+| `complete`             | `summary?`                                                                                                                   | updates `current`, sets `completedAt`                                 | Mark issue complete                                                                |
+| `close`                | `reason`                                                                                                                     | updates `current`, sets `closedReason`                                | Abandon from any state                                                             |
+| `hydrate`              | —                                                                                                                            | writes **separate** `hydrate` resource (does NOT mutate `current`)    | Compact decision summary for autonomous loop                                       |
 
 ## State fields
 
@@ -225,7 +279,10 @@ acceptance even if the skill itself has a bug.
 | `reviewHistory`                         | `approve_plan`, `reject_plan`, `iterate_tests`, `tests_approved`, `resolve_findings`, `iterate` | **Append-only** audit of every completed review round                                                                                                 |
 | `testReviewIteration`                   | `start` (init), `iterate_tests` (bump)                                                          | Test-review iteration counter                                                                                                                         |
 | `codeReviewIteration`                   | `start` (init), `iterate` (bump)                                                                | Code-review iteration counter                                                                                                                         |
+| `verificationIteration`                 | `start` (init), `iterate_verification` (bump)                                                   | Verification iteration counter                                                                                                                        |
 | `branch`                                | `implement`                                                                                     | Git branch name                                                                                                                                       |
+| `verification`                          | `verify`                                                                                        | Latest round's control results, runner and timestamps                                                                                                 |
+| `attestation`                           | `attest`                                                                                        | The attestation manifest, also written to its own `attestation` resource                                                                              |
 | `resolutions`                           | `resolve_findings`                                                                              | Cumulative map of finding → resolution                                                                                                                |
 | `harvest`                               | `harvest`                                                                                       | UAT + KB harvest proposals                                                                                                                            |
 | `completedAt`                           | `complete`                                                                                      | Completion timestamp                                                                                                                                  |
@@ -246,6 +303,8 @@ incompatible schemas by design.) The `hydrate` resource contains:
 | `planIterationsThisVersion` | Number of `plan_review` rounds for this plan version              |
 | `testReviewIteration`       | Current test-review iteration counter                             |
 | `codeReviewIteration`       | Current code-review iteration counter                             |
+| `verificationIteration`     | Current verification iteration counter                            |
+| `controls`                  | `{ran, total, blocking[]}` for the latest verification round      |
 | `blocking`                  | `{critical, high, total}` open blocking findings in current round |
 | `coverage`                  | `{complete, missing}` matrix coverage status                      |
 | `historyLength`             | Total `reviewHistory` length                                      |

@@ -11,7 +11,8 @@ description: >
   "issue plan", "lifecycle status", "resume issue", "approve plan",
   "review plan", "iterate plan", "issue lifecycle", "start issue",
   "harvest issue", "knowledge harvest", "tests approved",
-  "test review loop".
+  "test review loop", "verify", "verification loop", "run the controls",
+  "attest", "attestation", "pre-PR verification".
 ---
 
 # Issue Lifecycle
@@ -53,6 +54,8 @@ corresponding phase; if not, documented defaults in each reference file apply.
 - `agent-constraints/planning-conventions.md` — analysis + docs requirements
 - `agent-constraints/adversarial-dimensions.md` — review criteria overrides
 - `agent-constraints/implementation-conventions.md` — build, verify, PR
+- `agent-constraints/verification-controls.md` — the mechanical controls Phase
+  4c runs (fmt / lint / typecheck / test), with their tiers
 - `agent-constraints/code-review-conventions.md` — post-impl matrix fan-out
 - `agent-constraints/uat-conventions.md` — UAT test base location + format
 - `agent-constraints/knowledge-base.md` — KB location + format
@@ -67,15 +70,23 @@ corresponding phase; if not, documented defaults in each reference file apply.
 | 3. Adversarial review           | `planned ↔ reviewing → approved`                            | [references/adversarial-review.md](references/adversarial-review.md) |
 | 4a. TDD test review             | `approved → writing_tests ↔ reviewing_tests → implementing` | [references/test-review.md](references/test-review.md)               |
 | 4b. Implementation              | `implementing`                                              | [references/implementation.md](references/implementation.md)         |
-| 5. Code review                  | `implementing ↔ code_reviewing → resolved`                  | [references/code-review.md](references/code-review.md)               |
-| 6. Knowledge harvest (optional) | `resolved → harvested → complete`                           | [references/knowledge-harvest.md](references/knowledge-harvest.md)   |
+| 4c. Verification                | `implementing ↔ verifying`                                  | [references/verification.md](references/verification.md)             |
+| 5. Code review                  | `verifying → code_reviewing ↔ implementing → resolved`      | [references/code-review.md](references/code-review.md)               |
+| 5b. Attestation                 | `resolved → attested`                                       | [references/attestation.md](references/attestation.md)               |
+| 6. Knowledge harvest (optional) | `attested → harvested → complete`                           | [references/knowledge-harvest.md](references/knowledge-harvest.md)   |
 
-Phases 3, 4a, and 5 all drive a generic **autonomous iteration loop** (reject →
-revise → re-review until zero CRITICAL and zero HIGH, with safeguards). The loop
-logic lives in [references/autonomous-loop.md](references/autonomous-loop.md) —
-read it alongside whichever review phase is active. (The reference-file count
-deliberately exceeds the usual 2–7 guideline: each lifecycle phase dispatches to
-exactly one file, and that discipline takes precedence.)
+Phases 3, 4a, 4c and 5 all drive a generic **autonomous iteration loop** (reject
+→ revise → re-run until zero CRITICAL and zero HIGH — and, in Phase 4c, until
+every required control passes — with safeguards). The loop logic lives in
+[references/autonomous-loop.md](references/autonomous-loop.md) — read it
+alongside whichever loop phase is active. (The reference-file count deliberately
+exceeds the usual 2–7 guideline: each lifecycle phase dispatches to exactly one
+file, and that discipline takes precedence.)
+
+**Verification is not skippable.** `review_code` is guarded on `verifying`, so
+Phase 4c sits on the only path from `implementing` to code review. Every
+`iterate` from the code-review loop lands back in `implementing` and must pass
+through it again.
 
 State machine diagram + transition guards + method reference live in
 [references/state-machine.md](references/state-machine.md). Review matrix
@@ -112,8 +123,9 @@ swamp data get <issue-name> hydrate --json
 ```
 
 The hydrate output reports current state, planVersion, blocking finding counts,
-matrix coverage, iteration cursors, and review history length. Use it to
-dispatch to the right phase reference without reading the full state blob:
+verification control status (`controls.ran` / `.total` / `.blocking[]`), matrix
+coverage, iteration cursors, and review history length. Use it to dispatch to
+the right phase reference without reading the full state blob:
 
 | Hydrate `state`                    | Read                                                                 |
 | ---------------------------------- | -------------------------------------------------------------------- |
@@ -123,8 +135,10 @@ dispatch to the right phase reference without reading the full state blob:
 | `approved`                         | [references/test-review.md](references/test-review.md)               |
 | `writing_tests`, `reviewing_tests` | [references/test-review.md](references/test-review.md)               |
 | `implementing`                     | [references/implementation.md](references/implementation.md)         |
+| `verifying`                        | [references/verification.md](references/verification.md)             |
 | `code_reviewing`                   | [references/code-review.md](references/code-review.md)               |
-| `resolved`, `harvested`            | [references/knowledge-harvest.md](references/knowledge-harvest.md)   |
+| `resolved`                         | [references/attestation.md](references/attestation.md)               |
+| `attested`, `harvested`            | [references/knowledge-harvest.md](references/knowledge-harvest.md)   |
 
 For the full state:
 

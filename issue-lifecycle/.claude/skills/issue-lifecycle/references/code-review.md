@@ -2,9 +2,16 @@
 
 ## Prerequisites
 
-- State: `code_reviewing` (Phase 4b just called `review_code`)
+- State: `code_reviewing` (Phase 4c just called `review_code` from `verifying`)
 - The branch carries the test suite approved in Phase 4a (`tests_approved`), all
-  plan steps executed, and tests passing locally
+  plan steps executed, and **every required mechanical control passing** — fmt,
+  lint, typecheck and tests were run in Phase 4c
+  ([verification.md](verification.md))
+
+Because the controls already passed, reviewers here are looking at code that
+compiles, lints and tests clean. Do not spend a reviewer on what a control
+already answered — no "this won't compile", no "run the formatter". Review what
+only a reviewer can see.
 
 Phase 5 mirrors Phase 3 (adversarial review) but applies the matrix fan-out to
 the implemented code rather than the plan.
@@ -17,11 +24,11 @@ result.
 
 ## Entry prerequisite
 
-The `review_code` method was called at the end of Phase 4b, transitioning state
-to `code_reviewing` and bumping `codeReviewIteration`. If you're resuming a
-session and state is `code_reviewing`, you may need to re-enter by calling
-`review_code` again (this will snapshot the previous round into `reviewHistory`
-and start a fresh round — safe).
+The `review_code` method was called at the end of Phase 4c, transitioning state
+from `verifying` to `code_reviewing` and bumping `codeReviewIteration`. If
+you're resuming a session and state is `code_reviewing`, you may need to
+re-enter by calling `review_code` again (this will snapshot the previous round
+into `reviewHistory` and start a fresh round — safe).
 
 ## Step 1: Fan out reviewers in parallel
 
@@ -93,6 +100,9 @@ Read [autonomous-loop.md](autonomous-loop.md). The loop's Phase 5 mapping uses:
 
 - `iterate --input source=auto` to return to `implementing`
 - (You make code fixes addressing the CRIT/HIGH findings)
+- **`verify` to re-run the controls** — `iterate` lands in `implementing`, and
+  `review_code` is guarded on `verifying`. A code fix that broke the build must
+  not reach a reviewer again, so every round re-runs the controls.
 - `review_code` to re-enter `code_reviewing`
 - `resolve_findings` on clean exit (only after explicit human trigger)
 
@@ -121,13 +131,27 @@ resolutions:
   "LOW: comment typo": "fixed inline"
 ```
 
-State transitions from `code_reviewing` → `resolved`. At this point you can
-either:
+State transitions from `code_reviewing` → `resolved`.
+
+## Step 6: Attest
+
+From `resolved`, emit the attestation manifest before opening a PR:
+
+```bash
+swamp model method run <issue-name> attest --input "{\"commitSha\": \"$(git rev-parse HEAD)\", ...}"
+```
+
+Read [attestation.md](attestation.md) for the config paths to checksum and the
+commit-then-PR ordering. `attest` re-asserts every gate — required controls
+passed, no FAIL verdict, zero open CRITICAL/HIGH — and refuses rather than
+writing a manifest it cannot stand behind.
+
+State transitions `resolved` → `attested`. From there you can either:
 
 - Call `complete` directly (skip harvest — quick path)
 - Call `harvest` first, then `complete` (run Phase 6 — recommended)
 
-## Step 6: Offer Phase 6 (harvest)
+## Step 7: Offer Phase 6 (harvest)
 
 Before calling `complete`, ask the human:
 
@@ -142,7 +166,8 @@ On `harvest` → read [knowledge-harvest.md](knowledge-harvest.md). On
 
 ## Next phase
 
+- Attestation: read [attestation.md](attestation.md).
 - If harvest requested: read [knowledge-harvest.md](knowledge-harvest.md).
 - If skipped:
   `swamp model method run <issue-name> complete --input summary="..."`, state
-  becomes `complete`.
+  becomes `complete`. `complete` accepts `resolved`, `attested` and `harvested`.

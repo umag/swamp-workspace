@@ -216,6 +216,106 @@ export const HarvestSchema = z.object({
 });
 
 /**
+ * One mechanical verification control declared by the repository — the
+ * lint/format/typecheck/test commands CI would otherwise re-execute.
+ * Declared in `agent-constraints/verification-controls.md`, never hardcoded
+ * in the model.
+ *
+ * `tier` records where the control is *allowed* to run: `local` controls are
+ * cheap and run in the branch checkout; `managed` controls are reserved for
+ * a higher-assurance runner (a swamp worker) and are recorded but not
+ * executed locally.
+ *
+ * @internal
+ */
+export const ControlSpecSchema = z.object({
+  name: z.string().min(1),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  cwd: z.string().default("."),
+  tier: z.enum(["local", "managed"]).default("local"),
+  required: z.boolean().default(true),
+});
+
+/**
+ * Outcome of executing one control.
+ *
+ * `status` deliberately separates `fail` (the control ran and rejected the
+ * tree) from `error` (the control could not be executed at all — binary
+ * missing, permission denied, spawn failure). Both block attestation. The
+ * distinction exists because collapsing "the tool could not evaluate this"
+ * into a benign skip is exactly how a quality gate reports success while
+ * verifying nothing.
+ *
+ * @internal
+ */
+export const ControlResultSchema = z.object({
+  name: z.string().min(1),
+  command: z.string().min(1),
+  status: z.enum(["pass", "fail", "error", "skipped"]),
+  exitCode: z.number().int().nullable().default(null),
+  durationMs: z.number().int().nonnegative(),
+  runner: z.string().min(1),
+  required: z.boolean().default(true),
+  stderrTail: z.string().default(""),
+});
+
+/**
+ * One verification round: the controls that ran, where, and when.
+ *
+ * @internal
+ */
+export const VerificationSchema = z.object({
+  controls: z.array(ControlResultSchema).default([]),
+  runner: z.string().default("local"),
+  startedAt: z.iso.datetime(),
+  completedAt: z.iso.datetime().optional(),
+});
+
+/**
+ * Per-reviewer summary embedded in an attestation — finding counts by
+ * severity rather than the finding bodies, so the manifest stays small and
+ * carries no source excerpts.
+ *
+ * @internal
+ */
+export const AttestedReviewSchema = z.object({
+  reviewer: z.string(),
+  verdict: z.enum(["PASS", "FAIL", "SUGGEST_CHANGES"]),
+  critical: z.number().int().nonnegative(),
+  high: z.number().int().nonnegative(),
+  medium: z.number().int().nonnegative(),
+  low: z.number().int().nonnegative(),
+});
+
+/**
+ * The attestation manifest — the structured evidence a verification
+ * environment hands to CI so CI can *validate* rather than re-execute.
+ *
+ * `configChecksums` is the independently verifiable half: a validator
+ * recomputes each digest from the checked-out tree and compares. Result
+ * integrity (the `controls` array) is trusted to whoever ran the controls,
+ * which is why `runner` is recorded on the manifest and on every control.
+ *
+ * @internal
+ */
+export const AttestationSchema = z.object({
+  attestationVersion: z.literal(1),
+  issue: z.string().min(1),
+  commitSha: z.string().min(1),
+  branch: z.string().optional(),
+  planVersion: z.number().int().positive(),
+  prUrl: z.string().optional(),
+  configChecksums: z.record(z.string(), z.string()).default({}),
+  controls: z.array(ControlResultSchema).default([]),
+  reviews: z.array(AttestedReviewSchema).default([]),
+  runner: z.string().min(1),
+  producedAt: z.iso.datetime(),
+  producedBy: z.string().default("unknown"),
+  modelVersion: z.string().min(1),
+});
+
+/**
  * Compact summary written by `hydrate` for the autonomous loop. Lives in
  * its own `summary` resource (not `state`) so it has no shape overlap with
  * the main IssueStateSchema and mutation of one can never corrupt the other.
@@ -228,6 +328,12 @@ export const HydrateSummarySchema = z.object({
   planIterationsThisVersion: z.number().int().nonnegative(),
   testReviewIteration: z.number().int().nonnegative(),
   codeReviewIteration: z.number().int().nonnegative(),
+  verificationIteration: z.number().int().nonnegative(),
+  controls: z.object({
+    ran: z.boolean(),
+    total: z.number().int().nonnegative(),
+    blocking: z.array(z.string()),
+  }),
   blocking: z.object({
     critical: z.number().int().nonnegative(),
     high: z.number().int().nonnegative(),
@@ -256,8 +362,10 @@ export const StateEnum = z.enum([
   "writing_tests",
   "reviewing_tests",
   "implementing",
+  "verifying",
   "code_reviewing",
   "resolved",
+  "attested",
   "harvested",
   "complete",
   "closed",
@@ -269,7 +377,12 @@ export const StateEnum = z.enum([
  * @internal
  */
 export const ReviewRoundSchema = z.object({
-  phase: z.enum(["plan_review", "test_review", "code_review"]),
+  phase: z.enum([
+    "plan_review",
+    "test_review",
+    "verification",
+    "code_review",
+  ]),
   planVersion: z.number().int().positive(),
   iteration: z.number().int().positive(),
   reviews: z.array(ReviewResultSchema),
@@ -309,7 +422,10 @@ export const IssueStateSchema = z.object({
   planVersion: z.number().int().positive().default(1),
   testReviewIteration: z.number().int().positive().default(1),
   codeReviewIteration: z.number().int().positive().default(1),
+  verificationIteration: z.number().int().positive().default(1),
   branch: z.string().optional(),
+  verification: VerificationSchema.optional(),
+  attestation: AttestationSchema.optional(),
   resolutions: z.record(z.string(), z.string()).default({}),
   harvest: HarvestSchema.optional(),
   closedReason: z.string().optional(),
@@ -540,14 +656,20 @@ export type State =
   | "writing_tests"
   | "reviewing_tests"
   | "implementing"
+  | "verifying"
   | "code_reviewing"
   | "resolved"
+  | "attested"
   | "harvested"
   | "complete"
   | "closed";
 
 /** Review round phase. */
-export type ReviewPhase = "plan_review" | "test_review" | "code_review";
+export type ReviewPhase =
+  | "plan_review"
+  | "test_review"
+  | "verification"
+  | "code_review";
 
 /** Review round outcome. */
 export type ReviewOutcome =
@@ -597,6 +719,106 @@ export interface MatrixCoverage {
   missing: string[];
 }
 
+/** Where a control is allowed to run. */
+export type ControlTier = "local" | "managed";
+
+/** Outcome of executing one control. */
+export type ControlStatus = "pass" | "fail" | "error" | "skipped";
+
+/** One mechanical verification control declared by the repository. */
+export interface ControlSpec {
+  /** Short control name, e.g. `fmt`. */
+  name: string;
+  /** Executable to spawn. */
+  command: string;
+  /** Arguments passed to the executable. */
+  args: string[];
+  /** Working directory, relative to the repo root. */
+  cwd: string;
+  /** Whether this control may run locally or needs a managed runner. */
+  tier: ControlTier;
+  /** Required controls must pass before `attest` will emit a manifest. */
+  required: boolean;
+}
+
+/** Result of executing one control. */
+export interface ControlResult {
+  /** Short control name. */
+  name: string;
+  /** The command line as executed. */
+  command: string;
+  /** pass, fail (ran and rejected), error (could not run), or skipped. */
+  status: ControlStatus;
+  /** Process exit code, or null when the process never started. */
+  exitCode: number | null;
+  /** Wall-clock duration in milliseconds. */
+  durationMs: number;
+  /** Identifier of the environment that ran the control. */
+  runner: string;
+  /** Whether this control blocks attestation. */
+  required: boolean;
+  /** Tail of stderr, truncated, for in-context failure diagnosis. */
+  stderrTail: string;
+}
+
+/** One verification round. */
+export interface Verification {
+  /** Per-control results for the round. */
+  controls: ControlResult[];
+  /** Identifier of the environment that ran the round. */
+  runner: string;
+  /** ISO-8601 timestamp the round started. */
+  startedAt: string;
+  /** ISO-8601 timestamp the round ended. */
+  completedAt?: string;
+}
+
+/** Per-reviewer summary embedded in an attestation. */
+export interface AttestedReview {
+  /** Reviewer name, e.g. `review-security`. */
+  reviewer: string;
+  /** The reviewer's verdict. */
+  verdict: Verdict;
+  /** Open CRITICAL findings at attestation time. */
+  critical: number;
+  /** Open HIGH findings at attestation time. */
+  high: number;
+  /** Open MEDIUM findings at attestation time. */
+  medium: number;
+  /** Open LOW findings at attestation time. */
+  low: number;
+}
+
+/** Structured evidence handed to CI in place of re-execution. */
+export interface Attestation {
+  /** Manifest schema version. */
+  attestationVersion: 1;
+  /** Issue / lifecycle instance name. */
+  issue: string;
+  /** Commit the verification ran against. */
+  commitSha: string;
+  /** Branch carrying the work. */
+  branch?: string;
+  /** Plan version the work implements. */
+  planVersion: number;
+  /** Pull request URL, once opened. */
+  prUrl?: string;
+  /** Path → SHA-256 digest for every config input to the verification. */
+  configChecksums: Record<string, string>;
+  /** Control results backing the manifest. */
+  controls: ControlResult[];
+  /** Per-reviewer finding summary. */
+  reviews: AttestedReview[];
+  /** Identifier of the environment that produced the manifest. */
+  runner: string;
+  /** ISO-8601 timestamp the manifest was produced. */
+  producedAt: string;
+  /** Hostname or worker id that produced the manifest. */
+  producedBy: string;
+  /** Model version that produced the manifest. */
+  modelVersion: string;
+}
+
 /** Compact summary written by `hydrate`. */
 export interface HydrateSummary {
   /** Current lifecycle state. */
@@ -609,6 +831,17 @@ export interface HydrateSummary {
   testReviewIteration: number;
   /** Code-review iteration cursor. */
   codeReviewIteration: number;
+  /** Verification iteration cursor. */
+  verificationIteration: number;
+  /** Verification control status for the latest round. */
+  controls: {
+    /** True once `verify` has run at least once. */
+    ran: boolean;
+    /** Number of controls in the latest round. */
+    total: number;
+    /** Names of required controls that did not pass. */
+    blocking: string[];
+  };
   /** Open blocking-finding counts. */
   blocking: BlockingCounts;
   /** Review-matrix coverage for the current round. */
@@ -653,8 +886,14 @@ export interface IssueState {
   testReviewIteration: number;
   /** Code-review iteration cursor (bumps on every `iterate`). */
   codeReviewIteration: number;
+  /** Verification iteration cursor (bumps on every `iterate_verification`). */
+  verificationIteration: number;
   /** Optional implementation branch name. */
   branch?: string;
+  /** Latest verification round; unset until `verify` runs. */
+  verification?: Verification;
+  /** Attestation manifest; unset until `attest` runs. */
+  attestation?: Attestation;
   /** Map of finding-description → resolution-action. */
   resolutions: Record<string, string>;
   /** Optional harvest bundle from Phase 6. */
@@ -795,6 +1034,8 @@ export function snapshotReviewRound(
     ).length + 1;
   } else if (phase === "test_review") {
     iteration = data.testReviewIteration;
+  } else if (phase === "verification") {
+    iteration = data.verificationIteration;
   } else {
     iteration = data.codeReviewIteration;
   }
@@ -846,6 +1087,266 @@ function expandResolutionKeys(
 }
 
 // ============================================================================
+// Verification: subprocess + checksum helpers
+// ============================================================================
+//
+// This is the only I/O in the module. Every function that spawns a process
+// or reads a file takes its effect as an explicit first parameter, so the
+// whole verification path is unit-testable without spawning anything and
+// the compiler proves no un-injected call survives.
+
+/** Raw result of running one subprocess. */
+export interface RunResult {
+  /** Process exit code, or null if it never started. */
+  code: number | null;
+  /** Captured stdout. */
+  stdout: string;
+  /** Captured stderr. */
+  stderr: string;
+  /** Set when the process could not be spawned at all. */
+  spawnError?: string;
+}
+
+/**
+ * Injectable process runner. Production code passes {@link defaultRunner};
+ * tests pass a scripted fake that records calls and answers from a table.
+ */
+export type CommandRunner = (
+  command: string,
+  args: string[],
+  cwd: string,
+) => Promise<RunResult>;
+
+/** Injectable file reader, for checksum computation. */
+export type FileReader = (path: string) => Promise<Uint8Array>;
+
+/**
+ * Sentinel thrown when the runtime denies `allow-run`. The verification
+ * path must fail closed with a named error rather than reporting a control
+ * it never executed as anything other than a failure.
+ */
+export const RUN_PERMISSION_ERROR =
+  "allow-run is not granted to this model — verification controls cannot be " +
+  "executed. Refusing to report an unverified tree as verified.";
+
+/** Default runner: spawns the command with `Deno.Command`. */
+export const defaultRunner: CommandRunner = async (command, args, cwd) => {
+  try {
+    const output = await new Deno.Command(command, {
+      args,
+      cwd,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const dec = new TextDecoder();
+    return {
+      code: output.code,
+      stdout: dec.decode(output.stdout),
+      stderr: dec.decode(output.stderr),
+    };
+  } catch (err) {
+    if (err instanceof Deno.errors.NotCapable) {
+      throw new Error(RUN_PERMISSION_ERROR, { cause: err });
+    }
+    return {
+      code: null,
+      stdout: "",
+      stderr: "",
+      spawnError: err instanceof Error ? err.message : String(err),
+    };
+  }
+};
+
+/** Default file reader. */
+export const defaultFileReader: FileReader = (path) => Deno.readFile(path);
+
+/** How much stderr to retain per control, in characters. */
+export const STDERR_TAIL_LIMIT = 2000;
+
+/**
+ * Keep only the tail of a control's stderr. Failure output is read by an
+ * agent in-context to drive the fix, so the last lines (where the summary
+ * lives) matter more than the first.
+ */
+export function stderrTail(
+  stderr: string,
+  limit: number = STDERR_TAIL_LIMIT,
+): string {
+  if (stderr.length <= limit) return stderr;
+  return stderr.slice(stderr.length - limit);
+}
+
+/**
+ * Execute one control and classify the outcome.
+ *
+ * A control that could not be spawned is `error`, never `skipped` — the
+ * caller must not be able to mistake "did not run" for "nothing to check".
+ * A `managed`-tier control is `skipped` when the current runner is local;
+ * `attest` treats a skipped required control as blocking.
+ */
+export async function runControl(
+  run: CommandRunner,
+  spec: ControlSpec,
+  repoDir: string,
+  runner: string,
+): Promise<ControlResult> {
+  const commandLine = [spec.command, ...spec.args].join(" ");
+  const base = {
+    name: spec.name,
+    command: commandLine,
+    runner,
+    required: spec.required,
+  };
+
+  if (spec.tier === "managed" && runner === "local") {
+    return {
+      ...base,
+      status: "skipped" as const,
+      exitCode: null,
+      durationMs: 0,
+      stderrTail:
+        `control '${spec.name}' is tier=managed and the current runner is ` +
+        `'local' — it was not executed`,
+    };
+  }
+
+  const cwd = joinRepoPath(repoDir, spec.cwd);
+  const startedAt = Date.now();
+  const result = await run(spec.command, spec.args, cwd);
+  const durationMs = Date.now() - startedAt;
+
+  if (result.spawnError !== undefined) {
+    return {
+      ...base,
+      status: "error" as const,
+      exitCode: null,
+      durationMs,
+      stderrTail: stderrTail(result.spawnError),
+    };
+  }
+
+  return {
+    ...base,
+    status: result.code === 0 ? ("pass" as const) : ("fail" as const),
+    exitCode: result.code,
+    durationMs,
+    stderrTail: stderrTail(result.stderr || result.stdout),
+  };
+}
+
+/**
+ * Run every declared control in one pass, in declaration order.
+ *
+ * Fan-out rather than a caller-side loop: one method call acquires the
+ * model lock once and produces the whole round, instead of N calls
+ * contending on it.
+ *
+ * Controls run sequentially on purpose — they share a working tree and a
+ * Deno cache, and a parallel `fmt` and `test` can race on generated files.
+ * A control that throws the allow-run sentinel aborts the round rather than
+ * being swallowed into a partial result.
+ */
+export async function runControls(
+  run: CommandRunner,
+  specs: ControlSpec[],
+  repoDir: string,
+  runner: string,
+): Promise<ControlResult[]> {
+  const results: ControlResult[] = [];
+  for (const spec of specs) {
+    results.push(await runControl(run, spec, repoDir, runner));
+  }
+  return results;
+}
+
+/**
+ * Join a control's declared `cwd` onto the repo root, rejecting anything
+ * that escapes it. Control specs come from a repo file that an agent edits,
+ * so the path is treated as untrusted input.
+ */
+export function joinRepoPath(repoDir: string, relative: string): string {
+  if (relative === "" || relative === ".") return repoDir;
+  if (relative.startsWith("/")) {
+    throw new Error(
+      `Control cwd must be relative to the repo root, got absolute '${relative}'`,
+    );
+  }
+  const segments = relative.split("/").filter((p) => p !== "" && p !== ".");
+  if (segments.includes("..")) {
+    throw new Error(
+      `Control cwd must stay inside the repo, got '${relative}'`,
+    );
+  }
+  return `${repoDir.replace(/\/$/, "")}/${segments.join("/")}`;
+}
+
+/**
+ * Controls that block attestation: any required control that did not pass.
+ * `error` and `skipped` block exactly as `fail` does.
+ */
+export function blockingControls(controls: ControlResult[]): ControlResult[] {
+  return controls.filter((c) => c.required && c.status !== "pass");
+}
+
+/** Lowercase hex SHA-256 of the given bytes. */
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    bytes as unknown as ArrayBuffer,
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Compute `path → sha256` for every config input to the verification, so a
+ * validator can recompute them from a checked-out tree and prove the same
+ * review prompts, constraints and task definitions were in force.
+ *
+ * Paths are repo-relative and the result is key-sorted, so the manifest is
+ * byte-stable across machines. A path that cannot be read is recorded as
+ * `MISSING` rather than omitted — a silently absent entry would let a
+ * deleted constraints file pass validation.
+ */
+export async function computeChecksums(
+  readFile: FileReader,
+  repoDir: string,
+  paths: string[],
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const rel of [...paths].sort()) {
+    try {
+      out[rel] = await sha256Hex(
+        await readFile(joinRepoPath(repoDir, rel)),
+      );
+    } catch {
+      out[rel] = "MISSING";
+    }
+  }
+  return out;
+}
+
+/**
+ * Collapse the current round's reviews into per-reviewer severity counts for
+ * the attestation manifest. Only open findings are counted — a resolved
+ * finding is not evidence of an unverified tree.
+ */
+export function summarizeReviews(reviews: ReviewResult[]): AttestedReview[] {
+  return reviews.map((r) => {
+    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const f of r.findings) {
+      if (f.status !== "open") continue;
+      if (f.severity === "CRITICAL") counts.critical++;
+      else if (f.severity === "HIGH") counts.high++;
+      else if (f.severity === "MEDIUM") counts.medium++;
+      else counts.low++;
+    }
+    return { reviewer: r.reviewer, verdict: r.verdict, ...counts };
+  });
+}
+
+// ============================================================================
 // Model
 // ============================================================================
 
@@ -879,6 +1380,217 @@ async function readState(
 }
 
 /**
+ * `verify` implementation with the process runner injected, so the whole
+ * verification path is testable without spawning anything. The method
+ * wrapper passes {@link defaultRunner}.
+ */
+export async function verifyImpl(
+  run: CommandRunner,
+  args: { controls: ControlSpec[]; repoDir: string; runner: string },
+  context: ReadWriteCtx,
+): Promise<{ dataHandles: unknown[] }> {
+  const data = await readState(context);
+  if (!data) throw new Error("No issue state found — run 'start' first");
+  guardState(data.state, "implementing", "verify");
+
+  const startedAt = now();
+  context.logger.info(
+    "Verification round {iter}: running {count} control(s) on {runner}",
+    {
+      iter: data.verificationIteration,
+      count: args.controls.length,
+      runner: args.runner,
+    },
+  );
+
+  const controls = await runControls(
+    run,
+    args.controls,
+    args.repoDir,
+    args.runner,
+  );
+
+  const blocking = blockingControls(controls);
+  for (const c of controls) {
+    context.logger.info(
+      "  {status} {name} ({ms}ms) — {command}",
+      {
+        status: c.status.toUpperCase(),
+        name: c.name,
+        ms: c.durationMs,
+        command: c.command,
+      },
+    );
+  }
+
+  const handle = await context.writeResource("state", "current", {
+    ...data,
+    state: "verifying",
+    verification: {
+      controls,
+      runner: args.runner,
+      startedAt,
+      completedAt: now(),
+    },
+    reviewRoundStartedAt: startedAt,
+    updatedAt: now(),
+  });
+
+  if (blocking.length > 0) {
+    context.logger.info(
+      "{count} required control(s) did not pass: {names} — fix them in " +
+        "context, then call iterate_verification and verify again",
+      {
+        count: blocking.length,
+        names: blocking.map((c) => `${c.name}(${c.status})`).join(", "),
+      },
+    );
+  } else {
+    context.logger.info(
+      "All required controls passed — call review_code to enter the " +
+        "review fan-out",
+    );
+  }
+
+  return { dataHandles: [handle] };
+}
+
+/**
+ * `attest` implementation with the file reader injected, so checksum
+ * computation is testable without touching the filesystem. The method
+ * wrapper passes {@link defaultFileReader}.
+ */
+export async function attestImpl(
+  readFile: FileReader,
+  args: {
+    commitSha: string;
+    repoDir: string;
+    configPaths: string[];
+    prUrl?: string;
+    producedBy: string;
+  },
+  context: ReadWriteCtx,
+): Promise<{ dataHandles: unknown[] }> {
+  const data = await readState(context);
+  if (!data) throw new Error("No issue state found — run 'start' first");
+  guardState(data.state, "resolved", "attest");
+
+  // --- Gates. Every one of these fails closed: no manifest is written
+  // --- unless the tree actually cleared the bar it claims to attest.
+  const verification = data.verification;
+  if (!verification) {
+    throw new Error(
+      "Cannot attest: no verification round recorded. Run 'verify' " +
+        "before attesting — an attestation with no controls behind it " +
+        "is worse than none.",
+    );
+  }
+
+  const blocked = blockingControls(verification.controls);
+  if (blocked.length > 0) {
+    throw new Error(
+      `Cannot attest: ${blocked.length} required control(s) did not ` +
+        `pass: ${
+          blocked.map((c) => `${c.name}(${c.status})`).join(", ")
+        }. Fix them and re-run verify.`,
+    );
+  }
+
+  const blocking = hasBlockingFindings(data.reviews);
+  if (blocking.total > 0) {
+    throw new Error(
+      `Cannot attest: ${blocking.critical} CRITICAL and ` +
+        `${blocking.high} HIGH findings still open.`,
+    );
+  }
+
+  const failing = failingReviewers(data.reviews);
+  if (failing.length > 0) {
+    throw new Error(
+      `Cannot attest: reviewer(s) ${
+        failing.join(", ")
+      } recorded a FAIL verdict.`,
+    );
+  }
+
+  const configChecksums = await computeChecksums(
+    readFile,
+    args.repoDir,
+    args.configPaths,
+  );
+  const missing = Object.entries(configChecksums)
+    .filter(([, digest]) => digest === "MISSING")
+    .map(([path]) => path);
+  if (missing.length > 0) {
+    throw new Error(
+      `Cannot attest: ${missing.length} config path(s) could not be ` +
+        `read: ${
+          missing.join(", ")
+        }. A manifest that silently omits a config input cannot prove ` +
+        `which prompts and constraints were in force.`,
+    );
+  }
+
+  const attestation = {
+    attestationVersion: 1 as const,
+    issue: data.title,
+    commitSha: args.commitSha,
+    branch: data.branch,
+    planVersion: data.planVersion,
+    prUrl: args.prUrl,
+    configChecksums,
+    controls: verification.controls,
+    reviews: summarizeReviews(data.reviews),
+    runner: verification.runner,
+    producedAt: now(),
+    producedBy: args.producedBy,
+    modelVersion: MODEL_VERSION,
+  };
+
+  context.logger.info(
+    "Attesting {commit} — {controls} control(s), {configs} config " +
+      "checksum(s), {reviews} reviewer(s), runner {runner}",
+    {
+      commit: args.commitSha.slice(0, 12),
+      controls: attestation.controls.length,
+      configs: Object.keys(configChecksums).length,
+      reviews: attestation.reviews.length,
+      runner: attestation.runner,
+    },
+  );
+
+  const attestationHandle = await context.writeResource(
+    "attestation",
+    args.commitSha,
+    attestation,
+  );
+  const stateHandle = await context.writeResource("state", "current", {
+    ...data,
+    state: "attested",
+    attestation,
+    updatedAt: now(),
+  });
+
+  context.logger.info(
+    "Attested — commit the manifest to the branch, then open the PR",
+  );
+  return { dataHandles: [stateHandle, attestationHandle] };
+}
+
+/**
+ * Model version, stamped into every attestation manifest so a validator can
+ * tell which model produced it.
+ *
+ * Deliberately a SEPARATE literal from `model.version` below rather than the
+ * single source of truth for it. `scripts/quality/check_upgrade_chain.ts` —
+ * and swamp's own push-time validator — require `version:` to be a plain
+ * double-quoted string on the declaration; `version: MODEL_VERSION` reads as
+ * "no depth-1 version key" to both and silently skips the chain-terminus
+ * check. `issue_lifecycle_docs.test.ts` pins the two equal instead.
+ */
+export const MODEL_VERSION = "2026.08.31.1";
+
+/**
  * Internal model object — its value type recursively references Zod
  * internals that are private at the JSR-publish level. Consumers should
  * depend on the public types and helpers above and call methods via
@@ -888,7 +1600,7 @@ async function readState(
  */
 export const model = {
   type: "@magistr/issue-lifecycle",
-  version: "2026.08.19.1",
+  version: "2026.08.31.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -904,6 +1616,19 @@ export const model = {
     {
       toVersion: "2026.08.19.1",
       description: "Version bump and smoke test",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.19.1",
+      toVersion: "2026.08.31.1",
+      description:
+        "Pre-PR verification + attestation. Adds the `verifying` and " +
+        "`attested` states, the `verify`, `iterate_verification` and " +
+        "`attest` methods, and an `attestation` resource. `review_code` now " +
+        "requires `verifying`, so mechanical controls cannot be skipped on " +
+        "the way to review. Existing records gain `verificationIteration: " +
+        "1`; `verification` and `attestation` stay unset until the new " +
+        "methods run.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -925,6 +1650,16 @@ export const model = {
       schema: HydrateSummarySchema,
       lifetime: "infinite" as const,
       garbageCollection: 10,
+    },
+    attestation: {
+      description:
+        "Attestation manifest written by the `attest` method — commit sha, " +
+        "config checksums, control results and per-reviewer finding counts. " +
+        "This is the artifact CI validates in place of re-executing the " +
+        "controls; write it to the branch before opening the PR.",
+      schema: AttestationSchema,
+      lifetime: "infinite" as const,
+      garbageCollection: 20,
     },
   },
 
@@ -1687,6 +2422,91 @@ export const model = {
       },
     },
 
+    verify: {
+      description:
+        "Run the repository's mechanical verification controls (fmt, lint, " +
+        "typecheck, tests) against the working tree and record the results. " +
+        "Transitions implementing → verifying. This is the pre-PR half of " +
+        "the verification loop: it executes every declared control in one " +
+        "pass, so CI can later validate an attestation instead of " +
+        "re-executing them. Controls are supplied by the caller (read from " +
+        "agent-constraints/verification-controls.md) — the model never " +
+        "hardcodes a build command. A control that cannot be spawned is " +
+        "recorded as 'error', never skipped.",
+      arguments: z.object({
+        controls: z.array(ControlSpecSchema).min(1).describe(
+          "Control specs from agent-constraints/verification-controls.md",
+        ),
+        repoDir: z.string().describe(
+          "Absolute path to the repository root the controls run against",
+        ),
+        runner: z.string().default("local").describe(
+          "Identifier of the executing environment, e.g. 'local' or " +
+            "'worker:unraid-worker'. Recorded on every control result.",
+        ),
+      }),
+      execute: (
+        args: {
+          controls: ControlSpec[];
+          repoDir: string;
+          runner: string;
+        },
+        context: ReadWriteCtx,
+      ) => verifyImpl(defaultRunner, args, context),
+    },
+
+    iterate_verification: {
+      description:
+        "Return to implementing because verification controls failed. " +
+        "Snapshots the verification round to reviewHistory and bumps " +
+        "verificationIteration. Mirrors iterate / iterate_tests. " +
+        "`source=auto` means the skill iterated autonomously inside the " +
+        "verification loop.",
+      arguments: z.object({
+        reason: z.string(),
+        source: z.enum(["auto", "human"]).default("human"),
+      }),
+      execute: async (
+        args: { reason: string; source: "auto" | "human" },
+        context: ReadWriteCtx,
+      ) => {
+        const data = await readState(context);
+        if (!data) throw new Error("No issue state found — run 'start' first");
+        guardState(data.state, "verifying", "iterate_verification");
+
+        const outcome: ReviewRound["outcome"] = args.source === "auto"
+          ? "rejected_auto"
+          : "rejected_human";
+
+        context.logger.info(
+          "Iterating verification ({source}): {reason}",
+          { source: args.source, reason: args.reason },
+        );
+
+        const historyEntry = snapshotReviewRound(
+          data,
+          "verification",
+          outcome,
+          args.reason,
+          data.reviewRoundStartedAt ?? now(),
+        );
+
+        const handle = await context.writeResource("state", "current", {
+          ...data,
+          state: "implementing",
+          reviewHistory: [...data.reviewHistory, historyEntry],
+          verificationIteration: data.verificationIteration + 1,
+          reviewRoundStartedAt: undefined,
+          updatedAt: now(),
+        });
+
+        context.logger.info(
+          "Back to implementing — fix the failing controls, then call verify",
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
     review_code: {
       description:
         "Enter the code review phase — the skill then fans out reviewers " +
@@ -1699,7 +2519,7 @@ export const model = {
       ) => {
         const data = await readState(context);
         if (!data) throw new Error("No issue state found — run 'start' first");
-        guardState(data.state, "implementing", "review_code");
+        guardState(data.state, "verifying", "review_code");
 
         const matrix = data.plan?.reviewMatrix ?? {
           code: true,
@@ -1851,6 +2671,47 @@ export const model = {
       },
     },
 
+    attest: {
+      description:
+        "Emit the attestation manifest — the structured evidence CI " +
+        "validates instead of re-executing the controls. Transitions " +
+        "resolved → attested. Asserts, before writing anything, that every " +
+        "required control passed, that no reviewer recorded a FAIL verdict, " +
+        "and that zero CRITICAL / HIGH findings remain open. `attest` " +
+        "asserts; it does not approve — it cannot be used to wave work " +
+        "through a gate it failed. Write the returned manifest to the branch " +
+        "and commit it BEFORE opening the PR.",
+      arguments: z.object({
+        commitSha: z.string().min(1).describe(
+          "The commit the verification ran against (git rev-parse HEAD)",
+        ),
+        repoDir: z.string().describe(
+          "Absolute path to the repository root, for checksum computation",
+        ),
+        configPaths: z.array(z.string()).default([]).describe(
+          "Repo-relative paths whose contents are checksummed into the " +
+            "manifest: review skills, agent-constraints, CLAUDE.md, task " +
+            "definitions. A validator recomputes these from the PR tree.",
+        ),
+        prUrl: z.string().optional().describe(
+          "Pull request URL, when the PR already exists",
+        ),
+        producedBy: z.string().default("unknown").describe(
+          "Hostname or worker id that produced the manifest",
+        ),
+      }),
+      execute: (
+        args: {
+          commitSha: string;
+          repoDir: string;
+          configPaths: string[];
+          prUrl?: string;
+          producedBy: string;
+        },
+        context: ReadWriteCtx,
+      ) => attestImpl(defaultFileReader, args, context),
+    },
+
     harvest: {
       description:
         "Record UAT and KB improvement proposals from this lifecycle. " +
@@ -1869,7 +2730,7 @@ export const model = {
       ) => {
         const data = await readState(context);
         if (!data) throw new Error("No issue state found — run 'start' first");
-        guardState(data.state, "resolved", "harvest");
+        guardState(data.state, ["resolved", "attested"], "harvest");
 
         context.logger.info(
           "Harvesting knowledge: {uat} UAT proposals, {kb} KB proposals",
@@ -1908,7 +2769,11 @@ export const model = {
       ) => {
         const data = await readState(context);
         if (!data) throw new Error("No issue state found — run 'start' first");
-        guardState(data.state, ["resolved", "harvested"], "complete");
+        guardState(
+          data.state,
+          ["resolved", "attested", "harvested"],
+          "complete",
+        );
 
         context.logger.info("Completing issue");
 
@@ -1982,12 +2847,19 @@ export const model = {
             r.phase === "plan_review" && r.planVersion === data.planVersion,
         ).length;
 
+        const controls = data.verification?.controls ?? [];
         const summary = {
           state: data.state,
           planVersion: data.planVersion,
           planIterationsThisVersion,
           testReviewIteration: data.testReviewIteration,
           codeReviewIteration: data.codeReviewIteration,
+          verificationIteration: data.verificationIteration,
+          controls: {
+            ran: data.verification !== undefined,
+            total: controls.length,
+            blocking: blockingControls(controls).map((c) => c.name),
+          },
           blocking,
           coverage,
           historyLength: data.reviewHistory.length,
@@ -1996,12 +2868,19 @@ export const model = {
         };
 
         context.logger.info(
-          "Hydrate: state={state}, planV={planV}, testIter={testIter}, codeIter={codeIter}, blocking={blocking}, coverage={coverage}",
+          "Hydrate: state={state}, planV={planV}, testIter={testIter}, " +
+            "codeIter={codeIter}, controls={controls}, blocking={blocking}, " +
+            "coverage={coverage}",
           {
             state: summary.state,
             planV: summary.planVersion,
             testIter: summary.testReviewIteration,
             codeIter: summary.codeReviewIteration,
+            controls: summary.controls.ran
+              ? `${
+                summary.controls.total - summary.controls.blocking.length
+              }/${summary.controls.total} pass`
+              : "not run",
             blocking: `${blocking.critical}C+${blocking.high}H`,
             coverage: coverage.complete
               ? "complete"

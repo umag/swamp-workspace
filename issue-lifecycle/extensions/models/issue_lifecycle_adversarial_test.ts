@@ -39,10 +39,21 @@ import {
 } from "jsr:@std/assert@1";
 
 import {
+  AttestationSchema,
+  attestImpl,
+  blockingControls,
+  type CommandRunner,
+  type ControlSpec,
+  type FileReader,
   type Finding,
   type IssueState,
   IssueStateSchema,
+  joinRepoPath,
   model,
+  RUN_PERMISSION_ERROR,
+  runControl,
+  STDERR_TAIL_LIMIT,
+  verifyImpl,
 } from "./issue_lifecycle.ts";
 
 // ============================================================================
@@ -91,6 +102,8 @@ function createHarness(initial?: StoredRecord): Harness {
             "summary write must include a `state` field (compact summary)",
           );
         }
+      } else if (spec === "attestation") {
+        AttestationSchema.parse(data);
       } else {
         throw new Error(`Unknown resource spec: ${spec}`);
       }
@@ -121,6 +134,48 @@ async function run(
   const m = (model.methods as MethodMap)[method];
   if (!m) throw new Error(`unknown method: ${method}`);
   await m.execute(args, ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Verification helpers — scripted CommandRunner, nothing is ever spawned
+// ---------------------------------------------------------------------------
+
+/** Every control exits 0. */
+const okRunner: CommandRunner = () =>
+  Promise.resolve({ code: 0, stdout: "", stderr: "" });
+
+/** Every control exits non-zero with diagnostic output. */
+const failRunner: CommandRunner = () =>
+  Promise.resolve({ code: 1, stdout: "", stderr: "control rejected the tree" });
+
+/** A minimal required local control. */
+const TEST_CONTROLS: ControlSpec[] = [
+  {
+    name: "test",
+    command: "deno",
+    args: ["task", "test"],
+    cwd: ".",
+    tier: "local",
+    required: true,
+  },
+];
+
+/** Drive `implementing` → `verifying` with every control green. */
+function passVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    okRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
+}
+
+/** Drive `implementing` → `verifying` with a failing control. */
+function failVerification(h: Harness): Promise<unknown> {
+  return verifyImpl(
+    failRunner,
+    { controls: TEST_CONTROLS, repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
 }
 
 function defaultPlanArgs(): Record<string, unknown> {
@@ -189,6 +244,34 @@ async function withApprovedPlan(h: Harness): Promise<void> {
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("approve_plan", {}, h.ctx);
+}
+
+async function withImplementingState(h: Harness): Promise<void> {
+  await withApprovedPlan(h);
+  await run("implement", { branch: "feat/x", description: "" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("tests_approved", {}, h.ctx);
+}
+
+async function withResolvedState(h: Harness): Promise<void> {
+  await withImplementingState(h);
+  await passVerification(h);
+  await run("review_code", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("resolve_findings", { resolutions: {} }, h.ctx);
+}
+
+/** Reach `resolved` carrying a verification round whose control FAILED. */
+async function withResolvedAfterFailingControl(h: Harness): Promise<void> {
+  await withImplementingState(h);
+  await failVerification(h);
+  await run("review_code", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("resolve_findings", { resolutions: {} }, h.ctx);
 }
 
 // ============================================================================
@@ -378,6 +461,7 @@ Deno.test("IL-3: iterate has no model-enforced cap — 10 consecutive rounds all
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("tests_approved", {}, h.ctx);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
 
   for (let i = 0; i < 10; i++) {
@@ -390,6 +474,7 @@ Deno.test("IL-3: iterate has no model-enforced cap — 10 consecutive rounds all
     );
     await run("record_review", passReview("review-adversarial"), h.ctx);
     await run("iterate", { reason: `round ${i}`, source: "auto" }, h.ctx);
+    await passVerification(h);
     await run("review_code", {}, h.ctx);
   }
 
@@ -415,6 +500,7 @@ Deno.test("IL-4 (fixed): resolve_findings expands a shared description into one 
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("tests_approved", {}, h.ctx);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
 
   // Two DIFFERENT reviewers, two DIFFERENT findings, but the exact same
@@ -467,6 +553,7 @@ Deno.test("IL-4 (fixed): resolve_findings does not spuriously expand a single-re
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("tests_approved", {}, h.ctx);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
 
   await run(
@@ -500,6 +587,7 @@ Deno.test("IL-4 (fixed): resolve_findings stores a key that matches no current-r
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("tests_approved", {}, h.ctx);
+  await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
@@ -869,4 +957,226 @@ Deno.test("adversarial: reject_plan with an empty reason string is accepted (no 
   const s = h.getState()!;
   assertEquals(s.state, "planned");
   assertStringIncludes(s.reviewHistory[0].rejectReason ?? "", "");
+});
+
+// ============================================================================
+// Verification: the model now spawns subprocesses and reads files
+// ============================================================================
+//
+// Until 2026.08.31.1 this model was pure logic — no fetch, no subprocess, no
+// file I/O. `verify` and `attest` end that, and the control specs they act on
+// come from a repo file an agent edits. Everything below treats those specs
+// as hostile input.
+
+const LOCAL_CONTROL: ControlSpec = {
+  name: "test",
+  command: "deno",
+  args: ["task", "test"],
+  cwd: ".",
+  tier: "local",
+  required: true,
+};
+
+const neverRuns: CommandRunner = () => {
+  throw new Error("runner must not be invoked for this control");
+};
+
+Deno.test("adversarial: a control cwd escaping the repo root is rejected before anything spawns", async () => {
+  for (const cwd of ["../../etc", "a/../../b", ".."]) {
+    await assertRejects(
+      () => runControl(neverRuns, { ...LOCAL_CONTROL, cwd }, "/repo", "local"),
+      Error,
+      "must stay inside the repo",
+    );
+  }
+});
+
+Deno.test("adversarial: an absolute control cwd is rejected before anything spawns", async () => {
+  await assertRejects(
+    () =>
+      runControl(
+        neverRuns,
+        { ...LOCAL_CONTROL, cwd: "/etc" },
+        "/repo",
+        "local",
+      ),
+    Error,
+    "must be relative to the repo root",
+  );
+});
+
+Deno.test("adversarial: a control cwd is joined onto the repo root, never used bare", () => {
+  assertEquals(joinRepoPath("/repo", "scripts"), "/repo/scripts");
+  assertEquals(joinRepoPath("/repo/", "scripts"), "/repo/scripts");
+  assertEquals(joinRepoPath("/repo", "."), "/repo");
+  assertEquals(joinRepoPath("/repo", "./a/./b"), "/repo/a/b");
+});
+
+Deno.test("adversarial: a control the runtime cannot spawn is 'error', never a silent skip", async () => {
+  const spawnFails: CommandRunner = () =>
+    Promise.resolve({
+      code: null,
+      stdout: "",
+      stderr: "",
+      spawnError: "No such file or directory (os error 2)",
+    });
+  const result = await runControl(spawnFails, LOCAL_CONTROL, "/repo", "local");
+  assertEquals(result.status, "error");
+  assertEquals(result.exitCode, null);
+  assertStringIncludes(result.stderrTail, "os error 2");
+  // An unrunnable required control blocks exactly as a failing one does.
+  assertEquals(blockingControls([result]).length, 1);
+});
+
+Deno.test("adversarial: a managed control on a local runner is skipped AND still blocks", async () => {
+  const managed: ControlSpec = { ...LOCAL_CONTROL, tier: "managed" };
+  const result = await runControl(neverRuns, managed, "/repo", "local");
+  assertEquals(result.status, "skipped");
+  assertEquals(blockingControls([result]).length, 1);
+});
+
+Deno.test("adversarial: an optional control that fails does not block", async () => {
+  const optional: ControlSpec = { ...LOCAL_CONTROL, required: false };
+  const failing: CommandRunner = () =>
+    Promise.resolve({ code: 3, stdout: "", stderr: "nope" });
+  const result = await runControl(failing, optional, "/repo", "local");
+  assertEquals(result.status, "fail");
+  assertEquals(blockingControls([result]).length, 0);
+});
+
+Deno.test("adversarial: a runner that throws propagates — a control round never half-succeeds silently", async () => {
+  const h = createHarness();
+  await withImplementingState(h);
+  const throwing: CommandRunner = () => {
+    throw new Error(RUN_PERMISSION_ERROR);
+  };
+  await assertRejects(
+    () =>
+      verifyImpl(
+        throwing,
+        { controls: [LOCAL_CONTROL], repoDir: "/repo", runner: "local" },
+        h.ctx,
+      ),
+    Error,
+    "allow-run is not granted",
+  );
+  // State was never advanced — the tree is not recorded as verified.
+  assertEquals(h.getState()!.state, "implementing");
+});
+
+Deno.test("adversarial: control stderr is truncated to a bounded tail", async () => {
+  const noisy: CommandRunner = () =>
+    Promise.resolve({ code: 1, stdout: "", stderr: "x".repeat(50_000) });
+  const result = await runControl(noisy, LOCAL_CONTROL, "/repo", "local");
+  assertEquals(result.stderrTail.length, STDERR_TAIL_LIMIT);
+});
+
+Deno.test("adversarial: attest refuses when a required control did not pass", async () => {
+  const h = createHarness();
+  await withResolvedAfterFailingControl(h);
+  await assertRejects(
+    () =>
+      run(
+        "attest",
+        { commitSha: "a".repeat(40), repoDir: "/repo", configPaths: [] },
+        h.ctx,
+      ),
+    Error,
+    "required control(s) did not pass",
+  );
+  assertEquals(h.getState()!.state, "resolved");
+});
+
+Deno.test("adversarial: attest refuses when no verification round was ever recorded", async () => {
+  const h = createHarness();
+  await withReviewingPlan(h);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("approve_plan", {}, h.ctx);
+  await run("implement", { branch: "feat/x", description: "" }, h.ctx);
+  await run("review_tests", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("tests_approved", {}, h.ctx);
+  // Forge the state straight into `resolved` — as a buggy skill or a hand
+  // edit could — and confirm the model still refuses to attest.
+  const forged = { ...h.getState()!, state: "resolved" };
+  const h2 = createHarness(forged as unknown as Record<string, unknown>);
+  await assertRejects(
+    () =>
+      run(
+        "attest",
+        { commitSha: "a".repeat(40), repoDir: "/repo", configPaths: [] },
+        h2.ctx,
+      ),
+    Error,
+    "no verification round recorded",
+  );
+});
+
+Deno.test("adversarial: attest refuses when a declared config path cannot be read", async () => {
+  const h = createHarness();
+  await withResolvedState(h);
+  const missing: FileReader = () => {
+    throw new Deno.errors.NotFound("gone");
+  };
+  await assertRejects(
+    () =>
+      attestImpl(
+        missing,
+        {
+          commitSha: "a".repeat(40),
+          repoDir: "/repo",
+          configPaths: ["agent-constraints/verification-controls.md"],
+          producedBy: "test",
+        },
+        h.ctx,
+      ),
+    Error,
+    "could not be read",
+  );
+  // A manifest that silently omitted the entry would validate against a tree
+  // where the constraints file had been deleted.
+  assertEquals(h.getState()!.state, "resolved");
+});
+
+Deno.test("adversarial: attest refuses while a blocking finding is still open", async () => {
+  const h = createHarness();
+  await withImplementingState(h);
+  await verifyImpl(
+    () => Promise.resolve({ code: 0, stdout: "", stderr: "" }),
+    { controls: [LOCAL_CONTROL], repoDir: "/repo", runner: "local" },
+    h.ctx,
+  );
+  await run("review_code", {}, h.ctx);
+  await run("record_review", passReview("review-code"), h.ctx);
+  await run("record_review", passReview("review-adversarial"), h.ctx);
+  await run("resolve_findings", { resolutions: {} }, h.ctx);
+  // resolve_findings clears the round; re-open a CRITICAL by recording one
+  // against the now-resolved state via a fresh harness.
+  const withOpen = {
+    ...h.getState()!,
+    reviews: [{
+      reviewer: "review-code",
+      verdict: "FAIL",
+      findings: [{
+        reviewer: "review-code",
+        severity: "CRITICAL",
+        description: "still broken",
+        status: "open",
+      }],
+      timestamp: new Date().toISOString(),
+    }],
+  };
+  const h2 = createHarness(withOpen as unknown as Record<string, unknown>);
+  await assertRejects(
+    () =>
+      run(
+        "attest",
+        { commitSha: "a".repeat(40), repoDir: "/repo", configPaths: [] },
+        h2.ctx,
+      ),
+    Error,
+    "CRITICAL",
+  );
 });

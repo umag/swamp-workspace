@@ -155,9 +155,53 @@ jobs:
           echo "skills=$skills" >> "$GITHUB_OUTPUT"
           echo "Skills: $skills"
 
+  attestation:
+    name: attestation (validate, don't re-execute)
+    runs-on: ubuntu-latest
+    outputs:
+      valid: ${{ steps.validate.outputs.valid }}
+    # Deliberately NOT `needs: discover` — this job answers a question about
+    # the commit, not about which extensions changed, and `deno-check` gates
+    # on it, so it must not sit behind another job's failure.
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+
+      # The verification loop (issue-lifecycle Phase 4c) runs fmt/lint/check/
+      # test BEFORE the PR is opened and records the result in
+      # `.attestations/<sha>.json`. When that manifest proves the controls ran
+      # against exactly this commit under exactly these configs, re-running
+      # them here buys nothing.
+      #
+      # FAILS CLOSED TO RE-EXECUTION. Missing manifest, unreadable JSON,
+      # changed config checksum, wrong sha, a control that did not pass — all
+      # emit `valid=false`, which makes `deno-check` run the full matrix. The
+      # validator never emits `valid=true` for a check it could not perform,
+      # and it exits 0 either way: an unattested PR is normal, not a failure.
+      - name: Validate the attestation for this commit
+        id: validate
+        working-directory: scripts
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: deno task attestation --head-sha "$HEAD_SHA" --repo-dir ..
+
   deno-check:
     name: deno (fmt, lint, check, test)
-    needs: discover
+    needs: [discover, attestation]
+    # Skipped ONLY when a manifest validated against this exact commit. Any
+    # other outcome — including the attestation job itself failing — runs the
+    # matrix, because `!= 'true'` is true for 'false', '' and a skipped job.
+    #
+    # `!cancelled()` is what lets this run despite a FAILED `needs` job, which
+    # is the point for `attestation` — but `discover` must still have
+    # succeeded or `fromJson()` below has no matrix to expand.
+    if: >-
+      !cancelled()
+      && needs.discover.result == 'success'
+      && needs.attestation.outputs.valid != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -563,7 +607,17 @@ jobs:
     name: extension-publish (on manifest version bump)
     runs-on: ubuntu-latest
     needs: [deno-check, release-notes-cap]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    # `deno-check` is SKIPPED when a valid attestation covered the commit, and
+    # a skipped `needs` would skip this job too — silently stopping publishes
+    # on exactly the PRs that verified themselves best. So gate on the result
+    # explicitly: publish when deno-check succeeded OR was skipped, never when
+    # it failed. (`needs['deno-check']` — the hyphen rules out dot access.)
+    if: >-
+      !cancelled()
+      && github.event_name == 'push'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      && needs['deno-check'].result != 'failure'
+      && needs['release-notes-cap'].result == 'success'
     steps:
       - uses: actions/checkout@v6
         with:

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/issue-lifecycle"
-version: "2026.08.19.1"
+version: "2026.08.31.1"
 description: |
   Issue lifecycle model with 9 bundled Claude Code skills for DDD, TDD,
   moldable development, and parallel code review.
@@ -24,12 +24,17 @@ description: |
   writing_tests ──[review_tests]──> reviewing_tests
   reviewing_tests ──[iterate_tests]──> writing_tests  (autonomous TDD sub-loop)
   reviewing_tests ──[tests_approved]──> implementing  (autonomous gate)
-  implementing ──[review_code]──> code_reviewing
+  implementing ──[verify]──> verifying
+  verifying ──[iterate_verification]──> implementing  (autonomous loop)
+  verifying ──[review_code]──> code_reviewing  (the ONLY path onward)
   code_reviewing ──[resolve_findings]──> resolved
   code_reviewing ──[iterate]──> implementing  (autonomous loop)
   resolved ──[iterate]──> implementing
+  resolved ──[attest]──> attested  (optional)
   resolved ──[harvest]──> harvested  (optional)
   resolved ──[complete]──> complete
+  attested ──[harvest]──> harvested
+  attested ──[complete]──> complete
   harvested ──[complete]──> complete
   ```
 
@@ -39,6 +44,20 @@ description: |
   `close` works from any state. `start` refuses to overwrite an in-flight
   issue (any state other than complete/closed) unless `force:true` is
   passed.
+
+  ## Pre-PR verification and attestation
+
+  `verify` runs the repository's declared mechanical controls (fmt, lint,
+  typecheck, tests) in one fan-out pass and records per-control status,
+  exit code, duration and runner. `review_code` is guarded on `verifying`,
+  so no path reaches code review without running the controls. A control
+  that could not be executed is recorded as `error` — never as a skip —
+  and blocks exactly as a failure does.
+
+  `attest` emits a manifest (commit sha, SHA-256 config checksums, control
+  results, per-reviewer finding counts) that CI validates in place of
+  re-executing the controls. It asserts every gate before writing and
+  refuses otherwise; it does not approve anything.
 
   ## Methods
 
@@ -61,10 +80,16 @@ description: |
   - `tests_approved` — tests clean → write code (autonomous gate; supports
     `override_reason` for explicit human force-approve after 5-iteration cap,
     bypassing both the blocking-findings and FAIL-verdict gates)
-  - `review_code` — enter code review phase
+  - `verify` — run every declared mechanical control in one pass (enters
+    `verifying`); controls come from
+    `agent-constraints/verification-controls.md`, never hardcoded
+  - `iterate_verification` — loop back on a failing control (bumps
+    verificationIteration)
+  - `review_code` — enter code review phase (requires `verifying`)
   - `resolve_findings` — record resolutions keyed per matching reviewer,
     snapshot round
   - `iterate` — return to implementation (bumps codeReviewIteration)
+  - `attest` — emit the attestation manifest CI validates (enters `attested`)
   - `harvest` — record UAT/KB improvement proposals
   - `complete` — mark done
   - `close` — abandon from any state
