@@ -14,6 +14,23 @@ inputs:
       WITHOUT the leading "v" (e.g. "20260815.023608.0-sha.a648c130").
     required: false
     default: "stable"
+  attempts:
+    description: >
+      How many times to run the installer before giving up. Retries exist
+      for ONE failure class: the "stable" alias on artifacts.swamp-club.com
+      is two objects (the tarball and its .sha256) that upstream updates
+      non-atomically on every release, so a run that lands inside that
+      window downloads a tarball from one release and a checksum from the
+      other and the installer dies with "SHA-256 checksum verification
+      failed" (seen 2026-09-01, ~30 minutes after v20260901.204821.0
+      shipped). The window closes on its own; waiting and retrying is the
+      whole fix.
+    required: false
+    default: "5"
+  retry-delay:
+    description: Seconds to wait between installer attempts.
+    required: false
+    default: "20"
 
 runs:
   using: composite
@@ -22,6 +39,8 @@ runs:
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
+        ATTEMPTS: ${{ inputs.attempts }}
+        RETRY_DELAY: ${{ inputs.retry-delay }}
       run: |
         set -eo pipefail
         # The official installer is the supported distribution channel and is
@@ -31,8 +50,25 @@ runs:
         dest="${RUNNER_TEMP}/swamp-bin"
         mkdir -p "$dest"
         echo "Installing swamp (${VERSION}) from https://swamp.club/install.sh"
+        # The installer is fetched once so every attempt runs the SAME script,
+        # and so a failed attempt is attributable to the artifacts, not to a
+        # second installer download that happened to differ.
+        installer="${RUNNER_TEMP}/swamp-install.sh"
         curl -fsSL --retry 3 --retry-delay 2 https://swamp.club/install.sh \
-          | sh -s -- -d "$dest" -V "$VERSION"
+          -o "$installer"
+        attempt=1
+        until sh "$installer" -d "$dest" -V "$VERSION"; do
+          if [ "$attempt" -ge "$ATTEMPTS" ]; then
+            echo "::error::swamp installer failed ${ATTEMPTS} times in a row for release '${VERSION}' — not a transient alias race, see the installer output above"
+            exit 1
+          fi
+          echo "::warning::swamp installer attempt ${attempt}/${ATTEMPTS} failed (usually the stable tarball/.sha256 alias race right after an upstream release); retrying in ${RETRY_DELAY}s"
+          # A half-installed binary from a failed attempt must not satisfy the
+          # -x check below on a later attempt that also failed.
+          rm -f "$dest/swamp"
+          sleep "$RETRY_DELAY"
+          attempt=$((attempt + 1))
+        done
         # Fail loudly here rather than letting a later step report the far more
         # confusing "Failed to spawn 'swamp': entity not found".
         if [ ! -x "$dest/swamp" ]; then
