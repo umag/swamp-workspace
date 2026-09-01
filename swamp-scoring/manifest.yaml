@@ -1,0 +1,35 @@
+manifestVersion: 1
+name: "@magistr/swamp-scoring"
+version: "2026.08.18.1"
+description: |
+  Swamp Club scoring tracker — scrapes user profiles and the leaderboard from
+  swamp-club.com, compares users head-to-head, tracks scoring deltas over time,
+  reports top operations by points, and sends Telegram alerts.
+
+  Model:
+  - `@magistr/swamp-scoring` — `sync` scrapes profiles and activity for all
+    configured users. `leaderboard` fetches the public leaderboard. `compare`
+    ranks tracked users by score and daily rate. `delta` computes scoring
+    changes since the last snapshot. `top-ops` ranks operations by total points.
+    `alert` sends a Telegram summary via a configured @magistr/telegram/send
+    instance.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/swamp_scoring.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - swamp-club
+  - scoring
+  - leaderboard
+  - analytics
+  - telegram

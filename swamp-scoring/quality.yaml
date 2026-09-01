@@ -1,0 +1,29 @@
+schemaVersion: 1
+suites:
+  contract-fixture:
+    status: todo
+    files: []
+    notes: "Profile/activity HTML fixture tests"
+  methods:
+    status: todo
+    files: []
+    notes: "Method success/failure paths with stubbed fetch"
+  adversarial:
+    status: todo
+    files: []
+    notes: "Malformed HTML, injection, edge cases"
+  coverage:
+    status: todo
+    files: []
+    notes: "Guard coverage from code review"
+  property-invariant-flow:
+    status: todo
+    files: []
+    notes: "Property tests for parsers with fast-check"
+docs:
+  readme:
+    status: done
+    file: README.md
+  changelog:
+    status: todo
+    file: CHANGELOG.md
