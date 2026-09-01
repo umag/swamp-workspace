@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026.09.01.1
+
+Re-release of 2026.08.19.1, whose publish never reached the registry — the `extension-publish` job only fires on a version bump, so a version that fails to publish stays stranded until the next one. Content is unchanged from 2026.08.19.1; its notes are carried forward below so the registry keeps a full record.
+
+- Version bump and smoke test
+
 ## 2026.08.19.1
 
 - Version bump and smoke test

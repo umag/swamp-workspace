@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/mongodb-datastore"
-version: "2026.08.31.1"
+version: "2026.09.01.1"
 description: "MongoDB-backed swamp datastore — distributed locks with TTL, heartbeat, and nonce fencing, plus a manifest+content-addressed-blob sync protocol that streams the datastore tier as inline-bytes cursor batches. Blobs over 15 MB are transparently chunked across multiple docs so they fit under MongoDB's 16 MB BSON limit. Scoped by tenant + repo namespace. Requires MongoDB 4.0+ as a replica set."
 repository: https://github.com/umag/swamp-mongodb-datastore
 paths:
