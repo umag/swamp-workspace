@@ -1,0 +1,95 @@
+# Quality declaration for @magistr/spotify-data.
+#
+# 2026.08.02.1: first release. All five suites are present from the start —
+# this extension is new, so it carries no Phase D backlog and is deliberately
+# NOT on quality-allowlist.txt.
+#
+# Role map (each file assigned to exactly ONE honest role):
+#   contract-fixture        -> spotify_data_test.ts (pins the parse boundary
+#                              against the export RECORD SHAPE, via the
+#                              hand-authored fixture; the privacy pins live
+#                              here because the fixture carries all four
+#                              trail fields on every record so their absence
+#                              from a parsed row is observable)
+#   methods                 -> spotify_data_methods_test.ts (both methods'
+#                              success and failure paths against real temp-dir
+#                              exports — the filesystem is the only dependency
+#                              worth stubbing, since there is no network call
+#                              and no credential)
+#   adversarial             -> spotify_data_adversarial_test.ts (hostile export
+#                              content, the privacy boundary under attack, and
+#                              resource-name/key collision)
+#   coverage                -> spotify_data_coverage_test.ts (one test per
+#                              guard, e.g. the empty-episode_name case that
+#                              would otherwise classify every music play as a
+#                              podcast and import nothing)
+#   property-invariant-flow -> spotify_data_property_test.ts (fast-check@4.8.0:
+#                              no-loss, idempotence, order independence, key
+#                              soundness, privacy totality) plus the reports'
+#                              own suite, which is where the one-to-one
+#                              matching and threshold invariants are pinned
+#
+# The `canary` block is `na` rather than `backlog`: a canary runs a method
+# against a live instance, and this model's only input is a personal GDPR
+# export. There is no non-personal export to point a canary at, and pointing
+# one at a real export would defeat the privacy boundary this extension is
+# built around. That is permanent, not deferred.
+schemaVersion: 1
+extension: spotify-data
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/spotify_data_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/spotify_data_methods_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/spotify_data_adversarial_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/spotify_data_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/spotify_data_property_test.ts
+      - extensions/reports/spotify_stats_test.ts
+watch:
+  state: na
+  justification: >-
+    nothing to watch: this model has no dependency to track — it imports a
+    local file with the standard library and zod, calls no API, and pins no
+    upstream package whose release could break it. Spotify's export FORMAT can
+    change, but Spotify publishes no versioned changelog or feed for it, so
+    there is no source a release-watch could subscribe to; the contract-fixture
+    suite is what catches a format change, at import time
+canary:
+  state: na
+  justification: >-
+    no live canary is possible: the only input is a personal GDPR export, and
+    there is no non-personal export to point a canary at. Pointing one at a
+    real export would put a location and device trail into CI, defeating the
+    privacy boundary this extension is built around
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: na
+    justification: >-
+      spotify-data bundles no Claude skill — it is a two-method offline
+      importer plus two model-scope reports, with nothing skill-shaped to
+      document
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"
