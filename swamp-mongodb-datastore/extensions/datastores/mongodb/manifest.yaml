@@ -1,10 +1,11 @@
 name: mongodb-datastore
 type: datastore
 collective: "@magistr"
-version: 0.2.2
+version: 0.3.0
 description: |
   MongoDB-backed swamp datastore. Distributed locks with TTL + heartbeat +
-  nonce fencing, plus GridFS-backed byte sync of the datastore tier between
-  a local cache and MongoDB. Scoped by tenant + repo namespace. Requires
-  MongoDB 4.0+ running as a replica set.
+  nonce fencing, plus manifest + content-addressed blob sync of the datastore
+  tier between a local cache and MongoDB. Dirty tracking rides an append-only
+  journal with ancestor coalescing, so marking a file dirty is O(1). Scoped by
+  tenant + repo namespace. Requires MongoDB 4.0+ running as a replica set.
 entrypoint: mod.ts

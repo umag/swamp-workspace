@@ -92,9 +92,8 @@ export function createLock(
 
   const collectionName = lockCollectionName(cfg);
   let myNonce: string | undefined;
-  // setInterval types as Timeout (Node typings arrive via the mongodb package)
-  // under deno 2.9.6/TS6, and as number under the older pin. ReturnType keeps
-  // this correct on both rather than pinning one runtime's shape.
+  // Not `number`: the mongodb driver pulls in Node's DOM-incompatible timer
+  // typings, where setInterval returns a Timeout object.
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
   async function getCollection(): Promise<Collection<LockDoc>> {
