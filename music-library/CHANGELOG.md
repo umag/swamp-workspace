@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026.09.01.1
+
+Re-release of 2026.08.19.2, whose publish never reached the registry — the push
+that carried it also had an unrelated test failure in another extension, which
+skips the whole `extension-publish` job, and that job only fires on a version
+bump. Content is unchanged from 2026.08.19.2; its notes are carried forward
+below so the registry keeps a full record.
+
+Fixes `music-wanted-headphones-instance-implicit`. `model.version`/
+`manifest.yaml` move `2026.08.19.1` -> `2026.08.19.2`.
+
+**NOT BREAKING**: `headphonesInstance` and `musicbrainzInstance` become workflow
+inputs defaulting to `headphones` and `musicbrainz` — the values they were
+hardcoded to — so a run that passes neither binds exactly what it bound before.
+An operator whose headphones instance is named something else now retargets it
+with `swamp workflow run music-wanted --input headphonesInstance=<name>`, with
+no file edit, instead of hitting a gate that tells them to hand-edit every
+literal in the file.
+
+The `music-wanted` workflow's resolve step passed only `refresh` to
+`resolve-artists`, so its `headphonesInstance`/`musicbrainzInstance` arguments
+bound silently to their model-side defaults while two gate recovery messages
+told the operator to check "the headphones seed instance" — an instance the
+workflow never named, passed, or verified. The resolve step now passes
+`headphonesInstance: ${{ inputs.headphonesInstance }}` and
+`musicbrainzInstance: ${{ inputs.musicbrainzInstance }}` explicitly, the
+`wanted` step now passes `musicbrainzInstance` explicitly, and a new gate 9
+(`preflight-seed`, high, `allowFailure: false`) asserts the headphones `artists`
+seed is present and non-empty before the sync runs. The two retired recovery
+messages now name the instance the workflow actually passes and verifies, and no
+longer point at an instance the workflow never mentions elsewhere.
+
+Every site that names the headphones instance — the gate's `expr`, its own
+`data.query` measurements, both recovery messages, and the two step arguments —
+reads the one input, so a retarget moves them together. Sites inside an already
+`${{ }}`-wrapped interpolation use CEL string concatenation
+(`'modelName == "' + inputs.headphonesInstance + '"'`) because `${{ }}` cannot
+nest; the structural test normalizes both forms to the input name they read, so
+a site retargeted to a different input, or hardcoded back to a bare literal, is
+still caught.
+
+The three step `modelIdOrName` targets stay plain scalars: a dynamic step target
+does not remove swamp's step-input validation, it keeps the check and makes it
+report `passed: true` while verifying nothing. Renaming the `music` or
+`musicbrainz` instance is still a file edit, per the README's ordered procedure.
+
+No schema or resource shape change. `swamp workflow validate` reports the same
+22 check names as before this change, and the added workflow inputs cost zero
+validation checks (measured).
+
 ## 2026.08.19.2
 
 Fixes `music-wanted-headphones-instance-implicit`. `model.version`/

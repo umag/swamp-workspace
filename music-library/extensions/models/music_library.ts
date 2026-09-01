@@ -2340,7 +2340,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.08.19.2",
+  version: "2026.09.01.1",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2388,6 +2388,13 @@ export const model = {
       toVersion: "2026.08.19.2",
       description:
         "Fixes music-wanted-headphones-instance-implicit: the music-wanted workflow's resolve step passed only refresh to resolve-artists, so its headphonesInstance/musicbrainzInstance arguments bound silently to their model-side defaults ('headphones'/'musicbrainz') while two gate recovery messages told the operator to check 'the headphones seed instance' -- an instance the workflow never named, passed or verified. headphonesInstance and musicbrainzInstance are now WORKFLOW INPUTS defaulting to 'headphones'/'musicbrainz' (the values they were hardcoded to, so a run passing neither binds exactly what it bound before), the resolve and wanted steps bind them explicitly, every gate query and recovery message that names the headphones instance reads that one input, and a new preflight-seed gate asserts the headphones seed is present and non-empty before the ~35-minute sync is committed to. An operator whose headphones instance is named something else retargets with --input headphonesInstance=<name> rather than hand-editing the file. The three step modelIdOrName targets stay plain scalars: a dynamic target keeps swamp's step-input check while making it verify nothing. No schema or resource shape change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.08.19.2",
+      toVersion: "2026.09.01.1",
+      description:
+        "Re-release of 2026.08.19.2 with identical content. That version was declared on master but never reached the registry: the push that carried it also had an unrelated test failure in another extension, which skips the whole extension-publish job, and the job only fires again on a version bump. No schema or resource shape change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

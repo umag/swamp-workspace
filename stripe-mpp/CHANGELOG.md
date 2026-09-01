@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.09.01.1
+
+Re-release of 2026.08.19.1 (beta), whose publish never reached the registry —
+the repo-wide 2026.08.19.1 bump's `extension-publish` job did not complete for
+this package, and that job only fires on a version bump. Content is unchanged
+from 2026.08.19.1; its notes are carried forward below.
+
+- Version bump and smoke test
+
 ## 2026.08.19.1
 
 - Version bump and smoke test
