@@ -92,28 +92,59 @@ function sortedKeys(obj: Record<string, unknown> | undefined): string[] {
   return Object.keys(obj ?? {}).sort();
 }
 
+// Every way the workflow can name an instance inside a folded scalar, both
+// resolving to the same workflow input:
+//   modelName == "${{ inputs.headphonesInstance }}"   (plain prose / expr)
+//   modelName == "' + inputs.headphonesInstance + '"  (inside a ${{ }} block,
+//                                                      where nesting is illegal)
+// Returns the INPUT NAME each site reads, so a site retargeted to a different
+// input -- or hardcoded back to a bare literal -- is still visible.
 function extractInstanceLiterals(text: string): string[] {
   const re = /modelName == "([^"]*)"/g;
   const found: string[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    found.push(m[1]);
+    found.push(inputNameOf(m[1]));
   }
   return found;
 }
 
-// The single source of truth for "which headphones instance is this run
-// wired to": read from the resolve step's own input, never hardcoded, so a
-// legitimate retarget of the literal stays green everywhere this is used
-// (T6 and T8) instead of requiring two independent edits to stay in sync.
+// Normalizes one captured instance site to the input name it reads, or
+// returns it unchanged when it is a bare literal (which is then reported as a
+// mismatch by the caller, since the resolve step binds an input reference).
+function inputNameOf(site: string): string {
+  const templated = /^\$\{\{\s*inputs\.([A-Za-z0-9_]+)\s*\}\}$/.exec(site);
+  if (templated) return templated[1];
+  const concatenated = /^'\s*\+\s*inputs\.([A-Za-z0-9_]+)\s*\+\s*'$/.exec(site);
+  if (concatenated) return concatenated[1];
+  return site;
+}
+
+// The single source of truth for "which input is this run's headphones
+// instance wired to": read from the resolve step's own binding, never
+// hardcoded, so a legitimate rename of the input stays green everywhere this
+// is used (T6 and T8) instead of requiring two independent edits to stay in
+// sync.
 function headphonesInstance(doc: WorkflowDoc): string {
   const resolveStep = stepByName(doc, "resolve-artists");
   const hp = (resolveStep.task as ModelMethodTask).inputs?.headphonesInstance;
   assert(
     typeof hp === "string" && hp.length > 0,
-    "resolve-artists.headphonesInstance must be a non-empty plain string",
+    "resolve-artists.headphonesInstance must be a non-empty string",
   );
-  return hp;
+  return inputNameOf(hp);
+}
+
+// The declared default of one workflow input -- what an operator who passes
+// nothing actually gets. This is what keeps parameterization non-breaking.
+function inputDefault(doc: WorkflowDoc, name: string): unknown {
+  const props = (doc as unknown as {
+    inputs?: { properties?: Record<string, { default?: unknown }> };
+  }).inputs?.properties;
+  assert(props, "workflow declares no inputs.properties block");
+  const prop = props[name];
+  assert(prop, `workflow declares no input named "${name}"`);
+  return prop.default;
 }
 
 Deno.test("music-wanted workflow: name is exactly @magistr/music-wanted-sequence", async () => {
@@ -285,7 +316,7 @@ Deno.test("music-wanted workflow: the three model_method steps target the plain 
   );
 });
 
-Deno.test("music-wanted workflow: the three explicit instance bindings (headphonesInstance x2, musicbrainzInstance x1) are plain literals, and each model_method step's inputs carry exactly the expected key set", async () => {
+Deno.test("music-wanted workflow: the three explicit instance bindings (headphonesInstance x2, musicbrainzInstance x1) each read a declared input whose DEFAULT is the original literal -- parameterized, and non-breaking for an operator who passes nothing", async () => {
   const doc = await loadWorkflow();
 
   const resolveStep = stepByName(doc, "resolve-artists");
@@ -296,16 +327,42 @@ Deno.test("music-wanted workflow: the three explicit instance bindings (headphon
   const syncInputs = (syncStep.task as ModelMethodTask).inputs ?? {};
   const wantedInputs = (wantedStep.task as ModelMethodTask).inputs ?? {};
 
-  assertEquals(resolveInputs.headphonesInstance, "headphones");
-  assertEquals(resolveInputs.musicbrainzInstance, "musicbrainz");
-  assertEquals(wantedInputs.musicbrainzInstance, "musicbrainz");
+  // The bindings are input references, not bare literals -- that is what
+  // lets `--input headphonesInstance=<name>` retarget a run with no file
+  // edit, instead of the operator hitting preflight-seed and being told to
+  // hand-edit every literal in this file.
+  assertEquals(
+    resolveInputs.headphonesInstance,
+    "${{ inputs.headphonesInstance }}",
+  );
+  assertEquals(
+    resolveInputs.musicbrainzInstance,
+    "${{ inputs.musicbrainzInstance }}",
+  );
+  assertEquals(
+    wantedInputs.musicbrainzInstance,
+    "${{ inputs.musicbrainzInstance }}",
+  );
+
+  // ...and each referenced input DEFAULTS to the literal that used to be
+  // hardcoded, so a run that passes nothing binds exactly what it bound
+  // before this change. A mutation that parameterized the binding but
+  // dropped (or changed) the default would silently retarget every existing
+  // operator's run -- the precise breakage this test exists to prevent.
+  assertEquals(
+    inputDefault(doc, "headphonesInstance"),
+    "headphones",
+    "headphonesInstance's default must stay the pre-parameterization literal",
+  );
+  assertEquals(
+    inputDefault(doc, "musicbrainzInstance"),
+    "musicbrainz",
+    "musicbrainzInstance's default must stay the pre-parameterization literal",
+  );
 
   for (
     const [label, value] of [
-      [
-        "resolve-artists.headphonesInstance",
-        resolveInputs.headphonesInstance,
-      ],
+      ["resolve-artists.headphonesInstance", resolveInputs.headphonesInstance],
       [
         "resolve-artists.musicbrainzInstance",
         resolveInputs.musicbrainzInstance,
@@ -314,9 +371,10 @@ Deno.test("music-wanted workflow: the three explicit instance bindings (headphon
     ] as const
   ) {
     assert(
-      typeof value === "string" && !value.includes("${{"),
-      `${label} must be a plain literal string, never a dynamic ` +
-        `\${{ ... }} expression, got: ${String(value)}`,
+      typeof value === "string" &&
+        /^\$\{\{\s*inputs\.[A-Za-z0-9_]+\s*\}\}$/.test(value),
+      `${label} must be exactly one \${{ inputs.<name> }} reference and ` +
+        `nothing else, got: ${String(value)}`,
     );
   }
 
@@ -477,6 +535,11 @@ Deno.test("music-wanted workflow: the two headphones recovery messages name the 
     );
   }
 
+  // Both message sites name the instance by TEMPLATE reference, the form an
+  // operator's --input actually reaches; `hp` is the input name, so build
+  // the site text from it rather than hardcoding either half.
+  const hpSite = "${{ inputs." + hp + " }}";
+
   // Clauses (ii)/(iii), per site, derived from HP rather than hardcoded --
   // a hardcoded "headphones" would go red on a legitimate retarget and,
   // being satisfied by the new gate's own message alone, could not see
@@ -489,16 +552,16 @@ Deno.test("music-wanted workflow: the two headphones recovery messages name the 
   ) {
     const message = (step.task as AssertTask).message;
     assert(
-      message.includes(`instance "${hp}"`),
+      message.includes(`instance "${hpSite}"`),
       `step "${step.name}"'s message must name the instance the resolve ` +
-        `step passes, instance "${hp}"`,
+        `step passes, instance "${hpSite}"`,
     );
     assert(
       message.includes(
-        `modelName == "${hp}" && specName == "artists" && isLatest`,
+        `modelName == "${hpSite}" && specName == "artists" && isLatest`,
       ),
       `step "${step.name}"'s message must carry a runnable query naming ` +
-        `instance "${hp}"`,
+        `instance "${hpSite}"`,
     );
   }
 });

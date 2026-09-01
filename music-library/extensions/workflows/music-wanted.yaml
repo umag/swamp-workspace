@@ -87,6 +87,22 @@ tags: {}
 version: 1
 inputs:
   properties:
+    headphonesInstance:
+      type: string
+      default: headphones
+      description: >-
+        The @magistr/headphones instance resolve-artists seeds its artist
+        name -> MBID map from, and the one gate 9 (preflight-seed) checks.
+        Defaults to `headphones`; pass your own name if your instance is
+        called something else — no file edit needed.
+    musicbrainzInstance:
+      type: string
+      default: musicbrainz
+      description: >-
+        The @magistr/musicbrainz instance resolve-artists and wanted read
+        through. Defaults to `musicbrainz`. Note this does NOT retarget the
+        sync job's own model_method step, whose modelIdOrName must stay a
+        plain scalar; retarget that one in the file if you rename it.
     dryRun:
       type: boolean
       default: false
@@ -169,38 +185,44 @@ jobs:
         task:
           type: assert
           expr: >-
-            size(data.query('modelName == "headphones" && specName ==
-            "artists" && isLatest')) > 0 && size(data.query('modelName ==
-            "headphones" && specName == "artists" && isLatest',
+            size(data.query('modelName == "${{ inputs.headphonesInstance
+            }}" && specName == "artists" && isLatest')) > 0 &&
+            size(data.query('modelName == "${{ inputs.headphonesInstance
+            }}" && specName == "artists" && isLatest',
             'attributes').filter(r, "artists" in r && size(r.artists) >
             0)) > 0
           message: >-
             preflight-seed: music-wanted stopped BEFORE the ~35-minute
-            sync: the headphones seed on instance "headphones" is not
-            usable, so resolve-artists would seed from nothing and every
-            library artist would fall back to MusicBrainz search. Measured
-            now: ${{ size(data.query('modelName == "headphones" &&
-            specName == "artists" && isLatest')) }} artists rows on
-            instance "headphones", ${{ size(data.query('modelName ==
-            "headphones" && specName == "artists" && isLatest',
+            sync: the headphones seed on instance "${{
+            inputs.headphonesInstance }}" is not usable, so resolve-artists
+            would seed from nothing and every library artist would fall
+            back to MusicBrainz search. Measured now: ${{
+            size(data.query('modelName == "' + inputs.headphonesInstance +
+            '" && specName == "artists" && isLatest')) }} artists rows on
+            instance "${{ inputs.headphonesInstance }}", ${{
+            size(data.query('modelName == "' + inputs.headphonesInstance +
+            '" && specName == "artists" && isLatest',
             'attributes').filter(r, "artists" in r && size(r.artists) >
             0)) }} of them carrying a non-empty artists list, ${{
-            size(data.query('modelName == "headphones" && specName ==
-            "artists" && isLatest', 'attributes').filter(r, "total" in r
-            && r.total > 0)) }} reporting a non-zero total. ${{
-            size(data.query('modelName == "headphones" && specName ==
-            "artists" && isLatest')) == 0 ? 'Zero rows means no artists
-            resource exists on a model named "headphones". Two causes.
-            (a) Your headphones instance is named something else: retarget
-            every headphones literal in this file following "Retargeting
-            instance names" in the music-library README. (b) The index was
-            never built: run swamp model method run headphones get-index'
-            : 'The artists resource exists but no row carries a non-empty
-            artists list. A non-zero total above means the stored row
-            shape is wrong; a zero total means headphones itself reported
-            an empty library. Rebuild either way: run swamp model method
-            run headphones get-index' }} Inspect what is there: swamp data
-            query 'modelName == "headphones" && specName == "artists" &&
+            size(data.query('modelName == "' + inputs.headphonesInstance +
+            '" && specName == "artists" && isLatest',
+            'attributes').filter(r, "total" in r && r.total > 0)) }}
+            reporting a non-zero total. ${{ size(data.query('modelName ==
+            "' + inputs.headphonesInstance + '" && specName == "artists" &&
+            isLatest')) == 0 ? 'Zero rows means no artists resource exists
+            on a model named "' + inputs.headphonesInstance + '". Two
+            causes. (a) Your headphones instance is named something else:
+            re-run naming it, swamp workflow run music-wanted --input
+            headphonesInstance=<your-instance> — no file edit needed. (b)
+            The index was never built: run swamp model method run ' +
+            inputs.headphonesInstance + ' get-index' : 'The artists
+            resource exists but no row carries a non-empty artists list. A
+            non-zero total above means the stored row shape is wrong; a
+            zero total means headphones itself reported an empty library.
+            Rebuild either way: run swamp model method run ' +
+            inputs.headphonesInstance + ' get-index' }} Inspect what is
+            there: swamp data query 'modelName == "${{
+            inputs.headphonesInstance }}" && specName == "artists" &&
             isLatest' --select 'attributes.total' --json
           severity: high
       - name: read-discography-sync-cursor
@@ -242,8 +264,8 @@ jobs:
           modelIdOrName: music
           methodName: resolve-artists
           inputs:
-            headphonesInstance: headphones
-            musicbrainzInstance: musicbrainz
+            headphonesInstance: ${{ inputs.headphonesInstance }}
+            musicbrainzInstance: ${{ inputs.musicbrainzInstance }}
             refresh: ${{ inputs.refresh }}
       - name: assert-resolve-produced-something
         dependsOn:
@@ -272,12 +294,12 @@ jobs:
             workflow will not help until the map resolves something. Check in
             order: (1) the artist dimension is populated — swamp data query
             'modelName == "music" && specName == "artist" && isLatest'; (2)
-            the headphones seed on instance "headphones" — the instance
+            the headphones seed on instance "${{ inputs.headphonesInstance }}" — the instance
             this workflow's resolve step passes and its preflight-seed
             gate verifies — is populated and MusicBrainz-keyed: swamp data
-            query 'modelName == "headphones" && specName == "artists" &&
+            query 'modelName == "${{ inputs.headphonesInstance }}" && specName == "artists" &&
             isLatest' --select 'attributes.total' --json, rebuild with
-            swamp model method run headphones get-index; (3) MusicBrainz
+            swamp model method run ${{ inputs.headphonesInstance }} get-index; (3) MusicBrainz
             search is answering — swamp model method run musicbrainz
             search-artist --input query="Boards of Canada". Inspect the
             map: swamp data get music artist-map --json
@@ -304,8 +326,8 @@ jobs:
             below would be built from a fraction of the library and would
             understate the
             gap. This is the resolve step, not the sync. Check the
-            headphones seed on instance "headphones" — swamp data query
-            'modelName == "headphones" && specName == "artists" &&
+            headphones seed on instance "${{ inputs.headphonesInstance }}" — swamp data query
+            'modelName == "${{ inputs.headphonesInstance }}" && specName == "artists" &&
             isLatest' --select 'attributes.total' --json — and check that
             MusicBrainz search is not rate-limiting: swamp model method run
             musicbrainz search-artist --input query="Boards of Canada".
@@ -471,7 +493,7 @@ jobs:
           modelIdOrName: music
           methodName: wanted
           inputs:
-            musicbrainzInstance: musicbrainz
+            musicbrainzInstance: ${{ inputs.musicbrainzInstance }}
             targetQuality: ${{ inputs.targetQuality }}
       - name: assert-derive-existence
         dependsOn:
