@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026.09.01.1
+
+- **`parseEpisode` now reads the `SxxExx` form.** The bare E-prefix pattern
+  documented itself as covering "S01E05", but `\b` before the `E` never fires
+  when a digit precedes it, so every `S01E09`-style release parsed as `null` and
+  `pickBest` had nothing to rank. Seen live on 2026-09-01: Koukaku Kidoutai
+  (2026) ep 9 — Erai-raws (the group behind eps 1–8, dash form) never posted,
+  and all nine other 1080p releases (VARYG, Judas, DKB, ToonsHub, Ironclad,
+  Cattleya) used `S01E09`, so the show sat in `not-found` for five hourly runs.
+  A dedicated `\bS\d{1,2}E(\d{1,3})\b` check now runs right after the `- NN`
+  fansub convention.
+
 ## 2026.08.22.2
 
 - **An inferred airing time no longer drives an alert.** The not-found branch

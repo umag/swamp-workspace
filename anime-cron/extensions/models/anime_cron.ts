@@ -12,6 +12,10 @@ import { z } from "npm:zod@4";
 export function parseEpisode(title: string): number | null {
   const m1 = title.match(/\s-\s(\d{1,3})(?:v\d+)?\s/);
   if (m1) return parseInt(m1[1], 10);
+  // "S01E09": the bare E-prefix below never matches it — a digit and the E
+  // are both word chars, so `\b` before the E does not fire.
+  const mS = title.match(/\bS\d{1,2}E(\d{1,3})\b/i);
+  if (mS) return parseInt(mS[1], 10);
   const m2 = title.match(/\bE(?:P)?(\d{2,3})\b/i);
   if (m2) return parseInt(m2[1], 10);
   const m3 = title.match(/[\[(](\d{2,3})[\])](?:\s|$)/);
@@ -867,7 +871,7 @@ async function sendTg(modelName: string, text: string): Promise<void> {
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.08.22.2",
+  version: "2026.09.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     fetchResult: {
