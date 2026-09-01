@@ -51,5 +51,5 @@ docs:
     justification: datastore extension — bundles no Claude skill
 ratchet:
   rubricVersion: 3
-  baselinePercentage: 0
-  label: unscored
+  baselinePercentage: 100
+  label: "Grade A"
