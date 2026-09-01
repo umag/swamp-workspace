@@ -1,0 +1,53 @@
+manifestVersion: 1
+name: "@magistr/claude-sessions"
+version: "2026.07.19.2"
+description: |
+  Read Claude Code's own session transcripts as swamp data.
+
+  Claude Code appends one JSONL transcript per session under
+  ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl. That log is write-only
+  in practice — there is no way to ask "which of my sessions actually
+  finished?" without reading raw JSON by hand. This model parses those
+  transcripts into queryable resources:
+
+  - `index` — per-project session counts, bytes and last activity (stats
+    only, no parsing, so it stays cheap on a large history)
+  - `listSessions` — one `session` resource per transcript: ai-title, cwd,
+    git branch, CLI version, models used, start/last-activity, span,
+    staleness, turn and tool-call counts, top tools, the opening prompt and
+    the closing recap
+  - `search` — full-text search across transcripts with snippets
+  - `triage` — the worklist method: joins sessions to the kanban cards
+    created by the mk-session-card hook (state files under
+    ~/.claude/mk-session-cards/) and ranks them by a completion verdict
+
+  The completion verdict reads the session's LAST assistant message, which by
+  the hook's convention is a recap of what was done and what is left. It is a
+  ranking aid, not a judgment: `likely-complete`, `likely-open`, `unclear`,
+  or `hook-noise` when the session ended on card bookkeeping rather than on a
+  work recap. Every row carries the closing text as evidence so a human or
+  agent makes the actual call. Sidechain (subagent) turns are excluded so a
+  chatty subagent cannot become the session's last word.
+
+  All methods fan out over every matching session in a single run, so a whole
+  history is one method call and one model lock.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/claude_sessions.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - claude
+  - claude-code
+  - transcripts
+  - sessions
+  - kanban
+  - triage
+  - observability
