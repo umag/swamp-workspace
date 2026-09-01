@@ -114,6 +114,41 @@ Deno.test("groupScore: unknown group returns 1", () => {
   assertEquals(groupScore("Show - 01.mkv"), 1);
 });
 
+// Scene-style credits hang the group off the END with a dash, not a
+// bracket. VARYG sits at 7 in the table but scored 1 on every release, so
+// GITS 2026 ep 9 went to Judas (6) although VARYG had posted an hour earlier.
+Deno.test("groupScore: dash-suffixed scene credit", () => {
+  assertEquals(
+    groupScore(
+      "THE GHOST IN THE SHELL S01E09 EPISODE 09 BRAIN DRAIN ii 1080p AMZN WEB-DL DUAL DDP2.0 H.264-VARYG (Koukaku Kidoutai: THE GHOST IN THE SHELL, Multi-Subs)",
+    ),
+    7,
+  );
+  assertEquals(
+    groupScore(
+      "Your.Forma.S01E09.The.Nightmare.of.Petersburg.1080p.BILI.WEB-DL.AAC2.0.H.264-VARYG.mkv",
+    ),
+    7,
+  );
+  assertEquals(groupScore("Show S01E09 1080p WEB-DL H.264-VARYG"), 7);
+  // Unknown suffix credits stay at the default.
+  assertEquals(
+    groupScore("Ubel.Blatt.S01E09.1080p.AMZN.WEB-DL.H.265.MSubs-ToonsHub.mkv"),
+    1,
+  );
+  // Dashes inside the body ("WEB-DL", "Dual-Audio", "x265-10bit") are not
+  // credits and must not be mistaken for one.
+  assertEquals(
+    groupScore(
+      "[RandomGroup] Show - 09 [1080p][HEVC x265 10bit][Dual-Audio][Multi-Subs]",
+    ),
+    1,
+  );
+  assertEquals(groupScore("Show S01E09 1080p WEB-DL DUAL DDP2.0"), 1);
+  // A bracketed credit still wins over anything at the tail.
+  assertEquals(groupScore("[SubsPlease] Show - 09 (1080p) H.264-VARYG"), 10);
+});
+
 // ─── buildMagnet ──────────────────────────────────────────────────────────────
 
 Deno.test("buildMagnet: produces valid magnet URI", () => {

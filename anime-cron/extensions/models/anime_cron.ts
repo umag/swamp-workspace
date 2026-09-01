@@ -168,10 +168,20 @@ export function parseResolution(title: string): number {
   return 0;
 }
 
-/** Score a release title by its bracketed group credit; 0 when unrecognised. */
+/** Score a release title by its group credit; 1 when unrecognised.
+ *
+ *  Fansub releases lead with `[Group]`. Scene-style rips (VARYG, ToonsHub,
+ *  FLUX …) instead hang the credit off the END with a dash: `H.264-VARYG`,
+ *  `H.264-VARYG.mkv`, `H.264-VARYG (Romaji Title, Multi-Subs)`. The suffix is
+ *  only consulted when there is no bracketed credit, and must be followed by
+ *  `.mkv`, a parenthesised tail or the end of the title — so body dashes such
+ *  as `WEB-DL DUAL` or `Dual-Audio]` never read as a group. */
 export function groupScore(title: string): number {
-  const m = title.toLowerCase().match(/^\[([^\]]+)\]/);
-  return PREFERRED_GROUPS[m?.[1] ?? ""] ?? 1;
+  const lower = title.toLowerCase();
+  const bracketed = lower.match(/^\[([^\]]+)\]/);
+  if (bracketed) return PREFERRED_GROUPS[bracketed[1]] ?? 1;
+  const suffixed = lower.match(/-([a-z0-9]+)(?:\.mkv|\s*\(|\s*$)/);
+  return PREFERRED_GROUPS[suffixed?.[1] ?? ""] ?? 1;
 }
 
 /** Build a magnet URI from an infoHash plus a display name and the trackers
@@ -871,7 +881,7 @@ async function sendTg(modelName: string, text: string): Promise<void> {
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.09.01.1",
+  version: "2026.09.01.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     fetchResult: {
