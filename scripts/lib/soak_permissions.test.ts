@@ -114,7 +114,11 @@ Deno.test("parsePermissionSet: anilist-chart's real test task — --ignore= with
 Deno.test("parsePermissionSet: music-library's real test task — multiple positional dirs at the end are dropped", async () => {
   const parsed = parsePermissionSet(await readTestTask("music-library"));
   assertEquals(parsed.allow.get("env"), ["FC_NUM_RUNS"]);
-  assertEquals(parsed.allow.get("read"), ["extensions/workflows"]);
+  assertEquals(parsed.allow.get("read"), [
+    "extensions/workflows",
+    "manifest.yaml",
+    "README.md",
+  ]);
   assertEquals(parsed.allow.size, 2, JSON.stringify([...parsed.allow]));
 });
 

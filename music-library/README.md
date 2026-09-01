@@ -160,40 +160,46 @@ the medium-severity want-total sanity band and the medium-severity artist-map
 floor. `--fail-on high` downgrades both to warnings — use it only in CI, and
 read the assert results rather than the exit code.
 
-**Retargeting instance names.** The workflow body hardcodes three literal swamp
-model instance names — `music` (this model, matching the `Setup` section below),
-`musicbrainz`, and `headphones` (the seed instance `resolve-artists` reads by
-default) — repeated across several token classes, not confined to one line. The
-three step `modelIdOrName` targets (`music`, `musicbrainz`, `music`) are NOT
-workflow inputs: a dynamic step target does not remove swamp's step-input
-validation, it keeps the check and makes it report `passed: true` while
-verifying nothing, so parameterising them would have silently turned three of
-the workflow's 22 `swamp workflow validate` checks into checks that always pass.
-`headphonesInstance` and `musicbrainzInstance`, by contrast, ARE plain method
-arguments, already explicit literals on the resolve and wanted steps —
-retargeting those two is just editing their values, with no step-target risk.
+**Retargeting instance names.** The workflow names three swamp model instances —
+`music` (this model, matching the `Setup` section below), `musicbrainz`, and
+`headphones` (the seed instance `resolve-artists` reads).
 
-If your own instances are named `music`, `musicbrainz`, and `headphones` — the
-names this README's own examples use — the file runs as pasted, with no edits.
-If any are named differently, retarget the affected one(s) with a WHOLE-WORD
-(`\b`-bounded) find/replace, in this order:
+Two of the three are **workflow inputs**, so retargeting them needs no file edit
+at all:
+
+```
+swamp workflow run music-wanted \
+  --input headphonesInstance=<your-headphones-instance> \
+  --input musicbrainzInstance=<your-musicbrainz-instance>
+```
+
+`headphonesInstance` defaults to `headphones` and `musicbrainzInstance` to
+`musicbrainz` — the values they were hardcoded to before — so a run that passes
+neither binds exactly what it always bound. Both flow to the `resolve-artists`
+and `wanted` method arguments AND to every gate query and recovery message that
+names them, from one place.
+
+What is NOT parameterised: the three step `modelIdOrName` targets (`music`,
+`musicbrainz`, `music`). A dynamic step target does not remove swamp's
+step-input validation, it keeps the check and makes it report `passed: true`
+while verifying nothing, so parameterising those would have silently turned
+three of the workflow's 22 `swamp workflow validate` checks into checks that
+always pass. If your `music` or `musicbrainz` instance is named differently, you
+must still edit the file, with a WHOLE-WORD (`\b`-bounded) find/replace in this
+order:
 
 1. Replace every whole-word `musicbrainz` with your instance name FIRST —
    `musicbrainz` contains `music` as a substring, so replacing `music` first
    would corrupt `musicbrainz` into `<newname>brainz`.
 2. Then replace every remaining whole-word `music` with your instance name.
-3. Replace every whole-word `headphones` with your instance name — this one does
-   not overlap the other two, so its position in the order does not matter.
 
 Each replacement must move together across every token class it appears in, or a
 gate queries an instance the step never wrote to and fails by indexing `[0]` on
 an empty result:
 
 - the three step `modelIdOrName:` values;
-- the `headphonesInstance` / `musicbrainzInstance` step-input literal values on
-  the resolve and wanted steps;
-- every gate's `data.query('modelName == "<name>" && ...')` CEL predicate, in
-  both `expr` and `message`;
+- every gate's `data.query('modelName == "<name>" && ...')` CEL predicate naming
+  `music`, in both `expr` and `message`;
 - the two `data.latest("<name>", ...)` calls in `read-discography-sync-cursor`'s
   `expr` and `message` — miss these and a rename makes
   `data.latest(...) == null` true against a model that no longer exists, so the
@@ -205,6 +211,10 @@ an empty result:
 - the top-level `description:` narrative (`music/resolve-artists`,
   `musicbrainz/sync-artist-discographies`, `music/wanted`, and the `musicbrainz`
   model-lock sentence).
+
+The `headphones` and `musicbrainz` sites reached by `headphonesInstance` /
+`musicbrainzInstance` are already `${{ inputs.… }}` references and must be left
+alone by any find/replace — retarget those with `--input`, above.
 
 Do NOT touch, even though a careless replace might match nearby text:
 `@magistr/music-wanted-sequence` (the workflow's own name),
