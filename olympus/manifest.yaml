@@ -1,0 +1,75 @@
+manifestVersion: 1
+name: "@magistr/olympus"
+version: "2026.07.22.1"
+description: |
+  Authoring harness for Project Olympus (https://shipd.ai/quests/olympus)
+  challenge submissions: a phase-gated state machine over a workspace of
+  submissions, with every rule in the Creating Challenges doc turned into an
+  executable check.
+
+  Model type `@magistr/olympus/submission`:
+
+  ## State machine (one submission per state artifact)
+
+  ```
+  startSubmission -> repo -> problem -> tests -> solution -> dockerfile ->
+  review -> ready -> submitted        (abandon from any state)
+  ```
+
+  `advance` re-runs every text-only validator live off disk and refuses to move
+  unless the current phase's gate is clean. Gates backed by a clone or a
+  container (repo eligibility, prior art, patch application, local review) are
+  satisfied by a recorded pass whose artifact fingerprint still matches disk —
+  so editing an artifact after a green run reopens the gate rather than
+  coasting on it.
+
+  ## Methods
+
+  - init / startSubmission / status / advance / abandon / list — the lifecycle
+  - checkRepo — eligibility against the documented bar (public, not archived,
+    500+ stars, a commit in the last 12 months, permissive license, accepted
+    language) and resolves a ref to a pinned commit SHA
+  - scanPriorArt — one fan-out across pull requests (open, merged and closed),
+    issues and GitHub Discussions, because an existing PR is the top rejection
+    reason; it holds the repo gate when it returns hits (until they are
+    adjudicated) or is truncated (until re-run with narrower terms)
+  - acknowledgePriorArt — records a human's adjudication of the scanned hits
+    (the exact URL set) and opens the repo gate when the scan was untruncated;
+    it records a decision, it does not make one
+  - preflight — every text-only validator in one pass: the problem-description
+    prose linter, test-patch structure (test.sh present, executable, both
+    modes, --output_path, no fail-fast), solution-patch structure, Dockerfile
+    conformance, the quest-word leak scan and the effective-LOC count
+  - checkPatches — clones at the pinned commit and applies both patches
+  - localReview — reproduces the reviewer's loop in Docker: base passes and new
+    fails at the base commit, both pass with the solution applied, every run
+    with `--network none`
+  - bundle — assembles the four submission fields with any remaining blockers
+
+  Ships the `olympus` skill that drives Claude through the loop: status ->
+  produce the artifact for the current phase -> preflight -> advance.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+skills:
+  - olympus
+
+models:
+  - extensions/models/olympus_submission.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - olympus
+  - shipd
+  - challenge-authoring
+  - state-machine
+  - lifecycle
+  - docker
+  - github
+  - code-review
+  - testing
