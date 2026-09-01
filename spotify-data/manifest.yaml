@@ -1,0 +1,54 @@
+manifestVersion: 1
+name: "@magistr/spotify-data"
+version: "2026.08.02.1"
+description: |
+  Import a Spotify "Extended streaming history" GDPR export into swamp — one
+  `spotify.<year>` resource per calendar year, partitioned exactly like
+  `@magistr/lastfm`'s scrobble chunks so the two sources sit alongside each
+  other and stay comparable.
+
+  Model:
+  - `@magistr/spotify-data` — `inspect` reports what an export contains
+    (record counts, the music/podcast split, per-year distribution, date
+    range) without writing anything; `import` writes the year chunks plus an
+    `import.<label>` state resource. Both are idempotent.
+
+  This is an OFFLINE importer: no network call, no credential. The export is
+  the ZIP Spotify emails you from https://www.spotify.com/account/privacy/ —
+  request "Extended streaming history", not the plain "Account data" package,
+  which holds only the last twelve months. The Web API cannot substitute for
+  it: `recently-played` returns only the last 50 tracks.
+
+  Privacy: every export record carries `ip_addr`, and most carry
+  `conn_country`, `platform` and `incognito_mode`. That is a location and
+  device trail rather than listening data, so all four are dropped at the
+  parse boundary and never reach a resource.
+
+  Fidelity: podcast episodes are excluded, but every music stream is kept
+  regardless of how briefly it played — Last.fm only ever recorded plays past
+  its ~30s threshold, so the sub-threshold tail is precisely what this source
+  adds. Filtering by play time is a read-time concern.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/spotify_data.ts
+
+reports:
+  - extensions/reports/spotify_stats.ts
+  - extensions/reports/listening_overlap.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - music
+  - spotify
+  - listening
+  - import
+  - gdpr

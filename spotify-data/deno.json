@@ -1,0 +1,27 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/spotify_data.ts extensions/models/spotify_data_test.ts extensions/models/spotify_data_methods_test.ts extensions/models/spotify_data_adversarial_test.ts extensions/models/spotify_data_coverage_test.ts extensions/models/spotify_data_property_test.ts extensions/reports/spotify_stats.ts extensions/reports/listening_overlap.ts extensions/reports/spotify_stats_test.ts",
+    "test": "deno test --allow-env=FC_NUM_RUNS --allow-read --allow-write --permit-no-files extensions/",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS --allow-read --allow-write extensions/models/spotify_data_property_test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "zod": "npm:zod@4.4.3"
+  },
+  "compilerOptions": {
+    "noImplicitAny": false
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}
