@@ -2,105 +2,69 @@
 
 ## 2026.09.01.2
 
-Merges upstream `keeb/swamp-mongodb-datastore` 2026.08.19.2 into the `@magistr`
-fork, bringing journal-based dirty tracking and a maintenance model/workflow —
-while **keeping both fork-only guards the upstream tree does not carry**.
+Merges upstream keeb 2026.08.19.2 into the `@magistr` fork, **keeping two fork
+guards the upstream tree does not carry** and fixing a third defect found by
+live testing.
 
-### Journal-based dirty tracking (from upstream)
+### Fixed: the incremental push was inert (pre-existing, also on 2026.09.01.1)
 
-Dirty tracking now rides an append-only journal with ancestor coalescing, so
-`markDirty` is O(1) rather than a read-modify-write of the whole sidecar. Push
-reconciles dirty roots in batches (`ROOT_QUERY_BATCH` = 100 roots per manifest
-query, `PUSH_ROOT_SLICE` = 500 reconciled before a journal slice retires)
-instead of one round-trip each. `Sidecar` as a class is replaced by an interned
-`getSidecar(cachePath)` plus `reconcileWatermark`, so two sync services over one
-cache serialize with each other.
+Core calls `markDirty` and `hydrateFile` with a path that ALREADY carries the
+namespace (`<ns>/data/...`), while `tierRoot` scopes only the LOCAL side — every
+remote `_id`, the local walk and `isSecretsPath` speak tier-relative paths.
+swamp-club#1554 records the same asymmetry for `@swamp/s3-datastore`'s
+lazy-hydration hook.
 
-Blob docs gain `createdAt`, used solely for the orphan sweep's grace window: a
-blob is written before the path doc that references it, so a sweep must not
-judge a freshly-inserted blob unreachable. Docs written before 2026.08.19.1 lack
-the field and are treated as old.
+One prefix broke three things: the dirty journal recorded paths no walk could
+match, so ordinary writes NEVER reached the remote and only a full walk
+persisted; `isSecretsPath`/`isExcludedPath` stopped matching, so the vault tier
+was no longer filtered out of the journal; and `hydrateFile` looked up an `_id`
+no remote doc carries.
 
-### Maintenance model and workflow (from upstream)
+`toTierRelative()` normalizes at both hooks, before the secrets check. It strips
+only when the remainder begins with a real tier directory, so a tier-relative
+path is never mangled. Measured live: a namespaced repo held 37 local files and
+0 remote paths; after the fix, live paths went 70 -> 100 -> 144 over two runs.
 
-Adds `@magistr/mongodb-datastore-maintenance`
-(`extensions/models/maintenance.ts` plus `sweeps.ts`) and the
-`datastore-maintenance` workflow: inventory, sweep orphaned blobs and aged
-tombstones, and compact reclaimed space — fanning out over every namespace in
-one execution rather than one run per namespace.
+### Two fork guards kept, NOT inherited from upstream
 
-The manifest gains `models:` and `workflows:` keys accordingly, and
-`quality.yaml`'s `methods` suite moves from `na` to `present`: the package now
-genuinely ships a model, so the justification that it declares none no longer
-holds.
+- **Path-traversal confinement.** Upstream composes
+  `` `${cachePath}/${relPath}` `` by raw concatenation. One database is shared
+  by every repo and tenant (isolation is only a collection prefix), so a remote
+  `_id` is untrusted: a doc named `../../../../.ssh/authorized_keys` would be
+  written through — or unlinked when carrying `deletedAt`.
+  `resolveWithinCache`/`isSafeRelPath` restored and re-applied to all five
+  merged write sites.
+- **Namespace tier-root scoping.** Upstream roots reads/writes at the bare cache
+  path. Core reads the tier one segment deeper, so that builds a second,
+  invisible tier the reader never sees; push then refuses with "un-migrated data
+  found at root level" and `namespace migrate` cannot recover
+  (swamp-club#1458/#1554). Worse, `pushChanged` tombstones every remote path
+  absent from its local walk — rooted wrongly, that walk finds nothing and one
+  push tombstones the whole namespace. `tierRoot()` restored in `config.ts` and
+  applied in `createSyncService`.
 
-### Two fork-only guards kept, NOT inherited from upstream
+Both carry a comment naming them as fork guards so a later merge cannot quietly
+drop them again.
 
-The upstream merge dropped both. Taking it verbatim would have been a silent
-regression in each, so both were re-applied on top of the merged code:
+### From upstream
 
-- **Path-traversal confinement.** Upstream composes local targets as
-  `` `${cachePath}/${relPath}` `` by raw concatenation. One MongoDB database is
-  shared by every repo and tenant — isolation is only a collection prefix — so a
-  remote `_id` is untrusted input, and a doc named
-  `../../../../.ssh/authorized_keys` would be written through, or unlinked when
-  carrying `deletedAt`, anywhere the process can reach. `resolveWithinCache` /
-  `isSafeRelPath` are restored and re-applied to all five merged write sites
-  (delete, read-back, write, and both `absPath` joins).
-- **Namespace tier-root scoping.** Upstream roots every read and write at the
-  bare cache path. Core hands `createSyncService` the bare, un-namespaced path
-  but reads and writes the tier one segment deeper, so rooting at the bare path
-  builds a second, invisible copy of the tier at the cache root that the reader
-  never sees — `sync --push` then refuses with "un-migrated data found at root
-  level" and `datastore namespace migrate` cannot recover once both layouts
-  exist (swamp-club#1458 and #1554 are the same defect in
-  `@swamp/s3-datastore`). `tierRoot()` is restored in `config.ts` and applied in
-  `createSyncService`; the sidecar and journal are interned on the tier root,
-  not the bare path, so they sit beside the tier they describe.
-
-Both restorations carry a comment naming them as fork guards, so a future
-upstream merge does not quietly drop them again.
-
-### Namespace normalization on core's per-file hooks — the incremental push had been inert
-
-Live testing on an isolated namespace turned up a defect present in BOTH this
-merge and the pre-merge fork: after bootstrap, ordinary writes never reached the
-remote. A namespaced repo sat with 37 local files and 0 remote paths, and
-`sync --push` reported `Pushed 0 files`; only a forced full walk persisted
-anything.
-
-The cause, measured directly: core calls `markDirty` (and `hydrateFile`) with a
-path that ALREADY carries the namespace —
-`dsmerge-probe/definitions-evaluated/
-command/shell/probe2.yaml` — while
-`tierRoot` scopes only the LOCAL side, so remote `_id`s, the local walk and
-`isSecretsPath` all speak tier-relative paths. swamp-club#1554 records the same
-asymmetry for `@swamp/s3-datastore`'s lazy-hydration hook, which is why that one
-"lands correctly via the bare fallback" while the bulk path does not.
-
-Unnormalized, one prefix broke three things:
-
-- the dirty journal recorded paths no local walk could match, so the incremental
-  push found nothing and only a full walk ever persisted;
-- `isSecretsPath` / `isExcludedPath` stopped matching, so the vault tier and
-  host-local files were no longer filtered out of the journal;
-- `hydrateFile` looked up an `_id` no remote doc carries, and would have written
-  to `<tier>/<namespace>/...` had one matched.
-
-`toTierRelative()` now normalizes at both hooks, before the secrets check rather
-than after it. It strips only when the remainder begins with a real tier
-directory, so a genuinely tier-relative path is never mangled.
-
-Verified live: with the fix, ordinary method runs push incrementally again —
-live paths 70 -> 100 -> 144 across two runs, where before they stayed at 0.
+Dirty tracking rides an append-only journal with ancestor coalescing (O(1)
+`markDirty`); push reconciles dirty roots in batches rather than one round-trip
+each. `Sidecar` becomes an interned `getSidecar()` plus `reconcileWatermark`.
+Blob docs gain `createdAt` for the orphan sweep's grace window. Adds
+`@magistr/mongodb-datastore/maintenance` and the `datastore-maintenance`
+workflow — inventory, sweep orphaned blobs and aged tombstones, compact — over
+every namespace in one execution. `manifest.yaml` gains `models:`/`workflows:`;
+`quality.yaml`'s `methods` suite moves `na` -> `present`.
 
 ### Tests
 
-84 passing across seven suites. The four suites master added after this merge
-branch was cut — `config_test.ts`, `sync_adversarial_test.ts`,
-`sync_coverage_test.ts`, `sync_property_test.ts` — are **kept**, not replaced by
-the upstream tree's: the branch predates them and would have deleted them. They
-are what proves the two restored guards still hold against the merged code.
+89 across seven suites. Master's four newer suites are KEPT, not replaced by
+upstream's — the branch predates them and would have deleted them. New tests pin
+the guards' WIRING, not just their helpers: every prior test exercised
+`tierRoot()` and `resolveWithinCache()` as functions, which is exactly how the
+upstream merge regressed both while all 17 stayed green. Each new test is
+mutation-verified.
 
 ## 2026.09.01.1
 
