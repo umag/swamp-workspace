@@ -1,6 +1,7 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { ConfigSchema, tierRoot } from "./config.ts";
 import { Sidecar } from "./sidecar.ts";
+import { createSyncService } from "./sync.ts";
 
 // Coverage suite: guards a reviewer found load-bearing but untested.
 //
@@ -119,3 +120,56 @@ Deno.test("the sidecar is scoped to the tier root, not shared across namespaces"
     );
   });
 });
+
+// THE WIRING, not just the helper. The two tests above prove `tierRoot()`
+// computes the right path; NEITHER proves createSyncService actually calls it.
+// That gap is not hypothetical: the upstream keeb 2026.08.19.2 tree roots the
+// service at the bare cache path, and merging it verbatim left every test above
+// green while the service silently walked the wrong directory.
+//
+// The consequence is worse than misplaced files. pushChanged's reconciliation
+// pass tombstones every REMOTE path absent from its LOCAL walk. Rooted at the
+// bare path, that walk finds nothing, so the whole namespace is tombstoned in
+// one push — the MongoDB shape of swamp-club#1554, where the same defect in
+// @swamp/s3-datastore left 7431 live objects one boolean away from deletion.
+//
+// markDirty is network-free (it only appends to the journal), so the tier the
+// service resolved is observable without a cluster: the journal must appear
+// beside the tier, not at the bare root.
+Deno.test("createSyncService roots the service at the TIER, not the bare cache path — the journal lands under the namespace", async () => {
+  await withTempCache(async (bare) => {
+    const namespace = "wiring-probe";
+    const service = createSyncService(
+      cfg(namespace),
+      () => Promise.reject(new Error("markDirty must not open a client")),
+      "/repo",
+      bare,
+    );
+
+    await service.markDirty({ relPath: "data/probe/raw" });
+
+    const namespaced = `${bare}/${namespace}/.datastore-dirty.log`;
+    const atRoot = `${bare}/.datastore-dirty.log`;
+
+    assertEquals(
+      await exists(namespaced),
+      true,
+      "the dirty journal must be written under the namespace tier",
+    );
+    assertEquals(
+      await exists(atRoot),
+      false,
+      "a journal at the bare cache root means the service is rooted one " +
+        "level too high — push would then tombstone the whole namespace",
+    );
+  });
+});
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}

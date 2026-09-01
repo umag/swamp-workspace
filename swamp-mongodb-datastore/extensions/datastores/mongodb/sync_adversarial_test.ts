@@ -163,3 +163,49 @@ Deno.test("modelPrefixes anchors each prefix at the data tier with a trailing sl
   assertEquals(prefix.endsWith("/"), true);
   assertEquals("data/t/abcdef/x".startsWith(prefix), false);
 });
+
+// THE WIRING, not just the helper. Every test above exercises
+// resolveWithinCache as a FUNCTION. None of them observes whether the pull
+// path actually calls it — so reverting the call sites to raw concatenation
+// while leaving the export in place keeps all of them green.
+//
+// That is not hypothetical: the upstream keeb 2026.08.19.2 tree composes
+// `${cachePath}/${relPath}` directly at every site, and merging it verbatim
+// left this whole suite passing with the confinement gone.
+//
+// Exercising the real call sites needs a live cluster, so this asserts over
+// the source instead: outside the guard's own body, the only cache-path
+// concatenation allowed is over DATASTORE_SUBDIRS, whose members are
+// compile-time constants in this file rather than remote input.
+Deno.test("every cache-path join over remote input goes through resolveWithinCache — no raw concatenation survives at a write site", async () => {
+  const src = await Deno.readTextFile(new URL("./sync.ts", import.meta.url));
+  const lines = src.split("\n");
+
+  const offenders: string[] = [];
+  lines.forEach((line, i) => {
+    if (!line.includes("${cachePath}/")) return;
+    // The guard's own return statement is the one legitimate join.
+    if (line.includes("return `${cachePath}/${relPath}`;")) return;
+    // Walking a fixed subdirectory: `sub` comes from DATASTORE_SUBDIRS, a
+    // const tuple in this file, never from a remote document.
+    if (line.includes("${cachePath}/${sub}")) return;
+    offenders.push(`${i + 1}: ${line.trim()}`);
+  });
+
+  assertEquals(
+    offenders,
+    [],
+    "raw cache-path concatenation found — a remote _id reaching one of these " +
+      "escapes the cache root:\n" + offenders.join("\n"),
+  );
+
+  // Guard the guard: if the call sites were ever renamed away, the check above
+  // would pass vacuously on a file that no longer confines anything.
+  const callSites =
+    lines.filter((l) => l.includes("resolveWithinCache(cachePath")).length;
+  assertEquals(
+    callSites >= 5,
+    true,
+    `expected at least 5 resolveWithinCache call sites, found ${callSites}`,
+  );
+});
