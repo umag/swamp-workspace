@@ -978,7 +978,7 @@ async function retrievePaymentIntent(
  * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.08.19.1",
+  version: "2026.09.01.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     challenge: {
