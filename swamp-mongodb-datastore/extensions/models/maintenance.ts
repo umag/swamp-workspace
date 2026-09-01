@@ -195,7 +195,16 @@ async function collStats(
  */
 export const model = {
   type: "@magistr/mongodb-datastore/maintenance",
-  version: "2026.08.19.1",
+  version: "2026.09.01.2",
+  upgrades: [
+    {
+      fromVersion: "2026.08.19.1",
+      toVersion: "2026.09.01.2",
+      description:
+        "Carries the model into the @magistr fork at the fork's own package version — the model's code is unchanged from upstream keeb 2026.08.19.2, but this repo publishes it in lockstep with manifest.yaml, so the version moves 2026.08.19.1 -> 2026.09.01.2. An instance created against the upstream 2026.08.19.1 build keeps every stored resource: no schema, resource shape or argument changed.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     inventory: {
