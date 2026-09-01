@@ -1,5 +1,74 @@
 # Changelog
 
+## 2026.09.01.2
+
+Merges upstream `keeb/swamp-mongodb-datastore` 2026.08.19.2 into the `@magistr`
+fork, bringing journal-based dirty tracking and a maintenance model/workflow —
+while **keeping both fork-only guards the upstream tree does not carry**.
+
+### Journal-based dirty tracking (from upstream)
+
+Dirty tracking now rides an append-only journal with ancestor coalescing, so
+`markDirty` is O(1) rather than a read-modify-write of the whole sidecar. Push
+reconciles dirty roots in batches (`ROOT_QUERY_BATCH` = 100 roots per manifest
+query, `PUSH_ROOT_SLICE` = 500 reconciled before a journal slice retires)
+instead of one round-trip each. `Sidecar` as a class is replaced by an interned
+`getSidecar(cachePath)` plus `reconcileWatermark`, so two sync services over one
+cache serialize with each other.
+
+Blob docs gain `createdAt`, used solely for the orphan sweep's grace window: a
+blob is written before the path doc that references it, so a sweep must not
+judge a freshly-inserted blob unreachable. Docs written before 2026.08.19.1 lack
+the field and are treated as old.
+
+### Maintenance model and workflow (from upstream)
+
+Adds `@magistr/mongodb-datastore-maintenance`
+(`extensions/models/maintenance.ts` plus `sweeps.ts`) and the
+`datastore-maintenance` workflow: inventory, sweep orphaned blobs and aged
+tombstones, and compact reclaimed space — fanning out over every namespace in
+one execution rather than one run per namespace.
+
+The manifest gains `models:` and `workflows:` keys accordingly, and
+`quality.yaml`'s `methods` suite moves from `na` to `present`: the package now
+genuinely ships a model, so the justification that it declares none no longer
+holds.
+
+### Two fork-only guards kept, NOT inherited from upstream
+
+The upstream merge dropped both. Taking it verbatim would have been a silent
+regression in each, so both were re-applied on top of the merged code:
+
+- **Path-traversal confinement.** Upstream composes local targets as
+  `` `${cachePath}/${relPath}` `` by raw concatenation. One MongoDB database is
+  shared by every repo and tenant — isolation is only a collection prefix — so a
+  remote `_id` is untrusted input, and a doc named
+  `../../../../.ssh/authorized_keys` would be written through, or unlinked when
+  carrying `deletedAt`, anywhere the process can reach. `resolveWithinCache` /
+  `isSafeRelPath` are restored and re-applied to all five merged write sites
+  (delete, read-back, write, and both `absPath` joins).
+- **Namespace tier-root scoping.** Upstream roots every read and write at the
+  bare cache path. Core hands `createSyncService` the bare, un-namespaced path
+  but reads and writes the tier one segment deeper, so rooting at the bare path
+  builds a second, invisible copy of the tier at the cache root that the reader
+  never sees — `sync --push` then refuses with "un-migrated data found at root
+  level" and `datastore namespace migrate` cannot recover once both layouts
+  exist (swamp-club#1458 and #1554 are the same defect in
+  `@swamp/s3-datastore`). `tierRoot()` is restored in `config.ts` and applied in
+  `createSyncService`; the sidecar and journal are interned on the tier root,
+  not the bare path, so they sit beside the tier they describe.
+
+Both restorations carry a comment naming them as fork guards, so a future
+upstream merge does not quietly drop them again.
+
+### Tests
+
+84 passing across seven suites. The four suites master added after this merge
+branch was cut — `config_test.ts`, `sync_adversarial_test.ts`,
+`sync_coverage_test.ts`, `sync_property_test.ts` — are **kept**, not replaced by
+the upstream tree's: the branch predates them and would have deleted them. They
+are what proves the two restored guards still hold against the merged code.
+
 ## 2026.09.01.1
 
 Re-release of 2026.08.31.1, whose publish never reached the registry — the

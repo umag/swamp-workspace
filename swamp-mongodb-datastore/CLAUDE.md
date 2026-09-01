@@ -42,15 +42,30 @@ you're targeting.
 
 ## Project conventions
 
-- **Extension namespace:** `@keeb/mongodb-datastore`. The `type` string in the
-  extension export is what consumer `.swamp.yaml` files reference.
+- **Extension namespace:** `@magistr/mongodb-datastore`. The `type` string in
+  the extension export is what consumer `.swamp.yaml` files reference.
 - **Extension layout:** `extensions/datastores/mongodb/`
   - `mod.ts` — provider entry point (wires the five interface methods)
   - `client.ts` — `MongoClient` factory, cached per `repoDir`
   - `config.ts` — Zod `ConfigSchema`, collection naming, `.env` loader
   - `lock.ts` — TTL lock with heartbeat + nonce fencing
   - `sync.ts` — manifest + content-addressed blob sync of the datastore tier
+  - `sidecar.ts` — scalar sync state + the append-only dirty journal
   - `verifier.ts` — replica-set health check
+
+  `extensions/models/` holds the companion **model** type
+  (`@magistr/mongodb-datastore/maintenance`): `sweeps.ts` has the reclamation
+  functions, `maintenance.ts` exposes them as `inventory` / `sweep` / `compact`,
+  and `workflows/datastore-maintenance/workflow.yaml` chains them. A
+  `DatastoreProvider` exposes nothing a workflow can call, so without this,
+  maintenance could only ever be a script bolted on beside swamp — which is
+  exactly what SWAMP.md rules 9 and 10 say not to do.
+
+  `sweeps.ts` lives under `models/`, not `datastores/mongodb/`, because
+  packaging ships only each declared entry point's transitive import graph. The
+  datastore entry is `mod.ts`, which never imports the sweeps, so a
+  cross-directory import resolved locally and then broke in the tarball — caught
+  by `swamp extension quality`, not by `deno check`.
 
   Root `manifest.yaml` is the publishable package manifest.
 - **Secrets:** the mongo password comes from `$MONGO_PASSWORD` (env var name
@@ -79,6 +94,34 @@ you're targeting.
    server-side. Blobs ride inline as `Binary` (under MongoDB's 16MB BSON limit).
    No GridFS — the per-file `find`/chunk-read overhead it imposes is what made
    the previous protocol RTT-bound on tiny-file workloads.
+5. **Dirty tracking is a journal, not a document.** `markDirty` appends a line
+   to `.datastore-dirty.log`; only scalars live in `.datastore-sync-state.json`.
+   Keeping `dirtyPaths` inside the JSON made every `markDirty` a
+   read-modify-write plus a linear `includes` scan — on a repo that had
+   accumulated ~86k dirty paths, 13.6 MB of I/O and ~86k string compares per
+   dirtied file, under the global lock. On push the journal is coalesced so a
+   dirty directory absorbs everything beneath it, and past `MAX_DIRTY_PATHS` it
+   degrades to one full walk.
+6. **Two watermarks.** `lastPulledAt` = content hydrated to here (drives pull).
+   `lastReconciledAt` = complete remote path list observed to here (drives the
+   push tombstone pass). Conflating them means a host can never propagate
+   deletion of data it pushed itself, because its own push stamps
+   `updatedAt = now`, and the tombstone pass skips anything newer than the
+   watermark in order to protect a peer's concurrent writes.
+7. **`_blobs` is append-only; reclamation is out of band.** Dedup means a push
+   can't tell whether another path still references a hash, so it must never
+   delete. The `sweep` method reclaims unreferenced blobs, guarded by a
+   `createdAt` grace window — NOT by the global lock, which is only
+   defense-in-depth: a real sweep holding it still lost a blob to a concurrent
+   push, so swamp core does not funnel every write through it.
+8. **Tombstones are load-bearing and must age out, not vanish.** They carry
+   deletions to peers, so `_paths` grows without bound (855k tombstones vs 21k
+   live on one repo). `sweepTombstones` hard-deletes only those past a long
+   grace window (default 30d) — pruning a tombstone a peer hasn't seen makes the
+   deletion invisible and lets that peer resurrect the file.
+9. **Deleting documents does not free disk.** WiredTiger keeps the space on a
+   free list; `compact` (with `force: true` on a primary) is what returns it to
+   the filesystem.
 
 ## Verification
 

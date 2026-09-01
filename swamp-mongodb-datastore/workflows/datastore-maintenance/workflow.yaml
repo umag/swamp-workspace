@@ -1,0 +1,57 @@
+id: 75098440-81dd-44e9-9515-5a46f67aca0c
+name: '@magistr/datastore-maintenance'
+description: >-
+  Reclaim space in a MongoDB-backed swamp datastore: snapshot every namespace,
+  prune tombstones past grace and blobs no live path references, then return
+  the freed space to the filesystem. Requires a
+  @magistr/mongodb-datastore/maintenance instance named datastore-maintenance.
+jobs:
+  - name: reclaim
+    description: Inventory, sweep, then compact — each step fans out over all namespaces
+    steps:
+      - name: inventory
+        description: >-
+          Snapshot per-namespace live paths, tombstones, blob counts, and
+          allocated vs reusable bytes. Runs first so the sweep's effect is
+          measurable against a recorded baseline.
+        task:
+          type: model_method
+          modelIdOrName: datastore-maintenance
+          methodName: inventory
+        dependsOn: []
+        weight: 0
+      - name: sweep
+        description: >-
+          Prune tombstones older than the grace window and delete blobs no
+          live path references. dryRun is false here; the method itself still
+          refuses to sweep blobs in a namespace that is actively written and
+          whose blobs predate the createdAt field.
+        task:
+          type: model_method
+          modelIdOrName: datastore-maintenance
+          methodName: sweep
+          inputs:
+            dryRun: false
+        dependsOn:
+          - step: inventory
+            condition:
+              type: succeeded
+        weight: 0
+      - name: compact
+        description: >-
+          Return freed space to the filesystem. Deleting documents only moves
+          it to WiredTiger's free list, so without this the cluster still
+          reports its pre-sweep size. Depends on sweep because there is
+          nothing to reclaim until the sweep has produced free blocks.
+        task:
+          type: model_method
+          modelIdOrName: datastore-maintenance
+          methodName: compact
+        dependsOn:
+          - step: sweep
+            condition:
+              type: succeeded
+        weight: 0
+    dependsOn: []
+    weight: 0
+version: 1

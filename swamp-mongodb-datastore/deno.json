@@ -11,7 +11,7 @@
     }
   },
   "tasks": {
-    "check": "deno check extensions/datastores/mongodb/mod.ts",
+    "check": "deno check extensions/datastores/mongodb/mod.ts extensions/models/maintenance.ts extensions/models/sweeps.ts",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint",

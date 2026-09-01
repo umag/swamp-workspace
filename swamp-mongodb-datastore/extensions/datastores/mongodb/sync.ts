@@ -10,7 +10,11 @@ import {
   pathsCollectionName,
   tierRoot,
 } from "./config.ts";
-import { Sidecar, type SidecarState } from "./sidecar.ts";
+import {
+  getSidecar,
+  reconcileWatermark,
+  type SidecarState,
+} from "./sidecar.ts";
 
 // Mirrors @systeminit/swamp's domain/datastore/datastore_sync_service.ts.
 export interface SyncContext {
@@ -83,29 +87,29 @@ interface PathDoc {
 
 // Blob storage layout:
 //   * Inline blob (size <= BLOB_INLINE_MAX):
-//       { _id: <sha256>, size, data: <Binary> }
+//       { _id: <sha256>, size, createdAt, data: <Binary> }
 //   * Chunked blob (size > BLOB_INLINE_MAX):
-//       Header doc:  { _id: <sha256>, size, chunkCount }            (no data)
-//       Chunk docs:  { _id: "<sha256>:<i>", size, data: <Binary> }   (i = 0..N-1)
+//       Header doc:  { _id: <sha256>, size, createdAt, chunkCount }  (no data)
+//       Chunk docs:  { _id: "<sha256>:<i>", size, createdAt, data }  (i = 0..N-1)
 // `data` and `chunkCount` are mutually exclusive: a doc is either inline,
 // header, or chunk. Chunk ids use `:` which is not a sha256 hex character,
 // so chunk ids never collide with hash-only ids.
+//
+// `createdAt` exists solely for the orphan sweep's grace window: a blob is
+// written before the path doc that references it, so a sweep must not judge a
+// freshly-inserted blob unreachable. See maintenance.ts. Docs written before
+// 2026.08.19.1 lack the field and are treated as old.
 interface BlobDoc {
   _id: string;
   size: number;
+  createdAt?: Date;
   data?: Binary;
   chunkCount?: number;
 }
 
-interface LocalFile {
-  relPath: string;
-  hash: string;
-  size: number;
-  bytes: Uint8Array;
-}
-
-// Same shape as LocalFile minus bytes — used by fullWalkPush so we can walk
-// 100k+ files without buffering all of their contents in RAM.
+// Deliberately carries no `bytes`: both push paths walk for metadata first
+// and re-read only the files whose hashes the remote turns out to lack, so a
+// 100k-file tree never has all of its contents in RAM at once.
 interface LocalMeta {
   relPath: string;
   hash: string;
@@ -120,6 +124,14 @@ interface RemotePathSlim {
 
 const PUSH_BULK = 500;
 const BLOB_QUERY_BATCH = 5000;
+// Dirty roots folded into a single manifest query. Each root contributes two
+// `$or` clauses (exact id + prefix regex), so this keeps the query under a
+// few hundred clauses while cutting round-trips by the same factor.
+const ROOT_QUERY_BATCH = 100;
+// Dirty roots reconciled before retiring that slice from the journal. Small
+// enough that an interrupted push loses little work, large enough that the
+// journal rewrite is amortized.
+const PUSH_ROOT_SLICE = 500;
 // BSON doc cap is 16 MiB. Reserve ~1 MiB headroom for `_id`, `size`,
 // `chunkCount`, field-name overhead, and Binary subtype byte.
 const BLOB_INLINE_MAX = 15 * 1024 * 1024;
@@ -169,6 +181,10 @@ export function isSecretsPath(relPath: string): boolean {
  * Windows separator that survives a POSIX `split("/")` untouched), and NUL.
  * Legitimate tier paths keep dots inside a segment (`192.168.88.18`), spaces,
  * and `@` (`data/@magistr/...`) — only a segment that IS `.` or `..` is unsafe.
+ *
+ * This is a @magistr fork guard: the upstream keeb tree composes these paths by
+ * raw concatenation. The 2026.09.01.2 merge kept the guard and re-applied it to
+ * the merged write sites rather than inheriting upstream's unguarded ones.
  */
 export function resolveWithinCache(cachePath: string, relPath: string): string {
   if (!isSafeRelPath(relPath)) {
@@ -191,6 +207,31 @@ export function isSafeRelPath(relPath: string): boolean {
   return true;
 }
 
+// Host-local files that must never sync, matched on the basename.
+//
+//   *.db / *.db-wal / *.db-shm — swamp's SQLite catalogs (`data/_catalog.db`
+//     and friends). The `-shm` file is a mmap'd shared-memory region whose
+//     contents are meaningless off the machine that created it, and `-wal`
+//     only makes sense paired with the exact `.db` that wrote it. They also
+//     churn on every single write, so syncing them re-uploads a multi-MB blob
+//     per command for data the remote can never correctly consume. The `.db`
+//     itself is a rebuildable local index.
+//   *.tmp.<pid>.<uuid> — in-flight writeFileAtomic / sidecar staging files.
+//     Catching one mid-write pushes a torn blob.
+const EXCLUDED_BASENAME_RE =
+  /(?:\.db|\.db-wal|\.db-shm)$|\.tmp\.\d+\.[0-9a-f-]+$/;
+
+export function isExcludedPath(relPath: string): boolean {
+  const slash = relPath.lastIndexOf("/");
+  const base = slash >= 0 ? relPath.slice(slash + 1) : relPath;
+  return EXCLUDED_BASENAME_RE.test(base);
+}
+
+// Everything the push side refuses to carry.
+function isUnsyncable(relPath: string): boolean {
+  return isSecretsPath(relPath) || isExcludedPath(relPath);
+}
+
 export function createSyncService(
   cfg: MongoDatastoreConfig,
   getClient: (repoDir: string) => Promise<ClientHandle>,
@@ -200,10 +241,17 @@ export function createSyncService(
   // Core passes the bare, un-namespaced cache path; the tier actually lives one
   // segment deeper. Every local read/write below is rooted here so push walks
   // and pull writes land where core's reader looks. See tierRoot() in config.ts.
+  //
+  // A @magistr fork guard the upstream keeb tree does not carry: upstream roots
+  // everything at the bare path, which builds a second, invisible copy of the
+  // tier at the cache root that the reader never sees (swamp-club#1458/#1554).
+  // The 2026.09.01.2 merge kept the scoping rather than inheriting that.
   const cachePath = tierRoot(cfg, bareCachePath);
-  // The sidecar tracks paths relative to the tier root, so it belongs beside the
-  // tier it describes — not at the cache root shared with other namespaces.
-  const sidecar = new Sidecar(cachePath);
+  // Interned per cachePath: core builds a fresh sync service per invocation,
+  // and two Sidecars over one cache would not serialize with each other. It is
+  // interned on the TIER root, not the bare path, so the sidecar and journal
+  // sit beside the tier they describe rather than at the shared cache root.
+  const sidecar = getSidecar(cachePath);
   let updatedAtIndexEnsured = false;
 
   async function resources(): Promise<{
@@ -287,22 +335,12 @@ export function createSyncService(
     for await (const doc of paths.find(filter)) {
       const ms = doc.updatedAt.getTime();
       if (ms > maxUpdatedAtMs) maxUpdatedAtMs = ms;
-      // Never hydrate vault secrets, even if an older version synced them.
-      // Advance the watermark past the doc (above) so it isn't re-scanned,
-      // but don't write or delete it locally.
-      if (isSecretsPath(doc._id)) continue;
-      // A `_id` that escapes the cache root is dropped here rather than thrown
-      // on: the database is shared, and letting one malformed or planted doc
-      // abort every future pull would turn a rejected write into a sync outage.
-      // resolveWithinCache still guards the write sites as defence in depth.
-      if (!isSafeRelPath(doc._id)) {
-        console.warn(
-          `mongodb-datastore: skipping remote path outside the cache root: ${
-            JSON.stringify(doc._id)
-          }`,
-        );
-        continue;
-      }
+      // Never hydrate vault secrets or host-local files, even if an older
+      // version synced them. Advance the watermark past the doc (above) so it
+      // isn't re-scanned, but don't write or delete it locally — a stale
+      // `-wal`/`-shm` landing next to a live SQLite catalog is worse than
+      // having no copy at all.
+      if (isUnsyncable(doc._id)) continue;
       pathDocs.push(doc);
     }
 
@@ -313,9 +351,7 @@ export function createSyncService(
     await runPool(deletes, concurrency, async (doc) => {
       if (
         await removeSilentlyExisting(resolveWithinCache(cachePath, doc._id))
-      ) {
-        changes++;
-      }
+      ) changes++;
     });
 
     const needs = pathDocs.filter((d) => d.deletedAt === null);
@@ -369,6 +405,10 @@ export function createSyncService(
         ? new Date(maxUpdatedAtMs).toISOString()
         : new Date().toISOString();
       await sidecar.setLastPulledAt(watermark);
+      // The cache also mirrors the remote *path list* as of this point — the
+      // pull applied every tombstone and hydrated every addition in the
+      // window — so it is a reconcile point for the push tombstone pass too.
+      await sidecar.setLastReconciledAt(watermark);
       await sidecar.setLazyPullActive(false);
     }
     // A metadataOnly pull deliberately does NOT advance the watermark: doing
@@ -381,19 +421,14 @@ export function createSyncService(
   async function fullWalkPush(
     paths: Collection<PathDoc>,
     blobs: Collection<BlobDoc>,
-    lastPulledAt: string | null,
+    watermarkIso: string | null,
     lazyPullActive: boolean,
-  ): Promise<number> {
-    // Pre-fetch the set of blob hashes already in mongo so we can decide
-    // push-or-skip per file during the walk without buffering bytes.
-    // Filter out chunk docs (their `_id` carries `:<n>`): a hash is only
-    // "present" when its header/inline doc exists.
-    const remoteBlobHashes = new Set<string>();
-    for await (
-      const b of blobs.find({}, { projection: { _id: 1 } })
-    ) {
-      if (!b._id.includes(":")) remoteBlobHashes.add(b._id);
-    }
+  ): Promise<{ changes: number; reconciledAt: string }> {
+    // Stamped before the manifest read, not after: anything a peer writes
+    // while we are streaming the cursor must stay newer than this watermark
+    // so the *next* reconcile still considers it, rather than being silently
+    // treated as already-seen.
+    const reconciledAt = new Date().toISOString();
 
     // Pull the path manifest with a projection so the in-memory map carries
     // only the fields the diff/tombstone passes use.
@@ -411,54 +446,69 @@ export function createSyncService(
       });
     }
 
-    // Streaming push state: one file's bytes are in memory at most.
-    const inlineOps: AnyBulkWriteOperation<BlobDoc>[] = [];
-    let inlineBytes = 0;
-    let blobsPushed = 0;
-    const seenHashes = new Set<string>();
-
-    const flushInline = async () => {
-      if (inlineOps.length === 0) return;
-      blobsPushed += await safeBulkInsertBlobs(blobs, inlineOps);
-      inlineOps.length = 0;
-      inlineBytes = 0;
-    };
-
+    // Pass 1 — walk for metadata only, remembering where each distinct hash
+    // can be re-read from.
+    //
+    // This used to pre-fetch every `_id` in the blobs collection so the walk
+    // could decide push-or-skip inline. That cursor scales with the *blob
+    // store*, not the repo: proxmox-manager's had grown to 931k docs, so a
+    // push of ~21k files began by streaming ~60 MB of hashes and building a
+    // 931k-entry Set. Probing only the hashes we actually hold is bounded by
+    // the working set instead.
     const localMetas: LocalMeta[] = [];
-    const onFile = async (relPath: string, bytes: Uint8Array) => {
-      const hash = await sha256Hex(bytes);
-      localMetas.push({ relPath, hash, size: bytes.byteLength });
-
-      if (remoteBlobHashes.has(hash) || seenHashes.has(hash)) return;
-      seenHashes.add(hash);
-
-      if (bytes.byteLength > BLOB_INLINE_MAX) {
-        await flushInline();
-        blobsPushed += await pushChunkedBlob(blobs, hash, bytes);
-        return;
-      }
-      if (
-        inlineOps.length >= PUSH_BULK ||
-        inlineBytes + bytes.byteLength + 64 >= BULK_INLINE_BYTES
-      ) {
-        await flushInline();
-      }
-      inlineOps.push({
-        insertOne: {
-          document: {
-            _id: hash,
-            size: bytes.byteLength,
-            data: new Binary(bytes),
-          },
-        },
-      });
-      inlineBytes += bytes.byteLength + 64;
-    };
-
+    const hashToAbs = new Map<string, string>();
     for (const sub of DATASTORE_SUBDIRS) {
-      await walkAndStream(`${cachePath}/${sub}`, sub, onFile);
+      await walkMetas(
+        `${cachePath}/${sub}`,
+        sub,
+        localMetas,
+        hashToAbs,
+      );
     }
-    await flushInline();
+
+    // Pass 2 — probe blob existence for the distinct local hashes, then
+    // re-read and upload only what's missing. Chunk docs carry `:<n>` in
+    // their `_id`, so an `$in` over bare hashes only ever matches
+    // inline/header docs — exactly the "is this blob present" question.
+    let blobsPushed = 0;
+    const distinctHashes = [...hashToAbs.keys()];
+    const missingHashes: string[] = [];
+    for (let i = 0; i < distinctHashes.length; i += BLOB_QUERY_BATCH) {
+      const batch = distinctHashes.slice(i, i + BLOB_QUERY_BATCH);
+      const present = new Set<string>();
+      for await (
+        const b of blobs.find(
+          { _id: { $in: batch } },
+          { projection: { _id: 1 } },
+        )
+      ) {
+        present.add(b._id);
+      }
+      for (const h of batch) if (!present.has(h)) missingHashes.push(h);
+    }
+    for (let i = 0; i < missingHashes.length; i += PUSH_BULK) {
+      const batch = missingHashes.slice(i, i + PUSH_BULK);
+      const byHash = new Map<string, Uint8Array>();
+      let batchBytes = 0;
+      for (const h of batch) {
+        const bytes = await readFileOrNull(hashToAbs.get(h)!);
+        if (bytes === null) continue; // vanished mid-walk (autoGc)
+        byHash.set(h, bytes);
+        batchBytes += bytes.byteLength;
+        if (batchBytes >= BULK_INLINE_BYTES) {
+          blobsPushed += await pushBlobsByHash(
+            blobs,
+            [...byHash.keys()],
+            byHash,
+          );
+          byHash.clear();
+          batchBytes = 0;
+        }
+      }
+      if (byHash.size > 0) {
+        blobsPushed += await pushBlobsByHash(blobs, [...byHash.keys()], byHash);
+      }
+    }
 
     // Path upserts — no bytes needed, just the metadata collected above.
     let pathsPushed = 0;
@@ -499,8 +549,8 @@ export function createSyncService(
     // The local cache is then an incomplete mirror (data/.../raw is absent),
     // so an absent path is "never hydrated," not "deleted." Deletions resume
     // propagating once a full pull clears lazyPullActive.
-    if (lastPulledAt !== null && !lazyPullActive) {
-      const watermark = new Date(lastPulledAt);
+    if (watermarkIso !== null && !lazyPullActive) {
+      const watermark = new Date(watermarkIso);
       const localPaths = new Set(localMetas.map((f) => f.relPath));
       const tombstoneOps: AnyBulkWriteOperation<PathDoc>[] = [];
       for (const [relPath, doc] of remotePaths) {
@@ -521,73 +571,121 @@ export function createSyncService(
         );
       }
     }
-    return pathsPushed + blobsPushed;
+    return { changes: pathsPushed + blobsPushed, reconciledAt };
   }
 
-  async function pushOneRel(
+  // Reconciles a batch of dirty roots in one shot.
+  //
+  // The previous implementation handled one root per call from a serial loop,
+  // costing a `stat` plus a manifest `find` per root. With ~86k dirty entries
+  // — 99% of them version directories autoGc had already reaped — that was
+  // ~86k sequential round-trips holding the global lock, which is what made
+  // pushes time out and, because clearDirty only ran at the very end, left the
+  // dirty set to grow into the next run. Batching collapses that to a handful
+  // of queries: one manifest fetch per ROOT_QUERY_BATCH roots, one blob
+  // existence probe per BLOB_QUERY_BATCH hashes, and bulkWrites throughout.
+  async function pushRoots(
     paths: Collection<PathDoc>,
     blobs: Collection<BlobDoc>,
-    relPath: string,
-    lastPulledAt: string | null,
+    roots: string[],
+    watermarkIso: string | null,
     lazyPullActive: boolean,
   ): Promise<number> {
-    // Belt-and-suspenders: markDirty already drops secrets, so this only
-    // fires if a dirty path slipped through. Never push the vault tier.
-    if (isSecretsPath(relPath)) return 0;
-    const absPath = resolveWithinCache(cachePath, relPath);
-    let stat: Deno.FileInfo | null = null;
-    try {
-      stat = await Deno.stat(absPath);
-    } catch (err) {
-      if (!(err instanceof Deno.errors.NotFound)) throw err;
+    // Belt-and-suspenders: markDirty already drops these, so this only fires
+    // if a dirty path slipped through from an older sidecar.
+    const live = roots.filter((r) => !isUnsyncable(r));
+    if (live.length === 0) return 0;
+
+    // Pass 1 — walk every root for metadata only. Bytes are re-read later,
+    // and only for the hashes the remote is actually missing, so a dirty
+    // directory holding 15k files never lands in RAM all at once.
+    const localMetas: LocalMeta[] = [];
+    const hashToAbs = new Map<string, string>();
+    for (const root of live) {
+      const absPath = resolveWithinCache(cachePath, root);
+      let stat: Deno.FileInfo | null = null;
+      try {
+        stat = await Deno.stat(absPath);
+      } catch (err) {
+        if (!(err instanceof Deno.errors.NotFound)) throw err;
+      }
+      if (stat?.isFile) {
+        const bytes = await Deno.readFile(absPath);
+        const hash = await sha256Hex(bytes);
+        localMetas.push({ relPath: root, hash, size: bytes.byteLength });
+        if (!hashToAbs.has(hash)) hashToAbs.set(hash, absPath);
+      } else if (stat?.isDirectory) {
+        await walkMetas(absPath, root, localMetas, hashToAbs);
+      }
+      // A missing root is a deletion: it contributes no local metas, and the
+      // tombstone pass below reconciles whatever the remote still lists.
     }
 
-    const local: LocalFile[] = [];
-    if (stat?.isFile) {
-      const bytes = await Deno.readFile(absPath);
-      local.push({
-        relPath,
-        hash: await sha256Hex(bytes),
-        size: bytes.byteLength,
-        bytes,
-      });
-    } else if (stat?.isDirectory) {
-      await walkInto(absPath, relPath, local);
-    }
-
-    const remoteDocs = await paths.find({
-      $or: [
-        { _id: relPath },
-        { _id: { $regex: `^${escapeRegex(relPath)}/` } },
-      ],
-    }).toArray();
+    // Pass 2 — one manifest query per batch of roots instead of per root.
     const remoteByPath = new Map<string, PathDoc>();
-    for (const d of remoteDocs) remoteByPath.set(d._id, d);
-
-    const localByHash = new Map<string, Uint8Array>();
-    for (const f of local) {
-      if (!localByHash.has(f.hash)) localByHash.set(f.hash, f.bytes);
+    for (let i = 0; i < live.length; i += ROOT_QUERY_BATCH) {
+      const batch = live.slice(i, i + ROOT_QUERY_BATCH);
+      const clauses: Array<Record<string, unknown>> = [];
+      for (const root of batch) {
+        clauses.push({ _id: root });
+        clauses.push({ _id: { $regex: `^${escapeRegex(root)}/` } });
+      }
+      for await (const doc of paths.find({ $or: clauses })) {
+        remoteByPath.set(doc._id, doc);
+      }
     }
+
     let changes = 0;
 
-    const localHashes = [...localByHash.keys()];
-    const remoteBlobHashes = new Set<string>();
-    if (localHashes.length > 0) {
+    // Pass 3 — probe blob existence in bulk, then re-read and push only the
+    // bytes the remote lacks.
+    const distinctHashes = [...hashToAbs.keys()];
+    const missingHashes: string[] = [];
+    for (let i = 0; i < distinctHashes.length; i += BLOB_QUERY_BATCH) {
+      const batch = distinctHashes.slice(i, i + BLOB_QUERY_BATCH);
+      const present = new Set<string>();
       for await (
         const b of blobs.find(
-          { _id: { $in: localHashes } },
+          { _id: { $in: batch } },
           { projection: { _id: 1 } },
         )
       ) {
-        remoteBlobHashes.add(b._id);
+        present.add(b._id);
+      }
+      for (const h of batch) if (!present.has(h)) missingHashes.push(h);
+    }
+    for (let i = 0; i < missingHashes.length; i += PUSH_BULK) {
+      const batch = missingHashes.slice(i, i + PUSH_BULK);
+      const byHash = new Map<string, Uint8Array>();
+      let batchBytes = 0;
+      for (const h of batch) {
+        const bytes = await readFileOrNull(hashToAbs.get(h)!);
+        // Vanished between walk and read (autoGc): the path upsert below is
+        // skipped for it too, since its meta no longer resolves to bytes.
+        if (bytes === null) continue;
+        byHash.set(h, bytes);
+        batchBytes += bytes.byteLength;
+        if (batchBytes >= BULK_INLINE_BYTES) {
+          changes += await pushBlobsByHash(blobs, [...byHash.keys()], byHash);
+          byHash.clear();
+          batchBytes = 0;
+        }
+      }
+      if (byHash.size > 0) {
+        changes += await pushBlobsByHash(blobs, [...byHash.keys()], byHash);
       }
     }
-    const missing = localHashes.filter((h) => !remoteBlobHashes.has(h));
-    changes += await pushBlobsByHash(blobs, missing, localByHash);
 
+    // Pass 4 — path upserts, skipping anything the remote already has at the
+    // same hash.
     const now = new Date();
-    const pathOps: AnyBulkWriteOperation<PathDoc>[] = [];
-    for (const f of local) {
+    let pathOps: AnyBulkWriteOperation<PathDoc>[] = [];
+    const flushPathOps = async () => {
+      if (pathOps.length === 0) return;
+      await paths.bulkWrite(pathOps, { ordered: false });
+      pathOps = [];
+    };
+    for (const f of localMetas) {
       const existing = remoteByPath.get(f.relPath);
       if (
         existing &&
@@ -609,37 +707,34 @@ export function createSyncService(
         },
       });
       changes++;
+      if (pathOps.length >= PUSH_BULK) await flushPathOps();
     }
-    for (let i = 0; i < pathOps.length; i += PUSH_BULK) {
-      await paths.bulkWrite(
-        pathOps.slice(i, i + PUSH_BULK),
-        { ordered: false },
-      );
-    }
+    await flushPathOps();
 
-    // Same lazy guard as fullWalkPush: don't tombstone within this subtree
-    // while the cache is an incomplete (lazy) mirror.
-    if (lastPulledAt !== null && !lazyPullActive) {
-      const watermark = new Date(lastPulledAt);
-      const localPaths = new Set(local.map((f) => f.relPath));
-      const tombstoneOps: AnyBulkWriteOperation<PathDoc>[] = [];
-      for (const doc of remoteDocs) {
-        if (localPaths.has(doc._id) || doc.deletedAt !== null) continue;
+    // Pass 5 — same lazy guard as fullWalkPush: don't tombstone within these
+    // subtrees while the cache is an incomplete (lazy) mirror.
+    if (watermarkIso !== null && !lazyPullActive) {
+      const watermark = new Date(watermarkIso);
+      const localPaths = new Set(localMetas.map((f) => f.relPath));
+      let tombstoneOps: AnyBulkWriteOperation<PathDoc>[] = [];
+      const flushTombstones = async () => {
+        if (tombstoneOps.length === 0) return;
+        await paths.bulkWrite(tombstoneOps, { ordered: false });
+        tombstoneOps = [];
+      };
+      for (const [relPath, doc] of remoteByPath) {
+        if (localPaths.has(relPath) || doc.deletedAt !== null) continue;
         if (doc.updatedAt > watermark) continue;
         tombstoneOps.push({
           updateOne: {
-            filter: { _id: doc._id },
+            filter: { _id: relPath },
             update: { $set: { deletedAt: now, updatedAt: now } },
           },
         });
         changes++;
+        if (tombstoneOps.length >= PUSH_BULK) await flushTombstones();
       }
-      for (let i = 0; i < tombstoneOps.length; i += PUSH_BULK) {
-        await paths.bulkWrite(
-          tombstoneOps.slice(i, i + PUSH_BULK),
-          { ordered: false },
-        );
-      }
+      await flushTombstones();
     }
 
     return changes;
@@ -667,27 +762,46 @@ export function createSyncService(
       // (issue #4). `pushBootstrapped` survives a pull and is only set true
       // by a completed push, so it closes that gap and also re-pushes the
       // content of any deployment that already hit the bug.
+      const watermark = reconcileWatermark(state);
       if (state.bulkInvalidated || !state.pushBootstrapped) {
-        const changes = await fullWalkPush(
+        const { changes, reconciledAt } = await fullWalkPush(
           paths,
           blobs,
-          state.lastPulledAt,
+          watermark,
           lazy,
         );
         await sidecar.clearDirty();
+        // A full walk enumerated every remote path doc, so this cache has now
+        // genuinely observed the complete remote list — record it so the next
+        // push may tombstone paths this host itself wrote earlier. A lazy
+        // cache is exempt: it never had the full local side to compare.
+        if (!lazy) await sidecar.setLastReconciledAt(reconciledAt);
         return changes;
       }
 
-      if (state.dirtyPaths.length === 0) return 0;
+      // `dirtyPaths` arrives already coalesced: descendants of a dirty
+      // directory are dropped, because pushRoots walks a dirty directory in
+      // full. That is what turns the per-version markDirty storm into a
+      // handful of roots.
+      const roots = state.dirtyPaths;
+      if (roots.length === 0) return 0;
+
       let changes = 0;
-      for (const relPath of state.dirtyPaths) {
-        changes += await pushOneRel(
+      // Retire progress in slices. clearDirty used to run only after every
+      // root had been reconciled, so a push that timed out or was killed
+      // re-did all of its work next run — and the dirty set kept growing in
+      // the meantime. Forgetting each slice as it lands makes an interrupted
+      // push resume roughly where it stopped.
+      for (let i = 0; i < roots.length; i += PUSH_ROOT_SLICE) {
+        const slice = roots.slice(i, i + PUSH_ROOT_SLICE);
+        changes += await pushRoots(
           paths,
           blobs,
-          relPath,
-          state.lastPulledAt,
+          slice,
+          watermark,
           lazy,
         );
+        await sidecar.forgetDirty(slice);
       }
       await sidecar.clearDirty();
       return changes;
@@ -703,9 +817,11 @@ export function createSyncService(
 
     markDirty(options?: DatastoreSyncOptions): Promise<void> {
       const relPath = options?.relPath;
-      // Drop dirty signals for the vault tier — it never syncs (see
-      // isSecretsPath). A bulk invalidation (no relPath) still records.
-      if (relPath !== undefined && isSecretsPath(relPath)) {
+      // Drop dirty signals for the vault tier and host-local files — neither
+      // ever syncs (see isSecretsPath / isExcludedPath). Filtering here keeps
+      // per-command SQLite catalog churn out of the journal entirely. A bulk
+      // invalidation (no relPath) still records.
+      if (relPath !== undefined && isUnsyncable(relPath)) {
         return Promise.resolve();
       }
       return sidecar.recordDirty(relPath).then(() => undefined);
@@ -777,6 +893,7 @@ async function pushBlobsByHash(
           document: {
             _id: h,
             size: bytes.byteLength,
+            createdAt: new Date(),
             data: new Binary(bytes),
           },
         },
@@ -812,6 +929,7 @@ async function pushChunkedBlob(
         document: {
           _id: `${hash}:${i}`,
           size: chunkBytes.byteLength,
+          createdAt: new Date(),
           data: new Binary(chunkBytes),
         },
       },
@@ -823,7 +941,7 @@ async function pushChunkedBlob(
   // success.
   const headerWritten = await safeBulkInsertBlobs(blobs, [{
     insertOne: {
-      document: { _id: hash, size, chunkCount },
+      document: { _id: hash, size, createdAt: new Date(), chunkCount },
     },
   }]);
   return chunksWritten + headerWritten;
@@ -926,10 +1044,17 @@ async function runPool<T>(
   );
 }
 
-async function walkAndStream(
+// Metadata-only walk: hashes each file and drops its bytes immediately,
+// recording where to find them again if the remote turns out to need them.
+// Both push paths share it — the old walkInto accumulated every file's bytes,
+// so one dirty data-name directory holding 15k versions pinned all of them in
+// RAM, and the old walkAndStream had to decide push-or-skip inline, which
+// forced the whole blob-id prefetch.
+async function walkMetas(
   root: string,
   relRoot: string,
-  onFile: (relPath: string, bytes: Uint8Array) => Promise<void>,
+  out: LocalMeta[],
+  hashToAbs: Map<string, string>,
 ): Promise<void> {
   try {
     for await (const entry of Deno.readDir(root)) {
@@ -937,10 +1062,11 @@ async function walkAndStream(
       const childAbs = `${root}/${entry.name}`;
       const childRel = `${relRoot}/${entry.name}`;
       if (entry.isDirectory) {
-        await walkAndStream(childAbs, childRel, onFile);
+        await walkMetas(childAbs, childRel, out, hashToAbs);
         continue;
       }
       if (!entry.isFile) continue;
+      if (isExcludedPath(childRel)) continue;
       let bytes: Uint8Array;
       try {
         bytes = await Deno.readFile(childAbs);
@@ -948,42 +1074,9 @@ async function walkAndStream(
         if (err instanceof Deno.errors.NotFound) continue;
         throw err;
       }
-      await onFile(childRel, bytes);
-    }
-  } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return;
-    throw err;
-  }
-}
-
-async function walkInto(
-  root: string,
-  relRoot: string,
-  out: LocalFile[],
-): Promise<void> {
-  try {
-    for await (const entry of Deno.readDir(root)) {
-      if (entry.isSymlink) continue;
-      const childAbs = `${root}/${entry.name}`;
-      const childRel = `${relRoot}/${entry.name}`;
-      if (entry.isDirectory) {
-        await walkInto(childAbs, childRel, out);
-        continue;
-      }
-      if (!entry.isFile) continue;
-      let bytes: Uint8Array;
-      try {
-        bytes = await Deno.readFile(childAbs);
-      } catch (err) {
-        if (err instanceof Deno.errors.NotFound) continue;
-        throw err;
-      }
-      out.push({
-        relPath: childRel,
-        hash: await sha256Hex(bytes),
-        size: bytes.byteLength,
-        bytes,
-      });
+      const hash = await sha256Hex(bytes);
+      out.push({ relPath: childRel, hash, size: bytes.byteLength });
+      if (!hashToAbs.has(hash)) hashToAbs.set(hash, childAbs);
     }
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) return;
