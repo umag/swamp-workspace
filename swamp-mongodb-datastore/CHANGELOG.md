@@ -61,6 +61,39 @@ regression in each, so both were re-applied on top of the merged code:
 Both restorations carry a comment naming them as fork guards, so a future
 upstream merge does not quietly drop them again.
 
+### Namespace normalization on core's per-file hooks — the incremental push had been inert
+
+Live testing on an isolated namespace turned up a defect present in BOTH this
+merge and the pre-merge fork: after bootstrap, ordinary writes never reached the
+remote. A namespaced repo sat with 37 local files and 0 remote paths, and
+`sync --push` reported `Pushed 0 files`; only a forced full walk persisted
+anything.
+
+The cause, measured directly: core calls `markDirty` (and `hydrateFile`) with a
+path that ALREADY carries the namespace —
+`dsmerge-probe/definitions-evaluated/
+command/shell/probe2.yaml` — while
+`tierRoot` scopes only the LOCAL side, so remote `_id`s, the local walk and
+`isSecretsPath` all speak tier-relative paths. swamp-club#1554 records the same
+asymmetry for `@swamp/s3-datastore`'s lazy-hydration hook, which is why that one
+"lands correctly via the bare fallback" while the bulk path does not.
+
+Unnormalized, one prefix broke three things:
+
+- the dirty journal recorded paths no local walk could match, so the incremental
+  push found nothing and only a full walk ever persisted;
+- `isSecretsPath` / `isExcludedPath` stopped matching, so the vault tier and
+  host-local files were no longer filtered out of the journal;
+- `hydrateFile` looked up an `_id` no remote doc carries, and would have written
+  to `<tier>/<namespace>/...` had one matched.
+
+`toTierRelative()` now normalizes at both hooks, before the secrets check rather
+than after it. It strips only when the remainder begins with a real tier
+directory, so a genuinely tier-relative path is never mangled.
+
+Verified live: with the fix, ordinary method runs push incrementally again —
+live paths 70 -> 100 -> 144 across two runs, where before they stayed at 0.
+
 ### Tests
 
 84 passing across seven suites. The four suites master added after this merge

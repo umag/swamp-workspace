@@ -254,6 +254,42 @@ export function createSyncService(
   const sidecar = getSidecar(cachePath);
   let updatedAtIndexEnsured = false;
 
+  /**
+   * Strip the namespace core prepends, yielding the tier-relative path every
+   * other part of this service speaks.
+   *
+   * `tierRoot` scopes the LOCAL side only: remote `_id`s stay tier-relative
+   * (`data/...`), because this extension partitions by collection prefix, not
+   * key prefix. But core's per-file hooks — `markDirty` and `hydrateFile` —
+   * hand back a path that ALREADY carries the namespace
+   * (`dev-tmp-swamp/data/...`): the same asymmetry swamp-club#1554 records for
+   * @swamp/s3-datastore's lazy-hydration hook. Measured directly here — every
+   * markDirty call on a namespaced repo arrives prefixed.
+   *
+   * Unnormalized, that breaks three things:
+   *  - the dirty journal records paths no local walk can ever match, so the
+   *    incremental push finds nothing and ONLY a full walk ever persists;
+   *  - `isSecretsPath`/`isUnsyncable` stop matching, so the vault tier and
+   *    host-local files are no longer filtered out of the journal;
+   *  - `hydrateFile` looks up an `_id` no remote doc carries, and would write
+   *    to `<tier>/<namespace>/...` if one ever did.
+   *
+   * Strips only when the remainder begins with a real tier directory, so a
+   * genuinely tier-relative path is never mangled — including the ambiguous
+   * case of a namespace named like a tier directory, where stripping is
+   * correct anyway because core is the one that prefixed it.
+   */
+  function toTierRelative(relPath: string): string {
+    const ns = cfg.namespace.trim();
+    if (ns.length === 0) return relPath;
+    const prefix = `${ns}/`;
+    if (!relPath.startsWith(prefix)) return relPath;
+    const rest = relPath.slice(prefix.length);
+    const head = rest.split("/")[0];
+    const known: readonly string[] = DATASTORE_SUBDIRS;
+    return known.includes(head) || head === "secrets" ? rest : relPath;
+  }
+
   async function resources(): Promise<{
     paths: Collection<PathDoc>;
     blobs: Collection<BlobDoc>;
@@ -816,7 +852,11 @@ export function createSyncService(
     },
 
     markDirty(options?: DatastoreSyncOptions): Promise<void> {
-      const relPath = options?.relPath;
+      // Normalize BEFORE the unsyncable check: core prefixes the namespace, so
+      // an un-normalized `<ns>/secrets/...` slips past isSecretsPath.
+      const relPath = options?.relPath === undefined
+        ? undefined
+        : toTierRelative(options.relPath);
       // Drop dirty signals for the vault tier and host-local files — neither
       // ever syncs (see isSecretsPath / isExcludedPath). Filtering here keeps
       // per-command SQLite catalog churn out of the journal entirely. A bulk
@@ -831,7 +871,11 @@ export function createSyncService(
     // fetch by content hash (assembling chunks for >15 MB blobs). No
     // watermark or sidecar interaction — this is a pure on-demand read of a
     // file the lazy setup pull deliberately skipped.
-    async hydrateFile(relPath: string): Promise<boolean> {
+    async hydrateFile(rawRelPath: string): Promise<boolean> {
+      // Core passes this one namespace-prefixed too (swamp-club#1554 records
+      // the same for @swamp/s3-datastore's hook), so normalize before the
+      // secrets check, the remote _id lookup, and the local join alike.
+      const relPath = toTierRelative(rawRelPath);
       // The vault tier never syncs, so there's nothing to hydrate.
       if (isSecretsPath(relPath)) return false;
       const { paths, blobs } = await resources();

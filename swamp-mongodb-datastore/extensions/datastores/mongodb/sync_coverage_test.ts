@@ -173,3 +173,98 @@ async function exists(path: string): Promise<boolean> {
     return false;
   }
 }
+
+// THE NORMALIZATION core's per-file hooks require. Measured against a live
+// namespaced repo: every markDirty call arrives with the namespace already
+// prepended (`dsmerge-probe/definitions-evaluated/...`), while everything else
+// in this service — remote `_id`s, the local walk, isSecretsPath — speaks
+// tier-relative paths. swamp-club#1554 records the same asymmetry for
+// @swamp/s3-datastore's lazy-hydration hook.
+//
+// Left unnormalized the journal fills with paths no walk can match, so the
+// incremental push silently persists NOTHING and only a full walk ever does.
+// Confirmed live: before this fix a namespaced repo held 37 local files and 0
+// remote paths; after it, ordinary method runs push incrementally again.
+Deno.test("markDirty normalizes core's namespace-prefixed path to tier-relative before journalling it", async () => {
+  await withTempCache(async (bare) => {
+    const namespace = "ns-probe";
+    const service = createSyncService(
+      cfg(namespace),
+      () => Promise.reject(new Error("markDirty must not open a client")),
+      "/repo",
+      bare,
+    );
+
+    await service.markDirty({
+      relPath: `${namespace}/data/command/shell/abc/result`,
+    });
+
+    const journal = await Deno.readTextFile(
+      `${bare}/${namespace}/.datastore-dirty.log`,
+    );
+    assertEquals(
+      journal.includes("data/command/shell/abc/result"),
+      true,
+      "the tier-relative path must reach the journal",
+    );
+    assertEquals(
+      journal.includes(`${namespace}/data/`),
+      false,
+      "the namespace prefix must NOT survive into the journal — a prefixed " +
+        "entry matches no local walk, so the incremental push finds nothing",
+    );
+  });
+});
+
+// The prefix also hides the vault tier from isSecretsPath. Unnormalized,
+// `<ns>/secrets/...` fails the isSecretsPath test and is journalled like any
+// other path, re-arming the leak DATASTORE_SUBDIRS exists to prevent.
+Deno.test("markDirty still filters the vault tier when core prefixes the namespace", async () => {
+  await withTempCache(async (bare) => {
+    const namespace = "ns-probe";
+    const service = createSyncService(
+      cfg(namespace),
+      () => Promise.reject(new Error("markDirty must not open a client")),
+      "/repo",
+      bare,
+    );
+
+    await service.markDirty({ relPath: `${namespace}/secrets/my-vault.key` });
+
+    let journal = "";
+    try {
+      journal = await Deno.readTextFile(
+        `${bare}/${namespace}/.datastore-dirty.log`,
+      );
+    } catch {
+      journal = "";
+    }
+    assertEquals(
+      journal.includes("secrets"),
+      false,
+      "a namespace-prefixed secrets path must still be dropped",
+    );
+  });
+});
+
+// A genuinely tier-relative path must survive untouched, including the
+// ambiguous case where the first segment happens to equal the namespace.
+Deno.test("markDirty leaves an already tier-relative path alone", async () => {
+  await withTempCache(async (bare) => {
+    const namespace = "data";
+    const service = createSyncService(
+      cfg(namespace),
+      () => Promise.reject(new Error("markDirty must not open a client")),
+      "/repo",
+      bare,
+    );
+
+    // "outputs/..." does not start with "data/", so nothing is stripped.
+    await service.markDirty({ relPath: "outputs/command/shell/run.yaml" });
+
+    const journal = await Deno.readTextFile(
+      `${bare}/${namespace}/.datastore-dirty.log`,
+    );
+    assertEquals(journal.includes("outputs/command/shell/run.yaml"), true);
+  });
+});
