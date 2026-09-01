@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.09.01.3
+
+- **Republish of 2026.09.01.2, no code change.** The 2026.09.01.2 publish was
+  skipped when `fmt:check` failed on the merge commit (a deno 2.8/2.9 markdown
+  reflow difference in this file), and `extension-publish` only fires on the
+  commit that carries the version bump, so the registry never received it.
+
 ## 2026.09.01.2
 
 - **`groupScore` reads dash-suffixed scene credits.** It only ever looked for a
