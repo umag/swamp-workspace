@@ -1,0 +1,51 @@
+manifestVersion: 1
+name: "@magistr/vecs"
+version: "2026.07.28.1"
+description: |
+  The V.E.C.S. competency framework as queryable swamp data, with 0–5
+  self-assessment and gap analysis on top.
+
+  V.E.C.S. is the Method school's model (school.mishkatz.com) of what makes a
+  creative specialist strong: four dimensions — Vision, Execution,
+  Communication, Strategy — holding 19 skills, each published with explicit
+  Знания (knowledge) and Умения (abilities) lists. That structure is what makes
+  it scoreable.
+
+  The framework ships as a bundled reference file read via
+  `context.extensionFile`, so the model needs no credentials, no configuration
+  and no network access — it works offline and under `swamp serve`.
+
+  Methods:
+  - `framework` — the four dimensions and their skills, optionally filtered to one
+  - `skill`     — one skill's full knowledge/ability lists, by slug, Russian title
+    or `dimension:position` coordinate
+  - `courses`   — the school's course list with prices and summaries
+  - `assess`    — record a 0–5 self-assessment; rolls up per dimension, reports
+    coverage, unscored skills and unrecognised keys; idempotent unless `force`
+  - `gaps`      — turn the weakest scored skills into a study plan built from those
+    skills' own knowledge and ability bullets, with a delta against the
+    previous assessment
+
+  Assessments accumulate as versions of one resource, so the repo keeps the
+  whole competency time series.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/vecs.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - references/vecs.json
+
+labels:
+  - vecs
+  - competency-framework
+  - self-assessment
+  - skills
+  - design
+  - education
+  - offline
