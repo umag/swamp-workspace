@@ -38,6 +38,38 @@ Deno.test("parseEpisode: EP/E prefix format", () => {
   assertEquals(parseEpisode("Show EP123 1080p.mkv"), 123);
 });
 
+// GITS 2026 ep 9 (2026-09-01): Erai-raws never posted, and all nine other
+// 1080p releases used "S01E09" — which parsed as null, so the show sat in
+// not-found for hours while VARYG/Judas were sitting on Nyaa.
+Deno.test("parseEpisode: SxxExx season-episode format", () => {
+  assertEquals(
+    parseEpisode(
+      "[Judas] Koukaku Kidoutai (2026) (The Ghost in the Shell) - S01E09 [1080p][HEVC x265 10bit][Dual-Audio][Multi-Subs] (Weekly)",
+    ),
+    9,
+  );
+  assertEquals(
+    parseEpisode(
+      "[DKB] The Ghost in the Shell - S01E09 [1080p][HEVC x265 10bit][Dual-Audio][Multi-Subs][weekly]",
+    ),
+    9,
+  );
+  assertEquals(
+    parseEpisode(
+      "THE GHOST IN THE SHELL S01E09 EPISODE 09 BRAIN DRAIN ii 1080p AMZN WEB-DL DUAL DDP2.0 H.264-VARYG",
+    ),
+    9,
+  );
+  assertEquals(
+    parseEpisode(
+      "[ToonsHub] THE GHOST IN THE SHELL S01E09 1080p AMZN WEB-DL DUAL DDP2.0 H.265",
+    ),
+    9,
+  );
+  assertEquals(parseEpisode("Show S2E12 1080p.mkv"), 12);
+  assertEquals(parseEpisode("Show s01e105 1080p.mkv"), 105);
+});
+
 Deno.test("parseEpisode: bracketed episode number", () => {
   assertEquals(parseEpisode("Show [01] 1080p.mkv"), 1);
   assertEquals(parseEpisode("Show (12) 1080p.mkv"), 12);
