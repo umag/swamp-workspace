@@ -110,8 +110,13 @@ of tools that keep a mutable per-album status column.
 Run the three steps **in this order**; they span two model instances:
 
 ```bash
-# 1. artist name -> MusicBrainz ID map (this model)
-swamp model method run <instance> resolve-artists
+# 1. artist name -> MusicBrainz ID map (this model), seeded from a
+# headphones instance (default "headphones") and falling back to a
+# musicbrainz instance (default "musicbrainz") for whatever the seed does
+# not cover
+swamp model method run <instance> resolve-artists \
+  --input headphonesInstance=<headphones-instance> \
+  --input musicbrainzInstance=<musicbrainz-instance>
 
 # 2. get the artist list, then cache each artist's discography (the
 # musicbrainz model, NOT this one)
@@ -124,7 +129,8 @@ swamp model method run <musicbrainz-instance> sync-artist-discographies \
   --input 'artistMbids:json=["<mbid>","<mbid>"]'
 
 # 3. derive the gap (this model, pure — no network)
-swamp model method run <instance> wanted
+swamp model method run <instance> wanted \
+  --input musicbrainzInstance=<musicbrainz-instance>
 ```
 
 Step 2 is the expensive one: at MusicBrainz's public 1 req/sec a cold pass over
@@ -154,35 +160,75 @@ the medium-severity want-total sanity band and the medium-severity artist-map
 floor. `--fail-on high` downgrades both to warnings — use it only in CI, and
 read the assert results rather than the exit code.
 
-The workflow body hardcodes two literal swamp model instance names throughout —
-`music` (this model, matching the `Setup` section below) and `musicbrainz` —
-both in the three step targets (`modelIdOrName`) and in every gate's
-`data.query('modelName == "music" && ...')` /
-`'modelName == "musicbrainz" && ...'` CEL predicate. Neither is a workflow
-input: a dynamic step target does not remove swamp's step-input validation, it
-keeps the check and makes it report `passed: true` while verifying nothing, so
-parameterising would have silently turned three of the workflow's 22
-`swamp workflow validate` checks into checks that always pass. If your own
-instances are named `music` and `musicbrainz` — the names this README's own
-examples use — the file runs as pasted, with no edits. If they are named
-differently, retargeting it is a global find/replace of those two literal
-strings across the whole file (every step target AND every gate's query literal
-must move together, or a gate queries the instance the step never wrote to and
-fails by indexing `[0]` on an empty result) — mechanical, but not confined to
-one line.
+**Retargeting instance names.** The workflow body hardcodes three literal swamp
+model instance names — `music` (this model, matching the `Setup` section below),
+`musicbrainz`, and `headphones` (the seed instance `resolve-artists` reads by
+default) — repeated across several token classes, not confined to one line. The
+three step `modelIdOrName` targets (`music`, `musicbrainz`, `music`) are NOT
+workflow inputs: a dynamic step target does not remove swamp's step-input
+validation, it keeps the check and makes it report `passed: true` while
+verifying nothing, so parameterising them would have silently turned three of
+the workflow's 22 `swamp workflow validate` checks into checks that always pass.
+`headphonesInstance` and `musicbrainzInstance`, by contrast, ARE plain method
+arguments, already explicit literals on the resolve and wanted steps —
+retargeting those two is just editing their values, with no step-target risk.
 
-It enforces eight gates, every one `allowFailure: false`: (1)
-preflight-dimensions — the artist and album dimensions are populated before
-anything runs; (2) resolve-produced-something — resolve-artists resolved at
-least one artist this run; (3) artist-map-floor — resolved artists are at least
-20% of the library's artist dimension; (4) sync-coverage — the sync made one
-complete pass (`startOffset` 0, `remaining` 0); (5) sync-handoff — the sync was
-handed THIS run's full resolved list, not a stale or empty one; (6)
-catalog-completeness — every requested artist now has a cached discography; (7)
-derive-existence — the `wanted` step actually wrote a resource this run; (8)
-want-total-band — the derived want total is not implausibly large against the
-owned album count. Full detail, including recovery guidance per gate, is in the
-file's own `description:` block and each assert step's `message`.
+If your own instances are named `music`, `musicbrainz`, and `headphones` — the
+names this README's own examples use — the file runs as pasted, with no edits.
+If any are named differently, retarget the affected one(s) with a WHOLE-WORD
+(`\b`-bounded) find/replace, in this order:
+
+1. Replace every whole-word `musicbrainz` with your instance name FIRST —
+   `musicbrainz` contains `music` as a substring, so replacing `music` first
+   would corrupt `musicbrainz` into `<newname>brainz`.
+2. Then replace every remaining whole-word `music` with your instance name.
+3. Replace every whole-word `headphones` with your instance name — this one does
+   not overlap the other two, so its position in the order does not matter.
+
+Each replacement must move together across every token class it appears in, or a
+gate queries an instance the step never wrote to and fails by indexing `[0]` on
+an empty result:
+
+- the three step `modelIdOrName:` values;
+- the `headphonesInstance` / `musicbrainzInstance` step-input literal values on
+  the resolve and wanted steps;
+- every gate's `data.query('modelName == "<name>" && ...')` CEL predicate, in
+  both `expr` and `message`;
+- the two `data.latest("<name>", ...)` calls in `read-discography-sync-cursor`'s
+  `expr` and `message` — miss these and a rename makes
+  `data.latest(...) == null` true against a model that no longer exists, so the
+  step PASSES and renders "No prior state — this will be a cold pass from offset
+  0." even though the true cause is a stale instance name, not an empty cache;
+- bare prose `instance "<name>"` occurrences in preflight and gate messages;
+- the `swamp model method run` / `swamp data get` / `swamp data query` commands
+  inside gate messages that name an instance;
+- the top-level `description:` narrative (`music/resolve-artists`,
+  `musicbrainz/sync-artist-discographies`, `music/wanted`, and the `musicbrainz`
+  model-lock sentence).
+
+Do NOT touch, even though a careless replace might match nearby text:
+`@magistr/music-wanted-sequence` (the workflow's own name),
+`@magistr/musicbrainz-discography-sync` (a report name), the literal
+`music-wanted` inside recovery commands, `music-library` (this package's own
+name, named in the preflight-seed gate's recovery message), and the method names
+`resolve-artists` / `sync-artist-discographies` / `wanted`.
+
+It enforces nine gates, every one `allowFailure: false`. Gate numbers are stable
+labels, not execution positions: (1) preflight-dimensions — the artist and album
+dimensions are populated before anything runs; (9) preflight-seed — the
+headphones seed resolve-artists reads from (its headphonesInstance argument) is
+present and carries a non-empty artists list, catching a missing, wrong-named or
+empty seed before the ~35-minute sync is committed to; (2)
+resolve-produced-something — resolve-artists resolved at least one artist this
+run; (3) artist-map-floor — resolved artists are at least 20% of the library's
+artist dimension; (4) sync-coverage — the sync made one complete pass
+(`startOffset` 0, `remaining` 0); (5) sync-handoff — the sync was handed THIS
+run's full resolved list, not a stale or empty one; (6) catalog-completeness —
+every requested artist now has a cached discography; (7) derive-existence — the
+`wanted` step actually wrote a resource this run; (8) want-total-band — the
+derived want total is not implausibly large against the owned album count. Full
+detail, including recovery guidance per gate, is in the file's own
+`description:` block and each assert step's `message`.
 
 REQUIRED after any edit to the workflow: run it with `--input dryRun=true`
 before trusting the edit. This forces the sync step's `batchSize` to 0 (no new
@@ -209,16 +255,18 @@ drift check; the only differences above it are the `id:`/`name:` header lines
 and one appended homelab-only operating paragraph in the live copy's
 description.
 
-**`resolve-artists`** seeds the map for free from a headphones instance, whose
-artists are already MusicBrainz-keyed, then falls back to token-set MusicBrainz
-search for whatever the seed does not cover. Artists it cannot resolve
-confidently are **parked, never guessed** — exact-string matching against
-MusicBrainz fails in both directions (`Miles Davis` is rejected against the sort
-form `Davis, Miles`, while `Bill Brown` matches `James Brown` at score 100), so
-a name matching two distinct MBIDs is reported as ambiguous with its competing
-candidates rather than resolved to whichever came first. The
-`resolved`/`ambiguous`/`unresolved` counts are top-level fields, so a run that
-parked 300 artists looks different at the CLI from one that resolved them.
+**`resolve-artists`** seeds the map for free from a headphones instance (the
+`headphonesInstance` argument, default `"headphones"`), whose artists are
+already MusicBrainz-keyed, then falls back to token-set MusicBrainz search — via
+the `musicbrainzInstance` argument, default `"musicbrainz"` — for whatever the
+seed does not cover. Artists it cannot resolve confidently are **parked, never
+guessed** — exact-string matching against MusicBrainz fails in both directions
+(`Miles Davis` is rejected against the sort form `Davis, Miles`, while
+`Bill Brown` matches `James Brown` at score 100), so a name matching two
+distinct MBIDs is reported as ambiguous with its competing candidates rather
+than resolved to whichever came first. The `resolved`/`ambiguous`/`unresolved`
+counts are top-level fields, so a run that parked 300 artists looks different at
+the CLI from one that resolved them.
 
 The MusicBrainz fallback is a SINGLE batched call per run
 (`@magistr/musicbrainz`'s `search-artists-batch`), never one call per artist —

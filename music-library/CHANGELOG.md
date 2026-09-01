@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026.08.19.2
+
+Fixes `music-wanted-headphones-instance-implicit`. `model.version`/
+`manifest.yaml` move `2026.08.19.1` -> `2026.08.19.2`.
+
+**BREAKING**: a run that previously succeeded while silently seeding from
+nothing now hard-fails at a new `preflight-seed` gate for any operator whose
+headphones instance is not literally named `headphones`.
+
+**MIGRATION**: retarget the `headphones` literals per the README's ordered
+"Retargeting instance names" procedure, or, if your instance genuinely is named
+`headphones` but was never indexed, run
+`swamp model method run headphones get-index`.
+
+The `music-wanted` workflow's resolve step passed only `refresh` to
+`resolve-artists`, so its `headphonesInstance`/`musicbrainzInstance` arguments
+bound silently to their model-side defaults while two gate recovery messages
+told the operator to check "the headphones seed instance" — an instance the
+workflow never named, passed, or verified. The resolve step now passes
+`headphonesInstance: headphones` and `musicbrainzInstance: musicbrainz`
+explicitly (same values, so behaviour is unchanged on this instance), the
+`wanted` step now passes `musicbrainzInstance: musicbrainz` explicitly, and a
+new gate 9 (`preflight-seed`, high, `allowFailure: false`) asserts the
+headphones `artists` seed is present and non-empty before the sync runs. The two
+retired recovery messages now name the instance the workflow actually passes and
+verifies, and no longer point at an instance the workflow never mentions
+elsewhere.
+
+This also completes the README's retargeting procedure: `resolve-artists`' and
+`wanted`'s `musicbrainzInstance` defaults live in the model source, so a plain
+find/replace over the workflow file alone could never reach them. All three
+instance names — `music`, `musicbrainz`, `headphones` — are now explicit
+literals in the workflow file, and the README's retargeting section lists every
+token class each one appears in.
+
+No schema or resource shape change. `swamp workflow validate` reports the same
+22 check names as before this change, and the added workflow inputs cost zero
+validation checks (measured).
+
 ## 2026.08.19.1
 
 - Version bump and smoke test
