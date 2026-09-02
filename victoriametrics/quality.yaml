@@ -63,11 +63,13 @@ ratchet:
   rubricVersion: 3
   baselinePercentage: 100
   label: >-
-    Grade A — re-stamped after the 2026.08.02.1 real-fix batch (all 11
-    victoriametrics-latent-bugs closed, an identity upgrades[] entry
-    appended, no resource schema change). `swamp extension quality
-    manifest.yaml --json` emits a real score: 14/14 points (100%),
-    rubricVersion 3, allPassed true, dependencyTrust passed (no runtime
-    dependency besides zod, which the dependency-trust factor excludes).
-    Stamped directly from that tool output, not guessed — unchanged from the
-    prior 2026.07.16.2 stamp since the fix batch added no new dependency.
+    Grade A — re-stamped for 2026.09.02.1, which restores the `push` method and
+    its additive `pushResult` resource (identity upgrades[] entry, no existing
+    resource schema change) and adds 15 tests across the methods, adversarial,
+    coverage and property suites. `swamp extension quality manifest.yaml --json`
+    emits a real score: 12/12 locally earned at 100%, rubricVersion 3, allPassed
+    true, dependencyTrust passed (no runtime dependency besides zod, which the
+    dependency-trust factor excludes); repository-verified is provisional
+    locally and the server confirms it on publish for the full 14/14. Stamped
+    directly from that tool output, not guessed — unchanged in substance from
+    the 2026.08.02.1 stamp since this release adds no new dependency.

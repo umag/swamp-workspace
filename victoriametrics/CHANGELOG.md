@@ -1,5 +1,71 @@
 # Changelog
 
+## 2026.09.02.1
+
+Restores the `push` method and its `pushResult` resource.
+
+`push` existed on the 2026.08.08.1 model — it POSTs Prometheus exposition text
+to `/api/v1/import/prometheus` so a job can record its own outcome as a series
+vmalert can alert on. It was **dropped when the model was rewritten** for the
+11-bug fix batch and never made it into git, so every published version since
+has been missing it while one deployed copy of the old file kept using it. The
+gap surfaced on 2026-09-02: `swamp-fleet-update`'s `publish-metrics` step
+succeeded on the server (still on the stale 2026.08.08.1 file) and failed
+`swamp workflow validate` on the laptop with
+`Method 'push' not found on model type '@victoriametrics/query'`. Syncing the
+two copies in either direction would have silently killed the metrics.
+
+- `push` — `lines` (exposition text, blank lines and `#` comments allowed) and
+  optional `extraLabels` (comma-separated `key=value`) → `pushResult`.
+- Three pure helpers are now **exported** so they can be property-tested
+  directly: `sampleLines`, `metricNames`, `extraLabelParams`. Before this
+  release the model exported no parsing helpers at all.
+- A failed push writes `pushResult` with `ok:false` **before** throwing. A
+  method that throws without writing leaves no record of what it tried to send,
+  and the attempt that failed is the one worth keeping.
+- A transport failure records `httpStatus: 0` rather than inventing a status,
+  and a server error body is truncated to 300 characters so an unbounded
+  response cannot become an unbounded resource.
+- The success body is read even on VM's empty `204`, so the connection is not
+  left dangling.
+
+### One real defect found while writing the tests
+
+`extraLabelParams` trimmed each whole `key=value` pair, which silently rewrote
+any value with leading or trailing whitespace — `a=` was sent as `a=`, so the
+label VictoriaMetrics stored differed from the one the caller passed. Property
+`f2` (round-tripping arbitrary pairs back through `URLSearchParams`) shrank it
+to `{key:"a", value:" "}`. Now only the **key** is trimmed, so
+`"job=x,
+instance=y"` still parses while a value keeps every character it was
+given; the split is at the first `=`, so an `=` inside a value survives, and a
+pair whose key is empty is dropped rather than sent malformed.
+
+### Tests
+
+15 new tests across four suites, all green (105 total):
+
+- **methods** (5) — happy path pinning verb, endpoint, `text/plain` content type
+  and the exact body; `extraLabels` → percent-encoded params; non-2xx and
+  transport-failure paths asserting the resource is written _and_ the error
+  thrown; empty-payload rejection before any request is made.
+- **adversarial** (8) — HELP/TYPE and blank lines are not samples; a name ends
+  at the first `{` or whitespace (a naive `split(" ")[0]` reports
+  `a_metric{label="value`); malformed pairs dropped; an injected `&extra_label=`
+  cannot break out of the query string; a 200-with-error-body is still success
+  (VM signals import failure with a non-2xx — characterization, not a bug);
+  300-char error truncation; the two whitespace/`=` regressions above.
+- **coverage** (4) — the `port || 8428` fallback; no dangling `?` when there are
+  no labels; exactly one trailing newline after trimming; the success-path body
+  read (asserted via `bodyUsed`).
+- **property** (2) — `metricNames` returns exactly the distinct emitted names in
+  first-seen order and `sampleLines` counts exactly the emitted samples, both
+  oracled from the generator's own record rather than a re-parse; every
+  `extraLabels` pair round-trips as one param decoded by `URLSearchParams`.
+
+No existing test changed. No existing resource schema changed; `pushResult` is
+additive and the `upgrades[]` entry is an identity.
+
 ## 2026.08.30.1
 
 `system-overview` now counts each physical disk **once**.

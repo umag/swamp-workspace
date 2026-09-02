@@ -27,8 +27,11 @@ import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
 import {
   DISK_IO_QUERY,
+  extraLabelParams,
   isPhysicalDiskDevice,
+  metricNames,
   model,
+  sampleLines,
 } from "./victoriametrics.ts";
 import queryVector from "../../fixtures/query_vector.json" with {
   type: "json",
@@ -111,6 +114,16 @@ async function withFetchStub(
   } finally {
     globalThis.fetch = original;
   }
+}
+
+/** A raw (non-JSON) text response — an error-path body is read verbatim via
+ * `resp.text()`, so running it through `json()` would wrap it in quotes and
+ * corrupt the exact error-message assertions. */
+function text(body: string, status = 200) {
+  return new Response(body, {
+    status,
+    headers: { "Content-Type": "text/plain" },
+  });
 }
 
 function json(body: unknown, status = 200) {
@@ -1197,5 +1210,98 @@ Deno.test("system-overview drops dm-*/md* series even when the server returns th
   assertEquals(
     (payload.anomalies as string[]).filter((a) => a.includes("saturated")),
     ["Disk sdl saturated at 94%"],
+  );
+});
+
+// ---------------------------------------------------------------------------
+// push (2026.09.02.1) — hostile payloads. `push` is the only method that sends
+// user text to VM, so what it counts, names and forwards is the attack surface.
+// ---------------------------------------------------------------------------
+
+Deno.test("push: HELP/TYPE comments and blank lines are not counted as samples", () => {
+  const body = [
+    "# HELP swamp_fleet_update_ok whether the last run succeeded",
+    "# TYPE swamp_fleet_update_ok gauge",
+    "",
+    "swamp_fleet_update_ok 1",
+    "   ",
+    'swamp_fleet_update_ok{target="serve"} 1',
+  ].join("\n");
+  // Comments are legal exposition, not samples — counting them would inflate
+  // every reported `lines` by the size of the header block.
+  assertEquals(sampleLines(body).length, 2);
+  assertEquals(metricNames(body), ["swamp_fleet_update_ok"]);
+});
+
+Deno.test("push: a metric name is taken up to the first `{` or whitespace, and repeats collapse", () => {
+  const body = [
+    'a_metric{label="value with spaces"} 1',
+    "a_metric 2",
+    "b_metric\t3",
+  ].join("\n");
+  // Naive `split(" ")[0]` would report `a_metric{label="value` as a name.
+  assertEquals(metricNames(body), ["a_metric", "b_metric"]);
+});
+
+Deno.test("push: extraLabels entries without `=` are dropped, not forwarded malformed", () => {
+  assertEquals(
+    extraLabelParams("job=x,garbage,instance=y"),
+    "extra_label=job%3Dx&extra_label=instance%3Dy",
+  );
+  assertEquals(extraLabelParams("no-equals-anywhere"), "");
+  assertEquals(extraLabelParams(""), "");
+  assertEquals(extraLabelParams(undefined), "");
+});
+
+Deno.test("push: a label value containing & or = cannot break out of the query string", () => {
+  // The whole pair is percent-encoded, so an injected `&extra_label=` arrives
+  // as literal text inside one param instead of starting a second one.
+  const params = extraLabelParams("job=a&extra_label=injected%3Dtrue");
+  assertEquals(params.split("&").length, 1);
+  assert(params.includes("%26"));
+  assert(!params.includes("&extra_label=injected"));
+});
+
+Deno.test("push: a 200 with an error body is still treated as success (pin — VM signals import failure with a non-2xx)", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([() => text("ignored chatter", 200)], async () => {
+    await run("push", { lines: "up 1" }, ctx);
+  });
+  // Characterization, not a bug: VM answers 204 on success and 4xx/5xx on a
+  // parse failure. Sniffing the body of a 2xx would invent a failure mode the
+  // server does not have.
+  const res = written.find((w) => w.spec === "pushResult")!;
+  assertEquals(res.payload.ok, true);
+  assertEquals(res.payload.httpStatus, 200);
+});
+
+Deno.test("push: a long error body is truncated to 300 chars in the stored resource", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([() => text("x".repeat(5000), 500)], async () => {
+    await assertRejects(() => run("push", { lines: "up 1" }, ctx));
+  });
+  const res = written.find((w) => w.spec === "pushResult")!;
+  // "HTTP 500: " + 300 chars — an unbounded server body must not become an
+  // unbounded resource.
+  assertEquals((res.payload.error as string).length, "HTTP 500: ".length + 300);
+});
+
+Deno.test("push: only the key is trimmed — a label value keeps its whitespace verbatim", () => {
+  // Trimming the whole pair silently rewrote the value (property f2,
+  // 2026-09-02). `"job=x, instance=y"` must still parse, but `"a= "` must send
+  // a single-space value, not an empty one.
+  assertEquals(
+    extraLabelParams("job=x, instance=y"),
+    "extra_label=job%3Dx&extra_label=instance%3Dy",
+  );
+  assertEquals(extraLabelParams("a= "), "extra_label=a%3D%20");
+  // A pair whose key is only whitespace has no usable name — dropped, not sent.
+  assertEquals(extraLabelParams(" =v"), "");
+});
+
+Deno.test("push: a value containing `=` survives — the split is at the FIRST `=` only", () => {
+  assertEquals(
+    extraLabelParams("query=a=b"),
+    "extra_label=query%3Da%3Db",
   );
 });

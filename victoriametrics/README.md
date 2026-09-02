@@ -32,6 +32,19 @@ The model talks plain `http://<host>:<port>` to the query API.
 | `health`           | —                                      | Scrape-target up/down status from the `up` metric → `health` resource. |
 | `system-overview`  | `hoursBack?`                           | CPU/memory/load/disk/network stats + anomaly detection → `overview`.   |
 | `container-memory` | `hoursBack?`, `topN?`                  | Top-N container memory usage rankings → `containerMemory` resource.    |
+| `push`             | `lines`, `extraLabels?`                | Import Prometheus exposition text → `pushResult` resource.             |
+
+`push` is the one method that WRITES. It posts exposition text (one
+`name{labels} value` per line) to `/api/v1/import/prometheus`, so a job can
+record its own outcome as a series vmalert can alert on instead of a chat
+message nobody diffs. VictoriaMetrics assigns the timestamps at ingest.
+
+Two things to know before alerting on what you push. A one-shot push is a single
+sample, and VM's default `-search.latencyOffset=30s` hides it for the first ~30s
+— an instant query straight after a 204 legitimately returns `[]`. And a sample
+goes stale after ~5 minutes, so a rule over a once-a-day push must read
+`last_over_time(my_metric[26h])`; a bare instant selector can only match for
+five minutes a day.
 
 `system-overview` and `container-memory` assume a node-exporter / cAdvisor
 metric set (`node_cpu_seconds_total`, `node_memory_*`, `node_load1`,
@@ -68,6 +81,12 @@ swamp model method run my-vm query-range \
 swamp model method run my-vm health --json
 swamp model method run my-vm system-overview --input hoursBack=12 --json
 swamp model method run my-vm container-memory --input hoursBack=12 --input topN=20 --json
+
+# 5. Record a job's own outcome as an alertable series
+swamp model method run my-vm push --json --input '{
+  "lines": "my_job_ok 1\nmy_job_timestamp 1788371400",
+  "extraLabels": "job=my-job,instance=unraid"
+}'
 ```
 
 ## Resources produced
@@ -78,6 +97,11 @@ swamp model method run my-vm container-memory --input hoursBack=12 --input topN=
   `{ cpu, memory, load, disk[], network, uptime, anomalies[], timestamp }`
 - `containerMemory` —
   `{ containers: [{ name, maxMB, startMB, endMB, growthPercent }], timestamp }`
+- `pushResult` —
+  `{ endpoint, lines, metrics[], httpStatus, ok, error, timestamp }`
+
+A failed `push` writes `pushResult` with `ok:false` **and then** throws — the
+attempt that failed is the one worth having a record of.
 
 Reference results downstream with CEL, e.g.
 `data.latest("my-vm", "overview").attributes.cpu.max`.
