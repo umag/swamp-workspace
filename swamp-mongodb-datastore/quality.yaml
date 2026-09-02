@@ -8,6 +8,7 @@ tests:
     state: present
     files:
       - extensions/datastores/mongodb/config_test.ts
+      - extensions/datastores/mongodb/client_test.ts
       - extensions/datastores/mongodb/sidecar_test.ts
       - extensions/datastores/mongodb/sidecar_bulkseq_test.ts
       - extensions/datastores/mongodb/path_mapping_test.ts

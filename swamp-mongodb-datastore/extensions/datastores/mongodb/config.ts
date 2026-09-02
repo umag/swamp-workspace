@@ -2,7 +2,7 @@ import { z } from "npm:zod@4";
 
 export const ConfigSchema = z.object({
   uri: z.string().describe(
-    "MongoDB URI (no auth baked in), e.g. mongodb://hancock:27017/?replicaSet=rs0&authSource=admin",
+    "MongoDB URI (no auth baked in), e.g. mongodb://mongo.example.com:27017/?replicaSet=rs0&authSource=admin",
   ),
   username: z.string().describe(
     "MongoDB username — passed to the driver as an auth option, not baked into the URI",

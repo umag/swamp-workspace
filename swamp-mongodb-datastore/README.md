@@ -50,18 +50,28 @@ Swamp picks it up on the next invocation.
 
 ## Configuration
 
-| Field              | Type   | Required | Default          | Description                                                                 |
-| ------------------ | ------ | -------- | ---------------- | --------------------------------------------------------------------------- |
-| `uri`              | string | yes      | —                | MongoDB URI. Must resolve to a replica set.                                 |
-| `username`         | string | yes      | —                | Mongo user, passed to the driver as an auth option.                         |
-| `passwordEnv`      | string | no       | `MONGO_PASSWORD` | Env var name holding the password. Loaded from `<repoDir>/.env` at startup. |
-| `database`         | string | no       | `swamp`          | Shared database; per-repo isolation is by collection prefix.                |
-| `tenantId`         | string | no       | `default`        | Tenant identifier; part of the collection prefix.                           |
-| `namespace`        | string | yes      | —                | Per-repo identifier; part of the collection prefix.                         |
-| `defaultLockTtlMs` | number | no       | `30000`          | Default lock TTL. Must exceed your longest critical section.                |
+| Field                      | Type   | Required | Default          | Description                                                                                |
+| -------------------------- | ------ | -------- | ---------------- | ------------------------------------------------------------------------------------------ |
+| `uri`                      | string | yes      | —                | MongoDB URI. Must resolve to a replica set.                                                |
+| `username`                 | string | yes      | —                | Mongo user, passed to the driver as an auth option.                                        |
+| `passwordEnv`              | string | no       | `MONGO_PASSWORD` | Env var name holding the password. Loaded from `<repoDir>/.env` at startup.                |
+| `database`                 | string | no       | `swamp`          | Shared database; per-repo isolation is by collection prefix.                               |
+| `tenantId`                 | string | no       | `default`        | Tenant identifier; part of the collection prefix.                                          |
+| `namespace`                | string | yes      | —                | Per-repo identifier; part of the collection prefix.                                        |
+| `defaultLockTtlMs`         | number | no       | `30000`          | Default lock TTL. Must exceed your longest critical section.                               |
+| `maxPoolSize`              | number | no       | `500`            | Ceiling of the connection pool shared by every provider in the process (minPoolSize is 0). |
+| `maxIdleTimeMS`            | number | no       | `60000`          | How long an idle pooled connection is kept before the driver closes it.                    |
+| `serverSelectionTimeoutMS` | number | no       | `5000`           | How long to wait for a reachable primary before failing.                                   |
 
 Collections are prefixed `t_<tenantId>_r_<namespace>_*` — `_locks` for lock
 docs, `_paths` for the manifest, `_blobs` for content-addressed bytes.
+
+One `MongoClient` is shared per cluster + repo for the life of the process
+(merged from upstream keeb 2026.09.02.1): swamp core builds a fresh provider for
+every operation, so a per-provider cache would open a pool per operation. Every
+connection is stamped with an `appName` of `swamp:<tenantId>/<namespace>#<pid>`
+so `$currentOp` and mongod's logs can say which repo and process a connection
+belongs to.
 
 ## What it does
 

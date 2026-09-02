@@ -42,6 +42,15 @@ survive instance replacement and two instances never fire one schedule twice.
 - Every push stamps `_control/clients/<user@hostname>` with the extension
   version (the same identity the lock documents carry).
 
+### From upstream keeb 2026.09.02.1
+
+- One `MongoClient` shared per cluster + repo for the life of the process,
+  cached at module scope (core builds a fresh provider per operation, so the old
+  per-factory cache never hit and every operation opened a new pool);
+  connections stamped with `appName` `swamp:<tenantId>/<namespace>#<pid>`; a
+  failed connect is not cached. This fork keeps its `maxPoolSize` default of 500
+  and its `serverSelectionTimeoutMS` option.
+
 ### Kept
 
 The two fork guards from 2026.09.01.2 — `resolveWithinCache` on every
