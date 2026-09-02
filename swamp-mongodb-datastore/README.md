@@ -50,18 +50,28 @@ Swamp picks it up on the next invocation.
 
 ## Configuration
 
-| Field              | Type   | Required | Default          | Description                                                                 |
-| ------------------ | ------ | -------- | ---------------- | --------------------------------------------------------------------------- |
-| `uri`              | string | yes      | —                | MongoDB URI. Must resolve to a replica set.                                 |
-| `username`         | string | yes      | —                | Mongo user, passed to the driver as an auth option.                         |
-| `passwordEnv`      | string | no       | `MONGO_PASSWORD` | Env var name holding the password. Loaded from `<repoDir>/.env` at startup. |
-| `database`         | string | no       | `swamp`          | Shared database; per-repo isolation is by collection prefix.                |
-| `tenantId`         | string | no       | `default`        | Tenant identifier; part of the collection prefix.                           |
-| `namespace`        | string | yes      | —                | Per-repo identifier; part of the collection prefix.                         |
-| `defaultLockTtlMs` | number | no       | `30000`          | Default lock TTL. Must exceed your longest critical section.                |
+| Field                      | Type   | Required | Default          | Description                                                                                |
+| -------------------------- | ------ | -------- | ---------------- | ------------------------------------------------------------------------------------------ |
+| `uri`                      | string | yes      | —                | MongoDB URI. Must resolve to a replica set.                                                |
+| `username`                 | string | yes      | —                | Mongo user, passed to the driver as an auth option.                                        |
+| `passwordEnv`              | string | no       | `MONGO_PASSWORD` | Env var name holding the password. Loaded from `<repoDir>/.env` at startup.                |
+| `database`                 | string | no       | `swamp`          | Shared database; per-repo isolation is by collection prefix.                               |
+| `tenantId`                 | string | no       | `default`        | Tenant identifier; part of the collection prefix.                                          |
+| `namespace`                | string | yes      | —                | Per-repo identifier; part of the collection prefix.                                        |
+| `defaultLockTtlMs`         | number | no       | `30000`          | Default lock TTL. Must exceed your longest critical section.                               |
+| `maxPoolSize`              | number | no       | `500`            | Ceiling of the connection pool shared by every provider in the process (minPoolSize is 0). |
+| `maxIdleTimeMS`            | number | no       | `60000`          | How long an idle pooled connection is kept before the driver closes it.                    |
+| `serverSelectionTimeoutMS` | number | no       | `5000`           | How long to wait for a reachable primary before failing.                                   |
 
 Collections are prefixed `t_<tenantId>_r_<namespace>_*` — `_locks` for lock
 docs, `_paths` for the manifest, `_blobs` for content-addressed bytes.
+
+One `MongoClient` is shared per cluster + repo for the life of the process
+(merged from upstream keeb 2026.09.02.1): swamp core builds a fresh provider for
+every operation, so a per-provider cache would open a pool per operation. Every
+connection is stamped with an `appName` of `swamp:<tenantId>/<namespace>#<pid>`
+so `$currentOp` and mongod's logs can say which repo and process a connection
+belongs to.
 
 ## What it does
 
@@ -88,7 +98,45 @@ docs, `_paths` for the manifest, `_blobs` for content-addressed bytes.
   Past `MAX_DIRTY_PATHS` (10k) tracking degrades to a single full walk, which is
   cheaper than reconciling that many roots individually.
 - **Health verifier.** Rejects non-replica-set clusters and reports
-  primary/secondary state, latency, and namespace.
+  primary/secondary state, latency, both namespaces (config vs core) and a
+  warning when the connection is plaintext to a non-loopback host.
+- **Control plane.** `_control` holds swamp serve's coordination records
+  (instance heartbeats, active and pending runs, cron fire records, reconcile
+  claims, token secrets) with `putIfAbsent` = `insertOne` + duplicate-key. With
+  it serve reports deployment mode `durable`: runs survive instance replacement
+  and two instances never fire the same schedule twice.
+- **Two-phase push.** `preparePush` uploads blobs outside swamp's global lock;
+  `commitPush` merges path docs under it and releases only the dirty paths it
+  consumed. A `markDirty` that lands between the phases survives.
+
+### Capabilities and layout (2026.09.03.1)
+
+| Capability       | Meaning                                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `scopedSync`     | Per-model pulls scoped to `data/<type>/<id>/`.                                                                              |
+| `lazyHydration`  | Metadata-only setup pull; content fetched on first read.                                                                    |
+| `namespacedSync` | Core's `datastore.namespace` shapes the **local** cache (`<cache>/<ns>/…`); remote ids are always tier-relative (`data/…`). |
+| `twoPhaseSync`   | `preparePush` / `commitPush` split.                                                                                         |
+| `controlPlane`   | `_control` collection, `putIfAbsent` supported.                                                                             |
+| `configRefresh`  | `pullChanged({subdirs})` fetches only the listed prefixes (serve's config and access pollers).                              |
+
+Collections per namespace: `_paths`, `_blobs`, `_locks`, `_control`,
+`_migrations`, `_migration_ops`. Anyone with the database user can read all of
+them — blobs, the path manifest, locks, control records **including serve's
+token secrets**, and migration before-images (path metadata only; control
+records are journaled as hashes). Give the user `readWrite` on the `swamp`
+database and nothing cluster-wide, and put `?tls=true` in the URI unless the
+network is trusted; the verifier warns otherwise. Every push also stamps
+`_control/clients/<user@hostname>` with the extension version (the same identity
+the lock documents already carry) so migrations can refuse while an old client
+is still writing.
+
+Two things are both called "namespace": **core's** `datastore.namespace`
+(`swamp datastore namespace set`) and this extension's `config.namespace`
+(collection prefix). Only core's drives the on-disk layout. Do **not** run
+`swamp datastore namespace migrate` or `namespace unset --migrate` against this
+extension — the local tier is laid out by this extension, and those commands
+move or delete files core cannot account for (Lab #1280, #1304).
 
 ## Maintenance
 
@@ -214,6 +262,52 @@ docs, `_paths` for the manifest, `_blobs` for content-addressed bytes.
   2026.08.19.1 rewrite was not a protocol bug — it was retention drift nobody
   was watching. Pair it with `swamp data gc`, which is what actually keeps the
   corpus small; everything here cleans up after it.
+
+## Migrating to 2026.09.03.1 (path layout + control plane)
+
+Versions before 2026.09.03.1 stored the cache-relative path — core namespace
+included — as the remote id, so a client with a core namespace wrote
+`<ns>/data/…` while a client without one wrote `data/…`, and neither saw the
+other's writes. The new layout is tier-relative everywhere. Pull tolerates both
+during the transition (newer `updatedAt` wins, tie to the bare id); the
+`fold_namespace_prefix` maintenance method retires the prefixed docs.
+
+Every migration is journaled (`_migrations`, `_migration_ops`) and revertable
+with `revert_migration`. Blobs are never touched; prefixed docs are tombstoned,
+never removed.
+
+Runbook, in order:
+
+1. Stop every client still on the old version (the fold guard refuses while a
+   prefixed doc was written in the last 30 minutes or a client stamped with an
+   older version synced in the last 24 hours).
+2. Upgrade every client (Macs and serve) to this version.
+3. `swamp model method run datastore-maintenance fold_namespace_prefix --input
+   '{"legacyPrefix":"<core namespace>"}'`
+   — `legacyPrefix` is the core `datastore.namespace` the old clients wrote
+   (`dev-tmp-swamp` here). It defaults to the config namespace, which is only
+   right when the two are equal. Dry run by default; read the counts, then
+   re-run with `"dryRun":false`. Keep the `runId` from the `migration` resource.
+4. Inside the serve container, before its first restart on this version:
+   `import_control_records` with
+   `controlDir=/workspace/.swamp/datastore/_control` and `coreNamespace` set to
+   serve's core namespace (empty if unset). It copies — never moves — serve's
+   filesystem control records, including the token secrets, so existing worker
+   and access tokens keep working.
+5. Restart serve. `/ready` should report `deploymentMode: durable`;
+   `swamp datastore status` should show `coreNamespace` and no TLS warning.
+
+Rollback, in order: `revert_migration` for the import run, then for the fold run
+(dry run first; conflicts are records a client wrote after the migration and are
+skipped unless `force`), then `prefix_namespace` with `since` = the fold run's
+`startedAt` to give post-upgrade writes a prefixed twin, then pin the previous
+extension version and restart serve. The old version reads its filesystem
+control records again because the import never removed them. The new version
+never deletes old root-tier files from a cache, so a downgraded client finds
+them where it left them.
+
+Journal retention: `sweep` prunes migration runs older than the tombstone grace
+window (30 days by default) — revert within that window.
 
 ## Important Information
 

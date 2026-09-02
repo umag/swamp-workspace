@@ -70,6 +70,12 @@ export interface SidecarState {
   // read an absent path as a deletion. Survives clearDirty (a push doesn't
   // hydrate anything). Mirrors the S3/GCS reference's lazyPullActive.
   lazyPullActive: boolean;
+  // False once a cold (complete) pull observed no legacy `<namespace>/` remote
+  // ids; flips back to true the moment any pull sees one. While false the
+  // pull skips the legacy/bare twin lookup — the transition cost disappears
+  // on namespaces that never had, or have fully folded and swept, the old
+  // layout. Defaults true (assume legacy ids may exist).
+  legacyIdsPossible: boolean;
   // True once a push has run against this cache. Until then the per-path
   // dirty tracker can't be trusted (it only knows writes since it started),
   // so the next push must do a full walk to bootstrap the remote from
@@ -79,6 +85,10 @@ export interface SidecarState {
   // predates this field reads false, so an already-migrated-but-unpushed
   // cache self-heals on its next push.
   pushBootstrapped: boolean;
+  // Monotonic count of bulk invalidations. commitPush compares the value it
+  // captured at preparePush time against the current one: equal means no bulk
+  // signal landed while the tree was being walked, so the flag can be cleared.
+  bulkSeq: number;
 }
 
 // The persisted half — SidecarState minus the journal-derived dirtyPaths.
@@ -89,6 +99,8 @@ interface Scalars {
   lastReconciledAt: string | null;
   lazyPullActive: boolean;
   pushBootstrapped: boolean;
+  bulkSeq: number;
+  legacyIdsPossible: boolean;
 }
 
 function emptyScalars(): Scalars {
@@ -99,6 +111,8 @@ function emptyScalars(): Scalars {
     lastReconciledAt: null,
     lazyPullActive: false,
     pushBootstrapped: false,
+    bulkSeq: 0,
+    legacyIdsPossible: true,
   };
 }
 
@@ -174,6 +188,8 @@ function normalizeScalars(parsed: unknown): {
         : null,
       lazyPullActive: obj.lazyPullActive === true,
       pushBootstrapped: obj.pushBootstrapped === true,
+      bulkSeq: typeof obj.bulkSeq === "number" ? obj.bulkSeq : 0,
+      legacyIdsPossible: obj.legacyIdsPossible !== false,
     },
     legacyDirty,
   };
@@ -370,6 +386,8 @@ export class Sidecar {
       lastReconciledAt: s.lastReconciledAt,
       lazyPullActive: s.lazyPullActive,
       pushBootstrapped: s.pushBootstrapped,
+      bulkSeq: s.bulkSeq,
+      legacyIdsPossible: s.legacyIdsPossible,
     };
   }
 
@@ -406,6 +424,7 @@ export class Sidecar {
     if (relPath === undefined) {
       return this.updateScalars((s) => {
         s.bulkInvalidated = true;
+        s.bulkSeq += 1;
       });
     }
     const next = this.chain.then(async () => {
@@ -420,6 +439,7 @@ export class Sidecar {
       if (this.dirty.size > MAX_DIRTY_PATHS) {
         // Degrade to a full walk rather than tracking an unbounded set.
         this.scalars!.bulkInvalidated = true;
+        this.scalars!.bulkSeq += 1;
         this.dirty.clear();
         await this.persistJournal();
         await writeScalars(this.cachePath, this.scalars!);
@@ -473,6 +493,27 @@ export class Sidecar {
     });
     this.chain = next.catch(() => undefined);
     return next;
+  }
+
+  // Two-phase commit hooks. `clearBulkInvalidatedIf` drops the flag only when
+  // no bulk signal arrived since `seq` was captured; `markPushBootstrapped`
+  // records that a push reached the remote without touching the journal.
+  clearBulkInvalidatedIf(seq: number): Promise<SidecarState> {
+    return this.updateScalars((s) => {
+      if (s.bulkSeq === seq) s.bulkInvalidated = false;
+    });
+  }
+
+  setLegacyIdsPossible(possible: boolean): Promise<SidecarState> {
+    return this.updateScalars((s) => {
+      s.legacyIdsPossible = possible;
+    });
+  }
+
+  markPushBootstrapped(): Promise<SidecarState> {
+    return this.updateScalars((s) => {
+      s.pushBootstrapped = true;
+    });
   }
 
   setLastPulledAt(iso: string): Promise<SidecarState> {

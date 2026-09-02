@@ -49,9 +49,18 @@ you're targeting.
   - `client.ts` — `MongoClient` factory, cached per `repoDir`
   - `config.ts` — Zod `ConfigSchema`, collection naming, `.env` loader
   - `lock.ts` — TTL lock with heartbeat + nonce fencing
-  - `sync.ts` — manifest + content-addressed blob sync of the datastore tier
+  - `sync.ts` — manifest + content-addressed blob sync of the datastore tier,
+    two-phase push, control-plane store binding
+  - `path_mapping.ts` — local `<cache>/<coreNamespace>/<rel>` ↔ remote `<rel>`
+  - `control_plane.ts` — `ControlPlaneStore` over `_control`
+  - `stores.ts` — narrow driver ports (`PathsStore`, `BlobsStore`,
+    `ControlStore`) that tests satisfy with in-memory fakes
   - `sidecar.ts` — scalar sync state + the append-only dirty journal
-  - `verifier.ts` — replica-set health check
+  - `verifier.ts` — replica-set health check, namespace report, TLS warning
+  - `test_fakes.ts` — test double for the driver surface (tests only)
+
+  `extensions/models/journal.ts` is the migration journal (before-images,
+  revert, prune) used by the migrations in `sweeps.ts`.
 
   `extensions/models/` holds the companion **model** type
   (`@magistr/mongodb-datastore/maintenance`): `sweeps.ts` has the reclamation
@@ -122,6 +131,32 @@ you're targeting.
 9. **Deleting documents does not free disk.** WiredTiger keeps the space on a
    free list; `compact` (with `force: true` on a primary) is what returns it to
    the filesystem.
+10. **Remote ids are tier-relative; only core's namespace shapes the local
+    tree.** `path_mapping.ts` maps `<cache>/<coreNamespace>/<rel>` ↔ `<rel>`.
+    `config.namespace` selects the collection prefix and must never touch the
+    layout — serve runs with core's namespace unset and the Mac with it set, and
+    both must read the same documents. Pull tolerates legacy `<ns>/` ids (newer
+    `updatedAt` wins, tie to bare) until `fold_namespace_prefix` retires them. A
+    push never tombstones a legacy id.
+11. **Two-phase push releases only what it consumed.** `preparePush` walks and
+    uploads blobs outside the global lock and returns a manifest carrying the
+    dirty roots it read plus the sidecar's `bulkSeq`; `commitPush` re-reads the
+    remote, merges, then `forgetDirty(roots)` and clears `bulkInvalidated` only
+    if `bulkSeq` is unchanged. Never `clearDirty()` here — a `markDirty` between
+    the phases must survive.
+12. **The control plane is a plain collection.** `_control` docs are
+    `{_id: "<ns>/_control/<key>", data, updatedAt}`; `putIfAbsent` is
+    `insertOne` catching 11000 and nothing else. The store binds to the last
+    core namespace seen by sync because core calls `controlPlaneStore()` without
+    options. Every push stamps `_control/clients/<holder>` with the extension
+    version so migrations can refuse while an old client is live.
+13. **Migrations are journaled and revertable.** `models/journal.ts` writes a
+    before-image (`_migration_ops`) before every batch it applies; `revert`
+    replays in reverse, applies an op only when the current doc equals the
+    after-image, refuses when a later non-reverted migration touched the same
+    ids, and journals itself. Control records are journaled as hashes. `models/`
+    re-derives collection names and a minimal control store rather than
+    importing from `datastores/` (packaging, see above).
 
 ## Verification
 
@@ -142,6 +177,13 @@ Run before committing:
 - Do not bypass the `DatastoreProvider` interface with side-channel
   reads/writes. Everything must flow through the provider so swamp core owns the
   lifecycle.
+- Do not run `swamp datastore namespace migrate` or `namespace unset --migrate`
+  against this extension; the local tier is laid out by `path_mapping.ts`, and
+  those commands move or delete files core cannot account for.
+- Do not restart serve on a control-plane-capable version before
+  `import_control_records` has copied its filesystem `_control/` tree, or every
+  existing token is rejected.
+- Do not import `test_fakes.ts` from production code; it is a test double.
 
 Swamp-specific guidance for this repo (rules, skills, getting started) lives in
 [SWAMP.md](SWAMP.md).

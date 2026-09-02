@@ -1,5 +1,62 @@
 # Changelog
 
+## 2026.09.03.1
+
+Feature parity with `@swamp/s3-datastore`: the sync service now advertises
+`namespacedSync`, `twoPhaseSync`, `controlPlane` and `configRefresh` on top of
+`scopedSync` and `lazyHydration`. On this datastore `swamp serve` reports
+deployment mode `durable` instead of `local`: heartbeats, active and pending
+runs, cron fire records, reconcile claims and token secrets live in a new
+`_control` collection (`putIfAbsent` = `insertOne` + duplicate-key), so runs
+survive instance replacement and two instances never fire one schedule twice.
+
+### Added
+
+- **Control plane.** `controlPlaneStore()` over `t_<tenant>_r_<ns>_control`,
+  keys stored as `<coreNamespace>/_control/<key>` (or `_control/<key>`).
+  Namespace registration (`listNamespaces`, manifest-only `registerNamespace`).
+- **Two-phase push.** `preparePush` uploads blobs outside swamp's global lock;
+  `commitPush` re-reads the remote, merges path docs, tombstones, and releases
+  only the dirty roots it consumed (a `markDirty` between the phases survives;
+  `bulkInvalidated` clears only if the sidecar's new `bulkSeq` is unchanged).
+- **`subdirs` pulls** for serve's config and access pollers, watermark-bounded
+  and never advancing the watermark.
+- **Journaled, revertable migrations** on the maintenance model:
+  `fold_namespace_prefix` (retire legacy `<ns>/…` ids; guarded against a still-
+  writing old client by a recent-writer window and per-client version stamps),
+  `prefix_namespace` (its inverse for the post-fold delta),
+  `import_control_records` (copy serve's filesystem `_control/` tree,
+  hashes-only journal) and `revert_migration` (after-image conflict detection,
+  `force` opt-in). `sweep` prunes the journal past the tombstone window.
+- Verifier reports config vs core namespace and warns when the control plane
+  travels over a plaintext non-loopback URI.
+
+### Changed
+
+- **Path layout.** Remote ids are tier-relative; core's `datastore.namespace`
+  (`options.namespace`, with `config.namespace` as the fallback the previous
+  release used) shapes only the local cache. Pull tolerates legacy `<ns>/` ids
+  until folded: newer `updatedAt` wins, a legacy tombstone never outranks a bare
+  doc, and the twin outside a watermark window is fetched before deciding.
+  Migration and rollback runbooks are in the README.
+- Every push stamps `_control/clients/<user@hostname>` with the extension
+  version (the same identity the lock documents carry).
+
+### From upstream keeb 2026.09.02.1
+
+- One `MongoClient` shared per cluster + repo for the life of the process,
+  cached at module scope (core builds a fresh provider per operation, so the old
+  per-factory cache never hit and every operation opened a new pool);
+  connections stamped with `appName` `swamp:<tenantId>/<namespace>#<pid>`; a
+  failed connect is not cached. This fork keeps its `maxPoolSize` default of 500
+  and its `serverSelectionTimeoutMS` option.
+
+### Kept
+
+The two fork guards from 2026.09.01.2 — `resolveWithinCache` on every
+remote-supplied path and the namespaced tier root — are unchanged and still
+pinned by their wiring tests.
+
 ## 2026.09.01.2
 
 Merges upstream keeb 2026.08.19.2 into the `@magistr` fork, **keeping two fork

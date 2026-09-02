@@ -1,20 +1,33 @@
-import {
-  type AnyBulkWriteOperation,
-  Binary,
-  type Collection,
-} from "npm:mongodb@6.17.0";
+import { type AnyBulkWriteOperation, Binary } from "npm:mongodb@6.17.0";
 import type { ClientHandle } from "./client.ts";
 import {
   blobsCollectionName,
+  controlCollectionName,
+  EXTENSION_VERSION,
   type MongoDatastoreConfig,
   pathsCollectionName,
-  tierRoot,
 } from "./config.ts";
 import {
   getSidecar,
   reconcileWatermark,
   type SidecarState,
 } from "./sidecar.ts";
+import {
+  hasLegacyPrefix,
+  remoteRel,
+  stripLegacyPrefix,
+} from "./path_mapping.ts";
+import {
+  type ControlPlaneStore,
+  createControlPlaneStore,
+} from "./control_plane.ts";
+import type {
+  BlobDoc,
+  BlobsStore,
+  ControlStore,
+  PathDoc,
+  PathsStore,
+} from "./stores.ts";
 
 // Mirrors @systeminit/swamp's domain/datastore/datastore_sync_service.ts.
 export interface SyncContext {
@@ -24,6 +37,10 @@ export interface SyncContext {
 export interface SyncCapabilities {
   scopedSync?: boolean;
   lazyHydration?: boolean;
+  namespacedSync?: boolean;
+  twoPhaseSync?: boolean;
+  controlPlane?: boolean;
+  configRefresh?: boolean;
 }
 
 export interface DatastoreSyncOptions {
@@ -36,7 +53,16 @@ export interface DatastoreSyncOptions {
   // pullChanged downloads catalog metadata only and skips `data/.../raw`
   // content. Honored only when capabilities() advertises lazyHydration.
   metadataOnly?: boolean;
+  // swamp core's datastore.namespace. Drives the local layout
+  // (`<cache>/<namespace>/...`) — see path_mapping.ts. Never the same thing
+  // as config.namespace.
+  namespace?: string;
+  // Restricts a pull to these datastore subdirectories (configRefresh).
+  subdirs?: readonly string[];
 }
+
+/** Opaque to core; produced by preparePush, consumed by commitPush. */
+export type PushManifest = { readonly __brand: unique symbol };
 
 export interface DatastoreSyncService {
   pullChanged(options?: DatastoreSyncOptions): Promise<number>;
@@ -51,6 +77,17 @@ export interface DatastoreSyncService {
     relPath: string,
     options?: DatastoreSyncOptions,
   ): Promise<boolean>;
+  preparePush?(options?: DatastoreSyncOptions): Promise<PushManifest>;
+  commitPush?(
+    manifest: PushManifest,
+    options?: DatastoreSyncOptions,
+  ): Promise<number>;
+  controlPlaneStore?(): ControlPlaneStore;
+}
+
+/** Shared with the provider so the verifier can report the core namespace. */
+export interface NamespaceHolder {
+  current: string | undefined;
 }
 
 // `secrets` is deliberately absent: the `local_encryption` vault stores each
@@ -77,40 +114,11 @@ const DATASTORE_SUBDIRS = [
   "files",
 ] as const;
 
-interface PathDoc {
-  _id: string;
-  hash: string;
-  size: number;
-  updatedAt: Date;
-  deletedAt: Date | null;
-}
-
-// Blob storage layout:
-//   * Inline blob (size <= BLOB_INLINE_MAX):
-//       { _id: <sha256>, size, createdAt, data: <Binary> }
-//   * Chunked blob (size > BLOB_INLINE_MAX):
-//       Header doc:  { _id: <sha256>, size, createdAt, chunkCount }  (no data)
-//       Chunk docs:  { _id: "<sha256>:<i>", size, createdAt, data }  (i = 0..N-1)
-// `data` and `chunkCount` are mutually exclusive: a doc is either inline,
-// header, or chunk. Chunk ids use `:` which is not a sha256 hex character,
-// so chunk ids never collide with hash-only ids.
-//
-// `createdAt` exists solely for the orphan sweep's grace window: a blob is
-// written before the path doc that references it, so a sweep must not judge a
-// freshly-inserted blob unreachable. See maintenance.ts. Docs written before
-// 2026.08.19.1 lack the field and are treated as old.
-interface BlobDoc {
-  _id: string;
-  size: number;
-  createdAt?: Date;
-  data?: Binary;
-  chunkCount?: number;
-}
-
 // Deliberately carries no `bytes`: both push paths walk for metadata first
 // and re-read only the files whose hashes the remote turns out to lack, so a
 // 100k-file tree never has all of its contents in RAM at once.
 interface LocalMeta {
+  // Tier-relative remote id.
   relPath: string;
   hash: string;
   size: number;
@@ -122,16 +130,27 @@ interface RemotePathSlim {
   updatedAt: Date;
 }
 
+// What preparePush hands to commitPush. `dirtyRoots` is the slice of the
+// journal this manifest consumed, so commit releases exactly that (never the
+// whole journal — a markDirty that lands between the phases must survive).
+interface InternalPushManifest {
+  mode: "full" | "roots";
+  namespace: string | undefined;
+  localMetas: LocalMeta[];
+  dirtyRoots: string[];
+  bulkSeq: number;
+  watermark: string | null;
+  lazy: boolean;
+  reconciledAt: string;
+  blobsPushed: number;
+}
+
 const PUSH_BULK = 500;
 const BLOB_QUERY_BATCH = 5000;
 // Dirty roots folded into a single manifest query. Each root contributes two
 // `$or` clauses (exact id + prefix regex), so this keeps the query under a
 // few hundred clauses while cutting round-trips by the same factor.
 const ROOT_QUERY_BATCH = 100;
-// Dirty roots reconciled before retiring that slice from the journal. Small
-// enough that an interrupted push loses little work, large enough that the
-// journal rewrite is amortized.
-const PUSH_ROOT_SLICE = 500;
 // BSON doc cap is 16 MiB. Reserve ~1 MiB headroom for `_id`, `size`,
 // `chunkCount`, field-name overhead, and Binary subtype byte.
 const BLOB_INLINE_MAX = 15 * 1024 * 1024;
@@ -160,51 +179,11 @@ export function isRawContentPath(relPath: string): boolean {
 
 // True for the vault `secrets/` tier, which must never be synced to the shared
 // MongoDB (see DATASTORE_SUBDIRS). Enforced on both legs: push never walks the
-// tier (it's out of DATASTORE_SUBDIRS) and is guarded in markDirty/pushOneRel;
+// tier (it's out of DATASTORE_SUBDIRS) and is guarded in markDirty/pushRoots;
 // pull skips these docs so a deployment that synced secrets under an older
 // version cannot re-hydrate them into a cache.
 export function isSecretsPath(relPath: string): boolean {
   return relPath === "secrets" || relPath.startsWith("secrets/");
-}
-
-/**
- * Join a remote-supplied tier-relative path onto the cache root, refusing
- * anything that would land outside it.
- *
- * Pull takes its local target straight from a remote `_id`. One MongoDB
- * database is shared by every repo and tenant (isolation is only a collection
- * prefix), so a `_id` is untrusted input: a doc named
- * `../../../../.ssh/authorized_keys` would otherwise be written through — and,
- * when carrying `deletedAt`, unlinked — anywhere the process can reach.
- *
- * Rejects absolute paths, `.`/`..` segments, empty segments, backslashes (a
- * Windows separator that survives a POSIX `split("/")` untouched), and NUL.
- * Legitimate tier paths keep dots inside a segment (`192.168.88.18`), spaces,
- * and `@` (`data/@magistr/...`) — only a segment that IS `.` or `..` is unsafe.
- *
- * This is a @magistr fork guard: the upstream keeb tree composes these paths by
- * raw concatenation. The 2026.09.01.2 merge kept the guard and re-applied it to
- * the merged write sites rather than inheriting upstream's unguarded ones.
- */
-export function resolveWithinCache(cachePath: string, relPath: string): string {
-  if (!isSafeRelPath(relPath)) {
-    throw new Error(
-      `Refusing unsafe datastore path from remote: ${JSON.stringify(relPath)}`,
-    );
-  }
-  return `${cachePath}/${relPath}`;
-}
-
-/** Pure predicate behind resolveWithinCache — exported for the guard's tests. */
-export function isSafeRelPath(relPath: string): boolean {
-  if (relPath.length === 0) return false;
-  if (relPath.startsWith("/")) return false;
-  if (relPath.includes("\\")) return false;
-  if (relPath.includes("\0")) return false;
-  for (const segment of relPath.split("/")) {
-    if (segment === "" || segment === "." || segment === "..") return false;
-  }
-  return true;
 }
 
 // Host-local files that must never sync, matched on the basename.
@@ -232,77 +211,108 @@ function isUnsyncable(relPath: string): boolean {
   return isSecretsPath(relPath) || isExcludedPath(relPath);
 }
 
+/**
+ * Join a remote-supplied tier-relative path onto the cache root, refusing
+ * anything that would land outside it.
+ *
+ * Pull takes its local target straight from a remote `_id`. One MongoDB
+ * database is shared by every repo and tenant (isolation is only a collection
+ * prefix), so a `_id` is untrusted input: a doc named
+ * `../../../../.ssh/authorized_keys` would otherwise be written through — and,
+ * when carrying `deletedAt`, unlinked — anywhere the process can reach.
+ *
+ * Rejects absolute paths, `.`/`..` segments, empty segments, backslashes (a
+ * Windows separator that survives a POSIX `split("/")` untouched), and NUL.
+ * Legitimate tier paths keep dots inside a segment (`192.168.88.18`), spaces,
+ * and `@` (`data//...`) — only a segment that IS `.` or `..` is unsafe.
+ *
+ * This is a  fork guard: the upstream keeb tree composes these paths by
+ * raw concatenation. Every merge since 2026.09.01.2 keeps the guard on every
+ * local write site.
+ */
+export function resolveWithinCache(cachePath: string, relPath: string): string {
+  if (!isSafeRelPath(relPath)) {
+    throw new Error(
+      `Refusing unsafe datastore path from remote: ${JSON.stringify(relPath)}`,
+    );
+  }
+  return `${cachePath}/${relPath}`;
+}
+
+/** Pure predicate behind resolveWithinCache — exported for the guard's tests. */
+export function isSafeRelPath(relPath: string): boolean {
+  if (relPath.length === 0) return false;
+  if (relPath.startsWith("/")) return false;
+  if (relPath.includes("\\")) return false;
+  if (relPath.includes("\0")) return false;
+  for (const segment of relPath.split("/")) {
+    if (segment === "" || segment === "." || segment === "..") return false;
+  }
+  return true;
+}
+
 export function createSyncService(
   cfg: MongoDatastoreConfig,
   getClient: (repoDir: string) => Promise<ClientHandle>,
   repoDir: string,
   bareCachePath: string,
+  holder: NamespaceHolder = { current: undefined },
 ): DatastoreSyncService {
-  // Core passes the bare, un-namespaced cache path; the tier actually lives one
-  // segment deeper. Every local read/write below is rooted here so push walks
-  // and pull writes land where core's reader looks. See tierRoot() in config.ts.
-  //
-  // A @magistr fork guard the upstream keeb tree does not carry: upstream roots
-  // everything at the bare path, which builds a second, invisible copy of the
-  // tier at the cache root that the reader never sees (swamp-club#1458/#1554).
-  // The 2026.09.01.2 merge kept the scoping rather than inheriting that.
-  const cachePath = tierRoot(cfg, bareCachePath);
-  // Interned per cachePath: core builds a fresh sync service per invocation,
-  // and two Sidecars over one cache would not serialize with each other. It is
-  // interned on the TIER root, not the bare path, so the sidecar and journal
-  // sit beside the tier they describe rather than at the shared cache root.
-  const sidecar = getSidecar(cachePath);
   let updatedAtIndexEnsured = false;
+  // The extension's own namespace, used when a call carries no core namespace
+  // — the behaviour 2026.09.01.2 shipped (tierRoot in config.ts). In every
+  // real deployment the two are equal; when core passes one, it wins.
+  const configNamespace = cfg.namespace.trim() || undefined;
 
-  /**
-   * Strip the namespace core prepends, yielding the tier-relative path every
-   * other part of this service speaks.
-   *
-   * `tierRoot` scopes the LOCAL side only: remote `_id`s stay tier-relative
-   * (`data/...`), because this extension partitions by collection prefix, not
-   * key prefix. But core's per-file hooks — `markDirty` and `hydrateFile` —
-   * hand back a path that ALREADY carries the namespace
-   * (`dev-tmp-swamp/data/...`): the same asymmetry swamp-club#1554 records for
-   * @swamp/s3-datastore's lazy-hydration hook. Measured directly here — every
-   * markDirty call on a namespaced repo arrives prefixed.
-   *
-   * Unnormalized, that breaks three things:
-   *  - the dirty journal records paths no local walk can ever match, so the
-   *    incremental push finds nothing and ONLY a full walk ever persists;
-   *  - `isSecretsPath`/`isUnsyncable` stop matching, so the vault tier and
-   *    host-local files are no longer filtered out of the journal;
-   *  - `hydrateFile` looks up an `_id` no remote doc carries, and would write
-   *    to `<tier>/<namespace>/...` if one ever did.
-   *
-   * Strips only when the remainder begins with a real tier directory, so a
-   * genuinely tier-relative path is never mangled — including the ambiguous
-   * case of a namespace named like a tier directory, where stripping is
-   * correct anyway because core is the one that prefixed it.
-   */
-  function toTierRelative(relPath: string): string {
-    const ns = cfg.namespace.trim();
-    if (ns.length === 0) return relPath;
-    const prefix = `${ns}/`;
-    if (!relPath.startsWith(prefix)) return relPath;
-    const rest = relPath.slice(prefix.length);
-    const head = rest.split("/")[0];
-    const known: readonly string[] = DATASTORE_SUBDIRS;
-    return known.includes(head) || head === "secrets" ? rest : relPath;
+  // The core namespace last seen on any sync call. Core passes it on every
+  // pull/push/markDirty; controlPlaneStore() has no options parameter, so it
+  // binds to whatever the last call established (same as the S3 reference's
+  // bindNamespace).
+  function bind(options?: DatastoreSyncOptions): string | undefined {
+    if (options && "namespace" in options && options.namespace) {
+      holder.current = options.namespace;
+    } else if (holder.current === undefined) {
+      holder.current = configNamespace;
+    }
+    return holder.current;
+  }
+
+  // `<cache>` or `<cache>/<namespace>` — where the tier-relative tree lives.
+  // A  fork guard (swamp-club#1458/#1554): the upstream keeb tree roots
+  // everything at the bare cache path, which builds a second, invisible tier
+  // the reader never sees.
+  function localRoot(ns: string | undefined): string {
+    return ns ? `${bareCachePath}/${ns}` : bareCachePath;
+  }
+
+  // Interned per TIER root: core builds a fresh sync service per invocation,
+  // and two Sidecars over one cache would not serialize with each other. The
+  // sidecar and journal sit beside the tier they describe.
+  function sidecarFor(ns: string | undefined) {
+    return getSidecar(localRoot(ns));
   }
 
   async function resources(): Promise<{
-    paths: Collection<PathDoc>;
-    blobs: Collection<BlobDoc>;
+    paths: PathsStore;
+    blobs: BlobsStore;
+    control: ControlStore;
   }> {
     const { client } = await getClient(repoDir);
     const db = client.db(cfg.database);
-    const paths = db.collection<PathDoc>(pathsCollectionName(cfg));
-    const blobs = db.collection<BlobDoc>(blobsCollectionName(cfg));
+    const paths = db.collection(
+      pathsCollectionName(cfg),
+    ) as unknown as PathsStore;
+    const blobs = db.collection(
+      blobsCollectionName(cfg),
+    ) as unknown as BlobsStore;
+    const control = db.collection(
+      controlCollectionName(cfg),
+    ) as unknown as ControlStore;
     if (!updatedAtIndexEnsured) {
       await paths.createIndex({ updatedAt: 1 }).catch(() => undefined);
       updatedAtIndexEnsured = true;
     }
-    return { paths, blobs };
+    return { paths, blobs, control };
   }
 
   function poolConcurrency(): number {
@@ -313,21 +323,34 @@ export function createSyncService(
   }
 
   // `prefixes`, when present, scopes the pull to `_paths` docs whose `_id`
-  // begins with one of the given cache-relative prefixes (e.g.
-  // `data/<modelType>/<modelId>/`). A scoped pull is a pure read
+  // begins with one of the given tier-relative prefixes (e.g.
+  // `data/<modelType>/<modelId>/` or `config/`). A scoped pull is a pure read
   // optimization: it ignores the `lastPulledAt` floor (so it can fetch
   // anything in-scope that's missing/stale locally) and — critically — does
   // NOT advance the `lastPulledAt` watermark. The global watermark stays
   // owned exclusively by the full, unscoped pull; bumping it here would make
   // a later full pull skip every out-of-scope change in this window.
-  async function pull(opts?: {
+  //
+  // `subdirs` (core's config/access pollers) is scoped too, but keeps the
+  // watermark as a lower bound: the tiers it names are fully hydrated by the
+  // last full pull, so only docs newer than `lastPulledAt` can be missing —
+  // a quiet tier costs one findOne per poll instead of a hash-compare of
+  // every file. The watermark is still never advanced here.
+  async function pull(opts: {
+    ns: string | undefined;
     prefixes?: string[];
+    subdirs?: string[];
     metadataOnly?: boolean;
   }): Promise<number> {
-    const prefixes = opts?.prefixes;
-    const metadataOnly = opts?.metadataOnly === true;
-    const scoped = prefixes !== undefined && prefixes.length > 0;
+    const { ns } = opts;
+    const metadataOnly = opts.metadataOnly === true;
+    const modelScoped = opts.prefixes !== undefined && opts.prefixes.length > 0;
+    const subdirScoped = opts.subdirs !== undefined && opts.subdirs.length > 0;
+    const scoped = modelScoped || subdirScoped;
+    const prefixList = [...(opts.prefixes ?? []), ...(opts.subdirs ?? [])];
     const { paths, blobs } = await resources();
+    const cachePath = localRoot(ns);
+    const sidecar = sidecarFor(ns);
     // A metadataOnly pull leaves data/.../raw un-hydrated. Mark the cache so
     // a later pushChanged won't read those absent raw files as deletions and
     // tombstone the whole corpus. Set before the no-op early return so even a
@@ -335,24 +358,36 @@ export function createSyncService(
     if (metadataOnly) await sidecar.setLazyPullActive(true);
     const state = await sidecar.read();
 
-    if (!scoped && state.lastPulledAt !== null) {
-      const since = new Date(state.lastPulledAt);
+    const prefixFilter: Record<string, unknown> | null = scoped
+      ? {
+        $or: prefixList.map((p) => ({
+          _id: { $regex: `^${escapeRegex(p)}` },
+        })),
+      }
+      : null;
+    const useWatermark = !modelScoped && state.lastPulledAt !== null;
+    const watermarkFilter: Record<string, unknown> | null = useWatermark
+      ? { updatedAt: { $gt: new Date(state.lastPulledAt!) } }
+      : null;
+
+    if (useWatermark) {
       const probe = await paths.findOne(
-        { updatedAt: { $gt: since } },
+        prefixFilter
+          ? { $and: [watermarkFilter!, prefixFilter] }
+          : watermarkFilter!,
         { projection: { _id: 1 } },
       );
       if (probe === null) return 0;
     }
 
-    const baseFilter = scoped
-      ? {
-        $or: prefixes!.map((p) => ({
-          _id: { $regex: `^${escapeRegex(p)}` },
-        })),
-      }
-      : state.lastPulledAt !== null
-      ? { updatedAt: { $gt: new Date(state.lastPulledAt) } }
-      : {};
+    const parts = [watermarkFilter, prefixFilter].filter(
+      (f): f is Record<string, unknown> => f !== null,
+    );
+    const baseFilter = parts.length === 0
+      ? {}
+      : parts.length === 1
+      ? parts[0]
+      : { $and: parts };
     // metadataOnly: keep the catalog (metadata.yaml, latest) but skip the
     // bulky `data/<type>/<id>/.../raw` content so `data list`/`query`/CEL
     // work immediately. The skipped files are fetched on demand by
@@ -364,57 +399,81 @@ export function createSyncService(
     // cold-start bulk path) — it has no watermark history to lean on.
     const coldStart = !scoped && state.lastPulledAt === null;
 
-    const pathDocs: PathDoc[] = [];
+    // Legacy `<ns>/x` docs and tier-relative `x` docs describe the same local
+    // file. Keep one per local path: newer updatedAt wins, ties go to the
+    // bare id (the layout every upgraded client writes).
+    const winners = new Map<string, PathDoc>();
+    let legacySeen = false;
     let maxUpdatedAtMs = state.lastPulledAt !== null
       ? new Date(state.lastPulledAt).getTime()
       : 0;
     for await (const doc of paths.find(filter)) {
       const ms = doc.updatedAt.getTime();
       if (ms > maxUpdatedAtMs) maxUpdatedAtMs = ms;
+      const rel = stripLegacyPrefix(doc._id, ns);
       // Never hydrate vault secrets or host-local files, even if an older
       // version synced them. Advance the watermark past the doc (above) so it
       // isn't re-scanned, but don't write or delete it locally — a stale
       // `-wal`/`-shm` landing next to a live SQLite catalog is worse than
       // having no copy at all.
-      if (isUnsyncable(doc._id)) continue;
-      pathDocs.push(doc);
+      if (isUnsyncable(rel)) continue;
+      if (hasLegacyPrefix(doc._id, ns)) legacySeen = true;
+      const prev = winners.get(rel);
+      if (prev === undefined || newerWins(doc, prev, ns)) {
+        winners.set(rel, doc);
+      }
     }
+    // A watermark or scoped pull sees only part of a legacy/bare pair — e.g.
+    // after a fold the legacy tombstone is newer than the bare doc, so only
+    // the tombstone is in the window. Decide precedence against the twin
+    // that is NOT in the window, or a tombstone would delete a live file.
+    if (ns && (legacySeen || state.legacyIdsPossible)) {
+      await resolveTwins(paths, winners, ns);
+    }
+    // A cold pull enumerated every remote id: if none carried the legacy
+    // prefix, later pulls can skip the twin lookup until one shows up.
+    if (ns && coldStart && !metadataOnly && !legacySeen) {
+      await sidecar.setLegacyIdsPossible(false);
+    } else if (ns && legacySeen && !state.legacyIdsPossible) {
+      await sidecar.setLegacyIdsPossible(true);
+    }
+    const pathDocs = [...winners.entries()].map(([rel, doc]) => ({
+      rel,
+      doc,
+    }));
 
     const concurrency = poolConcurrency();
     let changes = 0;
 
-    const deletes = pathDocs.filter((d) => d.deletedAt !== null);
-    await runPool(deletes, concurrency, async (doc) => {
-      if (
-        await removeSilentlyExisting(resolveWithinCache(cachePath, doc._id))
-      ) changes++;
+    const deletes = pathDocs.filter((d) => d.doc.deletedAt !== null);
+    await runPool(deletes, concurrency, async ({ rel }) => {
+      if (await removeSilentlyExisting(resolveWithinCache(cachePath, rel))) {
+        changes++;
+      }
     });
 
-    const needs = pathDocs.filter((d) => d.deletedAt === null);
-    const pathsByHash = new Map<string, PathDoc[]>();
+    const needs = pathDocs.filter((d) => d.doc.deletedAt === null);
+    const pathsByHash = new Map<string, string[]>();
     if (coldStart) {
-      for (const doc of needs) addToBucket(pathsByHash, doc.hash, doc);
+      for (const { rel, doc } of needs) addToBucket(pathsByHash, doc.hash, rel);
     } else {
-      await runPool(needs, concurrency, async (doc) => {
-        const local = await readFileOrNull(
-          resolveWithinCache(cachePath, doc._id),
-        );
+      await runPool(needs, concurrency, async ({ rel, doc }) => {
+        const local = await readFileOrNull(resolveWithinCache(cachePath, rel));
         if (local !== null && (await sha256Hex(local)) === doc.hash) return;
-        addToBucket(pathsByHash, doc.hash, doc);
+        addToBucket(pathsByHash, doc.hash, rel);
       });
     }
 
     const hashesNeeded = [...pathsByHash.keys()];
     for (let i = 0; i < hashesNeeded.length; i += BLOB_QUERY_BATCH) {
       const hashBatch = hashesNeeded.slice(i, i + BLOB_QUERY_BATCH);
-      const writeJobs: Array<{ relPath: string; bytes: Uint8Array }> = [];
+      const writeJobs: Array<{ rel: string; bytes: Uint8Array }> = [];
       const chunkedHeaders: BlobDoc[] = [];
       for await (const blob of blobs.find({ _id: { $in: hashBatch } })) {
         if (blob.data) {
           const bytes = blob.data.buffer;
-          const dependents = pathsByHash.get(blob._id) ?? [];
-          for (const doc of dependents) {
-            writeJobs.push({ relPath: doc._id, bytes });
+          for (const rel of pathsByHash.get(blob._id) ?? []) {
+            writeJobs.push({ rel, bytes });
           }
         } else {
           chunkedHeaders.push(blob);
@@ -422,13 +481,12 @@ export function createSyncService(
       }
       for (const header of chunkedHeaders) {
         const bytes = await assembleChunkedBlob(blobs, header);
-        const dependents = pathsByHash.get(header._id) ?? [];
-        for (const doc of dependents) {
-          writeJobs.push({ relPath: doc._id, bytes });
+        for (const rel of pathsByHash.get(header._id) ?? []) {
+          writeJobs.push({ rel, bytes });
         }
       }
-      await runPool(writeJobs, concurrency, async ({ relPath, bytes }) => {
-        await writeFileAtomic(resolveWithinCache(cachePath, relPath), bytes);
+      await runPool(writeJobs, concurrency, async ({ rel, bytes }) => {
+        await writeFileAtomic(resolveWithinCache(cachePath, rel), bytes);
         changes++;
       });
     }
@@ -454,58 +512,94 @@ export function createSyncService(
     return changes;
   }
 
-  async function fullWalkPush(
-    paths: Collection<PathDoc>,
-    blobs: Collection<BlobDoc>,
-    watermarkIso: string | null,
-    lazyPullActive: boolean,
-  ): Promise<{ changes: number; reconciledAt: string }> {
+  // ---- push, phase 1: walk + blob upload (no lock needed) -----------------
+
+  async function prepareFull(
+    blobs: BlobsStore,
+    ns: string | undefined,
+    state: SidecarState,
+  ): Promise<InternalPushManifest> {
     // Stamped before the manifest read, not after: anything a peer writes
     // while we are streaming the cursor must stay newer than this watermark
     // so the *next* reconcile still considers it, rather than being silently
     // treated as already-seen.
     const reconciledAt = new Date().toISOString();
-
-    // Pull the path manifest with a projection so the in-memory map carries
-    // only the fields the diff/tombstone passes use.
-    const remotePaths = new Map<string, RemotePathSlim>();
-    for await (
-      const doc of paths.find(
-        {},
-        { projection: { hash: 1, deletedAt: 1, updatedAt: 1 } },
-      )
-    ) {
-      remotePaths.set(doc._id, {
-        hash: doc.hash,
-        deletedAt: doc.deletedAt,
-        updatedAt: doc.updatedAt,
-      });
-    }
-
-    // Pass 1 — walk for metadata only, remembering where each distinct hash
-    // can be re-read from.
-    //
-    // This used to pre-fetch every `_id` in the blobs collection so the walk
-    // could decide push-or-skip inline. That cursor scales with the *blob
-    // store*, not the repo: proxmox-manager's had grown to 931k docs, so a
-    // push of ~21k files began by streaming ~60 MB of hashes and building a
-    // 931k-entry Set. Probing only the hashes we actually hold is bounded by
-    // the working set instead.
+    const cachePath = localRoot(ns);
     const localMetas: LocalMeta[] = [];
     const hashToAbs = new Map<string, string>();
     for (const sub of DATASTORE_SUBDIRS) {
-      await walkMetas(
-        `${cachePath}/${sub}`,
-        sub,
-        localMetas,
-        hashToAbs,
-      );
+      await walkMetas(`${cachePath}/${sub}`, sub, localMetas, hashToAbs);
     }
+    const blobsPushed = await pushMissingBlobs(blobs, hashToAbs);
+    return {
+      mode: "full",
+      namespace: ns,
+      localMetas,
+      dirtyRoots: state.dirtyPaths,
+      bulkSeq: state.bulkSeq,
+      watermark: reconcileWatermark(state),
+      lazy: state.lazyPullActive,
+      reconciledAt,
+      blobsPushed,
+    };
+  }
 
-    // Pass 2 — probe blob existence for the distinct local hashes, then
-    // re-read and upload only what's missing. Chunk docs carry `:<n>` in
-    // their `_id`, so an `$in` over bare hashes only ever matches
-    // inline/header docs — exactly the "is this blob present" question.
+  async function prepareRoots(
+    blobs: BlobsStore,
+    ns: string | undefined,
+    state: SidecarState,
+  ): Promise<InternalPushManifest> {
+    const reconciledAt = new Date().toISOString();
+    const cachePath = localRoot(ns);
+    const localMetas: LocalMeta[] = [];
+    const hashToAbs = new Map<string, string>();
+    // Dirty roots are journaled tier-relative (markDirty normalizes them), so
+    // the file lives at `<tier>/<root>` and the remote id is the root itself.
+    // A journal written by an older client may still carry the namespace
+    // prefix; remoteRel strips it either way.
+    for (const root of state.dirtyPaths) {
+      const rel = remoteRel(root, ns);
+      if (isUnsyncable(rel)) continue;
+      const absPath = resolveWithinCache(cachePath, rel);
+      let stat: Deno.FileInfo | null = null;
+      try {
+        stat = await Deno.stat(absPath);
+      } catch (err) {
+        if (!(err instanceof Deno.errors.NotFound)) throw err;
+      }
+      if (stat?.isFile) {
+        if (isExcludedPath(rel)) continue;
+        const bytes = await Deno.readFile(absPath);
+        const hash = await sha256Hex(bytes);
+        localMetas.push({ relPath: rel, hash, size: bytes.byteLength });
+        if (!hashToAbs.has(hash)) hashToAbs.set(hash, absPath);
+      } else if (stat?.isDirectory) {
+        await walkMetas(absPath, rel, localMetas, hashToAbs);
+      }
+    }
+    const blobsPushed = await pushMissingBlobs(blobs, hashToAbs);
+    return {
+      mode: "roots",
+      namespace: ns,
+      localMetas,
+      dirtyRoots: state.dirtyPaths,
+      bulkSeq: state.bulkSeq,
+      watermark: reconcileWatermark(state),
+      lazy: state.lazyPullActive,
+      reconciledAt,
+      blobsPushed,
+    };
+  }
+
+  // Probe blob existence for the distinct local hashes, then re-read and
+  // upload only what's missing. Chunk docs carry `:<n>` in their `_id`, so
+  // an `$in` over bare hashes only ever matches inline/header docs — exactly
+  // the "is this blob present" question. Probing only the hashes we hold is
+  // bounded by the working set, not by the size of the blob store.
+  async function pushMissingBlobs(
+    blobs: BlobsStore,
+    hashToAbs: Map<string, string>,
+  ): Promise<number> {
     let blobsPushed = 0;
     const distinctHashes = [...hashToAbs.keys()];
     const missingHashes: string[] = [];
@@ -545,8 +639,57 @@ export function createSyncService(
         blobsPushed += await pushBlobsByHash(blobs, [...byHash.keys()], byHash);
       }
     }
+    return blobsPushed;
+  }
 
-    // Path upserts — no bytes needed, just the metadata collected above.
+  // ---- push, phase 2: index merge (under core's global lock) --------------
+
+  // Re-reads the remote path docs this manifest can touch. Full mode reads
+  // the whole manifest; roots mode reads one batched query per
+  // ROOT_QUERY_BATCH roots. Always read fresh here, never carried over from
+  // prepare — another writer may have committed in between.
+  async function readRemote(
+    paths: PathsStore,
+    m: InternalPushManifest,
+  ): Promise<Map<string, RemotePathSlim>> {
+    const remote = new Map<string, RemotePathSlim>();
+    const absorb = (doc: PathDoc) => {
+      remote.set(doc._id, {
+        hash: doc.hash,
+        deletedAt: doc.deletedAt,
+        updatedAt: doc.updatedAt,
+      });
+    };
+    if (m.mode === "full") {
+      for await (
+        const doc of paths.find(
+          {},
+          { projection: { hash: 1, deletedAt: 1, updatedAt: 1 } },
+        )
+      ) absorb(doc);
+      return remote;
+    }
+    const roots = m.dirtyRoots.map((r) => remoteRel(r, m.namespace)).filter(
+      (r) => !isUnsyncable(r),
+    );
+    for (let i = 0; i < roots.length; i += ROOT_QUERY_BATCH) {
+      const clauses: Array<Record<string, unknown>> = [];
+      for (const root of roots.slice(i, i + ROOT_QUERY_BATCH)) {
+        clauses.push({ _id: root });
+        clauses.push({ _id: { $regex: `^${escapeRegex(root)}/` } });
+      }
+      if (clauses.length === 0) continue;
+      for await (const doc of paths.find({ $or: clauses })) absorb(doc);
+    }
+    return remote;
+  }
+
+  async function commit(
+    paths: PathsStore,
+    m: InternalPushManifest,
+  ): Promise<number> {
+    const remote = await readRemote(paths, m);
+    const now = new Date();
     let pathsPushed = 0;
     let pathOps: AnyBulkWriteOperation<PathDoc>[] = [];
     const flushPathOps = async () => {
@@ -555,9 +698,8 @@ export function createSyncService(
       pathsPushed += (res.upsertedCount ?? 0) + (res.modifiedCount ?? 0);
       pathOps = [];
     };
-    const now = new Date();
-    for (const f of localMetas) {
-      const existing = remotePaths.get(f.relPath);
+    for (const f of m.localMetas) {
+      const existing = remote.get(f.relPath);
       if (
         existing &&
         existing.deletedAt === null &&
@@ -584,13 +726,16 @@ export function createSyncService(
     // Reconciliation tombstones: skipped entirely while a lazy pull is active.
     // The local cache is then an incomplete mirror (data/.../raw is absent),
     // so an absent path is "never hydrated," not "deleted." Deletions resume
-    // propagating once a full pull clears lazyPullActive.
-    if (watermarkIso !== null && !lazyPullActive) {
-      const watermark = new Date(watermarkIso);
-      const localPaths = new Set(localMetas.map((f) => f.relPath));
+    // propagating once a full pull clears lazyPullActive. Legacy-prefixed
+    // remote ids are never tombstoned by a push — fold_namespace_prefix owns
+    // their retirement.
+    if (m.watermark !== null && !m.lazy) {
+      const watermark = new Date(m.watermark);
+      const localPaths = new Set(m.localMetas.map((f) => f.relPath));
       const tombstoneOps: AnyBulkWriteOperation<PathDoc>[] = [];
-      for (const [relPath, doc] of remotePaths) {
+      for (const [relPath, doc] of remote) {
         if (localPaths.has(relPath) || doc.deletedAt !== null) continue;
+        if (hasLegacyPrefix(relPath, m.namespace)) continue;
         if (doc.updatedAt > watermark) continue;
         tombstoneOps.push({
           updateOne: {
@@ -607,256 +752,129 @@ export function createSyncService(
         );
       }
     }
-    return { changes: pathsPushed + blobsPushed, reconciledAt };
+    return pathsPushed + m.blobsPushed;
   }
 
-  // Reconciles a batch of dirty roots in one shot.
-  //
-  // The previous implementation handled one root per call from a serial loop,
-  // costing a `stat` plus a manifest `find` per root. With ~86k dirty entries
-  // — 99% of them version directories autoGc had already reaped — that was
-  // ~86k sequential round-trips holding the global lock, which is what made
-  // pushes time out and, because clearDirty only ran at the very end, left the
-  // dirty set to grow into the next run. Batching collapses that to a handful
-  // of queries: one manifest fetch per ROOT_QUERY_BATCH roots, one blob
-  // existence probe per BLOB_QUERY_BATCH hashes, and bulkWrites throughout.
-  async function pushRoots(
-    paths: Collection<PathDoc>,
-    blobs: Collection<BlobDoc>,
-    roots: string[],
-    watermarkIso: string | null,
-    lazyPullActive: boolean,
-  ): Promise<number> {
-    // Belt-and-suspenders: markDirty already drops these, so this only fires
-    // if a dirty path slipped through from an older sidecar.
-    const live = roots.filter((r) => !isUnsyncable(r));
-    if (live.length === 0) return 0;
-
-    // Pass 1 — walk every root for metadata only. Bytes are re-read later,
-    // and only for the hashes the remote is actually missing, so a dirty
-    // directory holding 15k files never lands in RAM all at once.
-    const localMetas: LocalMeta[] = [];
-    const hashToAbs = new Map<string, string>();
-    for (const root of live) {
-      const absPath = resolveWithinCache(cachePath, root);
-      let stat: Deno.FileInfo | null = null;
-      try {
-        stat = await Deno.stat(absPath);
-      } catch (err) {
-        if (!(err instanceof Deno.errors.NotFound)) throw err;
-      }
-      if (stat?.isFile) {
-        const bytes = await Deno.readFile(absPath);
-        const hash = await sha256Hex(bytes);
-        localMetas.push({ relPath: root, hash, size: bytes.byteLength });
-        if (!hashToAbs.has(hash)) hashToAbs.set(hash, absPath);
-      } else if (stat?.isDirectory) {
-        await walkMetas(absPath, root, localMetas, hashToAbs);
-      }
-      // A missing root is a deletion: it contributes no local metas, and the
-      // tombstone pass below reconciles whatever the remote still lists.
+  // Bookkeeping after a successful commit. Releases only what the manifest
+  // consumed; a journal entry or bulk signal that arrived between the phases
+  // is left for the next push.
+  async function settle(m: InternalPushManifest): Promise<void> {
+    const sidecar = sidecarFor(m.namespace);
+    await sidecar.forgetDirty(m.dirtyRoots);
+    if (m.mode === "full") {
+      await sidecar.clearBulkInvalidatedIf(m.bulkSeq);
+      // A full walk enumerated every remote path doc, so this cache has now
+      // genuinely observed the complete remote list — record it so the next
+      // push may tombstone paths this host itself wrote earlier. A lazy
+      // cache is exempt: it never had the full local side to compare.
+      if (!m.lazy) await sidecar.setLastReconciledAt(m.reconciledAt);
     }
+    await sidecar.markPushBootstrapped();
+  }
 
-    // Pass 2 — one manifest query per batch of roots instead of per root.
-    const remoteByPath = new Map<string, PathDoc>();
-    for (let i = 0; i < live.length; i += ROOT_QUERY_BATCH) {
-      const batch = live.slice(i, i + ROOT_QUERY_BATCH);
-      const clauses: Array<Record<string, unknown>> = [];
-      for (const root of batch) {
-        clauses.push({ _id: root });
-        clauses.push({ _id: { $regex: `^${escapeRegex(root)}/` } });
-      }
-      for await (const doc of paths.find({ $or: clauses })) {
-        remoteByPath.set(doc._id, doc);
-      }
-    }
-
-    let changes = 0;
-
-    // Pass 3 — probe blob existence in bulk, then re-read and push only the
-    // bytes the remote lacks.
-    const distinctHashes = [...hashToAbs.keys()];
-    const missingHashes: string[] = [];
-    for (let i = 0; i < distinctHashes.length; i += BLOB_QUERY_BATCH) {
-      const batch = distinctHashes.slice(i, i + BLOB_QUERY_BATCH);
-      const present = new Set<string>();
-      for await (
-        const b of blobs.find(
-          { _id: { $in: batch } },
-          { projection: { _id: 1 } },
-        )
-      ) {
-        present.add(b._id);
-      }
-      for (const h of batch) if (!present.has(h)) missingHashes.push(h);
-    }
-    for (let i = 0; i < missingHashes.length; i += PUSH_BULK) {
-      const batch = missingHashes.slice(i, i + PUSH_BULK);
-      const byHash = new Map<string, Uint8Array>();
-      let batchBytes = 0;
-      for (const h of batch) {
-        const bytes = await readFileOrNull(hashToAbs.get(h)!);
-        // Vanished between walk and read (autoGc): the path upsert below is
-        // skipped for it too, since its meta no longer resolves to bytes.
-        if (bytes === null) continue;
-        byHash.set(h, bytes);
-        batchBytes += bytes.byteLength;
-        if (batchBytes >= BULK_INLINE_BYTES) {
-          changes += await pushBlobsByHash(blobs, [...byHash.keys()], byHash);
-          byHash.clear();
-          batchBytes = 0;
-        }
-      }
-      if (byHash.size > 0) {
-        changes += await pushBlobsByHash(blobs, [...byHash.keys()], byHash);
-      }
-    }
-
-    // Pass 4 — path upserts, skipping anything the remote already has at the
-    // same hash.
-    const now = new Date();
-    let pathOps: AnyBulkWriteOperation<PathDoc>[] = [];
-    const flushPathOps = async () => {
-      if (pathOps.length === 0) return;
-      await paths.bulkWrite(pathOps, { ordered: false });
-      pathOps = [];
-    };
-    for (const f of localMetas) {
-      const existing = remoteByPath.get(f.relPath);
-      if (
-        existing &&
-        existing.deletedAt === null &&
-        existing.hash === f.hash
-      ) continue;
-      pathOps.push({
-        updateOne: {
-          filter: { _id: f.relPath },
-          update: {
-            $set: {
-              hash: f.hash,
-              size: f.size,
-              updatedAt: now,
-              deletedAt: null,
-            },
-          },
-          upsert: true,
-        },
+  async function stampClient(
+    control: ControlStore,
+    ns: string | undefined,
+  ): Promise<void> {
+    try {
+      const store = createControlPlaneStore(control, ns);
+      const holderName = clientHolder();
+      const body = JSON.stringify({
+        holder: holderName,
+        version: EXTENSION_VERSION,
+        at: new Date().toISOString(),
       });
-      changes++;
-      if (pathOps.length >= PUSH_BULK) await flushPathOps();
+      await store.put(
+        `clients/${holderName.replace(/[^A-Za-z0-9._@-]/g, "_")}`,
+        new TextEncoder().encode(body),
+      );
+    } catch {
+      // The stamp is advisory (migration guard input); never fail a push on it.
     }
-    await flushPathOps();
+  }
 
-    // Pass 5 — same lazy guard as fullWalkPush: don't tombstone within these
-    // subtrees while the cache is an incomplete (lazy) mirror.
-    if (watermarkIso !== null && !lazyPullActive) {
-      const watermark = new Date(watermarkIso);
-      const localPaths = new Set(localMetas.map((f) => f.relPath));
-      let tombstoneOps: AnyBulkWriteOperation<PathDoc>[] = [];
-      const flushTombstones = async () => {
-        if (tombstoneOps.length === 0) return;
-        await paths.bulkWrite(tombstoneOps, { ordered: false });
-        tombstoneOps = [];
-      };
-      for (const [relPath, doc] of remoteByPath) {
-        if (localPaths.has(relPath) || doc.deletedAt !== null) continue;
-        if (doc.updatedAt > watermark) continue;
-        tombstoneOps.push({
-          updateOne: {
-            filter: { _id: relPath },
-            update: { $set: { deletedAt: now, updatedAt: now } },
-          },
-        });
-        changes++;
-        if (tombstoneOps.length >= PUSH_BULK) await flushTombstones();
-      }
-      await flushTombstones();
+  async function prepare(
+    options?: DatastoreSyncOptions,
+  ): Promise<InternalPushManifest> {
+    const ns = bind(options);
+    const { blobs } = await resources();
+    const state = await sidecarFor(ns).read();
+    // First push from this cache must be a full walk so whatever is already
+    // on disk gets bootstrapped to the remote — the per-path dirty tracker
+    // only knows about writes since it started. `pushBootstrapped` survives a
+    // pull and is only set true by a completed push.
+    if (state.bulkInvalidated || !state.pushBootstrapped) {
+      return await prepareFull(blobs, ns, state);
     }
+    return await prepareRoots(blobs, ns, state);
+  }
 
+  async function commitAndSettle(
+    m: InternalPushManifest,
+    options?: DatastoreSyncOptions,
+  ): Promise<number> {
+    bind(options);
+    const { paths, control } = await resources();
+    const changes = await commit(paths, m);
+    await settle(m);
+    await stampClient(control, m.namespace);
     return changes;
   }
 
   return {
     capabilities(): SyncCapabilities {
-      return { scopedSync: true, lazyHydration: true };
+      return {
+        scopedSync: true,
+        lazyHydration: true,
+        namespacedSync: true,
+        twoPhaseSync: true,
+        controlPlane: true,
+        configRefresh: true,
+      };
     },
 
     // The dirty sidecar remains the authoritative source of what to push;
     // `context.models` is advisory (matches the s3 reference, whose push
     // stays diff-driven). We don't scope the push by it.
-    async pushChanged(_options?: DatastoreSyncOptions): Promise<number> {
-      const { paths, blobs } = await resources();
-      const state = await sidecar.read();
-      const lazy = state.lazyPullActive;
+    async pushChanged(options?: DatastoreSyncOptions): Promise<number> {
+      const m = await prepare(options);
+      if (m.mode === "roots" && m.dirtyRoots.length === 0) return 0;
+      return await commitAndSettle(m, options);
+    },
 
-      // First push from this cache must be a full walk so whatever is already
-      // on disk gets bootstrapped to the remote — the per-path dirty tracker
-      // only knows about writes since it started. `markDirty` on a missing
-      // sidecar sets bulkInvalidated, but a `pullChanged` that runs first
-      // (e.g. setup migrates files, then hydrates) writes a *clean* sidecar
-      // and erases that signal, so the migrated cache would never be pushed
-      // (issue #4). `pushBootstrapped` survives a pull and is only set true
-      // by a completed push, so it closes that gap and also re-pushes the
-      // content of any deployment that already hit the bug.
-      const watermark = reconcileWatermark(state);
-      if (state.bulkInvalidated || !state.pushBootstrapped) {
-        const { changes, reconciledAt } = await fullWalkPush(
-          paths,
-          blobs,
-          watermark,
-          lazy,
-        );
-        await sidecar.clearDirty();
-        // A full walk enumerated every remote path doc, so this cache has now
-        // genuinely observed the complete remote list — record it so the next
-        // push may tombstone paths this host itself wrote earlier. A lazy
-        // cache is exempt: it never had the full local side to compare.
-        if (!lazy) await sidecar.setLastReconciledAt(reconciledAt);
-        return changes;
-      }
+    async preparePush(options?: DatastoreSyncOptions): Promise<PushManifest> {
+      return await prepare(options) as unknown as PushManifest;
+    },
 
-      // `dirtyPaths` arrives already coalesced: descendants of a dirty
-      // directory are dropped, because pushRoots walks a dirty directory in
-      // full. That is what turns the per-version markDirty storm into a
-      // handful of roots.
-      const roots = state.dirtyPaths;
-      if (roots.length === 0) return 0;
-
-      let changes = 0;
-      // Retire progress in slices. clearDirty used to run only after every
-      // root had been reconciled, so a push that timed out or was killed
-      // re-did all of its work next run — and the dirty set kept growing in
-      // the meantime. Forgetting each slice as it lands makes an interrupted
-      // push resume roughly where it stopped.
-      for (let i = 0; i < roots.length; i += PUSH_ROOT_SLICE) {
-        const slice = roots.slice(i, i + PUSH_ROOT_SLICE);
-        changes += await pushRoots(
-          paths,
-          blobs,
-          slice,
-          watermark,
-          lazy,
-        );
-        await sidecar.forgetDirty(slice);
-      }
-      await sidecar.clearDirty();
-      return changes;
+    async commitPush(
+      manifest: PushManifest,
+      options?: DatastoreSyncOptions,
+    ): Promise<number> {
+      const m = manifest as unknown as InternalPushManifest;
+      if (m.mode === "roots" && m.dirtyRoots.length === 0) return 0;
+      return await commitAndSettle(m, options);
     },
 
     pullChanged(options?: DatastoreSyncOptions): Promise<number> {
+      const ns = bind(options);
       const prefixes = modelPrefixes(options?.context?.models);
+      const subdirs = subdirPrefixes(options?.subdirs);
       return pull({
+        ns,
         prefixes: prefixes.length > 0 ? prefixes : undefined,
+        subdirs: subdirs.length > 0 ? subdirs : undefined,
         metadataOnly: options?.metadataOnly,
       });
     },
 
     markDirty(options?: DatastoreSyncOptions): Promise<void> {
+      const ns = bind(options);
       // Normalize BEFORE the unsyncable check: core prefixes the namespace, so
-      // an un-normalized `<ns>/secrets/...` slips past isSecretsPath.
+      // an un-normalized `<ns>/secrets/...` would slip past isSecretsPath. The
+      // journal holds tier-relative paths, the same vocabulary as remote ids.
       const relPath = options?.relPath === undefined
         ? undefined
-        : toTierRelative(options.relPath);
+        : remoteRel(options.relPath, ns);
       // Drop dirty signals for the vault tier and host-local files — neither
       // ever syncs (see isSecretsPath / isExcludedPath). Filtering here keeps
       // per-command SQLite catalog churn out of the journal entirely. A bulk
@@ -864,25 +882,32 @@ export function createSyncService(
       if (relPath !== undefined && isUnsyncable(relPath)) {
         return Promise.resolve();
       }
-      return sidecar.recordDirty(relPath).then(() => undefined);
+      return sidecarFor(ns).recordDirty(relPath).then(() => undefined);
     },
 
     // Single-file hydration: one manifest lookup by path key, then one blob
     // fetch by content hash (assembling chunks for >15 MB blobs). No
     // watermark or sidecar interaction — this is a pure on-demand read of a
-    // file the lazy setup pull deliberately skipped.
-    async hydrateFile(rawRelPath: string): Promise<boolean> {
-      // Core passes this one namespace-prefixed too (swamp-club#1554 records
-      // the same for @swamp/s3-datastore's hook), so normalize before the
-      // secrets check, the remote _id lookup, and the local join alike.
-      const relPath = toTierRelative(rawRelPath);
-      // The vault tier never syncs, so there's nothing to hydrate.
-      if (isSecretsPath(relPath)) return false;
+    // file the lazy setup pull deliberately skipped. `relPath` is
+    // cache-relative (it may carry the core namespace); the remote id is
+    // tier-relative, with a legacy-prefixed fallback.
+    async hydrateFile(
+      relPath: string,
+      options?: DatastoreSyncOptions,
+    ): Promise<boolean> {
+      const ns = bind(options);
+      const rel = remoteRel(relPath, ns);
+      if (isSecretsPath(rel)) return false;
       const { paths, blobs } = await resources();
-      const doc = await paths.findOne({ _id: relPath });
+      let doc = await paths.findOne({ _id: rel });
+      if ((doc === null || doc.deletedAt !== null) && ns) {
+        const legacy = await paths.findOne({ _id: `${ns}/${rel}` });
+        if (legacy !== null && legacy.deletedAt === null) doc = legacy;
+      }
       if (doc === null || doc.deletedAt !== null) return false;
 
-      const absPath = resolveWithinCache(cachePath, relPath);
+      const cachePath = localRoot(ns);
+      const absPath = resolveWithinCache(cachePath, rel);
       const local = await readFileOrNull(absPath);
       if (local !== null && (await sha256Hex(local)) === doc.hash) return true;
 
@@ -891,10 +916,65 @@ export function createSyncService(
       await writeFileAtomic(absPath, bytes);
       return true;
     },
+
+    controlPlaneStore(): ControlPlaneStore {
+      return createControlPlaneStore(
+        async () => (await resources()).control,
+        holder.current,
+      );
+    },
   };
 }
 
-// Maps a scoped-sync model list to the cache-relative path prefixes that hold
+// For every candidate in `winners`, fetch the other form of its id (bare ↔
+// legacy) when that form was not part of the window, and re-run precedence.
+// One `$in` query per BLOB_QUERY_BATCH candidates; a namespace with no legacy
+// docs left pays one query per pull that returns nothing.
+async function resolveTwins(
+  paths: PathsStore,
+  winners: Map<string, PathDoc>,
+  ns: string,
+): Promise<void> {
+  const wanted: string[] = [];
+  for (const [rel, doc] of winners) {
+    wanted.push(hasLegacyPrefix(doc._id, ns) ? rel : `${ns}/${rel}`);
+  }
+  for (let i = 0; i < wanted.length; i += BLOB_QUERY_BATCH) {
+    const batch = wanted.slice(i, i + BLOB_QUERY_BATCH);
+    for await (const twin of paths.find({ _id: { $in: batch } })) {
+      const rel = stripLegacyPrefix(twin._id, ns);
+      const current = winners.get(rel);
+      if (current === undefined || current._id === twin._id) continue;
+      if (newerWins(twin, current, ns)) winners.set(rel, twin);
+    }
+  }
+}
+
+// Between a legacy `<ns>/x` doc and a bare `x` doc for the same local file:
+// newer updatedAt wins, a tie goes to the bare id.
+function newerWins(
+  candidate: PathDoc,
+  incumbent: PathDoc,
+  ns: string | undefined,
+): boolean {
+  const cLegacy = hasLegacyPrefix(candidate._id, ns);
+  const iLegacy = hasLegacyPrefix(incumbent._id, ns);
+  if (cLegacy === iLegacy) {
+    return candidate.updatedAt.getTime() > incumbent.updatedAt.getTime();
+  }
+  // Mixed pair. The bare id is the layout every upgraded client writes and
+  // the one fold_namespace_prefix converges on, so it wins unless the legacy
+  // doc is LIVE and strictly newer (an old client wrote after us). A legacy
+  // tombstone never outranks a bare doc: after a fold every legacy doc is a
+  // fresh tombstone, and letting it win would delete the folded file.
+  const legacy = cLegacy ? candidate : incumbent;
+  const bare = cLegacy ? incumbent : candidate;
+  const legacyWins = legacy.deletedAt === null &&
+    legacy.updatedAt.getTime() > bare.updatedAt.getTime();
+  return cLegacy ? legacyWins : !legacyWins;
+}
+
+// Maps a scoped-sync model list to the tier-relative path prefixes that hold
 // each model's bytes. Mirrors swamp core's per-model lock key root
 // (`data/<modelType>/<modelId>/.lock`) and the s3 reference's pull scope.
 export function modelPrefixes(
@@ -904,8 +984,27 @@ export function modelPrefixes(
   return models.map((m) => `data/${m.modelType}/${m.modelId}/`);
 }
 
+// `subdirs` from core's config/access pollers → tier-relative prefixes.
+export function subdirPrefixes(
+  subdirs: readonly string[] | undefined,
+): string[] {
+  if (!subdirs || subdirs.length === 0) return [];
+  return subdirs.map((s) => `${s.replace(/\/+$/, "")}/`);
+}
+
+function clientHolder(): string {
+  const user = Deno.env.get("USER") ?? Deno.env.get("USERNAME") ?? "unknown";
+  let host = "unknown";
+  try {
+    host = Deno.hostname();
+  } catch {
+    host = Deno.env.get("HOSTNAME") ?? Deno.env.get("HOST") ?? "unknown";
+  }
+  return `${user}@${host}`;
+}
+
 async function pushBlobsByHash(
-  blobs: Collection<BlobDoc>,
+  blobs: BlobsStore,
   hashes: string[],
   localByHash: Map<string, Uint8Array>,
 ): Promise<number> {
@@ -954,7 +1053,7 @@ async function pushBlobsByHash(
 }
 
 async function pushChunkedBlob(
-  blobs: Collection<BlobDoc>,
+  blobs: BlobsStore,
   hash: string,
   bytes: Uint8Array,
 ): Promise<number> {
@@ -994,7 +1093,7 @@ async function pushChunkedBlob(
 // Fetches a blob's full bytes by content hash, transparently assembling
 // chunked blobs. Returns null when no blob doc exists for the hash.
 async function fetchBlobBytes(
-  blobs: Collection<BlobDoc>,
+  blobs: BlobsStore,
   hash: string,
 ): Promise<Uint8Array | null> {
   const blob = await blobs.findOne({ _id: hash });
@@ -1004,7 +1103,7 @@ async function fetchBlobBytes(
 }
 
 async function assembleChunkedBlob(
-  blobs: Collection<BlobDoc>,
+  blobs: BlobsStore,
   header: BlobDoc,
 ): Promise<Uint8Array> {
   const chunkCount = header.chunkCount;
@@ -1042,7 +1141,7 @@ async function assembleChunkedBlob(
 }
 
 async function safeBulkInsertBlobs(
-  blobs: Collection<BlobDoc>,
+  blobs: BlobsStore,
   ops: AnyBulkWriteOperation<BlobDoc>[],
 ): Promise<number> {
   if (ops.length === 0) return 0;
@@ -1090,10 +1189,7 @@ async function runPool<T>(
 
 // Metadata-only walk: hashes each file and drops its bytes immediately,
 // recording where to find them again if the remote turns out to need them.
-// Both push paths share it — the old walkInto accumulated every file's bytes,
-// so one dirty data-name directory holding 15k versions pinned all of them in
-// RAM, and the old walkAndStream had to decide push-or-skip inline, which
-// forced the whole blob-id prefetch.
+// `relRoot` is the tier-relative (remote) prefix for `root`.
 async function walkMetas(
   root: string,
   relRoot: string,
