@@ -1,7 +1,7 @@
 name: mongodb-datastore
 type: datastore
 collective: "@magistr"
-version: 0.3.0
+version: 0.4.0
 description: |
   MongoDB-backed swamp datastore. Distributed locks with TTL + heartbeat +
   nonce fencing, plus manifest + content-addressed blob sync of the datastore

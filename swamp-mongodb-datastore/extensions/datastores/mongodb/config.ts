@@ -49,33 +49,6 @@ export function blobsCollectionName(cfg: MongoDatastoreConfig): string {
   return `${collectionPrefix(cfg)}_blobs`;
 }
 
-/**
- * Root of the datastore tier inside the local cache.
- *
- * Swamp core hands `createSyncService` the BARE cache path (the repoId-keyed
- * default, since `resolveCachePath` returns undefined here as it does for every
- * remote datastore) but reads and writes the tier through
- * `DefaultDatastorePathResolver.datastorePath()`, which prepends the namespace
- * as the OUTERMOST segment: `{cache}/{namespace}/data/...`. Walking or writing
- * the bare cache path therefore builds a second, invisible copy of the tier at
- * the cache root — the reader never sees it, `sync --push` refuses with
- * "un-migrated data found at root level", and `datastore namespace migrate`
- * cannot recover once both layouts exist (swamp-club#1458 and #1554 are the
- * same defect in @swamp/s3-datastore).
- *
- * Remote `_id`s stay tier-relative (`data/...`): this extension partitions by
- * collection prefix, not by key prefix, so the namespace must NOT appear in the
- * stored path. It scopes the local side only.
- *
- * An empty namespace is solo mode and yields the bare cache path, byte-identical
- * to a non-namespaced repo — matching core's own `namespace.length > 0` guard.
- */
-export function tierRoot(cfg: MongoDatastoreConfig, cachePath: string): string {
-  const ns = cfg.namespace.trim();
-  if (ns.length === 0) return cachePath;
-  return `${cachePath.replace(/\/+$/, "")}/${ns}`;
-}
-
 const ENV_LINE = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/;
 
 export async function loadDotEnv(repoDir: string): Promise<void> {
@@ -100,4 +73,47 @@ export async function loadDotEnv(repoDir: string): Promise<void> {
       : rawValue;
     Deno.env.set(key, value);
   }
+}
+
+/** The `_control` collection: control-plane records (heartbeats, claims, token secrets). */
+export function controlCollectionName(cfg: MongoDatastoreConfig): string {
+  return `${collectionPrefix(cfg)}_control`;
+}
+
+/** Migration journal headers — one document per migration run. */
+export function migrationsCollectionName(cfg: MongoDatastoreConfig): string {
+  return `${collectionPrefix(cfg)}_migrations`;
+}
+
+/** Migration journal before/after images — one document per touched record. */
+export function migrationOpsCollectionName(
+  cfg: MongoDatastoreConfig,
+): string {
+  return `${collectionPrefix(cfg)}_migration_ops`;
+}
+
+// Stamped into `_control/clients/<holder>` on every push so migrations can
+// refuse to run while an older client is still writing. Bump together with
+// manifest.yaml.
+export const EXTENSION_VERSION = "2026.09.03.1";
+
+/**
+ * Root of the datastore tier inside the local cache when only the extension's
+ * own namespace is known.
+ *
+ * Swamp core hands `createSyncService` the BARE cache path but reads and
+ * writes the tier through `DefaultDatastorePathResolver.datastorePath()`,
+ * which prepends core's `datastore.namespace` as the OUTERMOST segment:
+ * `{cache}/{namespace}/data/...`. The sync service prefers the namespace core
+ * passes on each call (`options.namespace`) and falls back to this — the
+ * behaviour 2026.09.01.2 shipped — when a call carries none. Remote `_id`s
+ * stay tier-relative either way (`data/...`); the namespace scopes the local
+ * side only (see path_mapping.ts).
+ *
+ * An empty namespace is solo mode and yields the bare cache path.
+ */
+export function tierRoot(cfg: MongoDatastoreConfig, cachePath: string): string {
+  const ns = cfg.namespace.trim();
+  if (ns.length === 0) return cachePath;
+  return `${cachePath.replace(/\/+$/, "")}/${ns}`;
 }

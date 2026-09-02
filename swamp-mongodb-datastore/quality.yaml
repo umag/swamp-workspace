@@ -9,6 +9,11 @@ tests:
     files:
       - extensions/datastores/mongodb/config_test.ts
       - extensions/datastores/mongodb/sidecar_test.ts
+      - extensions/datastores/mongodb/sidecar_bulkseq_test.ts
+      - extensions/datastores/mongodb/path_mapping_test.ts
+      - extensions/datastores/mongodb/control_plane_test.ts
+      - extensions/datastores/mongodb/verifier_test.ts
+      - extensions/datastores/mongodb/mod_test.ts
   methods:
     # Was `na` up to 2026.09.01.1 on the grounds that this package ships a
     # datastore provider and declares no model. As of 2026.09.01.2 it also
@@ -17,15 +22,20 @@ tests:
     state: present
     files:
       - extensions/models/maintenance_test.ts
+      - extensions/models/migration_methods_test.ts
   adversarial:
     state: present
     files:
       - extensions/datastores/mongodb/sync_adversarial_test.ts
+      - extensions/datastores/mongodb/integration_test.ts
   coverage:
     state: present
     files:
       - extensions/datastores/mongodb/sync_coverage_test.ts
+      - extensions/datastores/mongodb/sync_test.ts
       - extensions/models/sweeps_test.ts
+      - extensions/models/migrations_test.ts
+      - extensions/models/journal_test.ts
   property-invariant-flow:
     state: present
     files:

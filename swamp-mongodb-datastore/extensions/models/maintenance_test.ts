@@ -65,7 +65,11 @@ Deno.test("model declares the expected surface", () => {
   assertEquals(model.type, "@magistr/mongodb-datastore/maintenance");
   assertEquals(Object.keys(model.methods).sort(), [
     "compact",
+    "fold_namespace_prefix",
+    "import_control_records",
     "inventory",
+    "prefix_namespace",
+    "revert_migration",
     "sweep",
   ]);
   // compact writes its own spec rather than reusing `inventory` with zeroed
@@ -74,6 +78,7 @@ Deno.test("model declares the expected surface", () => {
   assertEquals(Object.keys(model.resources).sort(), [
     "compaction",
     "inventory",
+    "migration",
     "sweep",
   ]);
   // Both specs must bound their own retention, or the maintenance model

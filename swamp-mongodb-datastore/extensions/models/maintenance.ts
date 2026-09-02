@@ -2,10 +2,33 @@ import { z } from "npm:zod@4";
 import { MongoClient } from "npm:mongodb@6.17.0";
 import {
   type BlobDocLike,
+  type ClientStamp,
+  controlCollectionNameFor,
+  type ControlPort,
+  foldNamespacePrefix,
+  importControlRecords,
+  journalCollectionNamesFor,
   type PathDocLike,
+  type PathsPort,
+  prefixNamespace,
   sweepOrphanBlobs,
   sweepTombstones,
 } from "./sweeps.ts";
+import {
+  createJournal,
+  type Journal,
+  type JournalStore,
+  type OpDoc,
+  type PrunableJournalStore,
+  pruneJournal,
+  type RunDoc,
+  type TargetStore,
+} from "./journal.ts";
+
+// Must match EXTENSION_VERSION in ../datastores/mongodb/config.ts (not
+// imported — packaging). The fold guard refuses while a client stamped with
+// an older version is still syncing.
+const REQUIRED_CLIENT_VERSION = "2026.09.03.1";
 
 // Maintenance surface for @magistr/mongodb-datastore, exposed as model methods so
 // it composes into swamp workflows.
@@ -80,6 +103,19 @@ const SweepResultSchema = z.object({
   skippedTooYoung: z.number(),
   blobsSkipped: z.boolean(),
   skipReason: z.union([z.string(), z.null()]),
+});
+
+// One resource per migration run (or dry-run report). `counts` is
+// kind-specific; `runId` is null for dry runs and refusals.
+const MigrationSchema = z.object({
+  namespace: z.string(),
+  kind: z.enum(["fold", "prefix", "import-control", "revert"]),
+  runId: z.union([z.string(), z.null()]),
+  dryRun: z.boolean(),
+  refused: z.union([z.string(), z.null()]),
+  counts: z.record(z.string(), z.number()),
+  conflicts: z.array(z.string()).default([]),
+  startedAt: z.string(),
 });
 
 interface Ctx {
@@ -195,13 +231,20 @@ async function collStats(
  */
 export const model = {
   type: "@magistr/mongodb-datastore/maintenance",
-  version: "2026.09.01.2",
+  version: "2026.09.03.1",
   upgrades: [
     {
       fromVersion: "2026.08.19.1",
       toVersion: "2026.09.01.2",
       description:
         "Carries the model into the @magistr fork at the fork's own package version — the model's code is unchanged from upstream keeb 2026.08.19.2, but this repo publishes it in lockstep with manifest.yaml, so the version moves 2026.08.19.1 -> 2026.09.01.2. An instance created against the upstream 2026.08.19.1 build keeps every stored resource: no schema, resource shape or argument changed.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.09.01.2",
+      toVersion: "2026.09.03.1",
+      description:
+        "Adds the journaled migrations (fold_namespace_prefix, prefix_namespace, import_control_records, revert_migration) and the `migration` resource. Existing inventory, sweep and compaction resources and every global argument are unchanged; sweep additionally prunes the migration journal past the tombstone window.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -227,8 +270,306 @@ export const model = {
       lifetime: "infinite",
       garbageCollection: 30,
     },
+    migration: {
+      description:
+        "Result of a journaled migration (fold, prefix, import-control) or a revert. runId is null for dry runs and refusals; keep it — revert_migration needs it.",
+      schema: MigrationSchema,
+      lifetime: "infinite",
+      garbageCollection: 30,
+    },
   },
   methods: {
+    fold_namespace_prefix: {
+      description:
+        "Fold legacy `<namespace>/…` path ids onto their tier-relative twins (layout change in 2026.09.03.1). Journaled and revertable via revert_migration. Refuses while a prefixed doc was written within recentWriterMinutes or a client stamped with an older extension version synced in the last 24h. Defaults to dryRun.",
+      arguments: z.object({
+        namespaces: z.array(z.string()).default([]).describe(
+          "Namespaces to fold; empty means every namespace found",
+        ),
+        dryRun: z.boolean().default(true).describe(
+          "Report counts without writing. Defaults true — opt in to the migration.",
+        ),
+        legacyPrefix: z.string().default("").describe(
+          "The core datastore.namespace old clients used as the id prefix (e.g. dev-tmp-swamp). Defaults to the config namespace, which is only right when the two are equal.",
+        ),
+        recentWriterMinutes: z.number().default(30).describe(
+          "Refuse if any prefixed path doc was updated within this window (an old client is still writing)",
+        ),
+        force: z.boolean().default(false).describe(
+          "Override the recent-writer and client-version guards",
+        ),
+      }),
+      execute: async (
+        args: {
+          namespaces: string[];
+          dryRun: boolean;
+          legacyPrefix: string;
+          recentWriterMinutes: number;
+          force: boolean;
+        },
+        context: Ctx,
+      ) => {
+        const { database, tenantId } = context.globalArgs;
+        return await withClient(context, async (client) => {
+          const targets = args.namespaces.length > 0
+            ? args.namespaces
+            : await discoverNamespaces(client, database, tenantId);
+          const handles = [];
+          for (const ns of targets) {
+            const { paths, journal, control } = migrationDeps(
+              client,
+              database,
+              tenantId,
+              ns,
+            );
+            const clientStamps = await readClientStamps(control, ns);
+            const startedAt = new Date();
+            const r = await foldNamespacePrefix(paths, journal, {
+              namespace: args.legacyPrefix || ns,
+              dryRun: args.dryRun,
+              recentWriterMinutes: args.recentWriterMinutes,
+              force: args.force,
+              clientStamps,
+              requiredVersion: REQUIRED_CLIENT_VERSION,
+            });
+            if (r.refused) {
+              context.logger.warning("fold refused for {namespace}: {reason}", {
+                namespace: ns,
+                reason: r.refused,
+              });
+            }
+            handles.push(
+              await context.writeResource("migration", `fold-${ns}`, {
+                namespace: ns,
+                kind: "fold",
+                runId: r.runId,
+                dryRun: r.dryRun,
+                refused: r.refused,
+                counts: {
+                  scanned: r.scanned,
+                  droppedEqual: r.droppedEqual,
+                  bareWon: r.bareWon,
+                  prefixedWon: r.prefixedWon,
+                  created: r.created,
+                  tombstonesFolded: r.tombstonesFolded,
+                },
+                conflicts: [],
+                startedAt: startedAt.toISOString(),
+              }),
+            );
+          }
+          return { dataHandles: handles };
+        });
+      },
+    },
+
+    prefix_namespace: {
+      description:
+        "Inverse of fold for the post-upgrade delta: give every tier-relative path doc written after `since` a `<namespace>/`-prefixed twin, so a client rolled back to the old extension version sees it. Journaled and revertable. Defaults to dryRun.",
+      arguments: z.object({
+        namespaces: z.array(z.string()).default([]).describe(
+          "Namespaces to prefix; empty means every namespace found",
+        ),
+        legacyPrefix: z.string().default("").describe(
+          "Core namespace to prefix with; defaults to the config namespace",
+        ),
+        since: z.string().describe(
+          "ISO timestamp; docs updated after it are prefixed (use the fold run's startedAt)",
+        ),
+        dryRun: z.boolean().default(true),
+      }),
+      execute: async (
+        args: {
+          namespaces: string[];
+          legacyPrefix: string;
+          since: string;
+          dryRun: boolean;
+        },
+        context: Ctx,
+      ) => {
+        const { database, tenantId } = context.globalArgs;
+        const since = new Date(args.since);
+        if (Number.isNaN(since.getTime())) {
+          throw new Error(`since is not an ISO timestamp: ${args.since}`);
+        }
+        return await withClient(context, async (client) => {
+          const targets = args.namespaces.length > 0
+            ? args.namespaces
+            : await discoverNamespaces(client, database, tenantId);
+          const handles = [];
+          for (const ns of targets) {
+            const { paths, journal } = migrationDeps(
+              client,
+              database,
+              tenantId,
+              ns,
+            );
+            const startedAt = new Date();
+            const r = await prefixNamespace(paths, journal, {
+              namespace: args.legacyPrefix || ns,
+              since,
+              dryRun: args.dryRun,
+            });
+            handles.push(
+              await context.writeResource("migration", `prefix-${ns}`, {
+                namespace: ns,
+                kind: "prefix",
+                runId: r.runId,
+                dryRun: r.dryRun,
+                refused: null,
+                counts: { prefixed: r.prefixed },
+                conflicts: [],
+                startedAt: startedAt.toISOString(),
+              }),
+            );
+          }
+          return { dataHandles: handles };
+        });
+      },
+    },
+
+    import_control_records: {
+      description:
+        "Copy serve's filesystem control-plane tree (<repo>/.swamp/datastore/_control, including token secrets) into the namespace's _control collection with put-if-absent semantics. Run inside the serve container before its first restart on a control-plane-capable version. Copies, never moves. Journaled (hashes only) and revertable. Defaults to dryRun.",
+      arguments: z.object({
+        namespace: z.string().describe(
+          "Namespace whose _control collection receives the records (the serve repo's core namespace, or the config namespace when core's is unset)",
+        ),
+        controlDir: z.string().describe(
+          "Absolute path of the filesystem _control directory to import",
+        ),
+        coreNamespace: z.string().default("").describe(
+          "Core datastore.namespace of the serve repo; keys are stored under <coreNamespace>/_control/ when set, _control/ otherwise",
+        ),
+        dryRun: z.boolean().default(true),
+        maxBytes: z.number().int().positive().default(1024 * 1024).describe(
+          "Reject files larger than this",
+        ),
+      }),
+      execute: async (
+        args: {
+          namespace: string;
+          controlDir: string;
+          coreNamespace: string;
+          dryRun: boolean;
+          maxBytes: number;
+        },
+        context: Ctx,
+      ) => {
+        const { database, tenantId } = context.globalArgs;
+        return await withClient(context, async (client) => {
+          const { journal, control } = migrationDeps(
+            client,
+            database,
+            tenantId,
+            args.namespace,
+          );
+          const store = minimalControlStore(
+            control,
+            args.coreNamespace || undefined,
+          );
+          const startedAt = new Date();
+          const r = await importControlRecords(store, journal, {
+            controlDir: args.controlDir,
+            dryRun: args.dryRun,
+            maxBytes: args.maxBytes,
+          });
+          if (r.rejected.length > 0) {
+            context.logger.warning("import rejected {count} entries", {
+              count: r.rejected.length,
+            });
+          }
+          const handle = await context.writeResource(
+            "migration",
+            `import-control-${args.namespace}`,
+            {
+              namespace: args.namespace,
+              kind: "import-control",
+              runId: r.runId,
+              dryRun: r.dryRun,
+              refused: null,
+              counts: {
+                inserted: r.inserted,
+                skipped: r.skipped,
+                rejected: r.rejected.length,
+              },
+              conflicts: r.rejected,
+              startedAt: startedAt.toISOString(),
+            },
+          );
+          return { dataHandles: [handle] };
+        });
+      },
+    },
+
+    revert_migration: {
+      description:
+        "Replay a journaled migration run in reverse. Applies an op only when the current document still equals the run's after-image; conflicts (client writes made after the migration) are reported and skipped unless force is set. Refuses when a later non-reverted migration touched the same ids. Defaults to dryRun.",
+      arguments: z.object({
+        namespace: z.string().describe("Namespace the run belongs to"),
+        runId: z.string().describe("Run id from a previous migration result"),
+        dryRun: z.boolean().default(true),
+        force: z.boolean().default(false).describe(
+          "Overwrite records that changed after the migration. Echoes the conflict count; use only after a dry run.",
+        ),
+      }),
+      execute: async (
+        args: {
+          namespace: string;
+          runId: string;
+          dryRun: boolean;
+          force: boolean;
+        },
+        context: Ctx,
+      ) => {
+        const { database, tenantId } = context.globalArgs;
+        return await withClient(context, async (client) => {
+          const { journal } = migrationDeps(
+            client,
+            database,
+            tenantId,
+            args.namespace,
+          );
+          const startedAt = new Date();
+          const r = await journal.revert(args.runId, {
+            dryRun: args.dryRun,
+            force: args.force,
+          });
+          if (r.refused) {
+            context.logger.warning("revert refused: {reason}", {
+              reason: r.refused,
+            });
+          }
+          if (r.skippedConflicts.length > 0) {
+            context.logger.warning(
+              "revert skipped {count} conflicting records (pass force to overwrite)",
+              { count: r.skippedConflicts.length },
+            );
+          }
+          const handle = await context.writeResource(
+            "migration",
+            `revert-${args.runId}`,
+            {
+              namespace: args.namespace,
+              kind: "revert",
+              runId: r.revertRunId,
+              dryRun: r.dryRun,
+              refused: r.refused,
+              counts: {
+                opsTotal: r.opsTotal,
+                restored: r.restored,
+                deleted: r.deleted,
+                conflicts: r.skippedConflicts.length,
+              },
+              conflicts: r.skippedConflicts,
+              startedAt: startedAt.toISOString(),
+            },
+          );
+          return { dataHandles: [handle] };
+        });
+      },
+    },
+
     inventory: {
       description:
         "Snapshot every namespace in the cluster: live paths, tombstones, blob count, allocated vs reusable bytes, and how long since the last write. Fans out over all namespaces in one execution.",
@@ -343,6 +684,24 @@ export const model = {
               dryRun: args.dryRun,
               graceMs: args.tombstoneDays * 86_400_000,
             });
+
+            // Migration journal shares the tombstone window: a run is
+            // revertable for as long as a deletion is visible to peers.
+            const jn = journalCollectionNamesFor(tenantId, ns);
+            const pruned = await pruneJournal(
+              db.collection(jn.runs) as unknown as PrunableJournalStore<RunDoc>,
+              db.collection(jn.ops) as unknown as PrunableJournalStore<OpDoc>,
+              {
+                olderThanMs: args.tombstoneDays * 86_400_000,
+                dryRun: args.dryRun,
+              },
+            );
+            if (pruned.runsDeleted > 0) {
+              context.logger.info(
+                "Pruned {runs} migration run(s) older than {cutoff}",
+                { runs: pruned.runsDeleted, cutoff: pruned.cutoff },
+              );
+            }
 
             // Decide whether the blob sweep is safe here. Blobs written before
             // 2026.08.19.1 have no createdAt, so the grace window cannot
@@ -472,3 +831,115 @@ export const model = {
     },
   },
 };
+
+// ---- migration wiring -------------------------------------------------------
+
+interface ControlRow {
+  _id: string;
+  data: { buffer?: Uint8Array } | Uint8Array;
+  updatedAt: Date;
+}
+
+function migrationDeps(
+  client: MongoClient,
+  database: string,
+  tenantId: string,
+  ns: string,
+): {
+  paths: PathsPort;
+  journal: Journal;
+  control: ControlCollection;
+} {
+  const db = client.db(database);
+  const p = prefix(tenantId, ns);
+  const names = journalCollectionNamesFor(tenantId, ns);
+  const paths = db.collection(`${p}_paths`) as unknown as PathsPort;
+  const control = db.collection<ControlRow>(
+    controlCollectionNameFor(tenantId, ns),
+  ) as unknown as ControlCollection;
+  const journal = createJournal({
+    runs: db.collection(names.runs) as unknown as JournalStore<RunDoc>,
+    ops: db.collection(names.ops) as unknown as JournalStore<OpDoc>,
+    target: (collection: string): TargetStore => {
+      if (collection === "paths") return paths as unknown as TargetStore;
+      if (collection === "control") return control as unknown as TargetStore;
+      throw new Error(`unknown journal target collection: ${collection}`);
+    },
+  });
+  return { paths, journal, control };
+}
+
+// `_control/clients/<holder>` stamps written by every sync push. Read for the
+// fold guard. Both key layouts (core namespace set or not) are accepted.
+// The three driver calls the migrations make on `_control`.
+interface ControlCollection {
+  find(filter: Record<string, unknown>): AsyncIterable<ControlRow>;
+  findOne(filter: Record<string, unknown>): Promise<ControlRow | null>;
+  insertOne(doc: ControlRow): Promise<unknown>;
+}
+
+async function readClientStamps(
+  control: ControlCollection,
+  ns: string,
+): Promise<ClientStamp[]> {
+  const out: ClientStamp[] = [];
+  const re = `^(?:${
+    ns.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  }/)?_control/clients/`;
+  for await (const row of control.find({ _id: { $regex: re } })) {
+    try {
+      const bytes = row.data instanceof Uint8Array
+        ? row.data
+        : (row.data as { buffer?: Uint8Array }).buffer ?? new Uint8Array();
+      const body = JSON.parse(new TextDecoder().decode(bytes)) as {
+        holder?: string;
+        version?: string;
+        at?: string;
+      };
+      if (body.version && body.at) {
+        out.push({
+          holder: body.holder ?? row._id,
+          version: body.version,
+          at: new Date(body.at),
+        });
+      }
+    } catch {
+      // A malformed stamp is not a reason to refuse or proceed; skip it.
+    }
+  }
+  return out;
+}
+
+// The slice of the datastore's ControlPlaneStore the import needs, re-derived
+// here because models/ cannot import datastores/mongodb/control_plane.ts.
+// Same key layout: `<coreNamespace>/_control/<key>` or `_control/<key>`.
+function minimalControlStore(
+  control: ControlCollection,
+  coreNamespace: string | undefined,
+): ControlPort {
+  const rawKey = (key: string) =>
+    coreNamespace ? `${coreNamespace}/_control/${key}` : `_control/${key}`;
+  return {
+    rawKey,
+    async get(key) {
+      const doc = await control.findOne({ _id: rawKey(key) });
+      if (doc === null) return null;
+      return doc.data instanceof Uint8Array
+        ? doc.data
+        : (doc.data as { buffer?: Uint8Array }).buffer ?? new Uint8Array();
+    },
+    async putIfAbsent(key, data) {
+      try {
+        await control.insertOne({
+          _id: rawKey(key),
+          data,
+          updatedAt: new Date(),
+        });
+        return true;
+      } catch (err) {
+        if ((err as { code?: number }).code === 11000) return false;
+        throw err;
+      }
+    },
+  };
+}
