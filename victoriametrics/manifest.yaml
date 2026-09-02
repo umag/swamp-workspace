@@ -1,18 +1,21 @@
 manifestVersion: 1
 name: "@magistr/victoriametrics"
-version: "2026.08.30.1"
+version: "2026.09.02.1"
 description: |
   VictoriaMetrics query API for swamp — instant/range PromQL, scrape-target
-  health, a node-exporter system overview, and container memory rankings.
+  health, a node-exporter system overview, container memory rankings, and a
+  metrics push.
 
   Model:
   - `@magistr/victoriametrics` — queries a VictoriaMetrics (or Prometheus-
-    compatible) HTTP endpoint via `/api/v1/query` and `/api/v1/query_range`.
+    compatible) HTTP endpoint via `/api/v1/query` and `/api/v1/query_range`,
+    and writes to it via `/api/v1/import/prometheus`.
     Methods: `query` (instant PromQL), `query-range` (range PromQL over a time
     window), `health` (scrape-target up/down from the `up` metric),
     `system-overview` (CPU/memory/load/disk/network stats plus anomaly
-    detection from node-exporter), and `container-memory` (top-N container
-    memory usage rankings).
+    detection from node-exporter), `container-memory` (top-N container
+    memory usage rankings), and `push` (import Prometheus exposition text so a
+    job can record its own outcome as a series vmalert can alert on).
 
 repository: "https://github.com/umag/swamp-workspace"
 paths:

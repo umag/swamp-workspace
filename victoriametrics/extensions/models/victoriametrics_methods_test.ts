@@ -18,7 +18,12 @@
  * precedent. FakeTime drives every start/end/uptime/timestamp assertion and
  * coexists with the fetch stub in every test that needs both.
  */
-import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertThrows,
+} from "jsr:@std/assert@1";
 import { FakeTime } from "jsr:@std/testing@1/time";
 import { model } from "./victoriametrics.ts";
 import systemOverviewFixture from "../../fixtures/system_overview.json" with {
@@ -524,4 +529,120 @@ Deno.test("no method calls the logger at all today (pin — a future change that
     await run("query", { promql: "up" }, ctx);
   });
   assertEquals(logs.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// push (2026.09.02.1) — the only WRITE method; POSTs exposition text to
+// /api/v1/import/prometheus. Every assertion below reads the actual Request
+// the stub captured, so a change to endpoint, verb, or body fails here.
+// ---------------------------------------------------------------------------
+
+Deno.test("push: happy path — POSTs the body to the import endpoint and writes pushResult", async () => {
+  using _time = new FakeTime(FIXED_NOW_MS);
+  const { ctx, written } = makeCtx();
+  const lines = "swamp_fleet_update_ok 1\nswamp_fleet_targets_total 2";
+  await withFetchStub(
+    [() => new Response(null, { status: 204 })],
+    async (calls) => {
+      const result = await run("push", { lines }, ctx) as {
+        summary: string;
+        dataHandles: unknown[];
+      };
+      assertEquals(calls.length, 1);
+      assertEquals(calls[0].method, "POST");
+      assertEquals(
+        calls[0].url,
+        "http://vm.example:8428/api/v1/import/prometheus",
+      );
+      // VM parses the payload as text, not JSON — the content type is load-bearing.
+      assertEquals(calls[0].headers.get("Content-Type"), "text/plain");
+      // Trailing newline: the last sample is otherwise unterminated.
+      assertEquals(await calls[0].text(), lines + "\n");
+      assertEquals(
+        result.summary,
+        "Pushed 2 sample(s) to vm.example: swamp_fleet_update_ok, swamp_fleet_targets_total",
+      );
+      assertEquals(result.dataHandles.length, 1);
+    },
+  );
+  const res = written.find((w) => w.spec === "pushResult")!;
+  assertEquals(res.name, "pushResult");
+  assertEquals(res.payload.ok, true);
+  assertEquals(res.payload.httpStatus, 204);
+  assertEquals(res.payload.error, null);
+  assertEquals(res.payload.lines, 2);
+  assertEquals(res.payload.metrics, [
+    "swamp_fleet_update_ok",
+    "swamp_fleet_targets_total",
+  ]);
+  assertEquals(res.payload.timestamp, new Date(FIXED_NOW_MS).toISOString());
+});
+
+Deno.test("push: extraLabels become percent-encoded extra_label params", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [() => new Response(null, { status: 204 })],
+    async (calls) => {
+      await run(
+        "push",
+        {
+          lines: "up 1",
+          extraLabels: "job=swamp-fleet-update,instance=unraid",
+        },
+        ctx,
+      );
+      // The WHOLE pair is encoded, `=` included: VM reads the param value as
+      // `name=value` and decodes it server-side into one label.
+      assertEquals(
+        calls[0].url,
+        "http://vm.example:8428/api/v1/import/prometheus?extra_label=job%3Dswamp-fleet-update&extra_label=instance%3Dunraid",
+      );
+    },
+  );
+});
+
+Deno.test("push: error path — non-2xx records the failed attempt AND throws", async () => {
+  using _time = new FakeTime(FIXED_NOW_MS);
+  const { ctx, written } = makeCtx();
+  await withFetchStub([() => text("cannot parse line", 400)], async () => {
+    await assertRejects(
+      () => run("push", { lines: "garbage" }, ctx),
+      Error,
+      "VictoriaMetrics import failed: HTTP 400: cannot parse line",
+    );
+  });
+  // The load-bearing half: a push that failed is exactly the one worth having a
+  // resource for. Throwing without writing would leave no trace of the attempt.
+  const res = written.find((w) => w.spec === "pushResult")!;
+  assertEquals(res.payload.ok, false);
+  assertEquals(res.payload.httpStatus, 400);
+  assertEquals(res.payload.error, "HTTP 400: cannot parse line");
+});
+
+Deno.test("push: error path — a transport failure records httpStatus 0 and throws", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([
+    () => {
+      throw new Error("connection refused");
+    },
+  ], async () => {
+    await assertRejects(
+      () => run("push", { lines: "up 1" }, ctx),
+      Error,
+      "VictoriaMetrics import failed: Error: connection refused",
+    );
+  });
+  const res = written.find((w) => w.spec === "pushResult")!;
+  assertEquals(res.payload.ok, false);
+  // 0, not a fabricated status: nothing answered, so no status was observed.
+  assertEquals(res.payload.httpStatus, 0);
+});
+
+Deno.test("push: rejects an empty payload before any request is made", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub([() => new Response(null, { status: 204 })], (calls) => {
+    assertThrows(() => run("push", { lines: "" }, ctx));
+    assertEquals(calls.length, 0);
+    return Promise.resolve();
+  });
 });

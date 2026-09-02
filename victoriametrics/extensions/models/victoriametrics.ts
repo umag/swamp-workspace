@@ -63,6 +63,16 @@ const ContainerMemorySchema = z.object({
   timestamp: z.string(),
 });
 
+const PushResultSchema = z.object({
+  endpoint: z.string(),
+  lines: z.number(),
+  metrics: z.array(z.string()),
+  httpStatus: z.number(),
+  ok: z.boolean(),
+  error: z.union([z.string(), z.null()]),
+  timestamp: z.string(),
+});
+
 async function vmQuery(host, port, path) {
   const resp = await fetch(`http://${host}:${port}${path}`);
   if (!resp.ok) {
@@ -167,13 +177,71 @@ export const DISK_IO_QUERY = `rate(node_disk_io_time_seconds_total{device!~"(${
 }).*"}[5m])*100`;
 
 /**
+ * The sample lines of a Prometheus exposition payload: everything that is not
+ * blank and not a `#` comment (HELP/TYPE headers are legal in the format and
+ * are not samples). One place, so the reported `lines` count and the reported
+ * `metrics` names can never disagree about what counted as a sample.
+ */
+export function sampleLines(body: string): string[] {
+  return String(body)
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"));
+}
+
+/**
+ * Distinct metric names in a Prometheus exposition payload, in first-seen
+ * order. A sample is `name{labels} value` or `name value`, so the name ends at
+ * the first whitespace or `{`. Names only: the summary and the stored resource
+ * stay readable when the payload itself is hundreds of lines.
+ */
+export function metricNames(body: string): string[] {
+  const names = sampleLines(body).map((l) => l.split(/[\s{]/)[0]).filter((n) =>
+    n !== ""
+  );
+  return [...new Set(names)];
+}
+
+/**
+ * `extra_label` query params for VM's import endpoint, from a comma-separated
+ * `key=value` list. Pairs without `=`, or with an empty key, are dropped rather
+ * than sent malformed.
+ *
+ * Each whole pair is percent-encoded, `=` included: VM reads the param VALUE
+ * as `name=value`, so `job=x` must arrive as `extra_label=job%3Dx` and be
+ * decoded server-side into one value. Encoding only the halves would make VM
+ * see a bare `extra_label=job` with a stray `x`.
+ *
+ * Only the KEY is trimmed, so `"job=x, instance=y"` still parses while a value
+ * keeps every character it was given. Trimming the whole pair looked equivalent
+ * and was not: it silently rewrote any value with leading or trailing
+ * whitespace, so the label VM stored differed from the one the caller passed
+ * (found by property f2, 2026-09-02). The split is at the FIRST `=`, so an `=`
+ * inside a value survives.
+ */
+export function extraLabelParams(extraLabels?: string): string {
+  return String(extraLabels || "")
+    .split(",")
+    .map((pair) => {
+      const i = pair.indexOf("=");
+      if (i < 0) return null;
+      const key = pair.slice(0, i).trim();
+      return key === "" ? null : `${key}=${pair.slice(i + 1)}`;
+    })
+    .filter((p) => p !== null)
+    .map((p) => `extra_label=${encodeURIComponent(p)}`)
+    .join("&");
+}
+
+/**
  * VictoriaMetrics query model: instant/range PromQL, scrape-target health, a
- * node-exporter system overview, and container memory rankings over the HTTP
- * query API (`/api/v1/query`, `/api/v1/query_range`).
+ * node-exporter system overview, container memory rankings over the HTTP query
+ * API (`/api/v1/query`, `/api/v1/query_range`), and a metrics `push` over the
+ * import API (`/api/v1/import/prometheus`).
  */
 export const model = {
   type: "@magistr/victoriametrics",
-  version: "2026.08.30.1",
+  version: "2026.09.02.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -191,6 +259,12 @@ export const model = {
       toVersion: "2026.08.30.1",
       description:
         "system-overview counts each physical disk once — dm-*/md*/loop*/etc are excluded in PromQL and re-checked client-side; no resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.02.1",
+      description:
+        "Restore the `push` method and its `pushResult` resource (lost when the model was rewritten); additive only, no existing resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -220,8 +294,77 @@ export const model = {
       lifetime: "infinite",
       garbageCollection: 10,
     },
+    "pushResult": {
+      description:
+        "Result of importing metrics in Prometheus exposition format",
+      schema: PushResultSchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
   },
   methods: {
+    "push": {
+      description:
+        "Import metrics into VictoriaMetrics from Prometheus exposition text (one `name{labels} value` per line) via /api/v1/import/prometheus. Lets a job record its own outcome as a series that vmalert can alert on, instead of a chat message nobody diffs. Timestamps are assigned by VM at ingest.",
+      arguments: z.object({
+        lines: z.string().min(1).describe(
+          "Prometheus exposition text; blank lines and # comments are allowed",
+        ),
+        extraLabels: z.string().optional().describe(
+          "Labels applied to every pushed sample, as VM's extra_label query params would take them: comma-separated key=value",
+        ),
+      }),
+      execute: async (args, context) => {
+        const { host, port } = context.globalArgs;
+        const body = String(args.lines).trim() + "\n";
+        const params = extraLabelParams(args.extraLabels);
+        const endpoint = `http://${host}:${
+          port || 8428
+        }/api/v1/import/prometheus${params ? `?${params}` : ""}`;
+
+        const names = metricNames(body);
+        const lineCount = sampleLines(body).length;
+
+        let httpStatus = 0;
+        let error: string | null = null;
+        try {
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain" },
+            body,
+          });
+          httpStatus = res.status;
+          // VM answers 204 with an empty body on success; read it either way so
+          // the connection is not left dangling.
+          const text = await res.text();
+          if (!res.ok) error = `HTTP ${res.status}: ${text.slice(0, 300)}`;
+        } catch (e) {
+          error = String(e);
+        }
+
+        const ok = !error;
+        // Record the attempt BEFORE throwing: a push that failed is exactly the
+        // one worth having a resource for, and a method that throws without
+        // writing leaves no trace of what it tried to send.
+        const handle = await context.writeResource("pushResult", "pushResult", {
+          endpoint,
+          lines: lineCount,
+          metrics: names,
+          httpStatus,
+          ok,
+          error,
+          timestamp: new Date().toISOString(),
+        });
+        if (!ok) throw new Error(`VictoriaMetrics import failed: ${error}`);
+        return {
+          dataHandles: [handle],
+          summary: `Pushed ${lineCount} sample(s) to ${host}: ${
+            names.join(", ")
+          }`,
+        };
+      },
+    },
+
     "query": {
       description: "Run an instant PromQL query",
       arguments: z.object({

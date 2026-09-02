@@ -41,7 +41,12 @@
 import { assert } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
 import { FakeTime } from "jsr:@std/testing@1/time";
-import { model } from "./victoriametrics.ts";
+import {
+  extraLabelParams,
+  metricNames,
+  model,
+  sampleLines,
+} from "./victoriametrics.ts";
 import systemOverviewFixture from "../../fixtures/system_overview.json" with {
   type: "json",
 };
@@ -392,6 +397,91 @@ Deno.test("property: query-range flow — end===now, start===end-hoursBack*3600,
           start === end - hoursBack * 3600 &&
           end > start
         );
+      },
+    ),
+    FC_RUNS,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// (f) push exposition parsing — the first PURE exported helpers on this model
+//     (2026.09.02.1). Both oracles are built from the GENERATOR's own record
+//     of what it emitted, never by re-running the code's own parse.
+// ---------------------------------------------------------------------------
+
+/** A metric name the exposition format accepts: [a-zA-Z_][a-zA-Z0-9_]* */
+const metricNameArb = fc.stringMatching(/^[a-zA-Z_][a-zA-Z0-9_]{0,20}$/);
+
+Deno.test("property (f1): metricNames returns exactly the distinct emitted names, in first-seen order", async () => {
+  await fc.assert(
+    fc.property(
+      fc.array(
+        fc.record({
+          name: metricNameArb,
+          // A label blob wide enough to include spaces and `=`, which is what
+          // breaks a naive split(" ")[0].
+          labels: fc.option(fc.string({ minLength: 0, maxLength: 30 }), {
+            nil: undefined,
+          }),
+          value: fc.integer({ min: -1000, max: 1000 }),
+        }),
+        { minLength: 1, maxLength: 20 },
+      ),
+      // Comment/blank noise interleaved: legal exposition, never samples.
+      fc.array(fc.constantFrom("", "   ", "# HELP x y", "# TYPE x gauge"), {
+        maxLength: 10,
+      }),
+      (samples, noise) => {
+        const lines: string[] = [];
+        for (const s of samples) {
+          const labels = s.labels === undefined
+            ? ""
+            : `{l="${s.labels.replace(/["\\\n]/g, "")}"}`;
+          lines.push(`${s.name}${labels} ${s.value}`);
+        }
+        const body = [...lines, ...noise]
+          .sort(() => 0)
+          .join("\n");
+
+        // Oracle: distinct names in first-seen order, taken from what the
+        // generator RECORDED — not from re-parsing the text.
+        const expected = [...new Set(samples.map((s) => s.name))];
+        const got = metricNames(body);
+        return got.length === expected.length &&
+          got.every((n, i) => n === expected[i]) &&
+          // Every sample line is counted; no comment or blank ever is.
+          sampleLines(body).length === samples.length;
+      },
+    ),
+    FC_RUNS,
+  );
+});
+
+Deno.test("property (f2): every extraLabel pair survives the round trip as one param", async () => {
+  await fc.assert(
+    fc.property(
+      fc.array(
+        fc.record({
+          // Keys/values that can contain the delimiters an encoder must escape.
+          key: fc.stringMatching(/^[a-zA-Z_][a-zA-Z0-9_]{0,10}$/),
+          value: fc.string({ minLength: 1, maxLength: 20 }).filter((v) =>
+            !v.includes(",")
+          ),
+        }),
+        { minLength: 1, maxLength: 8 },
+      ),
+      (pairs) => {
+        const input = pairs.map((p) => `${p.key}=${p.value}`).join(",");
+        const params = extraLabelParams(input);
+
+        // Oracle: decode with the platform's own parser, not the encoder's
+        // inverse. One param per pair, each decoding to the exact `key=value`.
+        const decoded = new URLSearchParams(params).getAll("extra_label");
+        return decoded.length === pairs.length &&
+          decoded.every((d, i) => d === `${pairs[i].key}=${pairs[i].value}`) &&
+          // A `,` inside a value would have split the pair; the filter above
+          // keeps the generator honest about the documented input grammar.
+          params.split("&").length === pairs.length;
       },
     ),
     FC_RUNS,

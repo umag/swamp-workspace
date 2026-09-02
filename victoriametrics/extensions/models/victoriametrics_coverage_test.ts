@@ -452,3 +452,60 @@ Deno.test("green complement (VM2 fix): a TWO-series memory range result AGGREGAT
     avg: 46.0,
   });
 });
+
+// ---------------------------------------------------------------------------
+// push (2026.09.02.1) — the guards the methods/adversarial suites don't drive
+// on both sides. Deleting any one of these turns this file red.
+// ---------------------------------------------------------------------------
+
+Deno.test("push: a missing port falls back to 8428 rather than building `http://host:undefined`", async () => {
+  const { ctx } = makeCtx();
+  const noPortCtx = { ...ctx, globalArgs: { host: "vm.example" } };
+  await withFetchStub(
+    [() => new Response(null, { status: 204 })],
+    async (calls) => {
+      await run("push", { lines: "up 1" }, noPortCtx);
+      assertEquals(
+        calls[0].url,
+        "http://vm.example:8428/api/v1/import/prometheus",
+      );
+    },
+  );
+});
+
+Deno.test("push: no extraLabels means no `?` at all on the endpoint", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [() => new Response(null, { status: 204 })],
+    async (calls) => {
+      await run("push", { lines: "up 1" }, ctx);
+      // An empty param string must not leave a dangling `?`.
+      assertEquals(calls[0].url.includes("?"), false);
+    },
+  );
+});
+
+Deno.test("push: surrounding whitespace is trimmed and exactly one trailing newline is sent", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub(
+    [() => new Response(null, { status: 204 })],
+    async (calls) => {
+      await run("push", { lines: "\n\n  up 1  \n\n" }, ctx);
+      assertEquals(await calls[0].text(), "up 1\n");
+    },
+  );
+});
+
+Deno.test("push: the success body is read even though VM answers 204 empty", async () => {
+  const { ctx, written } = makeCtx();
+  // A 204 carries no body, so give the stub a 200 with one: `bodyUsed` only
+  // flips when something actually reads it.
+  const res = new Response("", { status: 200 });
+  await withFetchStub([() => res], async () => {
+    await run("push", { lines: "up 1" }, ctx);
+  });
+  // Leaving the body unread leaks the connection; this is the only assertion
+  // that the read happens on the SUCCESS path too.
+  assertEquals(res.bodyUsed, true);
+  assertEquals(written.find((w) => w.spec === "pushResult")!.payload.ok, true);
+});
