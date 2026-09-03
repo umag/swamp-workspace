@@ -324,18 +324,17 @@ export function createSyncService(
 
   // `prefixes`, when present, scopes the pull to `_paths` docs whose `_id`
   // begins with one of the given tier-relative prefixes (e.g.
-  // `data/<modelType>/<modelId>/` or `config/`). A scoped pull is a pure read
-  // optimization: it ignores the `lastPulledAt` floor (so it can fetch
-  // anything in-scope that's missing/stale locally) and — critically — does
-  // NOT advance the `lastPulledAt` watermark. The global watermark stays
-  // owned exclusively by the full, unscoped pull; bumping it here would make
-  // a later full pull skip every out-of-scope change in this window.
+  // `data/<modelType>/<modelId>/` or `config/`). A scoped pull does NOT
+  // advance the `lastPulledAt` watermark — the global watermark stays owned
+  // exclusively by the full, unscoped pull; bumping it here would make a
+  // later full pull skip every out-of-scope change in this window.
   //
-  // `subdirs` (core's config/access pollers) is scoped too, but keeps the
-  // watermark as a lower bound: the tiers it names are fully hydrated by the
-  // last full pull, so only docs newer than `lastPulledAt` can be missing —
-  // a quiet tier costs one findOne per poll instead of a hash-compare of
-  // every file. The watermark is still never advanced here.
+  // Both model-scoped and subdir-scoped pulls use the watermark as a LOWER
+  // BOUND: data in-scope is fully hydrated by the last full pull (and
+  // content files missing from lazy hydration are served on demand by
+  // hydrateFile — swamp-club#1984), so only docs newer than `lastPulledAt`
+  // can be missing. A quiet model costs one findOne probe instead of a
+  // hash-compare of every file in the prefix.
   async function pull(opts: {
     ns: string | undefined;
     prefixes?: string[];
@@ -365,7 +364,7 @@ export function createSyncService(
         })),
       }
       : null;
-    const useWatermark = !modelScoped && state.lastPulledAt !== null;
+    const useWatermark = state.lastPulledAt !== null;
     const watermarkFilter: Record<string, unknown> | null = useWatermark
       ? { updatedAt: { $gt: new Date(state.lastPulledAt!) } }
       : null;
