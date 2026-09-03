@@ -262,7 +262,7 @@ export function createSyncService(
   // Option 4: debounce — collapse per-step pulls into one per-run by skipping
   // pulls within a short window of the last successful pull. A workflow run's
   // steps fire sequentially, so a 30s debounce effectively means "once per run."
-  const PULL_DEBOUNCE_MS = 30_000;
+  const PULL_DEBOUNCE_MS = 120_000;
   let lastPullCompletedAt = 0;
 
   // Option 3: sole-writer fast path — skip the pull entirely when no other
