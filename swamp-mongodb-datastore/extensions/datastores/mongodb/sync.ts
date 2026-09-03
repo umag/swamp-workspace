@@ -251,6 +251,12 @@ export function isSafeRelPath(relPath: string): boolean {
   return true;
 }
 
+// Module-level debounce state: persists across createSyncService invocations
+// (core creates a fresh sync service per step, but the debounce must span a
+// workflow run's sequential steps). 120s covers back-to-back scheduled runs.
+const PULL_DEBOUNCE_MS = 120_000;
+let lastPullCompletedAt = 0;
+
 export function createSyncService(
   cfg: MongoDatastoreConfig,
   getClient: (repoDir: string) => Promise<ClientHandle>,
@@ -259,15 +265,6 @@ export function createSyncService(
   holder: NamespaceHolder = { current: undefined },
 ): DatastoreSyncService {
   let updatedAtIndexEnsured = false;
-  // Option 4: debounce — collapse per-step pulls into one per-run by skipping
-  // pulls within a short window of the last successful pull. A workflow run's
-  // steps fire sequentially, so a 30s debounce effectively means "once per run."
-  const PULL_DEBOUNCE_MS = 120_000;
-  let lastPullCompletedAt = 0;
-
-  // Option 3: sole-writer fast path — skip the pull entirely when no other
-  // client has pushed since our last pull. Checked via the control collection's
-  // client stamps (written by stampClient after each push).
   const thisClient = clientHolder();
 
   // The extension's own namespace, used when a call carries no core namespace
