@@ -255,7 +255,7 @@ export function isSafeRelPath(relPath: string): boolean {
 // entirely — no MongoDB connection opened. Reads the sidecar's lastPulledAt
 // (a local JSON file). 120s covers back-to-back scheduled runs and
 // per-step pulls within a single workflow run.
-const PULL_DEBOUNCE_MS = 120_000;
+const PULL_DEBOUNCE_MS = 600_000;
 
 export function createSyncService(
   cfg: MongoDatastoreConfig,
