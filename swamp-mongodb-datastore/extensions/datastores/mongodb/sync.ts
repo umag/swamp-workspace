@@ -355,18 +355,20 @@ export function createSyncService(
     const scoped = modelScoped || subdirScoped;
     const prefixList = [...(opts.prefixes ?? []), ...(opts.subdirs ?? [])];
 
-    // Fast path: if a recent pull already ran (within PULL_DEBOUNCE_MS),
-    // skip entirely. Uses the sidecar's lastPulledAt (a local JSON file,
-    // ~1ms) instead of opening a MongoDB connection. This collapses
-    // per-step pulls into roughly one per workflow run.
+    // Fast path: if a scoped pull completed recently (within
+    // PULL_DEBOUNCE_MS), skip entirely. Uses a local stamp file (~1ms
+    // stat) instead of opening a MongoDB connection. This collapses
+    // per-step pulls into roughly one per workflow run. The stamp is
+    // separate from the sidecar's lastPulledAt (which tracks the global
+    // watermark and is set by full/unscoped pulls, not scoped ones).
     if (scoped) {
-      const state = await sidecarFor(ns).read();
-      if (state.lastPulledAt !== null) {
-        const msSincePull = Date.now() - new Date(state.lastPulledAt).getTime();
-        if (msSincePull < PULL_DEBOUNCE_MS) {
+      const stampPath = `${localRoot(ns)}/.scoped-pull-stamp`;
+      try {
+        const stat = await Deno.stat(stampPath);
+        if (stat.mtime && Date.now() - stat.mtime.getTime() < PULL_DEBOUNCE_MS) {
           return 0;
         }
-      }
+      } catch { /* no stamp yet — first scoped pull */ }
     }
 
     const { paths, blobs } = await resources();
@@ -399,7 +401,12 @@ export function createSyncService(
         { projection: { _id: 1 } },
       );
       if (probe === null) {
-
+        if (scoped) {
+          await Deno.writeTextFile(
+            `${cachePath}/.scoped-pull-stamp`,
+            new Date().toISOString(),
+          ).catch(() => {});
+        }
         return 0;
       }
     }
@@ -528,6 +535,13 @@ export function createSyncService(
       // window — so it is a reconcile point for the push tombstone pass too.
       await sidecar.setLastReconciledAt(watermark);
       await sidecar.setLazyPullActive(false);
+    }
+    // Touch the scoped-pull stamp so the debounce fires for subsequent steps.
+    if (scoped) {
+      await Deno.writeTextFile(
+        `${cachePath}/.scoped-pull-stamp`,
+        new Date().toISOString(),
+      ).catch(() => {});
     }
     // A metadataOnly pull deliberately does NOT advance the watermark: doing
     // so would move it past the skipped data/.../raw docs, and a later full
