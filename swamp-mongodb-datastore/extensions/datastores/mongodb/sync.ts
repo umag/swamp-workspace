@@ -251,11 +251,11 @@ export function isSafeRelPath(relPath: string): boolean {
   return true;
 }
 
-// Module-level debounce state: persists across createSyncService invocations
-// (core creates a fresh sync service per step, but the debounce must span a
-// workflow run's sequential steps). 120s covers back-to-back scheduled runs.
+// Scoped pulls within this window of the last full/scoped pull are skipped
+// entirely — no MongoDB connection opened. Reads the sidecar's lastPulledAt
+// (a local JSON file). 120s covers back-to-back scheduled runs and
+// per-step pulls within a single workflow run.
 const PULL_DEBOUNCE_MS = 120_000;
-let lastPullCompletedAt = 0;
 
 export function createSyncService(
   cfg: MongoDatastoreConfig,
@@ -265,7 +265,6 @@ export function createSyncService(
   holder: NamespaceHolder = { current: undefined },
 ): DatastoreSyncService {
   let updatedAtIndexEnsured = false;
-  const thisClient = clientHolder();
 
   // The extension's own namespace, used when a call carries no core namespace
   // — the behaviour 2026.09.01.2 shipped (tierRoot in config.ts). In every
@@ -356,56 +355,21 @@ export function createSyncService(
     const scoped = modelScoped || subdirScoped;
     const prefixList = [...(opts.prefixes ?? []), ...(opts.subdirs ?? [])];
 
-    // Fast path: debounce consecutive pulls within a short window (option 4).
-    // A workflow run's steps fire sequentially, so this collapses per-step
-    // pulls into one per-run. Full (unscoped) pulls and metadataOnly pulls
-    // always run — they are boot/setup operations.
-    if (scoped && Date.now() - lastPullCompletedAt < PULL_DEBOUNCE_MS) {
-      return 0;
-    }
-
-    const { paths, blobs, control } = await resources();
-
-    // Fast path: sole-writer check (option 3). If the only client that
-    // pushed since our last pull is THIS process, nothing can have changed
-    // remotely. Read the control collection's client stamps and compare.
-    // Only applies when we have a prior pull (watermark is set) and are not
-    // doing a full/metadata pull.
+    // Fast path: if a recent pull already ran (within PULL_DEBOUNCE_MS),
+    // skip entirely. Uses the sidecar's lastPulledAt (a local JSON file,
+    // ~1ms) instead of opening a MongoDB connection. This collapses
+    // per-step pulls into roughly one per workflow run.
     if (scoped) {
-      const sidecar = sidecarFor(ns);
-      const state = await sidecar.read();
+      const state = await sidecarFor(ns).read();
       if (state.lastPulledAt !== null) {
-        try {
-          const store = createControlPlaneStore(control, ns);
-          const keys = await store.list("clients/");
-          const lastPulledMs = new Date(state.lastPulledAt).getTime();
-          const recentPushers = new Set<string>();
-          for (const key of keys) {
-            const raw = await store.get(key);
-            if (!raw) continue;
-            try {
-              const doc = JSON.parse(
-                new TextDecoder().decode(raw),
-              ) as { holder?: string; at?: string };
-              if (
-                doc.at && doc.holder &&
-                new Date(doc.at).getTime() > lastPulledMs
-              ) {
-                recentPushers.add(doc.holder);
-              }
-            } catch { /* malformed stamp */ }
-          }
-          if (
-            recentPushers.size === 0 ||
-            (recentPushers.size === 1 && recentPushers.has(thisClient))
-          ) {
-            lastPullCompletedAt = Date.now();
-            return 0;
-          }
-        } catch { /* control read failed, fall through to normal pull */ }
+        const msSincePull = Date.now() - new Date(state.lastPulledAt).getTime();
+        if (msSincePull < PULL_DEBOUNCE_MS) {
+          return 0;
+        }
       }
     }
 
+    const { paths, blobs } = await resources();
     const cachePath = localRoot(ns);
     const sidecar = sidecarFor(ns);
     // A metadataOnly pull leaves data/.../raw un-hydrated. Mark the cache so
@@ -435,7 +399,7 @@ export function createSyncService(
         { projection: { _id: 1 } },
       );
       if (probe === null) {
-        lastPullCompletedAt = Date.now();
+
         return 0;
       }
     }
@@ -569,7 +533,6 @@ export function createSyncService(
     // so would move it past the skipped data/.../raw docs, and a later full
     // pull (filtered by updatedAt > watermark) would then never re-fetch
     // them. Leaving the watermark put keeps those raw docs reachable.
-    lastPullCompletedAt = Date.now();
     return changes;
   }
 
