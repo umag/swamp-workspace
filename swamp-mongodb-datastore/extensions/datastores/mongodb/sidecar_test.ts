@@ -3,6 +3,7 @@ import {
   coalesce,
   getSidecar,
   MAX_DIRTY_PATHS,
+  MAX_SCOPE_WATERMARKS,
   reconcileWatermark,
   Sidecar,
 } from "./sidecar.ts";
@@ -11,6 +12,8 @@ import {
   isRawContentPath,
   isSecretsPath,
   modelPrefixes,
+  scopedPullFilter,
+  scopeFloor,
 } from "./sync.ts";
 
 Deno.test("modelPrefixes maps models to data/<type>/<id>/ prefixes", () => {
@@ -446,6 +449,149 @@ Deno.test("setLastReconciledAt is monotonic", async () => {
     // An interleaved older walk finishing late must not rewind the point.
     const state = await sc.setLastReconciledAt("2026-08-01T00:00:00.000Z");
     assertEquals(state.lastReconciledAt, "2026-08-19T12:00:00.000Z");
+  });
+});
+
+Deno.test("scopeFloor takes the later of the prefix's own mark and lastPulledAt", () => {
+  const P = "data/host/vm-1/";
+  // No history at all: the pull must scan the whole prefix.
+  assertEquals(
+    scopeFloor({ scopeWatermarks: {}, lastPulledAt: null }, P),
+    null,
+  );
+  // A full unscoped pull hydrated everything, this prefix included.
+  assertEquals(
+    scopeFloor(
+      { scopeWatermarks: {}, lastPulledAt: "2026-09-01T00:00:00Z" },
+      P,
+    ),
+    "2026-09-01T00:00:00Z",
+  );
+  // A scoped pull of this prefix is the more recent fact — the case that
+  // matters, since scoped pulls never move lastPulledAt.
+  assertEquals(
+    scopeFloor({
+      scopeWatermarks: { [P]: "2026-09-04T00:00:00Z" },
+      lastPulledAt: "2026-04-24T00:00:00Z",
+    }, P),
+    "2026-09-04T00:00:00Z",
+  );
+  // A stale scope mark never rewinds past a newer full pull.
+  assertEquals(
+    scopeFloor({
+      scopeWatermarks: { [P]: "2026-04-24T00:00:00Z" },
+      lastPulledAt: "2026-09-01T00:00:00Z",
+    }, P),
+    "2026-09-01T00:00:00Z",
+  );
+  // Another model's mark says nothing about this prefix.
+  assertEquals(
+    scopeFloor({
+      scopeWatermarks: { "data/net/br0/": "2026-09-04T00:00:00Z" },
+      lastPulledAt: null,
+    }, P),
+    null,
+  );
+});
+
+Deno.test("scopedPullFilter gives each prefix its own floor", () => {
+  const state = {
+    scopeWatermarks: { "data/host/vm-1/": "2026-09-04T00:00:00.000Z" },
+    lastPulledAt: null,
+  };
+  const filter = scopedPullFilter(
+    ["data/host/vm-1/", "data/net/br0/"],
+    state,
+  );
+  assertEquals(filter, {
+    $or: [
+      // Known prefix: incremental, so old tombstones stay out of the cursor.
+      {
+        _id: { $regex: "^data/host/vm-1/" },
+        updatedAt: { $gt: new Date("2026-09-04T00:00:00.000Z") },
+      },
+      // First sight of this prefix: full scan once, then it records a floor.
+      { _id: { $regex: "^data/net/br0/" } },
+    ],
+  });
+});
+
+Deno.test("advanceScopeWatermarks is per-prefix monotonic and survives reload", async () => {
+  await withTempCache(async (cache) => {
+    const sc = new Sidecar(cache);
+    await sc.advanceScopeWatermarks({
+      "data/host/vm-1/": "2026-09-04T12:00:00.000Z",
+      "data/net/br0/": "2026-09-04T12:00:00.000Z",
+    });
+    // A slower interleaved pull of one prefix must not pull its floor back.
+    const state = await sc.advanceScopeWatermarks({
+      "data/host/vm-1/": "2026-09-01T00:00:00.000Z",
+      "data/net/br0/": "2026-09-04T18:00:00.000Z",
+    });
+    assertEquals(
+      state.scopeWatermarks["data/host/vm-1/"],
+      "2026-09-04T12:00:00.000Z",
+    );
+    assertEquals(
+      state.scopeWatermarks["data/net/br0/"],
+      "2026-09-04T18:00:00.000Z",
+    );
+
+    // The floor is only useful if it outlives the process that recorded it.
+    const reloaded = await new Sidecar(cache).read();
+    assertEquals(
+      reloaded.scopeWatermarks["data/net/br0/"],
+      "2026-09-04T18:00:00.000Z",
+    );
+  });
+});
+
+Deno.test("scope watermarks are absent on a pre-upgrade sidecar, not a full walk", async () => {
+  await withTempCache(async (cache) => {
+    // A v2 sidecar written before scope watermarks existed. Reading it must
+    // not look corrupt — that would force every deployed cache to full-walk.
+    await Deno.writeTextFile(
+      `${cache}/.datastore-sync-state.json`,
+      JSON.stringify({
+        version: 2,
+        bulkInvalidated: false,
+        lastPulledAt: "2026-04-24T19:00:12.821Z",
+        lastReconciledAt: "2026-08-19T21:02:06.141Z",
+        lazyPullActive: false,
+        pushBootstrapped: true,
+      }),
+    );
+    const state = await new Sidecar(cache).read();
+    assertEquals(state.bulkInvalidated, false);
+    assertEquals(state.scopeWatermarks, {});
+    // The old full-pull watermark still floors every prefix.
+    assertEquals(
+      scopeFloor(state, "data/host/vm-1/"),
+      "2026-04-24T19:00:12.821Z",
+    );
+  });
+});
+
+Deno.test("advanceScopeWatermarks caps the map by evicting the oldest floors", async () => {
+  await withTempCache(async (cache) => {
+    const sc = new Sidecar(cache);
+    const entries: Record<string, string> = {};
+    for (let i = 0; i < MAX_SCOPE_WATERMARKS + 10; i++) {
+      // Lexicographic ISO order matches chronological order, so index i is
+      // also its age rank.
+      entries[`data/host/vm-${i}/`] = new Date(1_700_000_000_000 + i * 1000)
+        .toISOString();
+    }
+    const state = await sc.advanceScopeWatermarks(entries);
+    const keys = Object.keys(state.scopeWatermarks);
+    assertEquals(keys.length, MAX_SCOPE_WATERMARKS);
+    // The ten oldest are gone; each pays one full-prefix rescan, no more.
+    assertEquals(state.scopeWatermarks["data/host/vm-0/"], undefined);
+    assertEquals(state.scopeWatermarks["data/host/vm-9/"], undefined);
+    assertEquals(
+      typeof state.scopeWatermarks[`data/host/vm-${MAX_SCOPE_WATERMARKS + 9}/`],
+      "string",
+    );
   });
 });
 
