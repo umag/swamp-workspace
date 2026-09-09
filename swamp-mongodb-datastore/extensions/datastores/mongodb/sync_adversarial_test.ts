@@ -189,6 +189,9 @@ Deno.test("every cache-path join over remote input goes through resolveWithinCac
     // Walking a fixed subdirectory: `sub` comes from DATASTORE_SUBDIRS, a
     // const tuple in this file, never from a remote document.
     if (line.includes("${cachePath}/${sub}")) return;
+    // The scoped-pull debounce stamp: a compile-time constant filename, never
+    // remote input — same rationale as the DATASTORE_SUBDIRS exemption above.
+    if (line.includes("${cachePath}/.scoped-pull-stamp")) return;
     offenders.push(`${i + 1}: ${line.trim()}`);
   });
 

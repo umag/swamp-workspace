@@ -20,7 +20,6 @@
 //   - lastPulledAt — high-water-mark over _fs_meta.updatedAt. Anything in
 //                    Mongo with updatedAt > lastPulledAt is potentially new
 //                    work from another host. Read by pullChanged on entry.
-//   - scopeWatermarks — the same idea per model prefix, for scoped pulls.
 //   - lazyPullActive / pushBootstrapped — see field docs below.
 //
 // Atomicity: scalar mutations are read-modify-write under a process-local
@@ -39,12 +38,9 @@ const CURRENT_SCHEMA_VERSION = 2;
 // Hitting the cap degrades to bulkInvalidated rather than growing unbounded.
 export const MAX_DIRTY_PATHS = 10_000;
 
-// Scope watermarks are keyed by model prefix, so the map is bounded by the
-// number of models a repo has ever locked — tens, normally. The cap only
-// exists so a repo that churns model ids can't grow the sidecar without
-// bound; evicting the oldest entries costs one full-prefix scan each, not
-// correctness.
-export const MAX_SCOPE_WATERMARKS = 512;
+// Cap on retained per-prefix scope watermarks. Past this the oldest floors are
+// evicted; those prefixes pay one rescan and are recorded again.
+const MAX_SCOPE_WATERMARKS = 10_000;
 
 export interface SidecarState {
   version: number;
@@ -71,19 +67,6 @@ export interface SidecarState {
   // — at that instant we genuinely did observe the whole remote list — while
   // leaving lastPulledAt alone so a pull still re-fetches content it lacks.
   lastReconciledAt: string | null;
-  // Per-model-prefix equivalent of lastPulledAt: `data/<type>/<id>/` -> the
-  // newest updatedAt this cache has hydrated *under that prefix*. Written by a
-  // completed scoped pull, which is the only pull that can vouch for a slice
-  // without having seen the whole manifest.
-  //
-  // Needed because lastPulledAt is advanced only by an unscoped pull, and
-  // `scopedSync: true` means core scopes almost every pull — so on a host that
-  // mostly runs methods and workflows the global watermark goes stale (four
-  // months, on this extension's own repo) and can't gate anything. Without a
-  // per-scope floor, a scoped pull has no watermark to lean on and degrades to
-  // "fetch every path doc under the prefix, live and tombstoned, then re-read
-  // and re-hash every local file" on every single lock acquisition.
-  scopeWatermarks: Record<string, string>;
   // True while this cache holds an un-hydrated tree: set by a metadataOnly
   // (lazy) pull, cleared by a full (non-metadataOnly, unscoped) pull that
   // brings the cache fully in sync. While true, the local cache is NOT a
@@ -91,6 +74,12 @@ export interface SidecarState {
   // read an absent path as a deletion. Survives clearDirty (a push doesn't
   // hydrate anything). Mirrors the S3/GCS reference's lazyPullActive.
   lazyPullActive: boolean;
+  // False once a cold (complete) pull observed no legacy `<namespace>/` remote
+  // ids; flips back to true the moment any pull sees one. While false the
+  // pull skips the legacy/bare twin lookup — the transition cost disappears
+  // on namespaces that never had, or have fully folded and swept, the old
+  // layout. Defaults true (assume legacy ids may exist).
+  legacyIdsPossible: boolean;
   // True once a push has run against this cache. Until then the per-path
   // dirty tracker can't be trusted (it only knows writes since it started),
   // so the next push must do a full walk to bootstrap the remote from
@@ -100,6 +89,14 @@ export interface SidecarState {
   // predates this field reads false, so an already-migrated-but-unpushed
   // cache self-heals on its next push.
   pushBootstrapped: boolean;
+  // Monotonic count of bulk invalidations. commitPush compares the value it
+  // captured at preparePush time against the current one: equal means no bulk
+  // signal landed while the tree was being walked, so the flag can be cleared.
+  bulkSeq: number;
+  // Per-model-prefix watermark for scoped pulls: the instant up to which the
+  // cache holds every path under that prefix. Lets a scoped pull of one model
+  // skip rescanning quiet prefixes while still catching new docs.
+  scopeWatermarks: Record<string, string>;
 }
 
 // The persisted half — SidecarState minus the journal-derived dirtyPaths.
@@ -108,9 +105,11 @@ interface Scalars {
   bulkInvalidated: boolean;
   lastPulledAt: string | null;
   lastReconciledAt: string | null;
-  scopeWatermarks: Record<string, string>;
   lazyPullActive: boolean;
   pushBootstrapped: boolean;
+  bulkSeq: number;
+  legacyIdsPossible: boolean;
+  scopeWatermarks: Record<string, string>;
 }
 
 function emptyScalars(): Scalars {
@@ -119,10 +118,23 @@ function emptyScalars(): Scalars {
     bulkInvalidated: false,
     lastPulledAt: null,
     lastReconciledAt: null,
-    scopeWatermarks: {},
     lazyPullActive: false,
     pushBootstrapped: false,
+    bulkSeq: 0,
+    legacyIdsPossible: true,
+    scopeWatermarks: {},
   };
+}
+
+// A non-string value is a corrupt entry; dropping it just means the next pull
+// rescans that prefix.
+function normalizeScopeWatermarks(parsed: unknown): Record<string, string> {
+  if (typeof parsed !== "object" || parsed === null) return {};
+  const out: Record<string, string> = {};
+  for (const [prefix, iso] of Object.entries(parsed)) {
+    if (typeof iso === "string") out[prefix] = iso;
+  }
+  return out;
 }
 
 // The watermark the push tombstone pass compares against. Falls back to
@@ -161,17 +173,6 @@ function journalPath(cachePath: string): string {
   return `${cachePath}/${JOURNAL_FILENAME}`;
 }
 
-function normalizeScopeWatermarks(parsed: unknown): Record<string, string> {
-  if (typeof parsed !== "object" || parsed === null) return {};
-  const out: Record<string, string> = {};
-  for (const [prefix, iso] of Object.entries(parsed)) {
-    // A non-string value is a corrupt entry; dropping it just means the next
-    // pull rescans that prefix.
-    if (typeof iso === "string") out[prefix] = iso;
-  }
-  return out;
-}
-
 function normalizeScalars(parsed: unknown): {
   scalars: Scalars;
   legacyDirty: string[];
@@ -206,13 +207,11 @@ function normalizeScalars(parsed: unknown): {
       lastReconciledAt: typeof obj.lastReconciledAt === "string"
         ? obj.lastReconciledAt
         : null,
-      // Absent on sidecars written before scope watermarks existed. Still
-      // schema v2: an empty map costs one full-prefix scan per model and then
-      // self-heals, which is exactly the pre-upgrade behavior — not worth
-      // forcing every deployed cache through a bulkInvalidated full walk.
-      scopeWatermarks: normalizeScopeWatermarks(obj.scopeWatermarks),
       lazyPullActive: obj.lazyPullActive === true,
       pushBootstrapped: obj.pushBootstrapped === true,
+      bulkSeq: typeof obj.bulkSeq === "number" ? obj.bulkSeq : 0,
+      legacyIdsPossible: obj.legacyIdsPossible !== false,
+      scopeWatermarks: normalizeScopeWatermarks(obj.scopeWatermarks),
     },
     legacyDirty,
   };
@@ -407,9 +406,11 @@ export class Sidecar {
       bulkInvalidated: s.bulkInvalidated,
       lastPulledAt: s.lastPulledAt,
       lastReconciledAt: s.lastReconciledAt,
-      scopeWatermarks: { ...s.scopeWatermarks },
       lazyPullActive: s.lazyPullActive,
       pushBootstrapped: s.pushBootstrapped,
+      bulkSeq: s.bulkSeq,
+      legacyIdsPossible: s.legacyIdsPossible,
+      scopeWatermarks: { ...s.scopeWatermarks },
     };
   }
 
@@ -446,6 +447,7 @@ export class Sidecar {
     if (relPath === undefined) {
       return this.updateScalars((s) => {
         s.bulkInvalidated = true;
+        s.bulkSeq += 1;
       });
     }
     const next = this.chain.then(async () => {
@@ -460,6 +462,7 @@ export class Sidecar {
       if (this.dirty.size > MAX_DIRTY_PATHS) {
         // Degrade to a full walk rather than tracking an unbounded set.
         this.scalars!.bulkInvalidated = true;
+        this.scalars!.bulkSeq += 1;
         this.dirty.clear();
         await this.persistJournal();
         await writeScalars(this.cachePath, this.scalars!);
@@ -515,6 +518,27 @@ export class Sidecar {
     return next;
   }
 
+  // Two-phase commit hooks. `clearBulkInvalidatedIf` drops the flag only when
+  // no bulk signal arrived since `seq` was captured; `markPushBootstrapped`
+  // records that a push reached the remote without touching the journal.
+  clearBulkInvalidatedIf(seq: number): Promise<SidecarState> {
+    return this.updateScalars((s) => {
+      if (s.bulkSeq === seq) s.bulkInvalidated = false;
+    });
+  }
+
+  setLegacyIdsPossible(possible: boolean): Promise<SidecarState> {
+    return this.updateScalars((s) => {
+      s.legacyIdsPossible = possible;
+    });
+  }
+
+  markPushBootstrapped(): Promise<SidecarState> {
+    return this.updateScalars((s) => {
+      s.pushBootstrapped = true;
+    });
+  }
+
   setLastPulledAt(iso: string): Promise<SidecarState> {
     return this.updateScalars((s) => {
       s.lastPulledAt = iso;
@@ -533,18 +557,20 @@ export class Sidecar {
     });
   }
 
-  // Records that every path under each given prefix is hydrated as of that
-  // prefix's instant. Only a completed, non-metadataOnly scoped pull may call
-  // this: a metadataOnly pull deliberately skips `data/.../raw`, so recording
-  // its position would move the floor past docs it never fetched.
+  setLazyPullActive(active: boolean): Promise<SidecarState> {
+    return this.updateScalars((s) => {
+      s.lazyPullActive = active;
+    });
+  }
+
+  // Records how far each scoped prefix is now hydrated. Monotonic per prefix,
+  // for the same reason lastReconciledAt is: two pulls can interleave, and the
+  // older one's position must not pull the floor backwards.
   advanceScopeWatermarks(
     entries: Record<string, string>,
   ): Promise<SidecarState> {
     return this.updateScalars((s) => {
       for (const [prefix, iso] of Object.entries(entries)) {
-        // Monotonic per prefix, for the same reason lastReconciledAt is: two
-        // pulls can interleave, and the older one's position must not pull the
-        // floor backwards.
         const prev = s.scopeWatermarks[prefix];
         if (prev === undefined || prev < iso) s.scopeWatermarks[prefix] = iso;
       }
@@ -559,12 +585,6 @@ export class Sidecar {
           delete s.scopeWatermarks[k];
         }
       }
-    });
-  }
-
-  setLazyPullActive(active: boolean): Promise<SidecarState> {
-    return this.updateScalars((s) => {
-      s.lazyPullActive = active;
     });
   }
 
