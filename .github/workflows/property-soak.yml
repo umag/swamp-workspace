@@ -134,9 +134,34 @@ jobs:
           # (only spawns the child `deno test` process and reads env vars) —
           # the CHILD process's own permission set comes entirely from
           # $DENO_ARGS_JSON, resolved separately below.
+          #
+          # Tee the combined child output to a log so a FAILED night's
+          # diagnostics survive as an uploaded artifact: GitHub purges the raw
+          # job logs within weeks, but the soak runs at 1,000,000 iterations
+          # (a multi-hour run) that cannot be reproduced on demand, so a red
+          # night with expired logs is otherwise a dead end. `pipefail` keeps
+          # the child's non-zero exit propagating through the `tee`. The
+          # redirect is the runner shell's own write, OUTSIDE deno's
+          # permission set — the child still gets no --allow-write. $EXTENSION
+          # (not a `${{ }}` splice) names the file, per the anti-injection
+          # discipline above.
           deno run --allow-read --allow-run --allow-env \
             scripts/run_soak.ts \
             --extension "$EXTENSION" \
             --file "$FILE" \
             --deno-args-json "$DENO_ARGS_JSON" \
-            --runs "$RUNS"
+            --runs "$RUNS" 2>&1 | tee "soak-${EXTENSION}.log"
+
+      # Preserve the failing soak's captured output for post-mortem after the
+      # raw job logs are gone. `if: failure()` so green nights upload nothing.
+      # The artifact name carries the extension so the matrix's entries never
+      # collide. Splicing matrix.pair.extension into `with:` is safe — action
+      # inputs are not shell-evaluated (unlike a `run:` body).
+      - name: Upload failing soak log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-log-${{ matrix.pair.extension }}
+          path: soak-${{ matrix.pair.extension }}.log
+          retention-days: 30
+          if-no-files-found: warn

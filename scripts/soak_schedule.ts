@@ -26,6 +26,7 @@
  */
 import { join, relative } from "jsr:@std/path@1";
 import { parse as parseYaml } from "jsr:@std/yaml@1.0.10";
+import { parse as parseJsonc } from "jsr:@std/jsonc@1";
 import { deriveSoakArgsFromTestTask } from "./lib/soak_permissions.ts";
 
 export interface DiscoveredFile {
@@ -161,7 +162,14 @@ export async function readTestTaskLenient(
 ): Promise<string> {
   try {
     const raw = await Deno.readTextFile(join(root, extension, "deno.json"));
-    const json = JSON.parse(raw) as { tasks?: { test?: string } };
+    // deno.json is JSONC — Deno itself allows comments and trailing commas.
+    // A strict JSON.parse throws on any such file and this catch used to
+    // swallow it into "", silently emptying the derived permission argv (a
+    // JSONC deno.json then soaked with NO --allow-env, so its property test
+    // NotCapable-failed the instant it read FC_NUM_RUNS). Parse as JSONC so
+    // the real `test` task is honoured. See scripts/quality/check_soak.ts's
+    // readTestTask for the sibling copy of this reader.
+    const json = parseJsonc(raw) as { tasks?: { test?: string } };
     return json.tasks?.test ?? "";
   } catch {
     return "";

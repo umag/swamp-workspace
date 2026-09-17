@@ -36,6 +36,7 @@
  */
 import { dirname, fromFileUrl, join, relative } from "jsr:@std/path@1";
 import { parse as parseYaml } from "jsr:@std/yaml@1.0.10";
+import { parse as parseJsonc } from "jsr:@std/jsonc@1";
 import { listExtensions } from "./extensions.ts";
 import { discoverPropertyTestFiles } from "../soak_schedule.ts";
 import {
@@ -86,7 +87,13 @@ export async function readTestTask(
 ): Promise<string | null> {
   try {
     const raw = await Deno.readTextFile(join(root, extension, "deno.json"));
-    const json = JSON.parse(raw) as { tasks?: { test?: string } };
+    // deno.json is JSONC (comments / trailing commas). A strict JSON.parse
+    // throws on such a file and this catch returned null → the gate SKIPPED
+    // the extension entirely (see the `testTask === null` continue below),
+    // which is how swamp-watch's missing --allow-env slipped past this gate
+    // and NotCapable-failed the nightly. Parse as JSONC so the gate sees the
+    // real test task. Mirrors soak_schedule.ts's readTestTaskLenient.
+    const json = parseJsonc(raw) as { tasks?: { test?: string } };
     return json.tasks?.test ?? null;
   } catch {
     return null;

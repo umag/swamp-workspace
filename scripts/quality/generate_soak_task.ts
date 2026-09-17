@@ -57,6 +57,7 @@
  */
 import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 import { parse as parseYaml } from "jsr:@std/yaml@1.0.10";
+import { parse as parseJsonc } from "jsr:@std/jsonc@1";
 import { listExtensions } from "./extensions.ts";
 import { readTestTask } from "./check_soak.ts";
 import {
@@ -297,7 +298,10 @@ export async function readActualSoakTask(
 ): Promise<string | null> {
   try {
     const raw = await Deno.readTextFile(join(root, extension, "deno.json"));
-    const json = JSON.parse(raw) as { tasks?: Record<string, unknown> };
+    // JSONC, not strict JSON — see readTestTask in check_soak.ts. A strict
+    // parse here would return null for a JSONC deno.json, making the parity
+    // gate believe a present `test:soak` task was absent.
+    const json = parseJsonc(raw) as { tasks?: Record<string, unknown> };
     const task = json.tasks?.["test:soak"];
     return typeof task === "string" ? task : null;
   } catch {
