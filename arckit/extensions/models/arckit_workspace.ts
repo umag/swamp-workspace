@@ -1643,7 +1643,7 @@ const TEMPLATES_DIR = "templates";
  */
 export const model = {
   type: "@magistr/arckit/workspace",
-  version: "2026.08.19.1",
+  version: "2026.09.17.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1683,6 +1683,12 @@ export const model = {
     {
       toVersion: "2026.08.19.1",
       description: "Version bump and smoke test",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.17.1",
+      description:
+        "Version bump — republish (soak-hardening cycle); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

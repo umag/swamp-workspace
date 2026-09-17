@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.09.17.1
+
+### Fixed
+
+- HTTP requests are now bounded by racing `fetch` against a timer instead of
+  binding an `AbortSignal` to it. This removes a per-request heap retention (a
+  Deno fetch-with-signal leak) that accumulated under very high request volume.
+  No API, schema, or normal-use behavior change.
+
 ## 2026.08.19.1
 
 - Version bump and smoke test

@@ -231,7 +231,7 @@ async function collStats(
  */
 export const model = {
   type: "@magistr/mongodb-datastore/maintenance",
-  version: "2026.09.03.1",
+  version: "2026.09.17.1",
   upgrades: [
     {
       fromVersion: "2026.08.19.1",
@@ -245,6 +245,12 @@ export const model = {
       toVersion: "2026.09.03.1",
       description:
         "Adds the journaled migrations (fold_namespace_prefix, prefix_namespace, import_control_records, revert_migration) and the `migration` resource. Existing inventory, sweep and compaction resources and every global argument are unchanged; sweep additionally prunes the migration journal past the tombstone window.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.17.1",
+      description:
+        "Version bump — republish (soak-hardening cycle); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

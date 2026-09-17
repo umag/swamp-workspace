@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.09.17.1
+
+### Changed
+
+- Maintenance republish. Property-test coverage hardened (credit detection now
+  matches exact summary entries); no model behavior or schema change.
+
 ## 2026.08.31.1
 
 First release.

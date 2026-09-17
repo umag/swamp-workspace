@@ -637,7 +637,7 @@ export async function runDrift(
 /** The `@magistr/swamp-watch` model definition swamp loads at startup. */
 export const model = {
   type: "@magistr/swamp-watch",
-  version: "2026.08.21.1",
+  version: "2026.09.17.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     "scan": {

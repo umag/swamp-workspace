@@ -47,7 +47,7 @@ async function porkbunRequest(endpoint, apiKey, secretApiKey, extraBody = {}) {
 /** The @magistr/porkbun model — Porkbun DNS record management with full CRUD for all common record types. */
 export const model = {
   type: "@magistr/porkbun",
-  version: "2026.08.19.1",
+  version: "2026.09.17.1",
   globalArguments: InputSchema,
   resources: {
     "ping-result": {

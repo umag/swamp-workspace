@@ -187,7 +187,7 @@ async function vmQuery(host, port, path) {
 /** Swamp model that deploys cAdvisor and queries container resource metrics from cAdvisor and VictoriaMetrics. */
 export const model = {
   type: "@magistr/cadvisor",
-  version: "2026.08.19.1",
+  version: "2026.09.17.1",
   upgrades: [
     {
       fromVersion: "2026.08.01.1",
@@ -199,6 +199,12 @@ export const model = {
     {
       toVersion: "2026.08.19.1",
       description: "Version bump and smoke test",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.17.1",
+      description:
+        "Version bump — republish (soak-hardening cycle); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

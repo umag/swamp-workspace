@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.09.17.1
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
 ## 2026.09.01.3
 
 - **Republish of 2026.09.01.2, no code change.** The 2026.09.01.2 publish was

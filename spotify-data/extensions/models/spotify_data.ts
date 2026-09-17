@@ -458,7 +458,7 @@ const bounds = (rows: Stream[]) => ({
  */
 export const model = {
   type: "@magistr/spotify-data",
-  version: "2026.08.02.1",
+  version: "2026.09.17.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     streams: {

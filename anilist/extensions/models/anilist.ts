@@ -1495,7 +1495,7 @@ const ActivityItemSchema = z.object({
  */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.09.01.1",
+  version: "2026.09.17.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -1526,6 +1526,12 @@ export const model = {
       toVersion: "2026.09.01.1",
       description:
         "update-progress gained an optional `customLists` argument, and userlist now selects `customLists` so the current membership can be read first. AniList treats customLists as an ABSOLUTE set on write: it replaces the entry's ENTIRE custom-list membership with whatever is passed, so an omitted field would silently drop the entry from every custom list. The argument is therefore forwarded ONLY when the caller explicitly supplies one, and `[]` is the documented way to remove an entry from all custom lists. Purely additive — no stored resource is reshaped",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.17.1",
+      description:
+        "Version bump — republish (soak-hardening cycle); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

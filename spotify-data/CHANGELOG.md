@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.09.17.1
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
 ## 2026.08.02.1
 
 First release of `@magistr/spotify-data` — an offline importer for a Spotify

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.09.17.1
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
 ## 2026.08.21.1 — first release
 
 Initial model. Makes a swamp repo's own scheduled work observable per workflow

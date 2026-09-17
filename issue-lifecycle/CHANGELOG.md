@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.09.17.1
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
 ## 2026.08.31.1 — pre-PR verification + attestation
 
 **Model behavior change — model type version bumped to `2026.08.31.1`.** Adds
