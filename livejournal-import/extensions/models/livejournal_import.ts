@@ -929,7 +929,7 @@ function yamlEscape(s: string): string {
 /** Swamp model that imports LiveJournal entries (images, tags, mood, now playing, comments) into an Obsidian vault. */
 export const model = {
   type: "@magistr/livejournal/import",
-  version: "2026.08.19.1",
+  version: "2026.09.17.1",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",
@@ -988,6 +988,12 @@ export const model = {
     {
       toVersion: "2026.08.19.1",
       description: "Version bump and smoke test",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.17.1",
+      description:
+        "Version bump — republish (soak-hardening cycle); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

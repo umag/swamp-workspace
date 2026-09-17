@@ -268,7 +268,7 @@ function buildResult(
 /** SeaDex (releases.moe) model: best-release recommendations for anime, with lookups by AniList ID, by title, and fan-out batch lookups. */
 export const model = {
   type: "@magistr/seadex",
-  version: "2026.08.19.1",
+  version: "2026.09.17.1",
   reports: ["@magistr/seadex-upgrades"],
   globalArguments: GlobalArgsSchema,
   upgrades: [
@@ -289,6 +289,12 @@ export const model = {
     {
       toVersion: "2026.08.19.1",
       description: "Version bump and smoke test",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.17.1",
+      description:
+        "Version bump — republish (soak-hardening cycle); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

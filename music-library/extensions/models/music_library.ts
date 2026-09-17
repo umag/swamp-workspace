@@ -2340,7 +2340,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.09.01.1",
+  version: "2026.09.17.1",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2395,6 +2395,12 @@ export const model = {
       toVersion: "2026.09.01.1",
       description:
         "Re-release of 2026.08.19.2 with identical content. That version was declared on master but never reached the registry: the push that carried it also had an unrelated test failure in another extension, which skips the whole extension-publish job, and the job only fires again on a version bump. No schema or resource shape change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.17.1",
+      description:
+        "Version bump — republish (soak-hardening cycle); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

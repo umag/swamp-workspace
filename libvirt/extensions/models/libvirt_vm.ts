@@ -170,7 +170,7 @@ async function reportState(
  */
 export const model = {
   type: "@bad-at-naming/libvirt/vm",
-  version: "2026.08.19.1",
+  version: "2026.09.17.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     vm: {

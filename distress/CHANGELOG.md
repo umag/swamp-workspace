@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.09.17.1
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
 All notable changes to `@magistr/distress` are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);

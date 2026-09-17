@@ -910,7 +910,7 @@ export async function attributeImpl(
 
 export const model = {
   type: "@magistr/diskio",
-  version: "2026.08.31.1",
+  version: "2026.09.17.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     "deviceMap": {

@@ -241,7 +241,7 @@ export function extraLabelParams(extraLabels?: string): string {
  */
 export const model = {
   type: "@magistr/victoriametrics",
-  version: "2026.09.02.1",
+  version: "2026.09.17.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -265,6 +265,12 @@ export const model = {
       toVersion: "2026.09.02.1",
       description:
         "Restore the `push` method and its `pushResult` resource (lost when the model was rewritten); additive only, no existing resource schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.17.1",
+      description:
+        "Version bump — republish (soak-hardening cycle); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
