@@ -240,12 +240,46 @@ Deno.test("property: summarize never credits a proxy or an off-disk reader", asy
           blockWriteMBps: 0,
         }));
         const s = summarize("sdl", "sdl", ["sdl"], readers, []);
-        const credited = readers.filter((r) =>
-          s.includes(`${r.container} ${r.requestedReadMBps} MB/s`)
+        const label = (r: typeof readers[number]) =>
+          `${r.container} ${r.requestedReadMBps} MB/s`;
+        // A reader is credited iff its "<container> <MBps> MB/s" label is one
+        // of the entries in summarize's `Top readers: <a>, <b>, <c>.`
+        // sentence — the ONLY place a reader's label ever appears (this test
+        // passes no open files, so the "Files open on it belong to:" sentence
+        // never fires). Match against the exact ", "-joined entries, never a
+        // loose `s.includes(label)`: a substring test gave false positives
+        // both when two readers shared an identical (container, MBps) — an
+        // on-disk reader's legitimate label also matches its off-disk twin —
+        // AND when one container name was a suffix of another at the same MBps
+        // ("o 999 MB/s" is a substring of "Ao 999 MB/s"). The MBps value
+        // itself carries a "." (e.g. 999.9999999999998), so the sentence is
+        // terminated on a "." followed by a space or end-of-string, never on
+        // the decimal point inside a number.
+        const top = s.match(/Top readers: (.*?)\.(?: |$)/);
+        const creditedEntries = new Set(top ? top[1].split(", ") : []);
+        // The set of labels summarize is ALLOWED to credit — its own onDisk
+        // filter (non-proxy, onTarget !== false, positive read). When a
+        // proxy/off-disk reader's exact label collides with one of these, the
+        // entry in the sentence belongs to the eligible reader, not the
+        // excluded one, so it is not evidence of a bug — give it the benefit
+        // of the doubt. A genuinely mis-credited excluded reader has no such
+        // eligible twin and is still caught.
+        const eligibleLabels = new Set(
+          readers
+            .filter((r) =>
+              !r.fuseProxy && r.onTarget !== false && r.requestedReadMBps > 0
+            )
+            .map(label),
         );
-        for (const c of credited) {
-          assert(!c.fuseProxy, `proxy ${c.container} was credited`);
-          assert(c.onTarget !== false, `off-disk ${c.container} was credited`);
+        for (const r of readers) {
+          if (!r.fuseProxy && r.onTarget !== false) continue;
+          if (eligibleLabels.has(label(r))) continue; // an eligible twin owns it
+          assert(
+            !creditedEntries.has(label(r)),
+            r.fuseProxy
+              ? `proxy ${r.container} was credited`
+              : `off-disk ${r.container} was credited`,
+          );
         }
       },
     ),

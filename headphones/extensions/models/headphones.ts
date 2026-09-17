@@ -91,6 +91,35 @@ function rethrowRedacted(e: unknown): never {
   throw new Error(redactSecrets(message), cause ? { cause } : {});
 }
 
+// Bound a request to `ms` by RACING the fetch against a timer, deliberately
+// WITHOUT binding an AbortSignal to fetch. Binding a signal — whether via
+// `AbortSignal.timeout(ms)` or an explicit `AbortController` — leaks ~2.6 KB
+// per call under Deno 2.9.6 that survives a forced GC (measured: an identical
+// signal-free fetch keeps the heap flat while the signalled form grows it
+// linearly). Across the property soak's ~1,000,000 back-to-back requests that
+// retention OOM-killed the run with exit 133 every time headphones' rotation
+// bucket came up. The race gives the same "never hang a method past `ms`"
+// guarantee the onboard-artists poll loop relies on for its timeoutSeconds;
+// the timer is cleared in `finally` the instant the fetch settles, so exactly
+// one timer is live per in-flight request. On the timeout branch the
+// underlying connection is not aborted, but that path only fires against a
+// genuinely stalled instance — precisely the case the caller is erroring out
+// of anyway.
+async function fetchBounded(url: string, ms: number): Promise<Response> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`request timed out after ${ms}ms`)),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([fetch(url), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function api(
   host: string,
   apiKey: string,
@@ -107,12 +136,10 @@ async function api(
   // (the onboard-artists poll loop relies on this to honour timeoutSeconds).
   let response: Response;
   try {
-    response = await fetch(url.toString(), {
-      signal: AbortSignal.timeout(60_000),
-    });
+    response = await fetchBounded(url.toString(), 60_000);
   } catch (e) {
     // A network-layer failure (DNS, TLS, connection reset, or the
-    // AbortSignal.timeout above firing) throws a Deno error that typically
+    // fetchBounded timeout above firing) throws a Deno error that typically
     // embeds the request URL — which carries ?apikey=<KEY> — verbatim.
     // Redact before rethrow (message AND cause) so the credential never
     // reaches logs/callers through either.
@@ -148,9 +175,7 @@ async function webUi(
   }
   let response: Response;
   try {
-    response = await fetch(url.toString(), {
-      signal: AbortSignal.timeout(60_000),
-    });
+    response = await fetchBounded(url.toString(), 60_000);
   } catch (e) {
     // Same wrap-and-redact treatment as api(), for defense-in-depth — this
     // URL never carries the apiKey (getExtras is the unauthenticated web-UI
