@@ -1,0 +1,68 @@
+# Quality standard declaration for @magistr/manim.
+# See scripts/quality/STANDARD.md. Hand-maintained after scaffolding.
+#
+# Role map (each test file assigned to exactly one honest role):
+#   contract-fixture        -> manim/types_test.ts (CLI-vocabulary/arg contract)
+#   methods                 -> manim_scene_test.ts (model schema + runRender)
+#   adversarial             -> manim/runner_test.ts (failure/error paths)
+#   coverage                -> manim/coverage_test.ts
+#   property-invariant-flow -> manim/property_test.ts (fast-check)
+schemaVersion: 1
+extension: manim
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/manim/types_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/manim_scene_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/manim/runner_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/manim/coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/manim/property_test.ts
+watch:
+  state: backlog
+  justification: >-
+    No source-pinned upstream to track — manim itself is an external CLI
+    selected at runtime via the `command` global arg, not a bundled dep.
+    Backfill tracked in ext-quality-test-backfill.
+canary:
+  state: backlog
+  justification: >-
+    No live third-party API or physical device to canary — the integration is
+    a local subprocess. Backfill tracked in ext-quality-test-backfill.
+soak:
+  state: backlog
+  justification: >-
+    Property suite is fast-check-based and honors FC_NUM_RUNS; a narrowed
+    nightly soak permission set is backfill tracked in
+    ext-quality-release-watch-soak.
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: present
+    files:
+      - .claude/skills/manim-codegen/SKILL.md
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 0
+  label: >-
+    Initial release 2026.09.19.1 — five present test suites, Grade-A local
+    quality score (repository-verified provisional until first publish).

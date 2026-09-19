@@ -19,6 +19,8 @@ additionalFiles:
   - extensions/models/manim_scene_test.ts
   - extensions/models/manim/types_test.ts
   - extensions/models/manim/runner_test.ts
+  - extensions/models/manim/coverage_test.ts
+  - extensions/models/manim/property_test.ts
   - .claude/skills/manim-codegen/SKILL.md
   - .claude/skills/manim-codegen/references/manim-api.md
   - .claude/skills/manim-codegen/references/patterns.md
