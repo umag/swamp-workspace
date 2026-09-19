@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.09.19.1
+
+### Changed
+
+- Dependency bump (release-watch #226): `@jscad/modeling` `2.12.0` -> `2.13.0`;
+  `@jscad/stl-serializer`, `@jscad/dxf-serializer`, `@jscad/obj-serializer`
+  `2.1.21` -> `2.1.23`; `@jscad/3mf-serializer` `2.1.15` -> `2.1.17`;
+  `@jscad/svg-serializer` `2.3.10` -> `2.3.21`.
+
 ## 2026.09.17.1
 
 ### Changed

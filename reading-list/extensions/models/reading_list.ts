@@ -4,7 +4,7 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import { DOMParser } from "npm:linkedom@0.16.11";
+import { DOMParser } from "npm:linkedom@0.18.13";
 
 // ---------------------------------------------------------------------------
 // @magistr/reading-list
@@ -913,7 +913,7 @@ async function loadStoredFeeds(
 /** Model definition for the curated reading list. */
 export const model = {
   type: "@magistr/reading-list",
-  version: "2026.09.17.1",
+  version: "2026.09.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     "feed": {
