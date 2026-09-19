@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026.09.19.1
+
+### Changed
+
+- Dependency bump: `yaml` `2.6.1` -> `2.9.1` (release-watch #229).
+
 ## 2026.09.17.1
 
 ### Changed

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026.09.19.1
+
+### Changed
+
+- Dependency bump: `linkedom` `0.16.11` -> `0.18.13` (release-watch #230).
+
 ## 2026.09.17.1
 
 ### Changed

@@ -209,12 +209,12 @@ Deno.test("contract: outputPath and evalPath are distinct temp files", async () 
 // ---------------------------------------------------------------------------
 
 const EXPECTED_PACKAGE: Record<OutputFormat, string> = {
-  "stl": "npm:@jscad/stl-serializer@2.1.21",
-  "stl-ascii": "npm:@jscad/stl-serializer@2.1.21",
-  "dxf": "npm:@jscad/dxf-serializer@2.1.21",
-  "svg": "npm:@jscad/svg-serializer@2.3.10",
-  "obj": "npm:@jscad/obj-serializer@2.1.21",
-  "3mf": "npm:@jscad/3mf-serializer@2.1.15",
+  "stl": "npm:@jscad/stl-serializer@2.1.23",
+  "stl-ascii": "npm:@jscad/stl-serializer@2.1.23",
+  "dxf": "npm:@jscad/dxf-serializer@2.1.23",
+  "svg": "npm:@jscad/svg-serializer@2.3.21",
+  "obj": "npm:@jscad/obj-serializer@2.1.23",
+  "3mf": "npm:@jscad/3mf-serializer@2.1.17",
 };
 
 const EXPECTED_OPTS: Record<OutputFormat, string> = {
@@ -251,7 +251,7 @@ for (const format of OUTPUT_FORMATS) {
   });
 }
 
-Deno.test("contract: every eval script imports npm:@jscad/modeling@2.12.0 as modeling", async () => {
+Deno.test("contract: every eval script imports npm:@jscad/modeling@2.13.0 as modeling", async () => {
   await withCommandStub({ success: true, objectCount: 1 }, async (stub) => {
     await ScriptEvaluator.evaluateAndSerialize(
       CadScript.of(SIMPLE_SCRIPT),
@@ -260,7 +260,7 @@ Deno.test("contract: every eval script imports npm:@jscad/modeling@2.12.0 as mod
     );
     assert(
       stub.invocations[0].evalScript.includes(
-        'import * as modeling from "npm:@jscad/modeling@2.12.0";',
+        'import * as modeling from "npm:@jscad/modeling@2.13.0";',
       ),
     );
   });

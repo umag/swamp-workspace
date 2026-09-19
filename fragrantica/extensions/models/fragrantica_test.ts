@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { DOMParser } from "npm:linkedom@0.16.11";
+import { DOMParser } from "npm:linkedom@0.18.13";
 import {
   parseAccords,
   parseNotes,

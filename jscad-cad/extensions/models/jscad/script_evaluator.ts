@@ -24,16 +24,16 @@ function stripMarkdownFences(source: string): string {
 function serializerPackage(format: OutputFormat): string {
   switch (format) {
     case "3mf":
-      return "npm:@jscad/3mf-serializer@2.1.15";
+      return "npm:@jscad/3mf-serializer@2.1.17";
     case "stl":
     case "stl-ascii":
-      return "npm:@jscad/stl-serializer@2.1.21";
+      return "npm:@jscad/stl-serializer@2.1.23";
     case "dxf":
-      return "npm:@jscad/dxf-serializer@2.1.21";
+      return "npm:@jscad/dxf-serializer@2.1.23";
     case "svg":
-      return "npm:@jscad/svg-serializer@2.3.10";
+      return "npm:@jscad/svg-serializer@2.3.21";
     case "obj":
-      return "npm:@jscad/obj-serializer@2.1.21";
+      return "npm:@jscad/obj-serializer@2.1.23";
   }
 }
 
@@ -70,7 +70,7 @@ function buildEvalScript(
   const ctorRef = "Func" + "tion";
 
   return `
-import * as modeling from "npm:@jscad/modeling@2.12.0";
+import * as modeling from "npm:@jscad/modeling@2.13.0";
 import * as serializer from "${pkg}";
 const { primitives, transforms, booleans, expansions, extrusions, hulls, measurements, text, colors } = modeling;
 const userSource = ${JSON.stringify(source)};

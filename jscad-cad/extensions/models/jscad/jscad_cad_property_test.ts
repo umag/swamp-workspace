@@ -206,12 +206,12 @@ Deno.test("property: mutating the input object after construction never changes 
 // ---------------------------------------------------------------------------
 
 const EXPECTED_PACKAGE: Record<OutputFormat, string> = {
-  "stl": "npm:@jscad/stl-serializer@2.1.21",
-  "stl-ascii": "npm:@jscad/stl-serializer@2.1.21",
-  "dxf": "npm:@jscad/dxf-serializer@2.1.21",
-  "svg": "npm:@jscad/svg-serializer@2.3.10",
-  "obj": "npm:@jscad/obj-serializer@2.1.21",
-  "3mf": "npm:@jscad/3mf-serializer@2.1.15",
+  "stl": "npm:@jscad/stl-serializer@2.1.23",
+  "stl-ascii": "npm:@jscad/stl-serializer@2.1.23",
+  "dxf": "npm:@jscad/dxf-serializer@2.1.23",
+  "svg": "npm:@jscad/svg-serializer@2.3.21",
+  "obj": "npm:@jscad/obj-serializer@2.1.23",
+  "3mf": "npm:@jscad/3mf-serializer@2.1.17",
 };
 
 const arbFormat = fc.constantFrom(...OUTPUT_FORMATS);
@@ -298,7 +298,7 @@ Deno.test("property: any generated source (incl. quotes/backslashes/newlines/tem
       // vanishingly unlikely, must never be misread as broken structure;
       // the real no-breakout guarantee is the exact round-trip itself).
       const structureIntact = script.includes(
-        'import * as modeling from "npm:@jscad/modeling@2.12.0";',
+        'import * as modeling from "npm:@jscad/modeling@2.13.0";',
       ) &&
         script.includes("const Ctor = globalThis[");
       return recovered === source && structureIntact;

@@ -44,7 +44,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
 import { z } from "npm:zod@4";
-import { DOMParser } from "npm:linkedom@0.16.11";
+import { DOMParser } from "npm:linkedom@0.18.13";
 import {
   model,
   parseAccords,
