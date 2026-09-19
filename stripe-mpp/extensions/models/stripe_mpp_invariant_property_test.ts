@@ -9,7 +9,7 @@
  * the swamp runtime drives them (arguments.parse → execute).
  */
 import fc from "npm:fast-check@4.8.0";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.14";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.9.3";
 import {
   assertUrlPolicy,
   hostCategory,
@@ -124,7 +124,12 @@ const json = (b: unknown, status = 200) =>
 
 const CANON = /^(0|[1-9][0-9]*)$/;
 const arbCanon = fc.bigInt({ min: 0n, max: 9_999_999_999n }).map(String);
-const arbCanonPos = fc.bigInt({ min: 1n, max: 9_999_999_999n }).map(String);
+// Floor raised 1n -> 50n: mppx 0.8.17 added a canOffer minimum-charge gate
+// (usd/eur both floor at 50 minor units) that createChallenge now enforces
+// pre-flight (MIN_CHARGE in stripe_mpp.ts). Sub-50 amounts were never
+// something Stripe would accept in usd/eur; the old floor of 1n modelled a
+// domain Stripe itself never allowed, not a real edge case worth covering.
+const arbCanonPos = fc.bigInt({ min: 50n, max: 9_999_999_999n }).map(String);
 const arbNonCanon = fc.constantFrom(
   "-5",
   "1e3",

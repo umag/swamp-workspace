@@ -1,5 +1,5 @@
 /**
- * Contract tests pinning mppx@0.8.14 behavior to the MPP specs:
+ * Contract tests pinning mppx@0.9.3 behavior to the MPP specs:
  *  - draft-ryan-httpauth-payment-01 (the "Payment" HTTP auth scheme)
  *  - mpp-specs draft-stripe-charge-00 (the stripe charge method)
  *
@@ -15,9 +15,10 @@ import {
   assertEquals,
   assertMatch,
   assertNotEquals,
+  assertRejects,
 } from "jsr:@std/assert@1";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.14";
-import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.14/server";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.9.3";
+import { Mppx, stripe as stripeServer } from "npm:mppx@0.9.3/server";
 
 // ---------------------------------------------------------------------------
 // Spec fixtures (draft-stripe-charge-00 §request / §credential)
@@ -297,3 +298,74 @@ Deno.test("credential: tampered challenge inside credential fails server verify"
     SPEC_CHALLENGE_PARAMS.request.amount,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Drift guard: mppx's per-currency minimum-charge gate
+// (dist/stripe/server/Charge.js, `minimumChargeAmountByCurrency`, added in
+// mppx@0.8.17) is module-local and NOT exported, so stripe_mpp.ts keeps an
+// independent copy (`MIN_CHARGE`) to fail createChallenge closed with a clear
+// model-level error before a consumer is ever prompted, instead of the bare
+// "No payment offers are available for this request" mppx throws from
+// inside canOffer. Because the two tables are hand-maintained copies with no
+// shared source, probe mppx's REAL behavior at each boundary rather than
+// comparing our constant to itself — an upstream table change should redden
+// THIS suite, not leave the two copies silently out of step.
+//
+// Representative spread rather than all 32 currencies: usd/gbp cover the two
+// currencies this model and link-cli actually transact in; huf and czk are
+// the two highest floors in the table (most likely to expose a magnitude/
+// decimal-scale error); jpy is a zero-decimal currency (most likely to
+// expose a decimals-handling error). Full coverage would only add redundant
+// assertions of the same lookup-and-compare shape.
+// ---------------------------------------------------------------------------
+
+const MIN_CHARGE_SAMPLE: Record<string, bigint> = {
+  usd: 50n,
+  gbp: 30n,
+  huf: 17500n,
+  czk: 1500n,
+  jpy: 50n,
+};
+
+for (const [currency, floor] of Object.entries(MIN_CHARGE_SAMPLE)) {
+  Deno.test(
+    `server: stripe.charge canOffer drift guard — ${currency} refuses ${
+      (floor - 1n).toString()
+    }, offers at its ${floor.toString()} floor`,
+    async () => {
+      const offerAt = (amount: string) => {
+        const mppx = Mppx.create({
+          methods: [
+            stripeServer.charge({
+              secretKey: "sk_test_offline_dummy",
+              networkId: "profile_test_fixture",
+              paymentMethodTypes: ["card"],
+            }),
+          ],
+          realm: "api.example.test",
+          secretKey: SERVER_SECRET,
+        });
+        const handler = Mppx.compose(
+          mppx.stripe.charge({ amount, currency, decimals: 0 }),
+        );
+        return handler(
+          new Request("https://api.example.test/paid", { method: "GET" }),
+        );
+      };
+
+      await assertRejects(
+        () => offerAt((floor - 1n).toString()),
+        Error,
+        "No payment offers are available for this request",
+      );
+
+      const response = await offerAt(floor.toString());
+      assertEquals(
+        response.status,
+        402,
+        `${currency} at its ${floor.toString()} floor must still be offered ` +
+          "(402, not rejected) — MIN_CHARGE has drifted from mppx's real gate",
+      );
+    },
+  );
+}

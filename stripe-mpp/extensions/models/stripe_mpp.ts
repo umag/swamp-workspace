@@ -39,9 +39,9 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.14";
-import { Mppx, stripe as stripeServer } from "npm:mppx@0.8.14/server";
-import Stripe from "npm:stripe@22.4.0-beta.1";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.9.3";
+import { Mppx, stripe as stripeServer } from "npm:mppx@0.9.3/server";
+import Stripe from "npm:stripe@22.7.0-beta.1";
 import { callTool, type LinkCliConfig } from "./lib/link_cli.ts";
 
 // ============================================================================
@@ -97,7 +97,7 @@ const GlobalArgsSchema = z.object({
       "executable runs. Requires an authenticated link-cli device session " +
       "(`link-cli auth login`, US Link account) on the same host.",
   ),
-  linkCliVersion: z.string().default("0.10.1").describe(
+  linkCliVersion: z.string().default("0.19.1").describe(
     "Pinned link-cli version. The MCP initialize serverInfo.version is " +
       "checked against it as DRIFT DETECTION only (a shadow binary can spoof " +
       "it — this is not an integrity guarantee).",
@@ -629,8 +629,46 @@ const PROFILE = /^profile_(test_)?[A-Za-z0-9]+$/;
 
 /** Card-network minimum per currency, minor units (docs-sourced — NOT a
  * link-cli input constraint; enforced here so a sub-minimum grant is refused
- * before a consumer is ever prompted). */
-const MIN_CHARGE: Record<string, bigint> = { usd: 50n };
+ * before a consumer is ever prompted). Mirrors mppx's own
+ * `minimumChargeAmountByCurrency` gate (dist/stripe/server/Charge.js, added
+ * 0.8.17) so createChallenge fails with a clear model-level error instead of
+ * the bare "No payment offers are available for this request" mppx throws
+ * from inside `canOffer` — see the createChallenge pre-flight check below.
+ * Source: https://docs.stripe.com/currencies#minimum-and-maximum-charge-amounts */
+const MIN_CHARGE: Record<string, bigint> = {
+  aed: 200n,
+  ars: 50n,
+  aud: 50n,
+  bgn: 100n,
+  brl: 50n,
+  cad: 50n,
+  chf: 50n,
+  cop: 50n,
+  czk: 1500n,
+  dkk: 250n,
+  eur: 50n,
+  gbp: 30n,
+  hkd: 400n,
+  huf: 17500n,
+  idr: 50n,
+  ils: 50n,
+  inr: 50n,
+  jpy: 50n,
+  krw: 50n,
+  mxn: 1000n,
+  myr: 200n,
+  nok: 300n,
+  nzd: 50n,
+  php: 50n,
+  pln: 200n,
+  ron: 200n,
+  rub: 50n,
+  sek: 300n,
+  sgd: 50n,
+  thb: 1000n,
+  usd: 50n,
+  zar: 50n,
+};
 
 /** Build the link-cli MCP config from globals, failing CLOSED when the binary
  * path is unset or not absolute (a PATH-shadowing binary must not be able to
@@ -978,7 +1016,7 @@ async function retrievePaymentIntent(
  * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.09.17.1",
+  version: "2026.09.19.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     challenge: {
@@ -1394,6 +1432,13 @@ export const model = {
           throw new Error(
             `createChallenge amount (${args.amount}) must be a canonical ` +
               "minor-units integer.",
+          );
+        }
+        const floor = MIN_CHARGE[args.currency.toLowerCase()];
+        if (floor !== undefined && BigInt(args.amount) < floor) {
+          throw new Error(
+            `createChallenge amount (${args.amount} ${args.currency}) is ` +
+              `below the ${floor} minor-unit card-network minimum.`,
           );
         }
         const networkId = args.networkId ?? g.networkId;
