@@ -1,5 +1,57 @@
 # Changelog
 
+## 2026.09.19.1
+
+Dependency bump (GitHub issue #227): `cheerio` `1.0.0` -> `1.2.0` (minor) and
+`domhandler` `5.0.3` -> `6.0.1` (MAJOR, type-only import). No source logic
+change -- only the two `npm:` specifiers in `livejournal_import.ts` and the
+appended identity `upgrades[]` entry.
+
+### Changed
+
+- `npm:cheerio@1.0.0` -> `npm:cheerio@1.2.0`.
+- `npm:domhandler@5.0.3` -> `npm:domhandler@6.0.1` (types only: `AnyNode`,
+  `Element`, `Text`).
+- Added an identity `upgrades[]` entry (`2026.09.17.1 -> 2026.09.19.1`,
+  `upgradeAttributes: (old) => old`, no resource schema change).
+- `manifest.yaml`/model `version`: `2026.09.17.1` -> `2026.09.19.1`.
+
+### Investigated before bumping
+
+- **domhandler 5 -> 6 (upstream)**: the only breaking change is packaging --
+  domhandler 6 is ESM-only (`refactor!: ESM-only`, fb55/domhandler#1867);
+  `domelementtype` was bumped to `^3.0.0` and the minimum Node engine to
+  `>=20.19.0`. Diffing `src/node.ts` between `v5.0.3` and `v6.0.1` shows the
+  `AnyNode`/`ParentNode`/`ChildNode`/`Element`/`Text` type shapes are UNCHANGED
+  -- the diff is internal refactoring (class fields declared explicitly with
+  `declare`/assignment instead of constructor parameter properties,
+  `Object.hasOwn` instead of `hasOwnProperty`, `for...of` instead of `.forEach`,
+  JSDoc wording) with no field added, removed, or renamed on any of the three
+  imported types. Since this repo imports domhandler via a Deno `npm:` specifier
+  (always ESM), the ESM-only change is not a compatibility problem here.
+- **cheerio 1.2.0's declared domhandler range**: cheerio 1.2.0 still declares
+  `"domhandler": "^5.0.3"`, and its own transitive chain (`cheerio` ->
+  `htmlparser2`/`domutils`/`cheerio-select` -> all declare `^5.0.3`) pulls no
+  domhandler 6 anywhere. Regenerating `deno.lock` confirms this: it now locks
+  BOTH `domhandler@5.0.3` (used at runtime by
+  cheerio/htmlparser2/domutils/cheerio-select/dom-serializer) and
+  `domhandler@6.0.1` (only for this model's direct type-only import) -- two
+  copies in the bundle. Because the two type shapes are verified unchanged
+  (previous bullet), the `AnyNode`/`Element`/`Text` types imported from
+  `domhandler@6.0.1` still accurately describe the objects cheerio actually
+  produces at runtime (from its own bundled `domhandler@5.0.3`), so the cast is
+  not lying today -- but a future domhandler 6.x/7.x type change would silently
+  stop matching cheerio's runtime shape with no compiler signal, since
+  `deno check` only verifies the imported types are self-consistent, not that
+  they match what the transitively-bundled domhandler version emits. Per
+  explicit instruction, both bumps shipped despite this; flagging it here as the
+  residual risk rather than blocking on it.
+- `deno.lock`: regenerated from scratch (`rm deno.lock && deno task check`
+  followed by `deno task test` to also lock dev-dependency-only entries). No
+  occurrence of `cheerio@1.0.0` remains anywhere in the lock; `domhandler@5.0.3`
+  legitimately remains as the transitive runtime dependency described above,
+  alongside the new direct `domhandler@6.0.1` entry.
+
 ## 2026.09.17.1
 
 ### Changed

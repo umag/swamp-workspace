@@ -1,6 +1,6 @@
 import { z } from "npm:zod@4";
-import * as cheerio from "npm:cheerio@1.0.0";
-import type { AnyNode, Element, Text } from "npm:domhandler@5.0.3";
+import * as cheerio from "npm:cheerio@1.2.0";
+import type { AnyNode, Element, Text } from "npm:domhandler@6.0.1";
 
 const GlobalArgsSchema = z.object({
   journalUrl: z
@@ -929,7 +929,7 @@ function yamlEscape(s: string): string {
 /** Swamp model that imports LiveJournal entries (images, tags, mood, now playing, comments) into an Obsidian vault. */
 export const model = {
   type: "@magistr/livejournal/import",
-  version: "2026.09.17.1",
+  version: "2026.09.19.1",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",
@@ -994,6 +994,13 @@ export const model = {
       toVersion: "2026.09.17.1",
       description:
         "Version bump — republish (soak-hardening cycle); no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.09.17.1",
+      toVersion: "2026.09.19.1",
+      description:
+        "Dependency bump (GitHub issue #227): cheerio 1.0.0 -> 1.2.0, domhandler 5.0.3 -> 6.0.1. No resource schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
