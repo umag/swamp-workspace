@@ -1,0 +1,37 @@
+manifestVersion: 1
+name: "@magistr/manim"
+version: "2026.09.19.1"
+description: >-
+  Drive the ManimCommunity CLI from swamp — render a Python-defined Scene into
+  an mp4/gif/png/webm and capture the media file, CLI log, and render metadata
+  as swamp data. Configurable invocation prefix (manim, uvx, docker).
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/manim_scene.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - extensions/models/manim_scene_test.ts
+  - extensions/models/manim/types_test.ts
+  - extensions/models/manim/runner_test.ts
+  - extensions/models/manim/coverage_test.ts
+  - extensions/models/manim/property_test.ts
+  - .claude/skills/manim-codegen/SKILL.md
+  - .claude/skills/manim-codegen/references/manim-api.md
+  - .claude/skills/manim-codegen/references/patterns.md
+  - .claude/skills/manim-codegen/references/troubleshooting.md
+
+platforms: []
+
+labels:
+  - manim
+  - animation
+  - rendering
+  - video
+  - math
+  - education
