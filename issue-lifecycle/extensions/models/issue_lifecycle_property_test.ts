@@ -11,7 +11,7 @@
 //      decrease it.
 // P3 — a randomized-but-LEGAL walk through the state machine (bounded to a
 //      fixed skeleton with a handful of yes/no branch points: reject-then-
-//      replan, iterate_tests-then-retry, iterate-then-retry, harvest-or-
+//      replan, iterate-then-retry, harvest-or-
 //      skip) always ends in `complete` with every intermediate write still
 //      IssueStateSchema-valid (enforced by the harness itself) and with
 //      reviewHistory phase counts matching the branches actually taken.
@@ -237,7 +237,7 @@ const GUARD_TABLE: Record<string, { allowed: string[]; args: unknown }> = {
   plan: { allowed: ["triaged", "planned"], args: defaultPlanArgs() },
   review_plan: { allowed: ["planned"], args: {} },
   record_review: {
-    allowed: ["reviewing", "reviewing_tests", "code_reviewing"],
+    allowed: ["reviewing", "code_reviewing"],
     args: passReview("review-code"),
   },
   approve_plan: { allowed: ["reviewing"], args: {} },
@@ -249,12 +249,6 @@ const GUARD_TABLE: Record<string, { allowed: string[]; args: unknown }> = {
     allowed: ["approved"],
     args: { branch: "feat/x", description: "" },
   },
-  review_tests: { allowed: ["writing_tests"], args: {} },
-  iterate_tests: {
-    allowed: ["reviewing_tests"],
-    args: { reason: "x", source: "human" },
-  },
-  tests_approved: { allowed: ["reviewing_tests"], args: {} },
   verify: {
     allowed: ["implementing"],
     args: {
@@ -398,9 +392,8 @@ Deno.test("P2: hasBlockingFindings total is monotone non-decreasing under additi
 // throughout
 // ============================================================================
 
-// Six independent yes/no branch points along the one legal skeleton:
+// Five independent yes/no branch points along the one legal skeleton:
 // filed -> triaged -> planned -> [reject once?] -> reviewing -> approved
-//       -> writing_tests -> [iterate_tests once?] -> reviewing_tests
 //       -> implementing -> [verification fails once?] -> verifying
 //       -> [iterate once?] -> code_reviewing -> resolved -> [attest?]
 //       -> [harvest?] -> complete
@@ -411,14 +404,12 @@ Deno.test("P3: a randomized legal walk always ends in complete, schema-valid thr
   await fc.assert(
     fc.asyncProperty(
       fc.boolean(), // rejectPlanOnce
-      fc.boolean(), // iterateTestsOnce
       fc.boolean(), // verifyFailsOnce
       fc.boolean(), // iterateCodeOnce
       fc.boolean(), // attestBeforeFinish
       fc.boolean(), // harvestBeforeComplete
       async (
         rejectPlanOnce,
-        iterateTestsOnce,
         verifyFailsOnce,
         iterateCodeOnce,
         attest,
@@ -473,35 +464,8 @@ Deno.test("P3: a randomized legal walk always ends in complete, schema-valid thr
         await run("record_review", passReview("review-adversarial"), h.ctx);
         await run("approve_plan", {}, h.ctx);
 
-        // --- TDD test-review round(s) ---
+        // --- implementation ---
         await run("implement", { branch: "feat/walk" }, h.ctx);
-        await run("review_tests", {}, h.ctx);
-        if (iterateTestsOnce) {
-          await run("record_review", passReview("review-code"), h.ctx);
-          await run(
-            "record_review",
-            {
-              reviewer: "review-adversarial",
-              verdict: "FAIL",
-              findings: [{
-                reviewer: "review-adversarial",
-                severity: "HIGH",
-                description: "walk-iterate-tests",
-                status: "open",
-              }],
-            },
-            h.ctx,
-          );
-          await run(
-            "iterate_tests",
-            { reason: "walk iterate tests", source: "auto" },
-            h.ctx,
-          );
-          await run("review_tests", {}, h.ctx);
-        }
-        await run("record_review", passReview("review-code"), h.ctx);
-        await run("record_review", passReview("review-adversarial"), h.ctx);
-        await run("tests_approved", {}, h.ctx);
 
         // --- verification round(s) ---
         if (verifyFailsOnce) {
@@ -574,9 +538,6 @@ Deno.test("P3: a randomized legal walk always ends in complete, schema-valid thr
         const planRounds = s.reviewHistory.filter((r) =>
           r.phase === "plan_review"
         );
-        const testRounds = s.reviewHistory.filter((r) =>
-          r.phase === "test_review"
-        );
         const codeRounds = s.reviewHistory.filter((r) =>
           r.phase === "code_review"
         );
@@ -585,7 +546,6 @@ Deno.test("P3: a randomized legal walk always ends in complete, schema-valid thr
         );
         return (
           planRounds.length === (rejectPlanOnce ? 2 : 1) &&
-          testRounds.length === (iterateTestsOnce ? 2 : 1) &&
           codeRounds.length === (iterateCodeOnce ? 2 : 1) &&
           // Only a FAILED verification snapshots a round; a clean pass
           // flows straight into review_code.

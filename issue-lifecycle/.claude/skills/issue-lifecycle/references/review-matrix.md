@@ -3,11 +3,11 @@
 ## Which Reviews Activate When
 
 Set `reviewMatrix` in the `plan` method to control which skills run during the
-plan review (Phase 3), test review (Phase 4a), and code review (Phase 5) phases.
-The same matrix governs all three: `record_review` is accepted in `reviewing`,
-`reviewing_tests`, and `code_reviewing`, and the activation criteria below apply
-to test files too (e.g. if the change touches credentials, `review-security`
-also reviews the tests).
+plan review (Phase 3) and code review (Phase 5) phases. The same matrix governs
+both: `record_review` is accepted in `reviewing` and `code_reviewing`, and the
+activation criteria below apply to test files too (e.g. if the change touches
+credentials, `review-security` also reviews the tests written alongside the
+code).
 
 | Skill                | Field               | Activate When                                                           |
 | -------------------- | ------------------- | ----------------------------------------------------------------------- |
@@ -78,7 +78,7 @@ After ALL reviews are recorded, the human sees:
 - Which reviewers passed vs failed
 - Whether any CRITICAL or HIGH findings block acceptance
 
-The `approve_plan` and `tests_approved` methods both enforce: full matrix
-coverage AND zero open CRITICAL AND zero open HIGH findings. The difference is
-the trigger: `approve_plan` requires the human's explicit phrase, while
-`tests_approved` (Phase 4a) fires autonomously once the gate is satisfied.
+The `approve_plan` method enforces: full matrix coverage AND zero open CRITICAL
+AND zero open HIGH findings, and requires the human's explicit trigger phrase.
+`resolve_findings` (Phase 5) is the equivalent human-gated acceptance for the
+code-review round.

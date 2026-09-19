@@ -2,11 +2,10 @@
 
 ## Prerequisites
 
-- State: `code_reviewing` (Phase 4c just called `review_code` from `verifying`)
-- The branch carries the test suite approved in Phase 4a (`tests_approved`), all
-  plan steps executed, and **every required mechanical control passing** — fmt,
-  lint, typecheck and tests were run in Phase 4c
-  ([verification.md](verification.md))
+- State: `code_reviewing` (Phase 4b just called `review_code` from `verifying`)
+- The branch carries the implementation and its unit tests, all plan steps
+  executed, and **every required mechanical control passing** — fmt, lint,
+  typecheck and tests were run in Phase 4b ([verification.md](verification.md))
 
 Because the controls already passed, reviewers here are looking at code that
 compiles, lints and tests clean. Do not spend a reviewer on what a control
@@ -24,7 +23,7 @@ result.
 
 ## Entry prerequisite
 
-The `review_code` method was called at the end of Phase 4c, transitioning state
+The `review_code` method was called at the end of Phase 4b, transitioning state
 from `verifying` to `code_reviewing` and bumping `codeReviewIteration`. If
 you're resuming a session and state is `code_reviewing`, you may need to
 re-enter by calling `review_code` again (this will snapshot the previous round

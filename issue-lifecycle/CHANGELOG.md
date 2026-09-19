@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026.09.20.2
+
+### Changed
+
+- Version bump — CI publish of record for the test-review removal.
+  `2026.09.20.1` carried the same change but was pushed directly to the
+  registry; this release lands the identical source through the normal merge/CI
+  pipeline. No schema change.
+
+## 2026.09.20.1 — remove the TDD test-review phase
+
+**Model behavior change — model type version bumped to `2026.09.20.1`.**
+Simplifies the lifecycle by removing the dedicated TDD test-review sub-cycle.
+`implement` now transitions `approved` → `implementing` directly; code and its
+unit tests are written together, with no separate test-review round or gate.
+Ships as an identity `upgrades[]` migration — `globalArguments` is unchanged, so
+this only bumps `typeVersion`. State records are not transformed by upgrades:
+the stale `testReviewIteration` key is dropped from existing records on read,
+and an instance persisted mid-test-phase (transient states, none expected) is
+not auto-migrated.
+
+### Removed
+
+- **States `writing_tests` and `reviewing_tests`** — the TDD sub-cycle between
+  `approved` and `implementing`.
+- **Methods `review_tests`, `iterate_tests`, `tests_approved`** — the
+  test-review round and its autonomous acceptance gate.
+- **`test_review` ReviewPhase** and the **`testReviewIteration`** cursor.
+
+### Changed
+
+- **`implement`** transitions `approved` → `implementing` (was `approved` →
+  `writing_tests`); its description now tells the agent to write the code and
+  its unit tests together.
+- **`record_review`** guard narrowed to `[reviewing, code_reviewing]` (was
+  `[reviewing, reviewing_tests, code_reviewing]`).
+- **Skill docs** — `references/test-review.md` deleted; SKILL.md phase table,
+  hydrate map and Core Principle 1 updated (no autonomous acceptance exception
+  remains); `implementation.md`, `state-machine.md`, `autonomous-loop.md`,
+  `code-review.md` and `review-matrix.md` swept; eval scenarios 5, 8 and 9
+  (gate-specific) removed. Unit-test guidance survives in prose only.
+- The docs drift-guard test now pins the **absence** of the test-review phase.
+
 ## 2026.09.19.2
 
 ### Changed

@@ -3,9 +3,11 @@
 //
 // Drift-guard contract test: binds the bundled skill documentation to the
 // model (the source of truth). The model↔docs drift this guards against is
-// real: the TDD test-review sub-cycle shipped in the model in 2026.04.30.5
-// while the skills kept describing the old state machine, so agents wrote
-// implementation code before the test-review gate.
+// real: the TDD test-review sub-cycle once shipped in the model while the
+// skills described a different state machine. As of 2026.09.20.1 that
+// sub-cycle is REMOVED — `implement` transitions `approved` → `implementing`
+// directly — and the Layer-1 assertions below now pin its ABSENCE so the
+// phase cannot silently creep back into the docs without the model.
 //
 // Two layers:
 //   1. Per-file token assertions — each fact is asserted against the file
@@ -58,57 +60,59 @@ const REFS = `${SKILL_DIR}references/`;
 // Layer 1: per-file token assertions (authoritative file per fact)
 // ============================================================================
 
-Deno.test("implementation.md documents the test gate, not the old direct transition", async () => {
+// Tokens that must no longer appear in ANY skill doc — the removed
+// test-review sub-cycle. A regression that re-introduces the phase in the
+// docs (without the model) trips this immediately.
+const REMOVED_PHASE_TOKENS = [
+  "writing_tests",
+  "reviewing_tests",
+  "review_tests",
+  "iterate_tests",
+  "tests_approved",
+  "testReviewIteration",
+  "test_review",
+  "MAX_TEST_ITERATIONS",
+];
+
+Deno.test("implementation.md documents the direct approved → implementing transition", async () => {
   const doc = await readDoc(`${REFS}implementation.md`);
   assertStringIncludes(
     doc,
-    "tests_approved",
-    "implementation.md must reference the tests_approved gate",
+    "implementing",
+    "implementation.md must describe the implementing phase",
   );
-  // Unconditional by design: the rewritten doc must not quote the old
-  // transition even as a contrast note — use prose, not the literal
-  // backticked form, when describing what changed.
-  assert(
-    !doc.includes("`approved` → `implementing`"),
-    "implementation.md still claims the pre-sub-cycle transition " +
-      "'`approved` → `implementing`' — the model transitions approved → " +
-      "writing_tests (issue_lifecycle.ts implement method). Replace with " +
-      "the approved → writing_tests ↔ reviewing_tests → [tests_approved] " +
-      "→ implementing gate description.",
-  );
+  for (const token of REMOVED_PHASE_TOKENS) {
+    assert(
+      !doc.includes(token),
+      `implementation.md still references the removed test-phase token ` +
+        `'${token}' — the model now transitions approved → implementing ` +
+        `directly (issue_lifecycle.ts implement method).`,
+    );
+  }
 });
 
-Deno.test("SKILL.md phase table dispatches the TDD sub-cycle states", async () => {
+Deno.test("SKILL.md no longer dispatches the removed test-phase states", async () => {
   const doc = await readDoc(`${SKILL_DIR}SKILL.md`);
-  for (const token of ["writing_tests", "reviewing_tests"]) {
-    assertStringIncludes(
-      doc,
-      token,
-      `SKILL.md must dispatch state '${token}' to a phase reference file`,
+  for (const token of REMOVED_PHASE_TOKENS) {
+    assert(
+      !doc.includes(token),
+      `SKILL.md still references removed test-phase token '${token}'`,
     );
   }
 });
 
-Deno.test("autonomous-loop.md maps the test-review loop", async () => {
+Deno.test("autonomous-loop.md no longer maps a test-review loop", async () => {
   const doc = await readDoc(`${REFS}autonomous-loop.md`);
-  for (
-    const token of [
-      "review_tests",
-      "iterate_tests",
-      "tests_approved",
-      "testReviewIteration",
-      "MAX_TEST_ITERATIONS",
-    ]
-  ) {
-    assertStringIncludes(
-      doc,
-      token,
-      `autonomous-loop.md must map the test-review loop token '${token}'`,
+  for (const token of REMOVED_PHASE_TOKENS) {
+    assert(
+      !doc.includes(token),
+      `autonomous-loop.md still references removed test-phase token ` +
+        `'${token}'`,
     );
   }
 });
 
-Deno.test("state-machine.md record_review guard row includes reviewing_tests", async () => {
+Deno.test("state-machine.md record_review guard row is [reviewing, code_reviewing]", async () => {
   const doc = await readDoc(`${REFS}state-machine.md`);
   const guardRow = doc
     .split("\n")
@@ -119,11 +123,15 @@ Deno.test("state-machine.md record_review guard row includes reviewing_tests", a
     guardRow !== undefined,
     "state-machine.md must have a record_review row in the guard table",
   );
+  assert(
+    !guardRow.includes("reviewing_tests"),
+    "record_review guard row must NOT list reviewing_tests (model guard is " +
+      "now [reviewing, code_reviewing])",
+  );
   assertStringIncludes(
     guardRow,
-    "reviewing_tests",
-    "record_review guard row must list reviewing_tests (model guard is " +
-      "[reviewing, reviewing_tests, code_reviewing])",
+    "code_reviewing",
+    "record_review guard row must still list code_reviewing",
   );
 });
 
