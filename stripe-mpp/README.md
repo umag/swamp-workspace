@@ -7,10 +7,10 @@ Payment Tokens (SPTs)**; the Tempo/crypto method is deferred.
 
 Built reuse-first:
 
-- [`mppx@0.8.14`](https://github.com/wevm/mppx) — the reference MPP protocol
+- [`mppx@0.9.3`](https://github.com/wevm/mppx) — the reference MPP protocol
   library (challenge codec, HMAC-bound challenge ids, credential envelope,
   receipts; server primitives)
-- `stripe@22.4.0-beta.1` (public-preview channel) — typed SPT lifecycle
+- `stripe@22.7.0-beta.1` (public-preview channel) — typed SPT lifecycle
   (`sharedPayment.issuedTokens` / `grantedTokens`)
 
 The model adds the swamp-native layer: vault wiring, an audit trail (a `payment`

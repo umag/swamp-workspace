@@ -19,7 +19,7 @@ import {
   assertRejects,
   assertThrows,
 } from "jsr:@std/assert@1";
-import { Challenge, Credential } from "npm:mppx@0.8.14";
+import { Challenge, Credential } from "npm:mppx@0.9.3";
 import {
   amountExceeds,
   assertUrlPolicy,

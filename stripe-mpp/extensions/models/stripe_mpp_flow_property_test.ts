@@ -24,7 +24,7 @@
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import fc from "npm:fast-check@4.8.0";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.8.14";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.9.3";
 import { model } from "./stripe_mpp.ts";
 
 // Property iteration count — overridable for the nightly soak via
@@ -150,7 +150,12 @@ const MUTATIONS = [
 type Mutation = (typeof MUTATIONS)[number];
 
 const arbFlowFields = fc.record({
-  amount: fc.bigInt({ min: 1n, max: 9_999_999n }).map(String),
+  // Floor raised 1n -> 50n: mppx 0.8.17 added a canOffer minimum-charge gate
+  // (usd/eur floor at 50 minor units, gbp at 30) that createChallenge now
+  // enforces pre-flight (MIN_CHARGE in stripe_mpp.ts). Sub-50 amounts were
+  // never something Stripe would accept in any of usd/eur/gbp, so the old
+  // floor of 1n modelled a domain Stripe itself never allowed.
+  amount: fc.bigInt({ min: 50n, max: 9_999_999n }).map(String),
   currency: fc.constantFrom("usd", "eur", "gbp"),
   sptId: fc.stringMatching(/^spt_[A-Za-z0-9]{6,24}$/),
   externalId: fc.stringMatching(/^[A-Za-z0-9._-]{1,24}$/),

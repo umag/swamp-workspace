@@ -1,5 +1,74 @@
 # Changelog
 
+## 2026.09.19.1
+
+Dependency bump: `mppx@0.8.14 → 0.9.3` (minor, preview channel, bundled runtime
+dep) + `stripe@22.4.0-beta.1 → 22.7.0-beta.1` (`public-preview` dist-tag
+moved) + `linkCliVersion` drift-detection default `0.10.1 → 0.19.1`. Required a
+real source change, not just version strings — see below.
+
+- **mppx**: NO-OP on the fiat/SPT wire contract, confirmed on durable evidence.
+  The crypto primitives are byte-identical in the regenerated lock
+  (`@noble/hashes@1.8.0` backs the HMAC-SHA256 id-binding,
+  `@noble/curves@1.9.1`, `@scure/base@1.2.6`, `@scure/bip32@1.7.0`,
+  `@scure/bip39@1.6.0` all unmoved), and the upstream release notes for every
+  intervening version (0.8.15, 0.8.17..0.8.19, 0.9.0..0.9.3) show no change to
+  the HMAC challenge-id binding, key derivation, domain separators, or the
+  Challenge/Credential/Receipt codec. `stripe_mpp_test.ts`'s golden vectors and
+  `stripe_mpp_adversarial_test.ts` both pass **UNMODIFIED**. 0.9.0's breaking
+  removal of the machineUSD charge/session flows does not apply — this model
+  only imports the Stripe rail (`stripeServer.charge()`); no `machineUSD`,
+  Tempo, x402, or EVM usage anywhere in the extension.
+  - **Behavioural change (not wire format) required a source fix**: 0.8.17 added
+    a `canOffer` gate in mppx's Stripe rail (`dist/stripe/server/Charge.js`,
+    `minimumChargeAmountByCurrency`) that refuses to offer a charge below
+    Stripe's per-currency minimum, surfacing as a bare
+    `"No payment offers are available for this request"` from inside the
+    library. Extended the model's own `MIN_CHARGE` table (`usd` only until now)
+    to mirror all 32 currencies mppx enforces, and added a pre-flight check in
+    `createChallenge` (immediately after the existing `isCanonicalMinorUnits`
+    guard) so a sub-minimum request fails closed with a clear, model-level error
+    naming the amount, currency, and floor — before a consumer is ever prompted
+    — instead of the opaque library error. Raised the amount floor in
+    `stripe_mpp_flow_property_test.ts`'s and
+    `stripe_mpp_invariant_property_test.ts`'s amount arbitraries (1n → 50n) to
+    stop generating amounts Stripe itself would never have accepted; this is
+    correcting the property domain, not weakening it.
+  - **New drift guard**: mppx's `minimumChargeAmountByCurrency` is module-local
+    and not exported, so `MIN_CHARGE` is a hand-maintained copy that can
+    silently diverge from upstream. Added 5 contract tests
+    (`stripe_mpp_test.ts`) that probe mppx's REAL `canOffer` behaviour at the
+    boundary — refuses at `floor - 1`, offers at `floor` — for a representative
+    currency spread (`usd`, `gbp`, `huf`, `czk`, `jpy`: the two Link-relevant
+    currencies, the two highest floors in the table, and a zero-decimal
+    currency) rather than comparing the constant to itself, so a future upstream
+    table change reddens this suite instead of the two copies quietly drifting
+    apart.
+- **stripe**: `public-preview` dist-tag genuinely moved
+  (`npm view stripe
+  dist-tags`). No SDK-surface changes this model depends on.
+- **link-cli**: `@stripe/link-cli` drift-detection default re-pinned
+  `0.10.1 → 0.19.1` on maintainer instruction (nine minors, release-notes
+  evidence only — Link is still US-only, not live-verified). **Runtime
+  consequence**: `lib/link_cli.ts`'s version check is FATAL, not advisory — it
+  throws and aborts the call if the real binary's reported version differs from
+  `linkCliVersion`. Any host still running a `link-cli` older than 0.19.1 will
+  now hard-fail every consumer-grant call until the binary is upgraded. Updated
+  the three fixture literals (`stripe_mpp_methods_test.ts`,
+  `stripe_mpp_live_test.ts`, `lib/link_cli.test.ts`) alongside the default.
+- Transitive drift from the lockfile regeneration: `viem 2.55.10 → 2.56.8`, `ox`
+  gains a `0.14.45` peer variant, `@stripe/stripe-js 9.9.0 → 9.13.0`, peer
+  `zod 4.4.3 → 4.5.4` (this package's own `zod` import already floats on
+  `npm:zod@4`). `stripe`'s and `mppx`'s deps all keep sha512 integrity hashes;
+  no stale `mppx@0.8.14` specifier remains.
+- Re-bundle republishes with `0.9.3`/`22.7.0-beta.1` inlined. Full offline
+  suite: 126 passed, 0 failed, 1 ignored (`stripe_mpp_live_test.ts`, requires
+  real Link test-mode secrets, not run). 10000-run property soak: 28 passed, 0
+  failed. Contract (`stripe_mpp_test.ts`) and adversarial/tamper
+  (`stripe_mpp_adversarial_test.ts`) suites pass UNMODIFIED aside from the pin
+  string and, in the contract suite, the new drift-guard tests appended at the
+  end (no existing test body touched).
+
 ## 2026.09.17.1
 
 ### Changed
