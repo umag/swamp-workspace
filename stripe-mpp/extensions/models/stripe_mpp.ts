@@ -42,6 +42,16 @@ import { z } from "npm:zod@4";
 import { Challenge, Credential, Receipt } from "npm:mppx@0.9.3";
 import { Mppx, stripe as stripeServer } from "npm:mppx@0.9.3/server";
 import Stripe from "npm:stripe@22.7.0-beta.1";
+// BUNDLE RESOLUTION ONLY — not used by this model's code paths.
+// mppx declares @modelcontextprotocol/sdk as an OPTIONAL peer and reaches for
+// it via `await import("@modelcontextprotocol/sdk/types.js")` inside
+// compose() (dist/server/Mppx.js), on the MCP transport branch this model
+// never takes: we compose the HTTP handler, so that branch is dead code here.
+// swamp INLINES npm packages at bundle time, so the specifier must still
+// RESOLVE even though it is never executed, and an unresolved optional peer
+// fails the whole bundle. Importing it here puts it in the graph so mppx's
+// peer resolves. Pinned per this repo's explicit-version rule.
+import "npm:@modelcontextprotocol/sdk@1.30.0/types.js";
 import { callTool, type LinkCliConfig } from "./lib/link_cli.ts";
 
 // ============================================================================
