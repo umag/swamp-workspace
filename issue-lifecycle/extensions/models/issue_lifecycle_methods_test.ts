@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: MIT
 //
 // METHODS suite (ext-quality-bf-issue-lifecycle, wave-4 batch-4d; latent-bug
-// real-fix in 2026.08.02.1 touched `start`, `approve_plan`, `tests_approved`,
+// real-fix in 2026.08.02.1 touched `start`, `approve_plan`,
 // `resolve_findings`, and `record_review` — see issue_lifecycle_adversarial_
 // test.ts for the IL-1/2/4/7 fix pins). Every test here characterizes the
-// shipped behavior of the 20 model methods (start,
+// shipped behavior of the model methods (start,
 // triage, record_prior_art, record_reproduction, plan, review_plan,
-// record_review, approve_plan, reject_plan, implement, review_tests,
-// iterate_tests, tests_approved, review_code, resolve_findings, iterate,
+// record_review, approve_plan, reject_plan, implement,
+// review_code, resolve_findings, iterate,
 // harvest, complete, close, hydrate): one success-from-valid-precondition
 // test, one guardState-throw-from-illegal-state test (exact message
-// asserted) for each of the 17 guarded methods, plus a sweep pinning the
+// asserted) for each guarded method, plus a sweep pinning the
 // unknown-key-stripping behavior of every method's zod arguments schema and
 // a sweep pinning the "No issue state found — run 'start' first"
 // precondition shared by every method except `start`.
@@ -246,21 +246,9 @@ async function withApprovedPlan(h: Harness): Promise<void> {
   await run("approve_plan", {}, h.ctx);
 }
 
-async function withWritingTests(h: Harness, branch = "feat/x"): Promise<void> {
+async function withImplementing(h: Harness, branch = "feat/x"): Promise<void> {
   await withApprovedPlan(h);
   await run("implement", { branch }, h.ctx);
-}
-
-async function withReviewingTests(h: Harness): Promise<void> {
-  await withWritingTests(h);
-  await run("review_tests", {}, h.ctx);
-}
-
-async function withImplementing(h: Harness): Promise<void> {
-  await withReviewingTests(h);
-  await run("record_review", passReview("review-code"), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("tests_approved", {}, h.ctx);
 }
 
 async function withCodeReviewing(h: Harness): Promise<void> {
@@ -437,7 +425,7 @@ Deno.test("methods: record_review guardState-throws from planned", async () => {
   await assertRejects(
     () => run("record_review", passReview("review-code"), h.ctx),
     Error,
-    "Cannot call 'record_review' in state 'planned'. Expected: reviewing, reviewing_tests, code_reviewing",
+    "Cannot call 'record_review' in state 'planned'. Expected: reviewing, code_reviewing",
   );
 });
 
@@ -498,7 +486,7 @@ Deno.test("methods: implement succeeds from approved", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x" }, h.ctx);
-  assertEquals(h.getState()!.state, "writing_tests");
+  assertEquals(h.getState()!.state, "implementing");
 });
 
 Deno.test("methods: implement guardState-throws from reviewing", async () => {
@@ -508,74 +496,6 @@ Deno.test("methods: implement guardState-throws from reviewing", async () => {
     () => run("implement", { branch: "feat/x" }, h.ctx),
     Error,
     "Cannot call 'implement' in state 'reviewing'. Expected: approved",
-  );
-});
-
-// ============================================================================
-// review_tests
-// ============================================================================
-
-Deno.test("methods: review_tests succeeds from writing_tests", async () => {
-  const h = createHarness();
-  await withWritingTests(h);
-  await run("review_tests", {}, h.ctx);
-  assertEquals(h.getState()!.state, "reviewing_tests");
-});
-
-Deno.test("methods: review_tests guardState-throws from approved", async () => {
-  const h = createHarness();
-  await withApprovedPlan(h);
-  await assertRejects(
-    () => run("review_tests", {}, h.ctx),
-    Error,
-    "Cannot call 'review_tests' in state 'approved'. Expected: writing_tests",
-  );
-});
-
-// ============================================================================
-// iterate_tests
-// ============================================================================
-
-Deno.test("methods: iterate_tests succeeds from reviewing_tests", async () => {
-  const h = createHarness();
-  await withReviewingTests(h);
-  await run(
-    "record_review",
-    failReview("review-code", [finding("review-code", "HIGH", "x")]),
-    h.ctx,
-  );
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("iterate_tests", { reason: "fix", source: "auto" }, h.ctx);
-  assertEquals(h.getState()!.state, "writing_tests");
-});
-
-Deno.test("methods: iterate_tests guardState-throws from writing_tests", async () => {
-  const h = createHarness();
-  await withWritingTests(h);
-  await assertRejects(
-    () => run("iterate_tests", { reason: "x", source: "auto" }, h.ctx),
-    Error,
-    "Cannot call 'iterate_tests' in state 'writing_tests'. Expected: reviewing_tests",
-  );
-});
-
-// ============================================================================
-// tests_approved
-// ============================================================================
-
-Deno.test("methods: tests_approved succeeds from reviewing_tests with clean coverage", async () => {
-  const h = createHarness();
-  await withImplementing(h);
-  assertEquals(h.getState()!.state, "implementing");
-});
-
-Deno.test("methods: tests_approved guardState-throws from writing_tests", async () => {
-  const h = createHarness();
-  await withWritingTests(h);
-  await assertRejects(
-    () => run("tests_approved", {}, h.ctx),
-    Error,
-    "Cannot call 'tests_approved' in state 'writing_tests'. Expected: reviewing_tests",
   );
 });
 
@@ -591,13 +511,13 @@ Deno.test("methods: review_code succeeds from implementing", async () => {
   assertEquals(h.getState()!.state, "code_reviewing");
 });
 
-Deno.test("methods: review_code guardState-throws from reviewing_tests", async () => {
+Deno.test("methods: review_code guardState-throws from implementing (no verify)", async () => {
   const h = createHarness();
-  await withReviewingTests(h);
+  await withImplementing(h);
   await assertRejects(
     () => run("review_code", {}, h.ctx),
     Error,
-    "Cannot call 'review_code' in state 'reviewing_tests'. Expected: verifying",
+    "Cannot call 'review_code' in state 'implementing'. Expected: verifying",
   );
 });
 
@@ -931,9 +851,6 @@ const VALID_ARGS_BY_METHOD: Record<string, Record<string, unknown>> = {
   approve_plan: {},
   reject_plan: { reason: "x", source: "human" },
   implement: { branch: "feat/x", description: "" },
-  review_tests: {},
-  iterate_tests: { reason: "x", source: "human" },
-  tests_approved: {},
   verify: {
     controls: [
       {

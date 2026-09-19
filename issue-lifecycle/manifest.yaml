@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/issue-lifecycle"
-version: "2026.09.19.2"
+version: "2026.09.20.2"
 description: |
   Issue lifecycle model with 9 bundled Claude Code skills for DDD, TDD,
   moldable development, and parallel code review.
@@ -20,10 +20,7 @@ description: |
   planned ──[review_plan]──> reviewing
   reviewing ──[approve_plan]──> approved
   reviewing ──[reject_plan]──> planned  (feedback loop)
-  approved ──[implement]──> writing_tests
-  writing_tests ──[review_tests]──> reviewing_tests
-  reviewing_tests ──[iterate_tests]──> writing_tests  (autonomous TDD sub-loop)
-  reviewing_tests ──[tests_approved]──> implementing  (autonomous gate)
+  approved ──[implement]──> implementing
   implementing ──[verify]──> verifying
   verifying ──[iterate_verification]──> implementing  (autonomous loop)
   verifying ──[review_code]──> code_reviewing  (the ONLY path onward)
@@ -39,8 +36,9 @@ description: |
   ```
 
   `approve_plan` requires full matrix coverage AND zero open CRITICAL AND
-  zero open HIGH findings AND no reviewer FAIL verdict. `tests_approved`
-  enforces the same gate autonomously (override bypasses both dimensions).
+  zero open HIGH findings AND no reviewer FAIL verdict. `implement`
+  transitions `approved` → `implementing` directly; code and its unit tests
+  are written together, with no separate test-review gate.
   `close` works from any state. `start` refuses to overwrite an in-flight
   issue (any state other than complete/closed) unless `force:true` is
   passed.
@@ -74,12 +72,8 @@ description: |
   - `approve_plan` — approve (gated on coverage + zero blocking findings +
     no FAIL verdict)
   - `reject_plan` — reject with auto/human source tracking
-  - `implement` — start TDD on a branch (enters `writing_tests`)
-  - `review_tests` — enter test review phase
-  - `iterate_tests` — loop back on test-review findings (bumps testReviewIteration)
-  - `tests_approved` — tests clean → write code (autonomous gate; supports
-    `override_reason` for explicit human force-approve after 5-iteration cap,
-    bypassing both the blocking-findings and FAIL-verdict gates)
+  - `implement` — start implementation on a branch (enters `implementing`);
+    write the code together with its unit tests
   - `verify` — run every declared mechanical control in one pass (enters
     `verifying`); controls come from
     `agent-constraints/verification-controls.md`, never hardcoded

@@ -5,14 +5,14 @@
 // real-fix in 2026.08.02.1 added the failingReviewers() pure-function
 // coverage below). Guard-throw regression tests for all 17 guardState call
 // sites (triage, record_prior_art, record_reproduction, plan, review_plan,
-// record_review, approve_plan, reject_plan, implement, review_tests,
-// iterate_tests, tests_approved, review_code, resolve_findings, iterate,
+// record_review, approve_plan, reject_plan, implement,
+// review_code, resolve_findings, iterate,
 // harvest, complete) already live in issue_lifecycle_methods_test.ts (one
 // success + one guard-throw per method) — this file fills the BRANCH gaps
 // the methods/adversarial suites don't reach: allMatrixReviewersRecorded
 // across every reviewMatrix dimension, hasBlockingFindings' full status
 // filter, failingReviewers' verdict-only filter, both branches of iterate's
-// double-snapshot guard, reject_plan/iterate/iterate_tests' zod `source`
+// double-snapshot guard, reject_plan/iterate' zod `source`
 // default, record_reproduction's create-vs-merge branches, plan's
 // planVersion-bump predicate (keyed on `data.plan`, not on which of the two
 // guarded states you're in), and complete's silently-discarded `summary`
@@ -240,21 +240,13 @@ async function withApprovedPlan(h: Harness): Promise<void> {
 async function withImplementingCoverage(h: Harness): Promise<void> {
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x", description: "" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", passReview("review-code"), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("tests_approved", {}, h.ctx);
 }
 
-async function implementWithTestsApproved(
+async function implementReady(
   h: Harness,
   branch = "feat/x",
 ): Promise<void> {
   await run("implement", { branch }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", passReview("review-code"), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("tests_approved", {}, h.ctx);
 }
 
 // ============================================================================
@@ -445,7 +437,7 @@ Deno.test("coverage: failingReviewers on an empty reviews array returns an empty
 Deno.test("coverage: iterate from code_reviewing appends exactly one new reviewHistory entry", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
-  await implementWithTestsApproved(h);
+  await implementReady(h);
   await passVerification(h);
   await run("review_code", {}, h.ctx);
   const before = h.getState()!.reviewHistory.length;
@@ -463,7 +455,7 @@ Deno.test("coverage: iterate from code_reviewing appends exactly one new reviewH
 Deno.test("coverage: iterate from resolved appends zero new reviewHistory entries (already snapshotted by resolve_findings)", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
-  await implementWithTestsApproved(h);
+  await implementReady(h);
   await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
@@ -476,22 +468,18 @@ Deno.test("coverage: iterate from resolved appends zero new reviewHistory entrie
 });
 
 // ============================================================================
-// reject_plan / iterate / iterate_tests — zod `source` default is "human"
+// reject_plan / iterate — zod `source` default is "human"
 // ============================================================================
 
-Deno.test("coverage: reject_plan/iterate/iterate_tests arguments schema defaults source to 'human'", () => {
+Deno.test("coverage: reject_plan/iterate arguments schema defaults source to 'human'", () => {
   const rp = model.methods.reject_plan.arguments.parse({ reason: "x" }) as {
     source: string;
   };
   const it = model.methods.iterate.arguments.parse({ reason: "x" }) as {
     source: string;
   };
-  const itt = model.methods.iterate_tests.arguments.parse({ reason: "x" }) as {
-    source: string;
-  };
   assertEquals(rp.source, "human");
   assertEquals(it.source, "human");
-  assertEquals(itt.source, "human");
 });
 
 // ============================================================================
@@ -599,7 +587,7 @@ Deno.test("coverage: complete's summary argument is validated but silently disca
   await run("record_review", passReview("review-code"), h.ctx);
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("approve_plan", {}, h.ctx);
-  await implementWithTestsApproved(h);
+  await implementReady(h);
   await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);

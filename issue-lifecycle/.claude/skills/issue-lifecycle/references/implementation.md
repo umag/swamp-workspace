@@ -1,19 +1,20 @@
-# Phase 4b: Implementation
+# Phase 4a: Implementation
 
 ## Prerequisites
 
-- State: `implementing`, reached via `tests_approved` — the TDD test suite was
-  authored and passed review in Phase 4a ([test-review.md](test-review.md))
-- The branch in `state.branch` carries the approved failing tests
+- State: `approved` (the plan passed adversarial review and the human approved
+  it) or `implementing` (implementation already started, or re-entered via an
+  `iterate` from code review)
+- The plan lives in `state.plan`
 
-Phase 4b writes the code that makes the approved tests pass, then hands off to
-Phase 4c (verification), which is the only route onward to code review.
+Phase 4a writes the code — together with its unit tests — then hands off to
+Phase 4b (verification), which is the only route onward to code review. There is
+no separate test-review phase: tests are authored as part of implementation.
 
-## Step 1: Confirm where you are
+## Step 1: Start implementation
 
-`implement` was called at the start of Phase 4a — it records the branch and
-transitions the model from `approved` into the test-writing sub-phase (state
-`writing_tests`):
+`implement` records the branch and transitions the model from `approved`
+straight into `implementing`:
 
 ```bash
 swamp model method run <issue-name> implement \
@@ -21,10 +22,8 @@ swamp model method run <issue-name> implement \
   --input description="..."
 ```
 
-Code is written only after the test-review loop exits clean and `tests_approved`
-lands you in `implementing`. If the model is still in `writing_tests` or
-`reviewing_tests`, you are in Phase 4a — go to [test-review.md](test-review.md);
-do not write implementation code yet.
+`implement` may only be called from `approved`. Once in `implementing`, write
+the code and its tests.
 
 **Worktree resume rule.** If a session is resumed mid-implementation, run
 `git checkout $(...state.branch)` before reading or writing code. Don't assume
@@ -63,23 +62,23 @@ exact defect the plan reviewer flags as **HIGH** (see
 [adversarial-review.md](adversarial-review.md), "Trace existing execution
 paths"). Catch it here at implementation time — don't wait for review.
 
-**Tests are already approved — do not write failing tests here.** That was Phase
-4a. This phase is **GREEN** and **REFACTOR** against the approved suite:
+**Write the tests with the code — TDD is encouraged in prose, not gated.** Favor
+a red-green-refactor rhythm per unit of behavior:
 
-1. **GREEN** — write the **minimum** code to make the next approved test pass —
-   not the full implementation, just enough to go green.
-2. **GREEN** — run the suite and confirm the test **passes** (and nothing else
-   broke).
+1. **RED** — write the unit test for the next behavior first and watch it fail
+   for the right reason.
+2. **GREEN** — write the **minimum** code to make it pass — not the full
+   implementation, just enough to go green — then run the suite and confirm the
+   test passes (and nothing else broke).
 3. **REFACTOR** — always tidy up **now, while the tests are green** (improve
    naming, remove duplication, extract helpers). Do it in this same step — do
    **not** defer it to a follow-up issue, a TODO, or "later"; refactoring once
    the change is fresh is the cheapest it will ever be. State this step even
    when little is needed; "no refactor required" is a valid outcome, but say so.
 
-If a step exposes a genuine gap in the approved test suite (a behavior the plan
-requires but no test covers), that is a return to Phase 4a: write the failing
-test, run `review_tests`, and drive the loop again — do not silently grow the
-suite alongside the code.
+Every behavior the plan requires must end with a covering unit test. There is no
+separate review round for the tests — the code reviewer (Phase 5) checks test
+coverage alongside the code.
 
 Read `agent-constraints/implementation-conventions.md` at the repo root for
 repo-specific build commands, binary paths, test commands, and conventions. If
@@ -120,7 +119,7 @@ explicitly and proceed with extra caution.
 
 The PR comes after verification and attestation, not here. Opening it now means
 CI discovers failures the verification loop was about to catch — the exact round
-trip Phase 4c exists to eliminate.
+trip Phase 4b exists to eliminate.
 
 The PR URL has a first-class home: the `prUrl` argument on `attest`
 ([attestation.md](attestation.md)). The old convention of appending a `## PR`
@@ -128,9 +127,8 @@ section to the plan summary is obsolete; do not use it.
 
 ## Step 6: Hand off to verification
 
-Once implementation is complete — state is `implementing` (reached via
-`tests_approved` or an `iterate` from code review), all plan steps are executed,
-the approved test suite passes, and the reproduction (if any) verifies the fix —
+Once implementation is complete — state is `implementing`, all plan steps are
+executed, the unit tests pass, and the reproduction (if any) verifies the fix —
 run the repository's mechanical controls:
 
 ```bash
@@ -149,5 +147,4 @@ controls.
 
 Read [verification.md](verification.md). Code review
 ([code-review.md](code-review.md)) follows it, using the same autonomous loop
-pattern as Phases 3 and 4a but applied to the code rather than the plan or the
-tests.
+pattern as Phase 3 but applied to the code rather than the plan.

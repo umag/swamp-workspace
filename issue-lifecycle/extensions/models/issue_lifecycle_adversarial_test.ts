@@ -5,7 +5,7 @@
 // latent-bug real-fix in 2026.08.02.1). This suite assumes the source is
 // broken until proven otherwise: illegal transitions from varied source
 // states, malformed reviewer input (bad severity/verdict enums), hostile
-// approve_plan / tests_approved gate combinations, corrupted stored state,
+// approve_plan gate combinations, corrupted stored state,
 // and pins for the LOCAL latent bugs IL-1 through IL-7 (see the LOCAL
 // issue-lifecycle-latent-bugs issue-lifecycle model for the full triage —
 // never the swamp.club Lab).
@@ -14,7 +14,7 @@
 // behavior, not the original bug:
 //   IL-1 (fixed) — start refuses to overwrite an in-flight issue (any state
 //     other than complete/closed) unless force:true is passed.
-//   IL-2 (fixed) — approve_plan/tests_approved also block on a reviewer FAIL
+//   IL-2 (fixed) — approve_plan also blocks on a reviewer FAIL
 //     verdict, even with zero open/blocking findings.
 //   IL-4 (fixed) — resolve_findings keys resolutions per matching reviewer,
 //     so two different reviewers' findings sharing description text no
@@ -23,8 +23,8 @@
 //     reviewer's second submission within the same round.
 //
 // Three bugs are KEPT AS DESIGNED — re-affirmed, not fixed:
-//   IL-3 (by design) — no model-enforced iteration cap; MAX_CODE_ITERATIONS /
-//     MAX_TEST_ITERATIONS are skill-layer policy, not the pure model's job.
+//   IL-3 (by design) — no model-enforced iteration cap; MAX_CODE_ITERATIONS
+//     is skill-layer policy, not the pure model's job.
 //   IL-5 (by design) — close has no guardState call; it is the
 //     abandon/escape hatch and must work from any state, including
 //     terminal ones.
@@ -249,10 +249,6 @@ async function withApprovedPlan(h: Harness): Promise<void> {
 async function withImplementingState(h: Harness): Promise<void> {
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x", description: "" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", passReview("review-code"), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("tests_approved", {}, h.ctx);
 }
 
 async function withResolvedState(h: Harness): Promise<void> {
@@ -369,7 +365,7 @@ Deno.test("IL-1 (fixed): start succeeds from a terminal state (closed) without f
 });
 
 // ============================================================================
-// IL-2 (fixed) — approve_plan / tests_approved now also block on a reviewer
+// IL-2 (fixed) — approve_plan now also blocks on a reviewer
 // FAIL verdict, even with zero open/blocking findings
 // ============================================================================
 
@@ -412,43 +408,9 @@ Deno.test("IL-2 (fixed): approve_plan blocks when a reviewer's verdict is FAIL e
   );
 });
 
-Deno.test("IL-2 (fixed): tests_approved blocks when a reviewer's verdict is FAIL, even with zero blocking findings", async () => {
-  const h = createHarness();
-  await withApprovedPlan(h);
-  await run("implement", { branch: "feat/x" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", failReview("review-code", []), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-
-  await assertRejects(
-    () => run("tests_approved", {}, h.ctx),
-    Error,
-    "review-code",
-  );
-});
-
-Deno.test("IL-2 (fixed): tests_approved override_reason bypasses the FAIL-verdict gate too", async () => {
-  const h = createHarness();
-  await withApprovedPlan(h);
-  await run("implement", { branch: "feat/x" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", failReview("review-code", []), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-
-  await run(
-    "tests_approved",
-    { override_reason: "human accepts FAIL verdict with no open findings" },
-    h.ctx,
-  );
-  const s = h.getState()!;
-  assertEquals(s.state, "implementing");
-  const testRound = s.reviewHistory.find((r) => r.phase === "test_review")!;
-  assertEquals(testRound.outcome, "human_override");
-});
-
 // ============================================================================
 // IL-3 (re-affirmed by-design in 2026.08.02.1) — no model-enforced iteration
-// cap; MAX_CODE_ITERATIONS/MAX_TEST_ITERATIONS are skill-layer policy, not
+// cap; MAX_CODE_ITERATIONS is skill-layer policy, not
 // enforced here, so the human override_reason escape hatch is never coupled
 // to a model-level cap.
 // ============================================================================
@@ -457,10 +419,6 @@ Deno.test("IL-3: iterate has no model-enforced cap — 10 consecutive rounds all
   const h = createHarness();
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", passReview("review-code"), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("tests_approved", {}, h.ctx);
   await passVerification(h);
   await run("review_code", {}, h.ctx);
 
@@ -496,10 +454,6 @@ Deno.test("IL-4 (fixed): resolve_findings expands a shared description into one 
   const h = createHarness();
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", passReview("review-code"), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("tests_approved", {}, h.ctx);
   await passVerification(h);
   await run("review_code", {}, h.ctx);
 
@@ -549,10 +503,6 @@ Deno.test("IL-4 (fixed): resolve_findings does not spuriously expand a single-re
   const h = createHarness();
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", passReview("review-code"), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("tests_approved", {}, h.ctx);
   await passVerification(h);
   await run("review_code", {}, h.ctx);
 
@@ -583,10 +533,6 @@ Deno.test("IL-4 (fixed): resolve_findings stores a key that matches no current-r
   const h = createHarness();
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", passReview("review-code"), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("tests_approved", {}, h.ctx);
   await passVerification(h);
   await run("review_code", {}, h.ctx);
   await run("record_review", passReview("review-code"), h.ctx);
@@ -830,78 +776,33 @@ Deno.test("adversarial: implement rejected from filed (skipping plan/review/appr
   );
 });
 
-Deno.test("adversarial: resolve_findings rejected from writing_tests (skipping the entire code-review phase)", async () => {
+Deno.test("adversarial: resolve_findings rejected from implementing (skipping the entire code-review phase)", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x" }, h.ctx);
   await assertRejects(
     () => run("resolve_findings", { resolutions: {} }, h.ctx),
     Error,
-    "Cannot call 'resolve_findings' in state 'writing_tests'. Expected: code_reviewing",
+    "Cannot call 'resolve_findings' in state 'implementing'. Expected: code_reviewing",
   );
 });
 
-Deno.test("adversarial: harvest rejected from writing_tests", async () => {
+Deno.test("adversarial: harvest rejected from implementing", async () => {
   const h = createHarness();
   await withApprovedPlan(h);
   await run("implement", { branch: "feat/x" }, h.ctx);
   await assertRejects(
     () => run("harvest", { uatProposals: [], kbProposals: [] }, h.ctx),
     Error,
-    "Cannot call 'harvest' in state 'writing_tests'. Expected: resolved",
+    "Cannot call 'harvest' in state 'implementing'. Expected: resolved",
   );
 });
 
 // ============================================================================
-// whitespace override_reason still gated (tab / newline variants beyond the
-// single-space case already pinned in issue_lifecycle.test.ts)
-// ============================================================================
-
-Deno.test("adversarial: tests_approved with a tab-only override_reason still enforces the blocking gate", async () => {
-  const h = createHarness();
-  await withApprovedPlan(h);
-  await run("implement", { branch: "feat/x" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run(
-    "record_review",
-    failReview("review-code", [
-      finding("review-code", "HIGH", "missing"),
-    ]),
-    h.ctx,
-  );
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await assertRejects(
-    () => run("tests_approved", { override_reason: "\t\t" }, h.ctx),
-    Error,
-    "HIGH",
-  );
-});
-
-Deno.test("adversarial: tests_approved with a newline-only override_reason still enforces the blocking gate", async () => {
-  const h = createHarness();
-  await withApprovedPlan(h);
-  await run("implement", { branch: "feat/x" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run(
-    "record_review",
-    failReview("review-code", [
-      finding("review-code", "CRITICAL", "missing"),
-    ]),
-    h.ctx,
-  );
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await assertRejects(
-    () => run("tests_approved", { override_reason: "\n" }, h.ctx),
-    Error,
-    "CRITICAL",
-  );
-});
-
-// ============================================================================
-// Corrupted stored state — approve_plan / tests_approved "no plan" branches
-// (unreachable via the legitimate method flow: review_plan/review_tests only
-// transition FROM a state that plan() itself set alongside `data.plan`, so
-// these branches only fire against a directly-corrupted store)
+// Corrupted stored state — approve_plan "no plan" branch
+// (unreachable via the legitimate method flow: review_plan only
+// transitions FROM a state that plan() itself set alongside `data.plan`, so
+// this branch only fires against a directly-corrupted store)
 // ============================================================================
 
 Deno.test("adversarial: approve_plan throws 'no plan found' against a corrupted reviewing state with no plan", async () => {
@@ -917,22 +818,6 @@ Deno.test("adversarial: approve_plan throws 'no plan found' against a corrupted 
     () => run("approve_plan", {}, h.ctx),
     Error,
     "No plan found — nothing to approve",
-  );
-});
-
-Deno.test("adversarial: tests_approved throws 'no plan found' against a corrupted reviewing_tests state with no plan", async () => {
-  const h = createHarness();
-  await filedAndTriaged(h);
-  const s = h.getState()!;
-  await h.ctx.writeResource("state", "current", {
-    ...s,
-    state: "reviewing_tests",
-    plan: undefined,
-  });
-  await assertRejects(
-    () => run("tests_approved", {}, h.ctx),
-    Error,
-    "No plan found — tests cannot be approved without a plan",
   );
 });
 
@@ -1094,10 +979,6 @@ Deno.test("adversarial: attest refuses when no verification round was ever recor
   await run("record_review", passReview("review-adversarial"), h.ctx);
   await run("approve_plan", {}, h.ctx);
   await run("implement", { branch: "feat/x", description: "" }, h.ctx);
-  await run("review_tests", {}, h.ctx);
-  await run("record_review", passReview("review-code"), h.ctx);
-  await run("record_review", passReview("review-adversarial"), h.ctx);
-  await run("tests_approved", {}, h.ctx);
   // Forge the state straight into `resolved` — as a buggy skill or a hand
   // edit could — and confirm the model still refuses to attest.
   const forged = { ...h.getState()!, state: "resolved" };

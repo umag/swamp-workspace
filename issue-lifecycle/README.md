@@ -17,11 +17,9 @@ triaged ──[plan]──> planned
 planned ──[review_plan]──> reviewing
 reviewing ──[approve_plan]──> approved
 reviewing ──[reject_plan]──> planned  (feedback loop)
-approved ──[implement]──> writing_tests
-writing_tests ──[review_tests]──> reviewing_tests
-reviewing_tests ──[iterate_tests]──> writing_tests  (autonomous TDD sub-loop)
-reviewing_tests ──[tests_approved]──> implementing  (autonomous gate)
-implementing ──[review_code]──> code_reviewing
+approved ──[implement]──> implementing
+implementing ──[verify]──> verifying
+verifying ──[review_code]──> code_reviewing
 code_reviewing ──[resolve_findings]──> resolved
 code_reviewing ──[iterate]──> implementing  (autonomous loop)
 resolved ──[iterate]──> implementing
@@ -99,32 +97,23 @@ swamp model method run issue-42 approve_plan --json
 swamp model method run issue-42 reject_plan --input reason="..." --input source=human --json
 ```
 
-### Implementation (test-first)
+### Implementation
 
-`implement` enters the `writing_tests` sub-phase — the TDD test-review loop is
-enforced by the state machine before any production code is written.
+`implement` transitions `approved` → `implementing` directly. Write the code
+together with its unit tests, then run the mechanical controls with `verify`
+before code review.
 
 ```bash
-# Enter writing_tests, author failing TDD tests, then submit them for review
+# Enter implementing — write the code and its unit tests on the branch
 swamp model method run issue-42 implement --input branch=feat/retry-jitter --json
-swamp model method run issue-42 review_tests --json
 
-# Record each reviewer's verdict against the tests
-swamp model method run issue-42 record_review --input-file review-tests-code.yaml --json
-swamp model method run issue-42 record_review --input-file review-tests-adversarial.yaml --json
+# Run the declared mechanical controls (fmt/lint/typecheck/tests) in one pass
+swamp model method run issue-42 verify --input-file verify-controls.yaml --json
 
-# CRITICAL/HIGH findings? Loop back, rewrite tests, re-review
-swamp model method run issue-42 iterate_tests --input reason="add edge-case coverage" --input source=auto --json
+# A control failed? Fix it in context and loop back
+swamp model method run issue-42 iterate_verification --input reason="fix lint" --input source=auto --json
 
-# Tests clean? Approve and proceed to writing code (autonomous gate)
-swamp model method run issue-42 tests_approved --json
-
-# Cap reached after 5 iterations and findings still open?
-# Surface to human; if they explicitly authorise force-approval:
-swamp model method run issue-42 tests_approved \
-  --input override_reason="Cap reached at iter 5; remaining HIGH is acceptable scope cut" --json
-
-# Now in 'implementing' — write code that turns tests green, then run code review
+# Controls all pass? Enter code review
 swamp model method run issue-42 review_code --json
 
 # Record code review findings, then resolve or iterate
@@ -153,28 +142,27 @@ swamp data get issue-42 hydrate --json
 
 ## Methods
 
-| Method                | Description                                                               | State Transition                               |
-| --------------------- | ------------------------------------------------------------------------- | ---------------------------------------------- |
-| `start`               | File a new issue (refuses to overwrite an in-flight issue unless `force`) | -> `filed`                                     |
-| `triage`              | Classify with optional detail                                             | `filed` -> `triaged`                           |
-| `record_prior_art`    | Record existing UAT/KB entries                                            | no change                                      |
-| `record_reproduction` | Record/update bug-reproduction outcome (optional; re-call overwrites)     | no change (`triaged` or `planned`)             |
-| `plan`                | Create/revise plan (bumps planVersion)                                    | `triaged`\|`planned` -> `planned`              |
-| `review_plan`         | Enter plan review phase                                                   | `planned` -> `reviewing`                       |
-| `record_review`       | Record one reviewer's findings                                            | no change                                      |
-| `approve_plan`        | Approve (gated on coverage + zero blocking + no FAIL verdict)             | `reviewing` -> `approved`                      |
-| `reject_plan`         | Reject with auto/human source                                             | `reviewing` -> `planned`                       |
-| `implement`           | Start TDD on a branch — enter writing_tests                               | `approved` -> `writing_tests`                  |
-| `review_tests`        | Enter test review phase                                                   | `writing_tests` -> `reviewing_tests`           |
-| `iterate_tests`       | Loop back on test-review findings                                         | `reviewing_tests` -> `writing_tests`           |
-| `tests_approved`      | Tests clean — proceed to code (autonomous, or human override after cap)   | `reviewing_tests` -> `implementing`            |
-| `review_code`         | Enter code review phase                                                   | `implementing` -> `code_reviewing`             |
-| `resolve_findings`    | Record resolutions (keyed per matching reviewer), snapshot round          | `code_reviewing` -> `resolved`                 |
-| `iterate`             | Return to implementation                                                  | `resolved`\|`code_reviewing` -> `implementing` |
-| `harvest`             | Record UAT/KB improvement proposals                                       | `resolved` -> `harvested`                      |
-| `complete`            | Mark done                                                                 | `resolved`\|`harvested` -> `complete`          |
-| `close`               | Abandon from any state                                                    | any -> `closed`                                |
-| `hydrate`             | Write compact summary (no state mutation)                                 | no change                                      |
+| Method                 | Description                                                               | State Transition                               |
+| ---------------------- | ------------------------------------------------------------------------- | ---------------------------------------------- |
+| `start`                | File a new issue (refuses to overwrite an in-flight issue unless `force`) | -> `filed`                                     |
+| `triage`               | Classify with optional detail                                             | `filed` -> `triaged`                           |
+| `record_prior_art`     | Record existing UAT/KB entries                                            | no change                                      |
+| `record_reproduction`  | Record/update bug-reproduction outcome (optional; re-call overwrites)     | no change (`triaged` or `planned`)             |
+| `plan`                 | Create/revise plan (bumps planVersion)                                    | `triaged`\|`planned` -> `planned`              |
+| `review_plan`          | Enter plan review phase                                                   | `planned` -> `reviewing`                       |
+| `record_review`        | Record one reviewer's findings                                            | no change                                      |
+| `approve_plan`         | Approve (gated on coverage + zero blocking + no FAIL verdict)             | `reviewing` -> `approved`                      |
+| `reject_plan`          | Reject with auto/human source                                             | `reviewing` -> `planned`                       |
+| `implement`            | Start implementation on a branch (write code + unit tests)                | `approved` -> `implementing`                   |
+| `verify`               | Run declared mechanical controls in one pass                              | `implementing` -> `verifying`                  |
+| `iterate_verification` | Loop back on a failing control                                            | `verifying` -> `implementing`                  |
+| `review_code`          | Enter code review phase                                                   | `verifying` -> `code_reviewing`                |
+| `resolve_findings`     | Record resolutions (keyed per matching reviewer), snapshot round          | `code_reviewing` -> `resolved`                 |
+| `iterate`              | Return to implementation                                                  | `resolved`\|`code_reviewing` -> `implementing` |
+| `harvest`              | Record UAT/KB improvement proposals                                       | `resolved` -> `harvested`                      |
+| `complete`             | Mark done                                                                 | `resolved`\|`harvested` -> `complete`          |
+| `close`                | Abandon from any state                                                    | any -> `closed`                                |
+| `hydrate`              | Write compact summary (no state mutation)                                 | no change                                      |
 
 ## Data stored
 

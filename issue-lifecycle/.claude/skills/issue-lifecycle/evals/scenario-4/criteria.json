@@ -1,5 +1,5 @@
 {
-  "context": "Tests whether the agent follows the skill's Phase 4b discipline (the failing test suite was already authored and approved in Phase 4a — tests_approved has been called), maps integration points before writing code, avoids unnecessary backward-compatibility scaffolding for unreleased code, and anchors changes in existing abstractions rather than creating parallel implementations.",
+  "context": "Tests whether the agent follows the skill's Phase 4a implementation discipline (state is implementing, reached via implement), writes the code together with its unit tests, maps integration points before writing code, avoids unnecessary backward-compatibility scaffolding for unreleased code, and anchors changes in existing abstractions rather than creating parallel implementations.",
   "type": "weighted_checklist",
   "checklist": [
     {

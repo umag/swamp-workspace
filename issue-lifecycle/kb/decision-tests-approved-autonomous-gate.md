@@ -2,7 +2,18 @@
 kind: decision
 issue: tdd-subcycle-doc-drift
 date: 2026-06-12
+superseded_by: il-drop-test-phase
+superseded_date: 2026-09-20
 ---
+
+> **SUPERSEDED (2026.09.20.1, issue `il-drop-test-phase`).** The dedicated TDD
+> test-review phase — states `writing_tests`/`reviewing_tests`, methods
+> `review_tests`/`iterate_tests`/`tests_approved`, and the `test_review`
+> ReviewPhase — was removed. `implement` now transitions `approved` →
+> `implementing` directly and unit tests are written alongside the code. There
+> is **no autonomous acceptance exception** any more: `approve_plan` (Phase 3)
+> and `resolve_findings` (Phase 5) are both human-gated. The decision below is
+> kept for historical context only and no longer describes the shipped model.
 
 # Decision: `tests_approved` is the lifecycle's single autonomous acceptance
 
