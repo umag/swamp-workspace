@@ -612,7 +612,7 @@ export function tokenize(q) {
  */
 export const model = {
   type: "@magistr/career-kb",
-  version: "2026.09.17.1",
+  version: "2026.09.19.2",
   upgrades: [
     {
       fromVersion: "2026.08.01.1",
@@ -630,6 +630,12 @@ export const model = {
       toVersion: "2026.09.17.1",
       description:
         "Version bump — republish (soak-hardening cycle); no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.19.2",
+      description:
+        "Version bump — repo-wide maintenance release; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

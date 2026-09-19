@@ -652,7 +652,7 @@ function ftsToRecord(
 /** FidoNet JAM/Squish/FTS-0001 message base reader: list areas, read areas and netmail, and search messages by sender, FidoNet address, or text. */
 export const model = {
   type: "@magistr/fidonet-msgbase",
-  version: "2026.09.17.1",
+  version: "2026.09.19.2",
   globalArguments: GlobalArgsSchema,
 
   reports: ["@magistr/fidonet-summary", "@magistr/fidonet-messages"],
@@ -674,6 +674,12 @@ export const model = {
       toVersion: "2026.09.17.1",
       description:
         "Version bump — republish (soak-hardening cycle); no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.19.2",
+      description:
+        "Version bump — repo-wide maintenance release; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

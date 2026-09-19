@@ -35,11 +35,30 @@ version bump therefore changes the **shipped bundle's behaviour**. Procedure:
    round-trip suites cannot detect a self-consistent wire change on their own —
    that is what the golden vectors in `stripe_mpp_test.ts` are for.
 
-## Gotcha: plain `grep` silently skips `stripe_mpp.ts`
+## History: the NUL-byte domain separator is now a plain escape
 
-`stripe_mpp.ts` embeds a **raw NUL byte** (in `idemKey`, roughly line 318) as
-the SHA-256 idempotency-key domain separator (`` `${op}\x00${input}` ``).
-Because of that NUL, `file` reports the source as `data` and plain `grep` treats
-it as binary and **silently skips it** — which can produce a false "the model
-has no `npm:` imports" conclusion. Always use `grep -a` (or read the file
-directly) when auditing this file.
+`idemKey` (roughly line 320) SHA-256-hashes `` `${op}\x00${input}` ``, where
+`\x00` is the **NUL character** used as a domain separator between `op` and
+`input`. That separator is load-bearing: it is what keeps two distinct logical
+inputs from ever hashing to the same idempotency key (see the "INJECTIVE —
+distinct inputs → distinct keys" property in `stripe_mpp_property_test.ts`), so
+it must never be removed or replaced with an ordinary character that could
+plausibly appear inside `op` or an encoded `input` part.
+
+Until the 2026.09.19.2 release, that NUL was written as a **raw 0x00 byte**
+pasted directly into the template literal, rather than the two-character `\x00`
+escape sequence. Because of that raw byte, `file` reported the source as `data`
+and plain `grep` treated it as binary and silently skipped it — which could
+produce a false "the model has no `npm:` imports" conclusion, and anyone
+auditing this file needed `grep -a` (or to read the file directly) to see its
+contents at all.
+
+The raw byte has been replaced with the `\x00` escape, which produces the exact
+same runtime string (same bytes fed to `TextEncoder`, same SHA-256 digests, same
+idempotency keys — verified by recomputing `idemKey` for fixed inputs before and
+after the change and diffing the hex output) while making the file ordinary
+UTF-8 text. `file` no longer reports it as `data`, and plain `grep` no longer
+skips it — **this hazard no longer applies**, and `stripe_mpp.ts` can be grepped
+like any other file in this repo. Do not reintroduce a raw NUL byte here "to
+match the docs" or out of habit from this history — the escape is the correct,
+permanent form.

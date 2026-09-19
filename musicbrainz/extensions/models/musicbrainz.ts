@@ -1344,7 +1344,7 @@ const ArtistSearchBatchSchema = z.object({
  */
 export const model = {
   type: "@magistr/musicbrainz",
-  version: "2026.09.19.1",
+  version: "2026.09.19.2",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1403,6 +1403,12 @@ export const model = {
       toVersion: "2026.09.19.1",
       description:
         "Dependency bump: linkedom 0.16.11 -> 0.18.13; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.19.2",
+      description:
+        "Version bump — repo-wide maintenance release; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

@@ -1588,7 +1588,7 @@ export async function attestImpl(
  * "no depth-1 version key" to both and silently skips the chain-terminus
  * check. `issue_lifecycle_docs.test.ts` pins the two equal instead.
  */
-export const MODEL_VERSION = "2026.09.17.1";
+export const MODEL_VERSION = "2026.09.19.2";
 
 /**
  * Internal model object — its value type recursively references Zod
@@ -1600,7 +1600,7 @@ export const MODEL_VERSION = "2026.09.17.1";
  */
 export const model = {
   type: "@magistr/issue-lifecycle",
-  version: "2026.09.17.1",
+  version: "2026.09.19.2",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1635,6 +1635,12 @@ export const model = {
       toVersion: "2026.09.17.1",
       description:
         "Version bump — republish (soak-hardening cycle); no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.19.2",
+      description:
+        "Version bump — repo-wide maintenance release; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

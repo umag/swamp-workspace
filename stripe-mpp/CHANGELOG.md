@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026.09.19.2
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+- `idemKey`'s NUL-byte domain separator is now written as the literal `\x00`
+  escape instead of a raw embedded NUL byte in the source. Source-representation
+  change only: the hashed string, SHA-256 digests and idempotency keys are
+  byte-identical before and after (verified against fixed inputs).
+  `stripe_mpp.ts` is now ordinary UTF-8 text — see docs/MAINTAINING.md.
+
 ## 2026.09.19.1
 
 Dependency bump: `mppx@0.8.14 → 0.9.3` (minor, preview channel, bundled runtime

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/spotify-data"
-version: "2026.09.17.1"
+version: "2026.09.19.2"
 description: |
   Import a Spotify "Extended streaming history" GDPR export into swamp — one
   `spotify.<year>` resource per calendar year, partitioned exactly like

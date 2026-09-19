@@ -971,7 +971,7 @@ const nowIso = () => new Date().toISOString();
 /** Obsidian vault model: notes, search, tags, links, daily notes, frontmatter, and a corpus digest, over either the Obsidian CLI or a mounted vault directory. */
 export const model = {
   type: "@magistr/obsidian/vault",
-  version: "2026.09.19.1",
+  version: "2026.09.19.2",
   upgrades: [
     {
       fromVersion: "2026.03.28.1",
@@ -1014,6 +1014,12 @@ export const model = {
     {
       toVersion: "2026.09.19.1",
       description: "Dependency bump: yaml 2.6.1 -> 2.9.1; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.19.2",
+      description:
+        "Version bump — repo-wide maintenance release; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
