@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/diskio"
-version: "2026.09.17.1"
+version: "2026.09.19.2"
 description: |
   Answer "what is actually reading this disk?" on a Linux host whose storage
   sits behind device-mapper and FUSE — where the obvious tools all lie.

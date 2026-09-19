@@ -126,7 +126,15 @@ const BackupSchema = z.object({
 /** TubeArchivist model: manage videos, channels, downloads, and search via the API. */
 export const model = {
   type: "@magistr/tubearchivist",
-  version: "2026.09.17.1",
+  version: "2026.09.19.2",
+  upgrades: [
+    {
+      toVersion: "2026.09.19.2",
+      description:
+        "Version bump — repo-wide maintenance release; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     videos: {

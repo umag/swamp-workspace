@@ -910,7 +910,15 @@ export async function attributeImpl(
 
 export const model = {
   type: "@magistr/diskio",
-  version: "2026.09.17.1",
+  version: "2026.09.19.2",
+  upgrades: [
+    {
+      toVersion: "2026.09.19.2",
+      description:
+        "Version bump — repo-wide maintenance release; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     "deviceMap": {

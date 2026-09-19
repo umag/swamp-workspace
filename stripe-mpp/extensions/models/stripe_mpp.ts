@@ -325,7 +325,7 @@ export async function idemKey(
     .join("|");
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(`${op} ${input}`),
+    new TextEncoder().encode(`${op}\x00${input}`),
   );
   const hex = Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -1026,7 +1026,15 @@ async function retrievePaymentIntent(
  * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.09.19.1",
+  version: "2026.09.19.2",
+  upgrades: [
+    {
+      toVersion: "2026.09.19.2",
+      description:
+        "Version bump — repo-wide maintenance release; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     challenge: {
