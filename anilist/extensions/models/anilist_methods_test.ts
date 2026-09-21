@@ -767,6 +767,7 @@ Deno.test("set-score: mediaId-direct happy path — no title-resolve sub-query i
             status: "COMPLETED",
             score: 8,
             updatedAt: 1700000000,
+            user: { mediaListOptions: { scoreFormat: "POINT_10" } },
           },
         },
       });
@@ -775,9 +776,12 @@ Deno.test("set-score: mediaId-direct happy path — no title-resolve sub-query i
       await run("set-score", { mediaId: 90001, score: 8 }, ctx);
     },
   );
-  assert(
-    written.find((w) => w.spec === "watchProgress" && w.name === "score-90001"),
-  );
+  const wp = written.find(
+    (w) => w.spec === "watchProgress" && w.name === "score-90001",
+  )!;
+  assert(wp);
+  // The stored score's scale travels with it (8 means 8/10 here).
+  assertEquals(wp.payload.scoreFormat, "POINT_10");
 });
 
 Deno.test("set-score: title-resolve sub-query happy path — resolves mediaId via Media(search) then mutates", async () => {

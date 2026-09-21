@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026.09.21.1
+
+### Added
+
+- **Preferred score scale.** Scores now honour each user's own AniList scale
+  (`mediaListOptions.scoreFormat`), instead of printing a bare, scale-blind
+  number. The bare `score` AniList returns is already in the user's scale, so
+  this is a labelling change:
+
+  - `POINT_100` -> `score 85/100`, `POINT_10`/`POINT_10_DECIMAL` ->
+    `score 8.5/10`;
+  - `POINT_5` -> filled/empty stars (`★★★★☆`);
+  - `POINT_3` -> the AniList smiley (`🙁`/`😐`/`🙂`).
+
+  New exported helpers `renderScore` / `scoreSuffix` and a `ScoreFormat` type
+  drive it. An unknown or absent format falls back to the old bare `score N`, so
+  the change is backward-compatible and every pre-existing test stays green.
+
+- **`recent-activity`** carries the scale end-to-end: `scoreFormat` rides along
+  on the existing `ACTIVITY_SCORES_QUERY` score-enrichment fetch
+  (`user { mediaListOptions { scoreFormat } }`) — **no extra request** — and is
+  threaded through `ActivityItem` -> `mergeActivities`/`mergeStatusChanges` ->
+  both renderers and the stored `activityFeed` resource.
+
+- **`userlist`** surfaces a top-level `scoreFormat` (via a `User` selection in
+  `USERLIST_QUERY`) so per-entry `score` is interpretable.
+
+- **`set-score`** surfaces `scoreFormat` on `watchProgress` (via a `user` field
+  on the mutation) so the stored score's scale is known.
+
+`model.version`/`manifest.yaml` move `2026.09.19.2` -> `2026.09.21.1`. Purely
+additive — every new field is optional and no stored resource is reshaped.
+
 ## 2026.09.19.2
 
 ### Changed

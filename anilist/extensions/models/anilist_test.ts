@@ -306,6 +306,9 @@ Deno.test("contract: userlist.json — lists mapped with entryCount, totalEntrie
   );
   const res = written.find((w) => w.spec === "userlist")!;
   assert(res);
+  // The user's preferred scale rides along so the per-entry `score` is
+  // interpretable (POINT_10 here — the fixture's score 8 means 8/10).
+  assertEquals(res.payload.scoreFormat, "POINT_10");
   assertEquals(res.payload.listCount, 2);
   assertEquals(res.payload.totalEntries, 2);
   const lists = res.payload.lists as Array<Record<string, unknown>>;
