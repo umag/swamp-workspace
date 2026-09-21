@@ -39,6 +39,8 @@ import {
   mergeStatusChanges,
   parseUsernamesFile,
   partitionActivities,
+  renderScore,
+  scoreSuffix,
   STATUS_CHANGE_HEADING,
   TELEGRAM_MESSAGE_LIMIT,
 } from "./anilist.ts";
@@ -941,4 +943,78 @@ Deno.test("buildMetadataRow: absent studios/tags/coverImage default to empty/nul
   assertEquals(row.cover_image_large, null);
   assertEquals(row.genres, []);
   assertEquals(row.title_romaji, null);
+});
+
+// ---------- renderScore / scoreSuffix (preferred-scale rendering) ----------
+
+Deno.test("renderScore honours each AniList scoreFormat", () => {
+  assertEquals(renderScore(85, "POINT_100"), "score 85/100");
+  assertEquals(renderScore(8.5, "POINT_10_DECIMAL"), "score 8.5/10");
+  assertEquals(renderScore(9, "POINT_10"), "score 9/10");
+  assertEquals(renderScore(4, "POINT_5"), "★★★★☆");
+  assertEquals(renderScore(3, "POINT_3"), "🙂");
+  assertEquals(renderScore(2, "POINT_3"), "😐");
+  assertEquals(renderScore(1, "POINT_3"), "🙁");
+});
+
+Deno.test("renderScore falls back to a bare number for a missing/unknown format", () => {
+  assertEquals(renderScore(9, null), "score 9");
+  assertEquals(renderScore(9, undefined), "score 9");
+  // An AniList-added scale we don't know yet degrades, never throws.
+  assertEquals(
+    renderScore(9, "POINT_42" as unknown as Parameters<typeof renderScore>[1]),
+    "score 9",
+  );
+});
+
+Deno.test("renderScore / scoreSuffix treat null and <= 0 as unscored", () => {
+  assertEquals(renderScore(null, "POINT_10"), null);
+  assertEquals(renderScore(0, "POINT_10"), null);
+  assertEquals(scoreSuffix(0, "POINT_5"), "");
+  assertEquals(scoreSuffix(null, "POINT_5"), "");
+  assertEquals(scoreSuffix(7, "POINT_10"), " (score 7/10)");
+});
+
+Deno.test("renderScore clamps a star/smiley value to its scale range", () => {
+  assertEquals(renderScore(9, "POINT_5"), "★★★★★"); // clamped to 5
+  assertEquals(renderScore(9, "POINT_3"), "🙂"); // clamped to happiest
+});
+
+Deno.test("formatActivityMessages renders POINT_5 stars end-to-end", () => {
+  const [msg] = formatActivityMessages([
+    act(1, "fixture_watcher", 1000, {
+      progress: "5 - 7",
+      score: 4,
+      scoreFormat: "POINT_5",
+    }),
+  ]);
+  assert(msg.includes("(★★★★☆)"));
+  assert(!msg.includes("score 4")); // the bare, scale-blind form is gone
+});
+
+Deno.test("buildRichMessage renders the preferred scale (POINT_100)", () => {
+  const rich = buildRichMessage(
+    mergeActivities([
+      act(1, "fixture_watcher", 1000, {
+        mediaId: 90001,
+        progress: "5",
+        score: 85,
+        scoreFormat: "POINT_100",
+        siteUrl: "https://anilist.co/anime/90001",
+      }),
+    ]),
+  );
+  assert(JSON.stringify(rich).includes("(score 85/100)"));
+});
+
+Deno.test("mergeStatusChanges carries scoreFormat, best-known score wins", () => {
+  const rows = mergeStatusChanges([
+    verdict(1, "fixture_reader", { score: null, scoreFormat: "POINT_5" }),
+    verdict(2, "fixture_reader", { score: 4, scoreFormat: "POINT_5" }),
+  ]);
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].score, 4);
+  assertEquals(rows[0].scoreFormat, "POINT_5");
+  const [msg] = formatActivityMessages([], rows);
+  assert(msg.includes("(★★★★☆)"));
 });

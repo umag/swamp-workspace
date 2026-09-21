@@ -1,5 +1,6 @@
 {
   "data": {
+    "User": { "mediaListOptions": { "scoreFormat": "POINT_10" } },
     "MediaListCollection": {
       "lists": [
         {

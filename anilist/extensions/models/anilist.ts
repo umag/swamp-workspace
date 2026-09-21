@@ -273,6 +273,7 @@ query ($id: Int!) {
  */
 export const USERLIST_QUERY = `
 query ($userName: String!, $type: MediaType, $status: MediaListStatus) {
+  User(name: $userName) { mediaListOptions { scoreFormat } }
   MediaListCollection(userName: $userName, type: $type, status: $status) {
     lists {
       name status
@@ -393,6 +394,7 @@ const SET_SCORE_MUTATION = `
 mutation ($mediaId: Int!, $score: Float, $status: MediaListStatus) {
   SaveMediaListEntry(mediaId: $mediaId, score: $score, status: $status) {
     id mediaId status score updatedAt
+    user { mediaListOptions { scoreFormat } }
   }
 }`;
 
@@ -801,6 +803,9 @@ export type ActivityItem = {
   title: string;
   siteUrl?: string | null;
   score: number | null;
+  // The list-owner's preferred AniList scale for `score`, enriched alongside
+  // it. null when unknown (private list / unscored) -> score renders bare.
+  scoreFormat?: ScoreFormat | null;
 };
 
 /** Per-user dedupe cursor persisted across `recent-activity` runs: the
@@ -987,11 +992,65 @@ export const ACTIVITY_HASHTAG = "#AniList";
 /** The digest heading, tag included. Shared by both message formats. */
 export const ACTIVITY_HEADING = `${ACTIVITY_HASHTAG} activity`;
 
+/** AniList list-score scales, from a user's `mediaListOptions.scoreFormat`. */
+export type ScoreFormat =
+  | "POINT_100"
+  | "POINT_10_DECIMAL"
+  | "POINT_10"
+  | "POINT_5"
+  | "POINT_3";
+
+// POINT_3 smiley set, indexed 1->3 (AniList's sad / neutral / happy faces).
+const POINT_3_FACES = ["🙁", "😐", "🙂"];
+
+/**
+ * Render a raw AniList list score in the list-owner's own scale, ready to
+ * drop inside the "(...)" suffix of a digest line. AniList returns the bare
+ * `score` already in the user's preferred `scoreFormat`, so honouring the
+ * scale is a labelling concern: the point scales get a "score N/max"
+ * denominator, POINT_5 renders as filled/empty stars, and POINT_3 as the
+ * AniList smiley. A missing/unknown format falls back to the bare "score N"
+ * (the pre-scale-aware output), and an unset score (null / <= 0) yields null.
+ */
+export function renderScore(
+  score: number | null | undefined,
+  format?: ScoreFormat | null,
+): string | null {
+  if (score == null || score <= 0) return null;
+  switch (format) {
+    case "POINT_100":
+      return `score ${score}/100`;
+    case "POINT_10":
+    case "POINT_10_DECIMAL":
+      return `score ${score}/10`;
+    case "POINT_5": {
+      const filled = Math.max(0, Math.min(5, Math.round(score)));
+      return "★★★★★".slice(0, filled) + "☆☆☆☆☆".slice(0, 5 - filled);
+    }
+    case "POINT_3": {
+      const idx = Math.max(1, Math.min(3, Math.round(score))) - 1;
+      return POINT_3_FACES[idx];
+    }
+    default:
+      return `score ${score}`;
+  }
+}
+
+/** The " (...)" score suffix for a digest line, empty when unscored. */
+export function scoreSuffix(
+  score: number | null | undefined,
+  format?: ScoreFormat | null,
+): string {
+  const s = renderScore(score, format);
+  return s ? ` (${s})` : "";
+}
+
 /**
  * Render activities as Telegram HTML messages, grouped by user, chunked at
  * the Telegram limit. Every interpolated field is HTML-escaped; titles link
- * to their AniList page when known. Score is shown only when set (> 0).
- * ASCII-only chrome (no emoji, plain dashes) and compact lines so the
+ * to their AniList page when known. Score is shown only when set (> 0) and
+ * rendered in each user's own AniList scale (stars for POINT_5, a smiley for
+ * POINT_3, "N/max" otherwise). Plain-dash chrome and compact lines so the
  * common case is a single chunk. The hashtag rides in the header, so it
  * survives chunking — every chunk is independently searchable. Status
  * changes, when present, follow the per-user blocks under their own heading.
@@ -1015,8 +1074,9 @@ export function formatActivityMessages(
       const title = a.siteUrl
         ? `<a href="${escapeHtml(a.siteUrl)}">${escapeHtml(a.title)}</a>`
         : escapeHtml(a.title);
-      const scoreSuffix = a.score && a.score > 0 ? ` (score ${a.score})` : "";
-      lines.push(`- ${escapeHtml(verb)}: ${title}${scoreSuffix}`);
+      lines.push(
+        `- ${escapeHtml(verb)}: ${title}${scoreSuffix(a.score, a.scoreFormat)}`,
+      );
     }
     lines.push("");
   }
@@ -1029,11 +1089,10 @@ export function formatActivityMessages(
       const title = c.siteUrl
         ? `<a href="${escapeHtml(c.siteUrl)}">${escapeHtml(c.title)}</a>`
         : escapeHtml(c.title);
-      const scoreSuffix = c.score && c.score > 0 ? ` (score ${c.score})` : "";
       lines.push(
-        `- <b>${escapeHtml(c.userName)}</b> ${
-          escapeHtml(c.status)
-        }: ${title}${scoreSuffix}`,
+        `- <b>${escapeHtml(c.userName)}</b> ${escapeHtml(c.status)}: ${title}${
+          scoreSuffix(c.score, c.scoreFormat)
+        }`,
       );
     }
     lines.push("");
@@ -1065,6 +1124,7 @@ export type MergedShow = {
   title: string;
   siteUrl: string | null;
   score: number | null;
+  scoreFormat?: ScoreFormat | null;
   // Human line describing what happened, e.g. "watched episodes 1-3" or
   // "completed, episodes 1-12". Title/score are appended by the renderer.
   line: string;
@@ -1081,6 +1141,7 @@ export type StatusChange = {
   title: string;
   siteUrl: string | null;
   score: number | null;
+  scoreFormat?: ScoreFormat | null;
 };
 
 /**
@@ -1110,13 +1171,17 @@ export function mergeStatusChanges(
         title: a.title,
         siteUrl: a.siteUrl ?? null,
         score: a.score != null && a.score > 0 ? a.score : null,
+        scoreFormat: a.scoreFormat ?? null,
       });
       continue;
     }
     if (a.score != null && a.score > 0) {
       prev.score = Math.max(prev.score ?? 0, a.score);
     }
-    // A later duplicate may carry the siteUrl an earlier one lacked.
+    // A later duplicate may carry the scale (or siteUrl) an earlier one lacked.
+    if (prev.scoreFormat == null && a.scoreFormat != null) {
+      prev.scoreFormat = a.scoreFormat;
+    }
     if (!prev.siteUrl && a.siteUrl) prev.siteUrl = a.siteUrl;
   }
   return order.map((k) => rows.get(k)!);
@@ -1208,8 +1273,10 @@ export function mergeActivities(activities: ActivityItem[]): MergedShow[] {
     let verb = "";
     let unit = "";
     let score: number | null = null;
+    let scoreFormat: ScoreFormat | null = null;
     for (const a of acts) {
       if (a.score != null && a.score > 0) score = Math.max(score ?? 0, a.score);
+      if (a.scoreFormat != null) scoreFormat = a.scoreFormat;
       if (a.status.toLowerCase() === "completed") {
         completed = true;
         continue;
@@ -1247,6 +1314,7 @@ export function mergeActivities(activities: ActivityItem[]): MergedShow[] {
       title: first.title,
       siteUrl: first.siteUrl ?? null,
       score,
+      scoreFormat,
       line,
     });
   }
@@ -1275,9 +1343,8 @@ function showLine(show: MergedShow): unknown[] {
     ? { type: "url", text: show.title, url: show.siteUrl }
     : show.title;
   const parts: unknown[] = [`${show.line}: `, titleNode];
-  if (show.score != null && show.score > 0) {
-    parts.push(` (score ${show.score})`);
-  }
+  const suffix = scoreSuffix(show.score, show.scoreFormat);
+  if (suffix) parts.push(suffix);
   return parts;
 }
 
@@ -1293,9 +1360,8 @@ function statusChangeLine(change: StatusChange): unknown[] {
     ` ${change.status}: `,
     titleNode,
   ];
-  if (change.score != null && change.score > 0) {
-    parts.push(` (score ${change.score})`);
-  }
+  const suffix = scoreSuffix(change.score, change.scoreFormat);
+  if (suffix) parts.push(suffix);
   return parts;
 }
 
@@ -1464,11 +1530,16 @@ query ($userId: Int, $createdAtGreater: Int, $page: Int, $perPage: Int) {
   }
 }`;
 
+// The bare `score` comes back in each list-owner's own scoreFormat, so their
+// mediaListOptions.scoreFormat rides along to render it faithfully (stars for
+// POINT_5, a smiley for POINT_3, "N/max" otherwise). The `user` node repeats
+// per entry but carries no extra request — it reuses this enrichment fetch.
 const ACTIVITY_SCORES_QUERY = `
 query ($userIds: [Int], $mediaIds: [Int], $perPage: Int) {
   Page(page: 1, perPage: $perPage) {
     mediaList(userId_in: $userIds, mediaId_in: $mediaIds) {
       userId mediaId score
+      user { mediaListOptions { scoreFormat } }
     }
   }
 }`;
@@ -1484,6 +1555,9 @@ const ActivityItemSchema = z.object({
   title: z.string(),
   siteUrl: z.string().nullable(),
   score: z.number().nullable(),
+  // Kept loose (not a z.enum) so an AniList-added scale never fails the
+  // resource write; renderScore falls back to a bare number for unknowns.
+  scoreFormat: z.string().nullable().optional(),
 });
 
 /**
@@ -1495,7 +1569,7 @@ const ActivityItemSchema = z.object({
  */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.09.19.2",
+  version: "2026.09.21.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -1540,6 +1614,13 @@ export const model = {
         "Version bump — repo-wide maintenance release; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      fromVersion: "2026.09.19.2",
+      toVersion: "2026.09.21.1",
+      description:
+        "Scores now honour each user's preferred AniList scale (mediaListOptions.scoreFormat). The recent-activity digest renders scores in that scale — stars for POINT_5, a smiley for POINT_3, N/max otherwise — by piggy-backing scoreFormat on the existing score-enrichment fetch (no extra request); an unknown/absent format falls back to the old bare `score N`. The userlist and set-score data paths surface `scoreFormat` alongside the score so consumers can interpret it. Purely additive: every new field is optional and no stored resource is reshaped",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   resources: {
     search: {
@@ -1580,6 +1661,8 @@ export const model = {
       description: "User anime/manga list",
       schema: z.object({
         userName: z.string(),
+        // The user's preferred AniList scale; per-entry `score` is in it.
+        scoreFormat: z.string().nullable().optional(),
         listCount: z.number(),
         totalEntries: z.number(),
         lists: z.array(z.object({
@@ -1653,6 +1736,9 @@ export const model = {
         mediaId: z.number(),
         progress: z.number().nullable(),
         score: z.number().nullable(),
+        // The user's preferred scale for `score` (set-score only; null for
+        // update-progress, which never touches the score).
+        scoreFormat: z.string().nullable().optional(),
         status: z.string().nullable(),
         repeat: z.number().nullable(),
         updatedAt: z.number().nullable(),
@@ -1683,6 +1769,7 @@ export const model = {
           title: z.string(),
           siteUrl: z.string().nullable(),
           score: z.number().nullable(),
+          scoreFormat: z.string().nullable().optional(),
         })),
         statusChangeCount: z.number(),
         messages: z.array(z.string()),
@@ -2019,6 +2106,10 @@ export const model = {
 
         const gql = makeGql();
         const data = await gql(USERLIST_QUERY, variables);
+        // The list-owner's preferred scale. Bare `score` on each entry is
+        // already returned in it, so this labels the whole list's scores.
+        const scoreFormat: string | null =
+          data.User?.mediaListOptions?.scoreFormat ?? null;
         const lists = (data.MediaListCollection.lists || []).map(
           (list: {
             name: string;
@@ -2039,6 +2130,7 @@ export const model = {
 
         const handle = await context.writeResource!("userlist", args.userName, {
           userName: args.userName,
+          scoreFormat,
           listCount: lists.length,
           totalEntries,
           lists,
@@ -2352,6 +2444,7 @@ export const model = {
             mediaId: entry?.mediaId ?? args.mediaId,
             progress: entry?.progress ?? args.progress,
             score: null,
+            scoreFormat: null,
             status: entry?.status ?? null,
             repeat: entry?.repeat ?? args.repeat ?? null,
             updatedAt: entry?.updatedAt ?? null,
@@ -2462,6 +2555,9 @@ export const model = {
               status: string;
               score: number;
               updatedAt: number;
+              user?: {
+                mediaListOptions?: { scoreFormat?: string | null } | null;
+              } | null;
             };
           };
           errors?: Array<{ message: string }>;
@@ -2472,6 +2568,7 @@ export const model = {
           );
         }
         const entry = json.data?.SaveMediaListEntry;
+        const scoreFormat = entry?.user?.mediaListOptions?.scoreFormat ?? null;
         const handle = await context.writeResource!(
           "watchProgress",
           `score-${mediaId}`,
@@ -2479,6 +2576,7 @@ export const model = {
             mediaId: entry?.mediaId ?? mediaId,
             progress: null,
             score: entry?.score ?? args.score,
+            scoreFormat,
             status: entry?.status ?? null,
             repeat: null,
             updatedAt: entry?.updatedAt ?? null,
@@ -2706,6 +2804,7 @@ export const model = {
                     "?",
                   siteUrl: a.media?.siteUrl ?? null,
                   score: null,
+                  scoreFormat: null,
                 }));
               rawActivities.push(...items);
               if (!d.Page.pageInfo.hasNextPage) break;
@@ -2751,13 +2850,28 @@ export const model = {
                 perPage: 50,
               },
             );
+            const rows = (d.Page.mediaList ?? []) as Array<{
+              userId: number;
+              mediaId: number;
+              score: number | null;
+              user?:
+                | { mediaListOptions?: { scoreFormat?: string | null } | null }
+                | null;
+            }>;
             const scores = new Map<string, number | null>(
-              (d.Page.mediaList ?? []).map((
-                m: { userId: number; mediaId: number; score: number | null },
-              ) => [`${m.userId}:${m.mediaId}`, m.score]),
+              rows.map((m) => [`${m.userId}:${m.mediaId}`, m.score]),
             );
+            // One scoreFormat per user (any entry carries it, all agree).
+            const formats = new Map<number, ScoreFormat | null>();
+            for (const m of rows) {
+              const f = m.user?.mediaListOptions?.scoreFormat ?? null;
+              if (f && !formats.has(m.userId)) {
+                formats.set(m.userId, f as ScoreFormat);
+              }
+            }
             for (const a of fresh) {
               a.score = scores.get(`${a.userId}:${a.mediaId}`) ?? null;
+              a.scoreFormat = formats.get(a.userId) ?? null;
             }
           } catch (e) {
             warn(`Score enrichment failed (continuing without scores): ${e}`);
