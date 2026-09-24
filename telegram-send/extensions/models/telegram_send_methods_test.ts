@@ -563,3 +563,251 @@ Deno.test("no method calls the logger at all today (pin — a future change that
   );
   assertEquals(logs.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// getFile / setWebhook / getWebhookInfo / deleteWebhook / sendRichMessage /
+// sendMessage.replyMarkup — ported from the homelab in-repo copy in
+// 2026.09.24.1.
+// ---------------------------------------------------------------------------
+
+Deno.test("getFile: resolves file_path, downloads bytes, writes base64 downloadedFile", async () => {
+  const { ctx, written } = makeCtx();
+  const bytes = new TextEncoder().encode("hello torrent");
+  await withFetchStub([
+    (req) =>
+      req.url.endsWith("/getFile")
+        ? json({ ok: true, result: { file_path: "documents/file_7.torrent" } })
+        : undefined,
+    (req) =>
+      req.url.endsWith("/file/bot" + TOKEN + "/documents/file_7.torrent")
+        ? new Response(bytes)
+        : undefined,
+  ], async (calls) => {
+    await run("getFile", { fileId: "FID1", mimeType: "x/y" }, ctx);
+    assertEquals(calls.length, 2);
+    assertEquals(await requestJsonBody(calls[0]), { file_id: "FID1" });
+  });
+  assertEquals(written.length, 1);
+  assertEquals(written[0].spec, "downloadedFile");
+  assertEquals(written[0].name, "FID1");
+  assertEquals(written[0].payload.fileName, "file_7.torrent");
+  assertEquals(written[0].payload.mimeType, "x/y");
+  assertEquals(written[0].payload.size, bytes.length);
+  assertEquals(atob(written[0].payload.base64 as string), "hello torrent");
+});
+
+Deno.test("getFile: explicit fileName wins over the storage path name", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([
+    (req) =>
+      req.url.endsWith("/getFile")
+        ? json({ ok: true, result: { file_path: "documents/file_7" } })
+        : undefined,
+    () => new Response(new Uint8Array([1, 2, 3])),
+  ], async () => {
+    await run("getFile", { fileId: "F", fileName: "orig.torrent" }, ctx);
+  });
+  assertEquals(written[0].payload.fileName, "orig.torrent");
+});
+
+Deno.test("getFile: missing file_path throws and writes nothing", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse({ ok: true, result: {} }, 200, async () => {
+    await assertRejects(
+      () => run("getFile", { fileId: "F" }, ctx),
+      Error,
+      "no file_path",
+    );
+  });
+  assertEquals(written.length, 0);
+});
+
+Deno.test("getFile: non-2xx download throws without the token", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub([
+    (req) =>
+      req.url.endsWith("/getFile")
+        ? json({ ok: true, result: { file_path: "documents/x" } })
+        : undefined,
+    () => new Response("gone", { status: 404 }),
+  ], async () => {
+    const err = await assertRejects(
+      () => run("getFile", { fileId: "F" }, ctx),
+      Error,
+      "Failed to download Telegram file (404)",
+    );
+    assert(!err.message.includes(TOKEN));
+  });
+});
+
+Deno.test("setWebhook: sends url + secret_token + drop flag, writes webhookInfo(set)", async () => {
+  const { ctx, written } = makeCtx({ ...GLOBAL_ARGS, webhookSecret: "S3" });
+  await withOneResponse({ ok: true, result: true }, 200, async (calls) => {
+    await run("setWebhook", { url: "https://h/hooks/telegram" }, ctx);
+    const body = await requestJsonBody(calls[0]);
+    assertEquals(body, {
+      url: "https://h/hooks/telegram",
+      secret_token: "S3",
+      drop_pending_updates: false,
+    });
+    assert(calls[0].url.endsWith("/setWebhook"));
+  });
+  assertEquals(written[0].spec, "webhookInfo");
+  assertEquals(written[0].payload.action, "set");
+  assertEquals(written[0].payload.url, "https://h/hooks/telegram");
+});
+
+Deno.test("setWebhook: allowedUpdates rides the wire only when non-empty", async () => {
+  const { ctx } = makeCtx({ ...GLOBAL_ARGS, webhookSecret: "S3" });
+  await withOneResponse({ ok: true, result: true }, 200, async (calls) => {
+    await run("setWebhook", {
+      url: "https://h/x",
+      allowedUpdates: ["message", "callback_query"],
+    }, ctx);
+    assertEquals((await requestJsonBody(calls[0])).allowed_updates, [
+      "message",
+      "callback_query",
+    ]);
+  });
+});
+
+Deno.test("setWebhook: empty webhookSecret refuses before any request", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub([], async (calls) => {
+    await assertRejects(
+      () => run("setWebhook", { url: "https://h/x" }, ctx),
+      Error,
+      "webhookSecret is empty",
+    );
+    assertEquals(calls.length, 0);
+  });
+  assertEquals(written.length, 0);
+});
+
+Deno.test("getWebhookInfo: maps the Bot API snake_case fields", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse(
+    {
+      ok: true,
+      result: {
+        url: "https://h/x",
+        pending_update_count: 3,
+        ip_address: "1.2.3.4",
+        last_error_date: 1700000000,
+        last_error_message: "Wrong response",
+        max_connections: 40,
+        has_custom_certificate: false,
+      },
+    },
+    200,
+    async () => {
+      await run("getWebhookInfo", {}, ctx);
+    },
+  );
+  const p = written[0].payload;
+  assertEquals(p.action, "info");
+  assertEquals(p.url, "https://h/x");
+  assertEquals(p.pendingUpdateCount, 3);
+  assertEquals(p.ipAddress, "1.2.3.4");
+  assertEquals(p.lastErrorDate, 1700000000);
+  assertEquals(p.lastErrorMessage, "Wrong response");
+  assertEquals(p.maxConnections, 40);
+  assertEquals(p.hasCustomCertificate, false);
+});
+
+Deno.test("getWebhookInfo: no webhook set records an empty url", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse({ ok: true, result: {} }, 200, async () => {
+    await run("getWebhookInfo", {}, ctx);
+  });
+  assertEquals(written[0].payload.url, "");
+});
+
+Deno.test("deleteWebhook: sends drop flag, writes webhookInfo(deleted)", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse({ ok: true, result: true }, 200, async (calls) => {
+    await run("deleteWebhook", { dropPendingUpdates: true }, ctx);
+    assertEquals(await requestJsonBody(calls[0]), {
+      drop_pending_updates: true,
+    });
+  });
+  assertEquals(written[0].payload.action, "deleted");
+  assertEquals(written[0].payload.url, "");
+});
+
+for (const name of ["setWebhook", "getWebhookInfo", "deleteWebhook"]) {
+  Deno.test(`${name}: API error surfaces and writes nothing`, async () => {
+    const { ctx, written } = makeCtx({ ...GLOBAL_ARGS, webhookSecret: "S" });
+    const args = name === "setWebhook" ? { url: "https://h/x" } : {};
+    await withOneResponse(ERROR_BODY, 400, async () => {
+      await assertRejects(
+        () => run(name, args, ctx),
+        Error,
+        `Telegram API error (${name}): 400`,
+      );
+    });
+    assertEquals(written.length, 0);
+  });
+}
+
+Deno.test("sendRichMessage: JSON branch passes rich_message through as an object", async () => {
+  const { ctx, written } = makeCtx();
+  const rich = { blocks: [{ type: "paragraph", text: "hi" }] };
+  await withOneResponse(OK_MESSAGE(), 200, async (calls) => {
+    await run("sendRichMessage", { richMessage: JSON.stringify(rich) }, ctx);
+    const body = await requestJsonBody(calls[0]);
+    assertEquals(body.chat_id, DEFAULT_CHAT_ID);
+    assertEquals(body.rich_message, rich);
+    assert(calls[0].url.endsWith("/sendRichMessage"));
+  });
+  assertEquals(written[0].spec, "sentMessage");
+  assertEquals(written[0].name, "msg-2001");
+});
+
+Deno.test("sendRichMessage: files branch uploads multipart with attach names", async () => {
+  const { ctx } = makeCtx();
+  await withReadFileStub(new Uint8Array([9, 9]), async () => {
+    await withOneResponse(OK_MESSAGE(), 200, async (calls) => {
+      await run("sendRichMessage", {
+        richMessage: '{"blocks":[]}',
+        files: '{"chart":"/tmp/chart.png"}',
+        disableNotification: true,
+      }, ctx);
+      const form = await calls[0].formData();
+      assertEquals(form.get("chat_id"), DEFAULT_CHAT_ID);
+      assertEquals(form.get("rich_message"), '{"blocks":[]}');
+      assertEquals(form.get("disable_notification"), "true");
+      const file = form.get("chart") as File;
+      assertEquals(file.name, "chart.png");
+      assertEquals(file.size, 2);
+    });
+  });
+});
+
+Deno.test("sendRichMessage: API error surfaces and writes nothing", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse(ERROR_BODY, 400, async () => {
+    await assertRejects(
+      () => run("sendRichMessage", { richMessage: "{}" }, ctx),
+      Error,
+      "Telegram API error (sendRichMessage): 400",
+    );
+  });
+  assertEquals(written.length, 0);
+});
+
+Deno.test("sendMessage: replyMarkup object is JSON-serialised; string passes through", async () => {
+  const { ctx } = makeCtx();
+  const kb = { inline_keyboard: [[{ text: "ACK", callback_data: "ack:1" }]] };
+  await withOneResponse(OK_MESSAGE(), 200, async (calls) => {
+    await run("sendMessage", { text: "t", replyMarkup: kb }, ctx);
+    await run("sendMessage", { text: "t", replyMarkup: '{"x":1}' }, ctx);
+    await run("sendMessage", { text: "t" }, ctx);
+    assertEquals(
+      (await requestJsonBody(calls[0])).reply_markup,
+      JSON.stringify(kb),
+    );
+    assertEquals((await requestJsonBody(calls[1])).reply_markup, '{"x":1}');
+    assertEquals((await requestJsonBody(calls[2])).reply_markup, undefined);
+  });
+});

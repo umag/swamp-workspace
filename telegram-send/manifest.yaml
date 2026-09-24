@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/telegram-send"
-version: "2026.09.19.2"
+version: "2026.09.24.1"
 description: |
   Send messages, photos, documents, and videos to Telegram chats and channels
   via the Telegram Bot API.
@@ -12,9 +12,20 @@ description: |
   - `sendDocument` — arbitrary file (PDF, ZIP, …) up to 50 MB
   - `sendVideo` — video by URL, Telegram `file_id`, or local file path, with
     optional `width`/`height` so Telegram sizes the player correctly
+  - `sendRichMessage` — Bot API 10.2 block-based rich message (passthrough),
+    with local-file attachments uploaded multipart
+  - `getFile` — download a file the bot received, emitted as base64
+  - `setWebhook` / `getWebhookInfo` / `deleteWebhook` — manage the bot's
+    webhook registration
+  - `sendMessage` also accepts `replyMarkup` (e.g. inline keyboards)
 
-  The `botToken` is stored as a sensitive `globalArgument` and routed to a
-  vault automatically. Set `defaultChatId` on the model instance to avoid
+  Also ships the `@magistr/telegram-webhook` serve webhook scheme: it verifies
+  Telegram's static `X-Telegram-Bot-Api-Secret-Token` header in constant time,
+  so Telegram can call a `swamp serve` webhook directly, and surfaces flat
+  `callback` / `document` / `magnet` views on the update for workflows.
+
+  The `botToken` (and optional `webhookSecret`) are sensitive
+  `globalArguments` routed to a vault automatically. Set `defaultChatId` on the model instance to avoid
   repeating the chat target on every call.
 
   A natural complement to `@magistr/telegram-import`, which goes the other
@@ -27,6 +38,9 @@ paths:
 models:
   - extensions/models/telegram_send.ts
 
+webhooks:
+  - extensions/webhooks/telegram_webhook.ts
+
 additionalFiles:
   - README.md
   - LICENSE.md
@@ -37,3 +51,4 @@ labels:
   - bot
   - notification
   - chat
+  - webhook

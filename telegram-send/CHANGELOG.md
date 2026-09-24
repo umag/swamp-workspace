@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026.09.24.1
+
+### Added
+
+- Ported from the homelab in-repo copy, which had drifted ahead of this package
+  and was shadowing it on `swamp serve`: `getFile` (download a received file as
+  base64), `setWebhook` / `getWebhookInfo` / `deleteWebhook`, `sendRichMessage`
+  (the port deferred since 2026.08.01.1 as
+  `telegram-send-hardening-richmessage-port`), `replyMarkup` on `sendMessage`,
+  and the optional sensitive `webhookSecret` global argument.
+- The `@magistr/telegram-webhook` serve webhook scheme now ships in this package
+  (`extensions/webhooks/telegram_webhook.ts`). It was never published before, so
+  a registry install of this package could not serve `/hooks/telegram`.
+
+### Changed
+
+- Every Bot API and file-download request now goes through one token-redacting
+  `redactedFetch`, including the new `getFile` download URL
+  (`/file/bot<token>/...`) and the `sendRichMessage` multipart upload, which
+  bypassed redaction in the homelab copy.
+- `richMessage` / `files` JSON arguments fail with a named error
+  (`richMessage is not valid JSON: ...`) before any request is sent.
+- Upgrade `2026.09.19.2 -> 2026.09.24.1` carries attributes over unchanged;
+  `webhookSecret` defaults to empty.
+
 ## 2026.09.19.2
 
 ### Changed
