@@ -23,6 +23,7 @@ tests:
     state: present
     files:
       - extensions/models/telegram_send_methods_test.ts
+      - extensions/webhooks/telegram_webhook_test.ts
   adversarial:
     state: present
     files:
@@ -35,6 +36,7 @@ tests:
     state: present
     files:
       - extensions/models/telegram_send_property_test.ts
+      - extensions/webhooks/telegram_webhook_test.ts
 watch:
   state: backlog
   justification: seeded offender at CI-gate rollout — backfill tracked in ext-quality-test-backfill

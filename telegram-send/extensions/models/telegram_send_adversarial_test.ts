@@ -640,3 +640,115 @@ Deno.test("the TOKEN sentinel used throughout the methods/adversarial suites' te
   );
   assert(!TOKEN.includes(":"), "TOKEN sentinel must contain no colon at all");
 });
+
+// ---------------------------------------------------------------------------
+// 2026.09.24.1 port: getFile download, sendRichMessage multipart, setWebhook
+// secret — every new fetch path must redact the token, and malformed JSON
+// arguments must fail loudly before any request is made.
+// ---------------------------------------------------------------------------
+
+const SECRET = "WEBHOOK-SECRET-SENTINEL-DO-NOT-LOG-1111";
+
+Deno.test("adversarial: getFile download rejection carrying the token URL is redacted", async () => {
+  const { ctx } = makeCtx();
+  const original = globalThis.fetch;
+  globalThis.fetch = ((input: Request | URL | string) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.endsWith("/getFile")) {
+      return Promise.resolve(
+        json({ ok: true, result: { file_path: "documents/f" } }),
+      );
+    }
+    return Promise.reject(
+      new TypeError(`error sending request for url (${url})`),
+    );
+  }) as typeof globalThis.fetch;
+  try {
+    const err = await assertRejects(
+      () => run("getFile", { fileId: "F" }, ctx),
+      Error,
+    );
+    assert(!err.message.includes(TOKEN), err.message);
+    assert(err.message.includes(`${API_BASE}/file/bot<redacted>/documents/f`));
+    assert(!String((err.cause as Error)?.stack ?? "").includes(TOKEN));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("adversarial: sendRichMessage multipart rejection is redacted", async () => {
+  const { ctx } = makeCtx();
+  await withReadFileStub(new Uint8Array([1]), async () => {
+    await withRejectingFetch(
+      new TypeError(
+        `error sending request for url (${API_BASE}/bot${TOKEN}/sendRichMessage)`,
+      ),
+      async () => {
+        const err = await assertRejects(
+          () =>
+            run("sendRichMessage", {
+              richMessage: '{"blocks":[]}',
+              files: '{"a":"/tmp/a.png"}',
+            }, ctx),
+          Error,
+        );
+        assert(!err.message.includes(TOKEN), err.message);
+        assert(err.message.includes("/bot<redacted>/sendRichMessage"));
+      },
+    );
+  });
+});
+
+for (
+  const [field, args] of [
+    ["richMessage", { richMessage: "{not json" }],
+    ["files", { richMessage: "{}", files: "[oops" }],
+  ] as const
+) {
+  Deno.test(`adversarial: malformed ${field} JSON throws a named error and sends nothing`, async () => {
+    const { ctx, written } = makeCtx();
+    await withFetchStub([], async (calls) => {
+      await assertRejects(
+        () => run("sendRichMessage", { ...args }, ctx),
+        Error,
+        `${field} is not valid JSON`,
+      );
+      assertEquals(calls.length, 0);
+    });
+    assertEquals(written.length, 0);
+  });
+}
+
+Deno.test("adversarial: setWebhook never writes the secret into the resource or an error", async () => {
+  const written: Written[] = [];
+  const ctx = {
+    globalArgs: { ...GLOBAL_ARGS, webhookSecret: SECRET },
+    writeResource: (spec: string, name: string, payload: unknown) => {
+      written.push({ spec, name, payload: payload as Record<string, unknown> });
+      return Promise.resolve({ spec, name });
+    },
+  };
+  await withOneResponse({ ok: true, result: true }, async () => {
+    await run("setWebhook", { url: "https://h/x" }, ctx);
+  });
+  const s = JSON.stringify(written);
+  assert(!s.includes(SECRET) && !s.includes(TOKEN), s);
+  await withFetchStub(
+    [() => json({ ok: false, error_code: 400, description: "bad url" }, 400)],
+    async () => {
+      const err = await assertRejects(
+        () => run("setWebhook", { url: "ftp://nope" }, ctx),
+        Error,
+      );
+      assert(!err.message.includes(SECRET) && !err.message.includes(TOKEN));
+    },
+  );
+});
+
+Deno.test("adversarial: webhookSecret is marked sensitive so swamp routes it to a vault", () => {
+  const shape = (model.globalArguments as unknown as {
+    shape: Record<string, { meta: () => Record<string, unknown> | undefined }>;
+  }).shape;
+  assertEquals(shape.webhookSecret.meta()?.sensitive, true);
+  assertEquals(shape.botToken.meta()?.sensitive, true);
+});

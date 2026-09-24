@@ -22,7 +22,14 @@
  * (`deno task test:soak`, FC_NUM_RUNS=10000).
  */
 import fc from "npm:fast-check@4.8.0";
-import { isLocalPath, model, resolveChatId } from "./telegram_send.ts";
+import {
+  bytesToBase64,
+  isLocalPath,
+  model,
+  parseJsonArg,
+  resolveChatId,
+  serializeReplyMarkup,
+} from "./telegram_send.ts";
 
 // Property iteration count — overridable for the nightly soak via
 // FC_NUM_RUNS (e.g. FC_NUM_RUNS=10000 deno task test:soak).
@@ -256,6 +263,63 @@ Deno.test("property: sendMessage's written messageId always equals the wire mess
           res.name === `msg-${messageId}`;
       },
     ),
+    FC_RUNS,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 2026.09.24.1 helpers.
+// ---------------------------------------------------------------------------
+
+Deno.test("property: bytesToBase64 round-trips any byte array through atob", () => {
+  fc.assert(
+    fc.property(fc.uint8Array({ maxLength: 40000 }), (bytes) => {
+      const back = Uint8Array.from(
+        atob(bytesToBase64(bytes)),
+        (c) => c.charCodeAt(0),
+      );
+      return back.length === bytes.length &&
+        back.every((b, i) => b === bytes[i]);
+    }),
+    FC_RUNS,
+  );
+});
+
+Deno.test("property: serializeReplyMarkup(object) parses back to the same object; strings are untouched", () => {
+  fc.assert(
+    fc.property(
+      fc.dictionary(fc.string(), fc.jsonValue()),
+      fc.string(),
+      (obj, s) => {
+        const out = serializeReplyMarkup(obj as Record<string, unknown>);
+        return JSON.stringify(JSON.parse(out as string)) ===
+            JSON.stringify(obj) && serializeReplyMarkup(s) === s;
+      },
+    ),
+    FC_RUNS,
+  );
+});
+
+Deno.test("property: parseJsonArg inverts JSON.stringify and names the arg on any failure", () => {
+  fc.assert(
+    fc.property(fc.jsonValue(), fc.string(), (v, junk) => {
+      const ok = JSON.stringify(parseJsonArg("a", JSON.stringify(v))) ===
+        JSON.stringify(v);
+      let named = true;
+      try {
+        JSON.parse(junk);
+      } catch {
+        try {
+          parseJsonArg("richMessage", junk);
+          named = false;
+        } catch (e) {
+          named = (e as Error).message.startsWith(
+            "richMessage is not valid JSON",
+          );
+        }
+      }
+      return ok && named;
+    }),
     FC_RUNS,
   );
 });

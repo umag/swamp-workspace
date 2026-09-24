@@ -9,7 +9,13 @@
  */
 import { assertEquals, assertThrows } from "jsr:@std/assert@1";
 import { z } from "npm:zod@4";
-import { model, resolveChatId } from "./telegram_send.ts";
+import {
+  bytesToBase64,
+  model,
+  parseJsonArg,
+  resolveChatId,
+  serializeReplyMarkup,
+} from "./telegram_send.ts";
 
 const TOKEN = "FAKE-BOT-TOKEN-SENTINEL-DO-NOT-LOG-0000";
 const DEFAULT_CHAT_ID = "555000111";
@@ -383,4 +389,53 @@ Deno.test("reviewer-gap: SentMessageSchema itself permits BOTH text and caption 
   }) as { text?: string; caption?: string };
   assertEquals(parsed.text, "both");
   assertEquals(parsed.caption, "both");
+});
+
+// ---------------------------------------------------------------------------
+// 2026.09.24.1 helpers — every branch.
+// ---------------------------------------------------------------------------
+
+Deno.test("coverage: serializeReplyMarkup — undefined / string / object branches", () => {
+  assertEquals(serializeReplyMarkup(undefined), undefined);
+  assertEquals(serializeReplyMarkup('{"a":1}'), '{"a":1}');
+  assertEquals(serializeReplyMarkup({ a: [1] }), '{"a":[1]}');
+});
+
+Deno.test("coverage: parseJsonArg — valid value and named failure", () => {
+  assertEquals(parseJsonArg("x", '{"k":[1,2]}'), { k: [1, 2] });
+  assertThrows(
+    () => parseJsonArg("files", "{"),
+    Error,
+    "files is not valid JSON",
+  );
+});
+
+Deno.test("coverage: bytesToBase64 — empty, small, and multi-chunk inputs", () => {
+  assertEquals(bytesToBase64(new Uint8Array()), "");
+  assertEquals(bytesToBase64(new TextEncoder().encode("hi")), "aGk=");
+  const big = new Uint8Array(0x8000 * 2 + 5).map((_, i) => i % 256);
+  const decoded = Uint8Array.from(
+    atob(bytesToBase64(big)),
+    (c) => c.charCodeAt(0),
+  );
+  assertEquals(decoded, big);
+});
+
+Deno.test("coverage: every ported method and resource is registered", () => {
+  for (
+    const m of [
+      "getFile",
+      "setWebhook",
+      "getWebhookInfo",
+      "deleteWebhook",
+      "sendRichMessage",
+    ]
+  ) {
+    assertEquals(m in model.methods, true, m);
+  }
+  for (const r of ["webhookInfo", "downloadedFile"]) {
+    assertEquals(r in model.resources, true, r);
+  }
+  assertEquals(model.version, "2026.09.24.1");
+  assertEquals(model.upgrades.at(-1)?.toVersion, model.version);
 });
