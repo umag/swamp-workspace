@@ -479,3 +479,13 @@ Deno.test("isExcludedPath drops SQLite catalogs and in-flight temp files", () =>
   // `.db` only as a suffix of the basename, not a directory component.
   assertEquals(isExcludedPath("data/my.db/raw"), false);
 });
+
+Deno.test("isExcludedPath drops the core catalog export at any prefix", () => {
+  // Core rewrites a full catalog snapshot after every push; nothing here reads
+  // it back, and every rewrite orphaned an 85–290 MB blob.
+  assertEquals(isExcludedPath(".catalog-export.json"), true);
+  assertEquals(isExcludedPath("dev-tmp-swamp/.catalog-export.json"), true);
+  // Only the exact basename.
+  assertEquals(isExcludedPath("data/x/catalog-export.json"), false);
+  assertEquals(isExcludedPath("data/x/.catalog-export.json.bak"), false);
+});

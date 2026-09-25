@@ -2,11 +2,17 @@ import { type AnyBulkWriteOperation, Binary } from "npm:mongodb@6.17.0";
 import type { ClientHandle } from "./client.ts";
 import {
   blobsCollectionName,
+  catalogCollectionName,
   controlCollectionName,
   EXTENSION_VERSION,
   type MongoDatastoreConfig,
   pathsCollectionName,
 } from "./config.ts";
+import {
+  type CatalogRowsStore,
+  readForeignCatalog,
+  syncCatalogRows,
+} from "./catalog_rows.ts";
 import {
   getSidecar,
   reconcileWatermark,
@@ -83,6 +89,17 @@ export interface DatastoreSyncService {
     options?: DatastoreSyncOptions,
   ): Promise<number>;
   controlPlaneStore?(): ControlPlaneStore;
+  // `swamp datastore catalog pull`: every catalog row of each foreign
+  // namespace; namespaces with no rows are omitted.
+  pullForeignCatalogs?(
+    namespaces: readonly string[],
+  ): Promise<Array<{ namespace: string; rows: Record<string, unknown>[] }>>;
+  // One tier-relative file of a foreign namespace, or null when it has no
+  // live manifest doc. Core caches the bytes for the command only.
+  fetchForeignContent?(
+    namespace: string,
+    relPath: string,
+  ): Promise<Uint8Array | null>;
 }
 
 /** Shared with the provider so the verifier can report the core namespace. */
@@ -197,8 +214,13 @@ export function isSecretsPath(relPath: string): boolean {
 //     itself is a rebuildable local index.
 //   *.tmp.<pid>.<uuid> — in-flight writeFileAtomic / sidecar staging files.
 //     Catching one mid-write pushes a torn blob.
+//   .catalog-export.json — core rewrites a full catalog snapshot (85–290 MB)
+//     and marks it dirty after every push. Its only reader is
+//     pullForeignCatalogs, which this datastore does not implement, so the
+//     file is write-only here — yet each rewrite orphaned its previous blob
+//     (~140 GB of sweepable garbage in a month) and cold pulls downloaded it.
 const EXCLUDED_BASENAME_RE =
-  /(?:\.db|\.db-wal|\.db-shm)$|\.tmp\.\d+\.[0-9a-f-]+$/;
+  /(?:\.db|\.db-wal|\.db-shm)$|\.tmp\.\d+\.[0-9a-f-]+$|^\.catalog-export\.json$/;
 
 export function isExcludedPath(relPath: string): boolean {
   const slash = relPath.lastIndexOf("/");
@@ -297,6 +319,7 @@ export function createSyncService(
     paths: PathsStore;
     blobs: BlobsStore;
     control: ControlStore;
+    catalog: CatalogRowsStore;
   }> {
     const { client } = await getClient(repoDir);
     const db = client.db(cfg.database);
@@ -309,11 +332,41 @@ export function createSyncService(
     const control = db.collection(
       controlCollectionName(cfg),
     ) as unknown as ControlStore;
+    const catalog = db.collection(
+      catalogCollectionName(cfg),
+    ) as unknown as CatalogRowsStore;
     if (!updatedAtIndexEnsured) {
       await paths.createIndex({ updatedAt: 1 }).catch(() => undefined);
       updatedAtIndexEnsured = true;
     }
-    return { paths, blobs, control };
+    return { paths, blobs, control, catalog };
+  }
+
+  // Another namespace's collections. Collections are keyed by the config
+  // namespace, which equals the core namespace in every real deployment.
+  async function foreign(ns: string): Promise<{
+    paths: PathsStore;
+    blobs: BlobsStore;
+    catalog: CatalogRowsStore;
+  }> {
+    const { client } = await getClient(repoDir);
+    const db = client.db(cfg.database);
+    const fcfg = { ...cfg, namespace: ns };
+    return {
+      paths: db.collection(pathsCollectionName(fcfg)) as unknown as PathsStore,
+      blobs: db.collection(blobsCollectionName(fcfg)) as unknown as BlobsStore,
+      catalog: db.collection(
+        catalogCollectionName(fcfg),
+      ) as unknown as CatalogRowsStore,
+    };
+  }
+
+  // Core rewrites the catalog export before every push; publish its changed
+  // rows. Runs after the path commit settled, so a failure here never undoes
+  // or repeats file sync — the untouched row state retries on the next push.
+  async function publishCatalog(ns: string | undefined): Promise<number> {
+    const { catalog } = await resources();
+    return await syncCatalogRows(catalog, localRoot(ns));
   }
 
   function poolConcurrency(): number {
@@ -831,7 +884,7 @@ export function createSyncService(
     const changes = await commit(paths, m);
     await settle(m);
     await stampClient(control, m.namespace);
-    return changes;
+    return changes + await publishCatalog(m.namespace);
   }
 
   return {
@@ -849,9 +902,13 @@ export function createSyncService(
     // The dirty sidecar remains the authoritative source of what to push;
     // `context.models` is advisory (matches the s3 reference, whose push
     // stays diff-driven). We don't scope the push by it.
+    // The catalog export never enters the dirty journal (isExcludedPath), so
+    // a push with no dirty files still publishes it.
     async pushChanged(options?: DatastoreSyncOptions): Promise<number> {
       const m = await prepare(options);
-      if (m.mode === "roots" && m.dirtyRoots.length === 0) return 0;
+      if (m.mode === "roots" && m.dirtyRoots.length === 0) {
+        return await publishCatalog(m.namespace);
+      }
       return await commitAndSettle(m, options);
     },
 
@@ -864,7 +921,10 @@ export function createSyncService(
       options?: DatastoreSyncOptions,
     ): Promise<number> {
       const m = manifest as unknown as InternalPushManifest;
-      if (m.mode === "roots" && m.dirtyRoots.length === 0) return 0;
+      if (m.mode === "roots" && m.dirtyRoots.length === 0) {
+        bind(options);
+        return await publishCatalog(m.namespace);
+      }
       return await commitAndSettle(m, options);
     },
 
@@ -935,6 +995,34 @@ export function createSyncService(
         async () => (await resources()).control,
         holder.current,
       );
+    },
+
+    async pullForeignCatalogs(
+      namespaces: readonly string[],
+    ): Promise<Array<{ namespace: string; rows: Record<string, unknown>[] }>> {
+      const out = [];
+      for (const ns of namespaces) {
+        const rows = await readForeignCatalog((await foreign(ns)).catalog);
+        if (rows.length > 0) out.push({ namespace: ns, rows });
+      }
+      return out;
+    },
+
+    // Same lookup as hydrateFile (bare id, then legacy `<ns>/` id), against
+    // the foreign namespace's collections; nothing is written locally.
+    async fetchForeignContent(
+      namespace: string,
+      relPath: string,
+    ): Promise<Uint8Array | null> {
+      if (isSecretsPath(relPath)) return null;
+      const { paths, blobs } = await foreign(namespace);
+      let doc = await paths.findOne({ _id: relPath });
+      if (doc === null || doc.deletedAt !== null) {
+        const legacy = await paths.findOne({ _id: `${namespace}/${relPath}` });
+        if (legacy !== null && legacy.deletedAt === null) doc = legacy;
+      }
+      if (doc === null || doc.deletedAt !== null) return null;
+      return await fetchBlobBytes(blobs, doc.hash);
     },
   };
 }

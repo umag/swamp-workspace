@@ -495,6 +495,185 @@ Deno.test("sync: markDirty for a namespaced relPath is pushed tier-relative by t
   }
 });
 
+Deno.test("sync: core's catalog export is never pushed — no path doc, no blob", async () => {
+  const s = await bootstrapped();
+  try {
+    // Exactly what core's writeCatalogExportIfNeeded does after every push.
+    await writeLocal(s.cacheDir, `${NS}/.catalog-export.json`, "[{}]");
+    await s.svc.markDirty({
+      relPath: `${NS}/.catalog-export.json`,
+      namespace: NS,
+    });
+    await s.svc.pushChanged({ namespace: NS });
+    assertEquals(s.paths.docs().map((d) => d._id), ["data/m/i/n/1/raw"]);
+    assert(
+      !s.blobs.store.has(await sha256Hex(enc("[{}]"))),
+      "catalog export bytes must not reach _blobs",
+    );
+  } finally {
+    await s.cleanup();
+  }
+});
+
+const catalogRow = (name: string, version: number) => ({
+  namespace: NS,
+  type_normalized: "@a/b",
+  model_id: "m",
+  data_name: name,
+  id: `${name}-${version}`,
+  version,
+  is_latest: 1,
+  model_name: "model",
+  spec_name: "spec",
+  data_type: "resource",
+  content_type: "application/json",
+  lifetime: "infinite",
+  owner_type: "model-method",
+  streaming: 0,
+  size: 2,
+  created_at: "2026-09-25T00:00:00.000Z",
+  tags: "{}",
+  owner_ref: "m",
+  workflow_run_id: "",
+  workflow_name: "",
+  job_name: "",
+  step_name: "",
+  source: "",
+});
+
+Deno.test("sync: a push publishes the catalog export as row documents in _catalog", async () => {
+  const s = await bootstrapped();
+  try {
+    await writeLocal(
+      s.cacheDir,
+      `${NS}/.catalog-export.json`,
+      `[${JSON.stringify(catalogRow("n", 1))}]\n`,
+    );
+    await s.svc.markDirty({
+      relPath: `${NS}/.catalog-export.json`,
+      namespace: NS,
+    });
+    await s.svc.pushChanged({ namespace: NS });
+    const catalog = s.db.collection(`${PREFIX}_catalog`);
+    assertEquals(catalog.docs().length, 1);
+    assertEquals(catalog.docs()[0].data_name, "n");
+  } finally {
+    await s.cleanup();
+  }
+});
+
+Deno.test("sync: a push with only the catalog export dirty still publishes its rows", async () => {
+  const s = await bootstrapped();
+  try {
+    await s.svc.pushChanged({ namespace: NS }); // settles data/m/i/n/1/raw
+    // `swamp datastore sync --push` shape: export rewritten, nothing else dirty.
+    await writeLocal(
+      s.cacheDir,
+      `${NS}/.catalog-export.json`,
+      `[${JSON.stringify(catalogRow("n", 1))}]\n`,
+    );
+    await s.svc.markDirty({
+      relPath: `${NS}/.catalog-export.json`,
+      namespace: NS,
+    });
+    await s.svc.pushChanged({ namespace: NS });
+    assertEquals(s.db.collection(`${PREFIX}_catalog`).docs().length, 1);
+  } finally {
+    await s.cleanup();
+  }
+});
+
+Deno.test("sync: pullForeignCatalogs returns another namespace's rows and skips empty ones", async () => {
+  const s = await setup();
+  try {
+    const foreign = s.db.collection("t_default_r_infra_catalog");
+    foreign.seed([{
+      _id: "k",
+      h: "x",
+      ...catalogRow("a", 1),
+      namespace: "infra",
+    }]);
+    const svc = s.svc as unknown as {
+      pullForeignCatalogs(
+        ns: readonly string[],
+      ): Promise<Array<{ namespace: string; rows: unknown[] }>>;
+    };
+    const entries = await svc.pullForeignCatalogs(["infra", "empty"]);
+    assertEquals(entries.map((e) => e.namespace), ["infra"]);
+    assertEquals(entries[0].rows, [{
+      ...catalogRow("a", 1),
+      namespace: "infra",
+    }]);
+  } finally {
+    await s.cleanup();
+  }
+});
+
+Deno.test("sync: fetchForeignContent reads a live file from another namespace, bare or legacy id", async () => {
+  const s = await setup();
+  try {
+    const fPaths = s.db.collection("t_default_r_infra_paths");
+    const fBlobs = s.db.collection("t_default_r_infra_blobs");
+    await remoteFile(
+      fPaths,
+      fBlobs,
+      "data/a/b/n/1/raw",
+      '{"x":1}',
+      T("2026-09-01T00:00:00Z"),
+    );
+    await remoteFile(
+      fPaths,
+      fBlobs,
+      "infra/data/a/b/old/1/raw",
+      "{}",
+      T("2026-09-01T00:00:00Z"),
+    );
+    await remoteFile(
+      fPaths,
+      fBlobs,
+      "data/a/b/gone/1/raw",
+      "{}",
+      T("2026-09-01T00:00:00Z"),
+      T("2026-09-02T00:00:00Z"),
+    );
+    const svc = s.svc as unknown as {
+      fetchForeignContent(ns: string, rel: string): Promise<Uint8Array | null>;
+    };
+    const bytes = await svc.fetchForeignContent("infra", "data/a/b/n/1/raw");
+    assertEquals(new TextDecoder().decode(bytes!), '{"x":1}');
+    assert(
+      (await svc.fetchForeignContent("infra", "data/a/b/old/1/raw")) !== null,
+    );
+    assertEquals(
+      await svc.fetchForeignContent("infra", "data/a/b/gone/1/raw"),
+      null,
+    );
+    assertEquals(await svc.fetchForeignContent("infra", "secrets/x"), null);
+  } finally {
+    await s.cleanup();
+  }
+});
+
+Deno.test("sync: a remote catalog export left by an older version is not pulled", async () => {
+  const s = await setup();
+  try {
+    await remoteFile(
+      s.paths,
+      s.blobs,
+      ".catalog-export.json",
+      "[{}]",
+      T("2026-09-01T00:00:00Z"),
+    );
+    await s.svc.pullChanged({ namespace: NS });
+    assertEquals(
+      await readLocal(s.cacheDir, `${NS}/.catalog-export.json`),
+      null,
+    );
+  } finally {
+    await s.cleanup();
+  }
+});
+
 Deno.test("sync: hydrateFile maps a namespaced cache-relative path to its tier-relative remote id", async () => {
   const s = await setup();
   try {

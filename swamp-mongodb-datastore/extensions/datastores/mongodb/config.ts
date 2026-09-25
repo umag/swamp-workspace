@@ -80,6 +80,10 @@ export function controlCollectionName(cfg: MongoDatastoreConfig): string {
   return `${collectionPrefix(cfg)}_control`;
 }
 
+export function catalogCollectionName(cfg: MongoDatastoreConfig): string {
+  return `${collectionPrefix(cfg)}_catalog`;
+}
+
 /** Migration journal headers — one document per migration run. */
 export function migrationsCollectionName(cfg: MongoDatastoreConfig): string {
   return `${collectionPrefix(cfg)}_migrations`;

@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026.09.25.1
+
+### Fixed
+
+- **The catalog export no longer leaves orphan blobs.** Core rewrites a full
+  catalog snapshot, `<ns>/.catalog-export.json` (85–290 MB), and marks it dirty
+  after every push. Synced as a file into content-addressed blobs, each rewrite
+  orphaned the previous snapshot until a sweep ran: about 140 GB across two
+  namespaces in one month. The file itself no longer syncs; it matches
+  `isExcludedPath` alongside the SQLite catalogs.
+
+### Added
+
+- **`_catalog` collection.** It holds one document per catalog row, keyed by
+  core's primary key. Each push writes only the rows whose content changed since
+  this host last published, which is usually two rows per new data version, not
+  a 290 MB upload.
+  - An unchanged row is recognised by a hash of its raw bytes and is never
+    parsed.
+  - Retraction is per host: a host deletes only rows it published earlier and no
+    longer holds, so a peer that has not pulled can never erase or revert newer
+    rows.
+  - A host's first sync reads the remote row hashes, so identical rows are not
+    rewritten.
+  - An emptied remote collection is republished in full.
+  - The host-local state is `<ns>/.catalog-rows.state`, 8 bytes per row.
+- **`pullForeignCatalogs`.** `swamp datastore catalog pull --namespaces a,b` now
+  works against this datastore. It reads the foreign namespaces' `_catalog`
+  rows.
+- **`fetchForeignContent`.** Cross-namespace `data.query` hydration reads a
+  foreign namespace's live file: bare id first, then the legacy `<ns>/` id.
+  Nothing is written locally.
+
+### Upgrade notes
+
+- Remote path docs that older clients wrote for `.catalog-export.json` stay live
+  until a full-walk push tombstones them. Each one pins a single blob. Run
+  `sweep` and then `compact` once to reclaim the orphans that have already built
+  up.
+
 ## 2026.09.19.2
 
 ### Changed
