@@ -231,7 +231,7 @@ async function collStats(
  */
 export const model = {
   type: "@magistr/mongodb-datastore/maintenance",
-  version: "2026.09.19.2",
+  version: "2026.09.25.1",
   upgrades: [
     {
       fromVersion: "2026.08.19.1",
@@ -257,6 +257,12 @@ export const model = {
       toVersion: "2026.09.19.2",
       description:
         "Version bump — repo-wide maintenance release; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.09.25.1",
+      description:
+        "Version bump — the datastore stores the catalog export as _catalog rows instead of a synced file; no model schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

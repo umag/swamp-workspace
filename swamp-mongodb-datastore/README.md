@@ -120,7 +120,7 @@ belongs to.
 | `controlPlane`   | `_control` collection, `putIfAbsent` supported.                                                                             |
 | `configRefresh`  | `pullChanged({subdirs})` fetches only the listed prefixes (serve's config and access pollers).                              |
 
-Collections per namespace: `_paths`, `_blobs`, `_locks`, `_control`,
+Collections per namespace: `_paths`, `_blobs`, `_locks`, `_control`, `_catalog`,
 `_migrations`, `_migration_ops`. Anyone with the database user can read all of
 them — blobs, the path manifest, locks, control records **including serve's
 token secrets**, and migration before-images (path metadata only; control
@@ -349,6 +349,18 @@ window (30 days by default) — revert within that window.
   nothing off the machine that made it, and both it and `-wal` churn on every
   command — syncing them re-uploaded a blob per invocation for bytes no peer
   could correctly consume.
+- **The catalog export is stored as rows, not a file.** Core rewrites
+  `<ns>/.catalog-export.json` (the whole catalog, hundreds of MB) before every
+  push. It never syncs as a file; instead each push publishes to `_catalog` only
+  the rows whose content changed since this host last published (one document
+  per catalog row, keyed by core's primary key), and retracts rows it published
+  that are gone. A host never deletes or reverts rows a peer published and it
+  has not seen. `_catalog` backs `pullForeignCatalogs`
+  (`swamp datastore catalog
+  pull`) and `fetchForeignContent` serves the
+  foreign bytes. Cost per push on a 290k-row catalog: about 2 s of CPU and 300
+  MB of peak RSS, plus the changed rows; the host-local state is
+  `<ns>/.catalog-rows.state` (8 bytes per row).
 - **Two watermarks, not one.** `lastPulledAt` tracks hydrated content and drives
   pull; `lastReconciledAt` tracks when this cache last enumerated the complete
   remote path list and drives the push tombstone pass. They must stay separate:
