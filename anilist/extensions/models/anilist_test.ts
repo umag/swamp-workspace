@@ -373,6 +373,39 @@ Deno.test("contract: seasonal.json — season/seasonYear echoed, nextAiringEpiso
   );
 });
 
+Deno.test("contract: seasonal.json — requests description/tags/relations and passes them through", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [queryRoute(
+      "media(season: $season, seasonYear: $seasonYear",
+      seasonalFixture,
+    )],
+    async (calls) => {
+      await run("seasonal", {
+        season: "SUMMER",
+        seasonYear: 2026,
+        perPage: 50,
+        page: 1,
+      }, ctx);
+      const { query } = await requestBody(calls[0]);
+      assert(query.includes("description(asHtml: false)"));
+      assert(query.includes("tags { name rank isMediaSpoiler }"));
+      assert(query.includes("relations { edges { relationType"));
+    },
+  );
+  const res = written.find((w) => w.spec === "seasonal")!;
+  const results = res.payload.results as Array<Record<string, unknown>>;
+  assertEquals(
+    results[0].description,
+    "A lighthouse keeper keeps finding letters from a ship that sank decades ago.",
+  );
+  assertEquals((results[0].tags as unknown[]).length, 2);
+  const edges =
+    (results[0].relations as { edges: Array<{ relationType: string }> })
+      .edges;
+  assertEquals(edges[0].relationType, "PREQUEL");
+});
+
 // ---------------------------------------------------------------------------
 // watching.json contract — WATCHING_QUERY
 // ---------------------------------------------------------------------------

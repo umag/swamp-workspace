@@ -372,6 +372,9 @@ query ($season: MediaSeason!, $seasonYear: Int!, $type: MediaType, $page: Int, $
       format status episodes
       averageScore meanScore popularity
       genres seasonYear season
+      description(asHtml: false)
+      tags { name rank isMediaSpoiler }
+      relations { edges { relationType node { id type title { romaji english } } } }
       startDate { year month day }
       nextAiringEpisode { episode airingAt timeUntilAiring }
       siteUrl
@@ -1569,7 +1572,7 @@ const ActivityItemSchema = z.object({
  */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.09.21.1",
+  version: "2026.09.26.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -1619,6 +1622,13 @@ export const model = {
       toVersion: "2026.09.21.1",
       description:
         "Scores now honour each user's preferred AniList scale (mediaListOptions.scoreFormat). The recent-activity digest renders scores in that scale — stars for POINT_5, a smiley for POINT_3, N/max otherwise — by piggy-backing scoreFormat on the existing score-enrichment fetch (no extra request); an unknown/absent format falls back to the old bare `score N`. The userlist and set-score data paths surface `scoreFormat` alongside the score so consumers can interpret it. Purely additive: every new field is optional and no stored resource is reshaped",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      fromVersion: "2026.09.21.1",
+      toVersion: "2026.09.26.1",
+      description:
+        "seasonal now returns each title's synopsis (description, plain text), tags (name, rank, isMediaSpoiler) and relations (relationType + related node id/type/title). Purely additive: new fields on each seasonal result, no stored resource reshaped",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

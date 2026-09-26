@@ -21,17 +21,53 @@
           "averageScore": 85,
           "meanScore": 84,
           "popularity": 20000,
-          "genres": ["Mystery"],
+          "genres": [
+            "Mystery"
+          ],
           "seasonYear": 2026,
           "season": "SUMMER",
-          "startDate": { "year": 2026, "month": 7, "day": 1 },
+          "startDate": {
+            "year": 2026,
+            "month": 7,
+            "day": 1
+          },
           "nextAiringEpisode": {
             "airingAt": 1720000000,
             "episode": 4,
             "timeUntilAiring": 259200
           },
           "siteUrl": "https://anilist.co/anime/90003",
-          "coverImage": { "large": "https://fixtures.example/covers/90003.jpg" }
+          "coverImage": {
+            "large": "https://fixtures.example/covers/90003.jpg"
+          },
+          "description": "A lighthouse keeper keeps finding letters from a ship that sank decades ago.",
+          "tags": [
+            {
+              "name": "Mystery",
+              "rank": 90,
+              "isMediaSpoiler": false
+            },
+            {
+              "name": "Twist Ending",
+              "rank": 80,
+              "isMediaSpoiler": true
+            }
+          ],
+          "relations": {
+            "edges": [
+              {
+                "relationType": "PREQUEL",
+                "node": {
+                  "id": 90002,
+                  "type": "ANIME",
+                  "title": {
+                    "romaji": "Quiet Horizon Zero",
+                    "english": null
+                  }
+                }
+              }
+            ]
+          }
         }
       ]
     }
