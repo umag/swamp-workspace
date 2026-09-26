@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.09.26.1
+
+### Added
+
+- **`seasonal` returns synopses, tags and relations.** `SEASONAL_QUERY` now
+  requests `description(asHtml: false)`, `tags { name rank isMediaSpoiler }` and
+  `relations { edges { relationType node { id type title } } } }`, so a season
+  can be ranked by story ideas rather than genres alone, and sequels can be
+  matched to a user's list by media id instead of by title. Purely additive: new
+  fields on each result, no stored resource reshaped; same single request.
+
 ## 2026.09.21.1
 
 ### Added

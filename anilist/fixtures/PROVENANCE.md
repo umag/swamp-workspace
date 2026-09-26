@@ -94,7 +94,7 @@ literals when a value could plausibly resemble a real secret.
 | `media-details.json` | `DETAILS_QUERY`         | `{data:{Media:{...}}}` — single media with studios/staff/relations/recommendations/tags/externalLinks                           |
 | `userlist.json`      | `USERLIST_QUERY`        | `{data:{MediaListCollection:{lists[]}}}` — two lists (Completed, Planning)                                                      |
 | `trending.json`      | `TRENDING_QUERY`        | `{data:{Page:{pageInfo,media[]}}}` — one trending result                                                                        |
-| `seasonal.json`      | `SEASONAL_QUERY`        | `{data:{Page:{pageInfo,media[]}}}` — one seasonal result with `nextAiringEpisode`                                               |
+| `seasonal.json`      | `SEASONAL_QUERY`        | `{data:{Page:{pageInfo,media[]}}}` — one seasonal result with `nextAiringEpisode`, synopsis, tags, relations                    |
 | `watching.json`      | `WATCHING_QUERY`        | `{data:{MediaListCollection:{lists[].entries[]}}}` — CURRENT list, one airing/one finished                                      |
 | `activities.json`    | `ACTIVITIES_QUERY`      | `{data:{Page:{pageInfo,activities[]}}}` — 3 activities, one consumption, one non-consumption ("plans to watch"), one completion |
 | `user-id.json`       | `USER_ID_QUERY`         | `{data:{User:{id,name}}}`                                                                                                       |
