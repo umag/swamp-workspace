@@ -1,0 +1,51 @@
+manifestVersion: 1
+name: "@magistr/gtoolkit"
+version: "2026.09.27.1"
+description: |
+  Drive a running Glamorous Toolkit (GT) from swamp — and so from Claude.
+
+  GT ships its own MCP server (GtLMcpServer) with the tools of its LLM
+  harness. This model starts GT with that server on and talks to it; it does
+  not reimplement GT. Methods:
+
+  - `start` / `stop` / `status` — launch GT with the MCP server (idempotent),
+    quit it (optionally saving the image), report reachability, tool count,
+    open windows and GT processes.
+  - `eval` — evaluate Smalltalk; the result lands in GT's object storage and
+    comes back with an objectId, class, print string and its views.
+  - `view` — render any Phlow view of a stored object (list, columned list,
+    tree, text) to rows, through Phlow's declarative specifications.
+  - `open` — open row N of a view, as a click in GT would; a new objectId.
+  - `inspect` — open a GT inspector window on an object, for the human.
+  - `screenshot` — PNG of a GT window or of one view rendered offscreen, for
+    views that are pictures (graphs, explicit views).
+  - `tools` / `tool` — every tool GT's server exposes: class and method
+    search, Lepiter pages and snippets, compiling methods, running examples.
+
+  Every caller value that becomes Smalltalk is quoted as a string literal or
+  checked against a strict identifier/selector/object-id grammar. Large
+  results travel through files, since GT truncates print strings at 50 000
+  characters.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/gtoolkit.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - CHANGELOG.md
+
+platforms: []
+
+labels:
+  - glamorous-toolkit
+  - gtoolkit
+  - pharo
+  - smalltalk
+  - moldable-development
+  - mcp
+  - claude-code

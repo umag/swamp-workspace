@@ -1,0 +1,24 @@
+{
+  "spec": {
+    "methodSelector": null,
+    "viewName": "GtPhlowTextEditorViewSpecification",
+    "actionSpecifications": [
+      {
+        "__typeName": "GtPhlowButtonActionSpecification",
+        "priority": 51,
+        "__typeLabel": "phlowButtonActionSpecification",
+        "tooltipText": "Update",
+        "methodSelector": null,
+        "iconStencil": {
+          "__typeName": "GtPhlowPngBytesIconStencil",
+          "pngBytes": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAsUlEQVR4XmOgNdAAYiZKDGgA4gNALEqOZmYgng7E/4H4BRDbk6KxFojfQzXD8B8g1ifGgPVA/A+Iu4F4OVTzayB2JEZzCFRDIlIY7ANicWKdDwqwM0h8bVJj4RsQd+GRVyQUmI+AeD4e+RVA/IpQAH4CYkkscjJQF67FZ4AqVNFJIFZCEz8NxN+hqRMv8ATi39CovAbEN6Hsn0DsQWxgigBxBBAvAOJZQBwGxEIMgxIAALE4KGJZy8vuAAAAAElFTkSuQmCC"
+        }
+      }
+    ],
+    "priority": 110,
+    "title": "Print",
+    "dataTransport": 2,
+    "__typeName": "GtPhlowTextEditorViewSpecification"
+  },
+  "text": "File @ /"
+}

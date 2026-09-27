@@ -1,0 +1,60 @@
+# Quality declaration for @magistr/gtoolkit — see ../STANDARD.md.
+#
+# All five suites drive the exported method implementations against a fake GT
+# MCP server (an injected fetch) and in-memory process/file doubles; writes are
+# validated against the model's real Zod schemas. No suite opens a socket or
+# starts GT, so everything runs in CI without Glamorous Toolkit installed. The
+# contract suite pins behaviour to responses recorded from GT v1.1.601.
+schemaVersion: 1
+extension: gtoolkit
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - "extensions/models/gtoolkit_test.ts"
+  methods:
+    state: present
+    files:
+      - "extensions/models/gtoolkit_methods_test.ts"
+  adversarial:
+    state: present
+    files:
+      - "extensions/models/gtoolkit_adversarial_test.ts"
+  coverage:
+    state: present
+    files:
+      - "extensions/models/gtoolkit_coverage_test.ts"
+  property-invariant-flow:
+    state: present
+    files:
+      - "extensions/models/gtoolkit_property_test.ts"
+watch:
+  state: backlog
+  justification: no generalized release-watch yet — tracked in ext-quality-test-backfill
+canary:
+  state: present
+  instance: gt
+  method: status
+  args: {}
+  assert: "data.latest('gt', 'status').attributes.url != ''"
+soak:
+  state: na
+  justification: the test task authority is narrow (read fixtures, one env var) — no permission narrowing needed; this block declares the local run count
+  runs: 5000
+docs:
+  readme:
+    state: present
+    files:
+      - "README.md"
+  changelog:
+    state: present
+    files:
+      - "CHANGELOG.md"
+  skill:
+    state: present
+    files:
+      - ".claude/skills/gtoolkit/SKILL.md"
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"

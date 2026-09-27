@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "serverInfo": {
+      "version": "1.0.0",
+      "name": "Glamorous Toolkit",
+      "title": "Glamorous Toolkit MCP Server"
+    },
+    "instructions": "",
+    "protocolVersion": "2025-06-18",
+    "capabilities": { "completions": {}, "tools": {} }
+  },
+  "id": 1
+}
