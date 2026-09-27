@@ -29,6 +29,7 @@ import {
   assertObjectId,
   assertViewSelector,
   bootScript,
+  INSPECT_CODE,
   renderViewCode,
   sentItemCode,
   viewPngCode,
@@ -802,14 +803,15 @@ export async function runInspect(
     : requireOk(await evaluate(env, args.code, args.bindings), "evaluating")
       .objectId;
   const e = requireOk(
-    await evaluate(env, "obj inspect. obj", { obj: target }),
+    await evaluate(env, INSPECT_CODE, { obj: target }),
     "inspect",
   );
   return [
     await context.writeResource("action", "action-inspect", {
       method: "inspect",
       changed: true,
-      detail: `opened a GT inspector on ${e.printString} (object ${target})`,
+      detail:
+        `queued a GT inspector window on ${e.printString} (object ${target})`,
       pid: null,
       at: deps.now().toISOString(),
     }),

@@ -159,6 +159,20 @@ BlExporter png element: space root; fileName: ${stString(path)}; export.
 space title asString`;
 }
 
+/**
+ * Opens an inspector on `obj` from GT's UI process. MCP requests run in a worker process, and
+ * building editors there raises BrEditorWrongThreadError, so the inspect is queued as a task on
+ * GT's main window (a GtWorld; other spaces such as "Scripter" may never run frames).
+ */
+export const INSPECT_CODE = `| world |
+world := (GtWorld allInstances select: [ :each | each isOpened ])
+	ifEmpty: [ nil ]
+	ifNotEmpty: [ :all | all first ].
+world
+	ifNil: [ obj inspect ]
+	ifNotNil: [ BlTaskAction enqueueElement: world root action: [ obj inspect ] ].
+obj`;
+
 export const WINDOWS_CODE =
   `((BlSpace allSubInstances select: [ :each | each isOpened ]) collect: [ :each | each title asString ]) asArray`;
 

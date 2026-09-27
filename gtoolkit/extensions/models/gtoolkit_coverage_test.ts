@@ -14,6 +14,7 @@ import {
 } from "./gtoolkit.ts";
 import {
   bootScript,
+  INSPECT_CODE,
   renderViewCode,
   windowPngCode,
   WINDOWS_CODE,
@@ -40,6 +41,11 @@ Deno.test("a start past the last row asks GT for no items instead of a negative 
 Deno.test("windows include GtWorld: subclass instances are listed (allSubInstances)", () => {
   assertStringIncludes(WINDOWS_CODE, "allSubInstances");
   assertStringIncludes(windowPngCode("", "/tmp/a.png"), "allSubInstances");
+});
+
+Deno.test("inspect runs on GT's UI frame via its main window, not in the MCP worker process", () => {
+  assertStringIncludes(INSPECT_CODE, "GtWorld allInstances");
+  assertStringIncludes(INSPECT_CODE, "BlTaskAction enqueueElement:");
 });
 
 Deno.test("boot script stops a previous server before starting a new one", () => {

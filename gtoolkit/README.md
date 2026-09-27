@@ -82,7 +82,7 @@ elements, graphs) are reported as such; use `screenshot` for those.
 
 ```sh
 deno task check
-deno task test        # 78 tests, no GT needed: a fake MCP server + recorded GT fixtures
+deno task test        # 79 tests, no GT needed: a fake MCP server + recorded GT fixtures
 deno task test:soak   # property suite at 5000 runs
 ```
 

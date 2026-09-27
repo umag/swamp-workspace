@@ -352,18 +352,22 @@ Deno.test("open: sends retrieveSentItemAt: with the row index; the new object is
 
 // ---- inspect
 
-Deno.test("inspect: by objectId sends `obj inspect`", async () => {
+Deno.test("inspect: by objectId queues `obj inspect` on GT's UI frame", async () => {
   const gt = fakeGt({ onEval: () => evalAnswer("LePage", "a LePage") });
   const ctx = fakeContext(G);
   await runInspect(ctx, { objectId: OBJ }, fakeDeps(gt));
-  assertEquals(gt.evals[0].code, "obj inspect. obj");
+  assertStringIncludes(
+    gt.evals[0].code,
+    "BlTaskAction enqueueElement: world root action: [ obj inspect ]",
+  );
   assertStringIncludes(String(only(ctx.written, "action").detail), "a LePage");
 });
 
 Deno.test("inspect: by code evaluates first, then inspects the stored result", async () => {
   const gt = fakeGt();
   await runInspect(fakeContext(G), { code: "42" }, fakeDeps(gt));
-  assertEquals(gt.evals.map((e) => e.code), ["42", "obj inspect. obj"]);
+  assertEquals(gt.evals[0].code, "42");
+  assertStringIncludes(gt.evals[1].code, "obj inspect");
 });
 
 Deno.test("inspect: needs exactly one of objectId or code", async () => {
