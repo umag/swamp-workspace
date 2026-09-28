@@ -1,0 +1,609 @@
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "tools": [
+      {
+        "name": "searchForClasses",
+        "description": "Searches for classes by name matching the query substring (case-insensitive).\r\rArguments:\r- query: string\r\rReturn values:\r- foundClassNames: array of class names as strings\r- mayHaveMore: boolean indicating if there are more matches than returned\r\rExample JSON arguments:\r{\r  \"query\": \"Collection\"\r}\r\rExample JSON response:\r{\r  \"foundClassNames\": [\"Collection\", \"CollectionSequence\"],\r  \"mayHaveMore\": false\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "query": { "type": "string" } },
+          "required": ["query"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "classSubclasses",
+        "description": "Retrieve all subclasses of the given class.\r\rArguments:\r- className: string\r\rReturn values:\r- givenClassName: the input class name string\r- subclassNames: array of subclass names as strings\r\rExample JSON arguments:\r{\r  \"className\": \"Object\"\r}\r\rExample JSON response:\r{\r  \"givenClassName\": \"Object\",\r  \"subclassNames\": [\"Behavior\", \"UndefinedObject\"]\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "className": { "type": "string" } },
+          "required": ["className"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lookupClass",
+        "description": "Get the details of a class as JSON.\r\rArguments:\r- className: string\r\rReturn values:\r- currentClassName: class name string\r- superclassName: superclass name string or nil\r- comment: class comment\r- packageName: package name\r- instanceSlotNames: array of instance slot names\r- classSlotNames: array of class slot names\r- allInstanceMethodNames: array of selectors\r- allClassMethodNames: array of selectors\r\rExample JSON arguments:\r{\r  \"className\": \"Collection\"\r}\r\rExample JSON response:\r{\r  \"currentClassName\": \"Collection\",\r  \"superclassName\": \"SequenceableCollection\",\r  \"comment\": \"...\",\r  \"packageName\": \"Collections-Sequenceable\",\r  \"instanceSlotNames\": [\"array\"],\r  \"classSlotNames\": [],\r  \"allInstanceMethodNames\": [\"at:\", \"size\"],\r  \"allClassMethodNames\": [\"withAll:\"]\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "className": { "type": "string" } },
+          "required": ["className"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "classReferences",
+        "description": "Search the image for the references to the given class.\r\rArguments:\r- className: string\r\rReturn values:\r- givenClassName: the input class name string\r- references: array of method references\r- mayHaveMore: boolean indicating if there are more matches than returned\r\rExample JSON arguments:\r{\r  \"className\": \"Collection\"\r}\r\rExample JSON response:\r{\r  \"givenClassName\": \"Collection\",\r  \"references\": [\r    {\r      \"methodClassName\": \"Collection\",\r      \"methodName\": \"withAll:\",\r      \"classSide\": true\r    }\r  ],\r  \"mayHaveMore\": false\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "className": { "type": "string" } },
+          "required": ["className"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "methodReferences",
+        "description": "Search the image for the senders of the given selector.\r\rArguments:\r- methodName: string\r\rReturn values:\r- foundMethods: array of method references\r- mayHaveMore: boolean indicating if there are more matches than returned\r\rExample JSON arguments:\r{\r  \"methodName\": \"value\"\r}\r\rExample JSON response:\r{\r  \"foundMethods\": [\r    {\r      \"methodClassName\": \"Object\",\r      \"methodName\": \"value\",\r      \"classSide\": false\r    }\r  ],\r  \"mayHaveMore\": false\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "methodName": { "type": "string" } },
+          "required": ["methodName"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "getImplementors",
+        "description": "Gets a method by name and returns a list of methods that implement it.\r\rArguments:\r- methodName: string\r\rReturn values:\r- foundMethods: array of method references\r- mayHaveMore: boolean indicating if there are more matches than returned\r\rExample JSON arguments:\r{\r  \"methodName\": \"performToolCall:\"\r}\r\rExample JSON response:\r{\r  \"foundMethods\": [\r    {\r      \"methodClassName\": \"GtLAbstractFunctionTool\",\r      \"methodName\": \"performToolCall:\",\r      \"classSide\": false\r    }\r  ],\r  \"mayHaveMore\": false\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "methodName": { "type": "string" } },
+          "required": ["methodName"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "getCodeOfMethods",
+        "description": "Gets source code for multiple methods. Arguments must provide a methodDescriptors array of method descriptors with methodClassName, methodName, and optional classSide values.\r\rExample JSON arguments:\r{\r  \"methodDescriptors\": [\r    {\"methodClassName\": \"Collection\", \"methodName\": \"withAll:\", \"classSide\": true},\r    {\"methodClassName\": \"GtLToolForMethodImplementors\", \"methodName\": \"privatePerformToolCall:\", \"classSide\": false}\r  ]\r}\r\rExample JSON response:\r{\r  \"methods\": [\r    {\"methodReference\": {\"methodName\": \"withAll:\", \"methodClassName\": \"Collection\", \"classSide\": true}, \"sourceCode\": \"...\"},\r    {\"methodReference\": {\"methodName\": \"privatePerformToolCall:\", \"methodClassName\": \"GtLToolForMethodImplementors\", \"classSide\": false}, \"sourceCode\": \"...\"}\r  ]\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "methodDescriptors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "classSide": { "type": "boolean" },
+                  "methodClassName": { "type": "string" },
+                  "methodName": { "type": "string" }
+                },
+                "required": ["classSide", "methodClassName", "methodName"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["methodDescriptors"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "packageClasses",
+        "description": "Retrieve all classes defined or extended in the given package.\r\rArguments:\r- packageName: string\r\rReturn values:\r- foundClassNames: array of class names as strings\r- mayHaveMore: boolean indicating if there are more matches than returned\r\rExample JSON arguments:\r{\r  \"packageName\": \"Bloc\"\r}\r\rExample JSON response:\r{\r  \"foundClassNames\": [\"BlElement\", \"BlSpace\"],\r  \"mayHaveMore\": true\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "packageName": { "type": "string" } },
+          "required": ["packageName"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "substringLiteralSearch",
+        "description": "Searches for methods by substring literal match.\r\rArguments:\r- query: string\r\rReturn values:\r- foundMethods: array of method references\r- mayHaveMore: boolean indicating if there are more matches than returned\r\rExample JSON arguments:\r{\r  \"query\": \"substringLiteralSearch\"\r}\r\rExample JSON response:\r{\r  \"foundMethods\": [\r    {\r      \"methodClassName\": \"GtLToolForSubstringLiteralSearch\",\r      \"methodName\": \"privatePerformToolCall:inContext:\",\r      \"classSide\": false\r    }\r  ],\r  \"mayHaveMore\": false\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "query": { "type": "string" } },
+          "required": ["query"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "lepiterKnowledgeBases",
+        "description": "Retrieve the registered Lepiter knowledge bases.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "searchForLepiterPages",
+        "description": "Searches for Lepiter pages by name matching the query substring (case-insensitive).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "knowledgeBases": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "query": { "type": "string" }
+          },
+          "required": ["knowledgeBases", "query"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "getLepiterPageContents",
+        "description": "Gets the serialized contents of a Lepiter page identified by UID.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "databaseId": { "type": "string" },
+            "pageUid": { "type": "string" }
+          },
+          "required": ["databaseId", "pageUid"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "createClassesAndTraits",
+        "description": "Creates multiple classes and traits in a single request and reports each result. \rTrait names usually starts with \"T\".\r\rExample JSON arguments:\r{\r  \"classes\": [\r    {\"targetClassName\": \"MyClass\", \"superclassName\": \"Object\", \"package\": \"MyPackage\", \"packageTag\": \"MyTag\", \"traitComposition\": \"{TMyTrait}\"},\r    {\"targetClassName\": \"MySubclass\", \"superclassName\": \"MyClass\", \"package\": \"MyPackage\", \"instanceVariables\": \"value\", \"classInstanceVariables\": \"valueTwo\"}\r  ],\r  \"traits\": [\r    {\"targetTraitName\": \"TMyTrait\", \"package\": \"MyPackage\", \"packageTag\": \"MyTag\", \"traitComposition\": \"{}\"},\r    {\"targetTraitName\": \"TMyTraitTwo\", \"package\": \"MyPackage\", \"instanceVariables\": \"value\", \"classInstanceVariables\": \"valueTwo\", \"traitComposition\": \"{TMyTrait}\"}\r  ]\r}\r\rExample JSON response:\r{\r  \"classes\": [\r    {\"currentClassName\": \"MyClass\", \"superclassName\": \"Object\", \"packageName\": \"MyPackage\", \"packageTag\": \"MyTag\", \"instanceSlotNames\": [], \"classSlotNames\": [], \"classVariableNames\": [], \"traitCompositionString\": \"{TMyTrait}\"},\r    {\"currentClassName\": \"MySubclass\", \"superclassName\": \"MyClass\", \"packageName\": \"MyPackage\", \"instanceSlotNames\": [\"value\"], \"classSlotNames\": [ \"valueTwo\" ], \"traitCompositionString\": \"{}\"}\r  ],\r  \"traits\": [\r    {\"currentTraitName\": \"TMyTrait\", \"packageName\": \"MyPackage\", \"instanceSlotNames\": [], \"classSlotNames\": [], \"traitCompositionString\": \"{}\"},\r    {\"currentTraitName\": \"TMyTraitTwo\", \"packageName\": \"MyPackage\", \"instanceSlotNames\": [\"value\"], \"classSlotNames\": [\"valueTwo\"], \"traitCompositionString\": \"{TMyTrait}\"}\r  ]\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "classes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "classInstanceVariables": { "type": "string" },
+                  "classVariables": { "type": "string" },
+                  "comment": { "type": "string" },
+                  "instanceVariables": { "type": "string" },
+                  "package": { "type": "string" },
+                  "packageTag": { "type": "string" },
+                  "superclassName": { "type": "string" },
+                  "targetClassName": { "type": "string" },
+                  "traitCompositionString": { "type": "string" }
+                },
+                "required": ["package", "superclassName", "targetClassName"],
+                "additionalProperties": false
+              }
+            },
+            "traits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "classInstanceVariables": { "type": "string" },
+                  "classVariables": { "type": "string" },
+                  "comment": { "type": "string" },
+                  "instanceVariables": { "type": "string" },
+                  "package": { "type": "string" },
+                  "packageTag": { "type": "string" },
+                  "targetTraitName": { "type": "string" },
+                  "traitCompositionString": { "type": "string" }
+                },
+                "required": ["package", "targetTraitName"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["classes", "traits"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "changeClassOrTraitSignature",
+        "description": "Changes a class signature by updating superclass, instance variables, class variables, package, package tag. \r\t\r\tIt also changes a Trait signature by updating instance variables, class instance variables, package, and package tag. In terms of definition, trait is a specialized class, so it have same arguments. It therefore defines trait name using `targetClassName` argument. Trait does not define superclassName, neither `classVariables`.\r\rExample JSON arguments:\r{\r  \"classChangeRequest\": {\r    \"targetClassName\": \"MyClass\",\r    \"superclassName\": \"NewSuperclass\",\r    \"traitComposition\": \"{TMyTrait}\",\r    \"instanceVariables\": [\"slot1\", \"slot2\"],\r    \"classInstanceVariables\": [\"slot3\", \"slot4\"],\r    \"classVariables\": [\"SharedValue\"],\r    \"package\": \"MyPackage\",\r    \"packageTag\": \"MyTag\"\r  }\r}\r\rExample JSON response:\r{\r  \"currentClassName\": \"MyClass\",\r  \"superclassName\": \"NewSuperclass\",\r  \"packageName\": \"MyPackage\",\r  \"instanceSlotNames\": [\"slot1\", \"slot2\"],\r  \"classSlotNames\": [\"slot3\", \"slot4\"],\r  \"classVariableNames\": [\"SharedValue\"],\r  \"traitCompositionString\": \"{}\"\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "classChangeRequest": {
+              "type": "object",
+              "properties": {
+                "classInstanceVariables": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "classVariables": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "instanceVariables": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "package": { "type": "string" },
+                "packageTag": { "type": "string" },
+                "superclassName": { "type": "string" },
+                "targetClassName": { "type": "string" },
+                "traitCompositionString": { "type": "string" }
+              },
+              "required": ["targetClassName"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["classChangeRequest"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "changeClassOrTraitComment",
+        "description": "Change the class or trait comment. Both, class and trait use the same argument names and response structure.\r\rExample JSON arguments:\r{\r  \"className\": \"MyClass\",\r  \"classComment\": \"description of the class\"\r}\r\rExample JSON response:\r{\r  \"className\": \"MyClass\",\r  \"status\": \"changed\"\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "classComment": { "type": "string" },
+            "className": { "type": "string" }
+          },
+          "required": ["classComment", "className"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "compileMethods",
+        "description": "Compiles multiple method sources across classes and reports each result.\r\rArguments:\r- methods: array of method compilation requests\r\rExample JSON arguments:\r{\r  \"methods\": [\r    {\"methodClassName\": \"MyClass\", \"sourceCode\": \"myMethod ^ 42\", \"protocol\": \"accessing\", \"classSide\": false},\r    {\"methodClassName\": \"MyClass\", \"sourceCode\": \"anotherMethod ^ 1\", \"protocol\": \"accessing\", \"classSide\": false}\r  ]\r}\r\rExample JSON response:\r{\r  \"methods\": [\r    {\"status\": \"compiled\"},\r    {\"status\": \"compiled\"}\r  ]\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "methods": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "classSide": { "type": "boolean" },
+                  "methodClassName": { "type": "string" },
+                  "protocol": { "type": "string" },
+                  "sourceCode": { "type": "string" }
+                },
+                "required": [
+                  "classSide",
+                  "methodClassName",
+                  "protocol",
+                  "sourceCode"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["methods"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "removeMethods",
+        "description": "Removes multiple methods across classes and reports each result.\r\rArguments:\r- methods: array of method descriptors with methodClassName, methodName, and classSide\r\rExample JSON arguments:\r{\r  \"methods\": [\r    {\"methodClassName\": \"MyClass\", \"methodName\": \"method1\", \"classSide\": false},\r    {\"methodClassName\": \"MyClass\", \"methodName\": \"method2\", \"classSide\": true}\r  ]\r}\r\rExample JSON response:\r{\r  \"methods\": [\r    {\"status\": \"removed\"},\r    {\"status\": \"removed\"}\r  ]\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "methods": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "classSide": { "type": "boolean" },
+                  "methodClassName": { "type": "string" },
+                  "methodName": { "type": "string" }
+                },
+                "required": ["classSide", "methodClassName", "methodName"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["methods"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "removeClass",
+        "description": "Removes the class with the provided name from the image.\r\rExample JSON arguments:\r{\r  \"className\": \"MyClass\"\r}\r\rExample JSON response:\r{\r  \"removedClassName\": \"MyClass\",\r  \"status\": \"removed\"\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "className": { "type": "string" } },
+          "required": ["className"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "createLepiterPage",
+        "description": "Create a new Lepiter page in a database with the provided title and target database id.\r\rExample JSON arguments:\r{\r  \"title\": \"New Page\",\r  \"databaseId\": \"UUID\"\r}\r\rExample JSON response:\r{\r  \"status\": \"created\",\r  \"pageUid\": \"UUID\",\r  \"title\": \"New Page\"\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "databaseId": { "type": "string" },
+            "title": { "type": "string" }
+          },
+          "required": ["databaseId", "title"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "removeLepiterPage",
+        "description": "Remove a Lepiter page using the database and page identifiers.\r\rExample JSON arguments:\r{\r  \"databaseId\": \"UUID\",\r  \"pageUid\": \"UUID\"\r}\r\rExample JSON response:\r{\r  \"status\": \"removed\",\r  \"databaseId\": \"UUID\",\r  \"pageUid\": \"UUID\",\r  \"title\": \"Page Title\"\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "databaseId": { "type": "string" },
+            "pageUid": { "type": "string" }
+          },
+          "required": ["databaseId", "pageUid"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "editLepiterSnippet",
+        "description": "Edits a Lepiter snippet identified by page and snippet ids, updating the snippet text.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "pageUid": { "type": "string" },
+            "snippetUid": { "type": "string" },
+            "updatedText": { "type": "string" }
+          },
+          "required": ["pageUid", "snippetUid", "updatedText"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "createLepiterSnippets",
+        "description": "Creates new Lepiter snippets for pages identified by their page ids.\r\rExample JSON arguments:\r{\r  \"snippets\": [\r    {\"TextSnippet\": {\"pageUid\": \"UUID\", \"snippetText\": \"Notes\"}},\r    {\"PharoSnippet\": {\"pageUid\": \"UUID\", \"pharoCode\": \"Transcript show: 1\"}},\r    {\"ExampleSnippet\": {\"pageUid\": \"UUID\", \"exampleClassName\": \"MyExamples\", \"exampleMethodName\": \"exampleMethod\"}}\r  ]\r}\r\rSupported snippet types are: text, pharo, python, shell, example.\r\rExample JSON response:\r{\r  \"snippets\": [\r    {\"status\": \"created\", \"pageUid\": \"UUID\", \"snippetUid\": \"UUID\"},\r    {\"status\": \"created\", \"pageUid\": \"UUID\", \"snippetUid\": \"UUID\"}\r  ]\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "snippets": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "TextSnippet": {
+                        "type": "object",
+                        "properties": {
+                          "pageUid": { "type": "string" },
+                          "parentSnippetUid": {
+                            "type": "string",
+                            "description": "Optional uid of the parent snippet. If provided, the new snippet is added as a child of that snippet instead of as a top-level page snippet."
+                          },
+                          "snippetText": {
+                            "type": "string",
+                            "description": "Textual content of the snippet."
+                          }
+                        },
+                        "required": ["snippetText"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["TextSnippet"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "PharoSnippet": {
+                        "type": "object",
+                        "properties": {
+                          "pageUid": { "type": "string" },
+                          "parentSnippetUid": {
+                            "type": "string",
+                            "description": "Optional uid of the parent snippet. If provided, the new snippet is added as a child of that snippet instead of as a top-level page snippet."
+                          },
+                          "pharoCode": {
+                            "type": "string",
+                            "description": "Pharo code for the snippet."
+                          }
+                        },
+                        "required": ["pharoCode"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["PharoSnippet"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "PythonSnippet": {
+                        "type": "object",
+                        "properties": {
+                          "pageUid": { "type": "string" },
+                          "parentSnippetUid": {
+                            "type": "string",
+                            "description": "Optional uid of the parent snippet. If provided, the new snippet is added as a child of that snippet instead of as a top-level page snippet."
+                          },
+                          "pythonCode": {
+                            "type": "string",
+                            "description": "Python code for the snippet."
+                          }
+                        },
+                        "required": ["pythonCode"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["PythonSnippet"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "ShellSnippet": {
+                        "type": "object",
+                        "properties": {
+                          "pageUid": { "type": "string" },
+                          "parentSnippetUid": {
+                            "type": "string",
+                            "description": "Optional uid of the parent snippet. If provided, the new snippet is added as a child of that snippet instead of as a top-level page snippet."
+                          },
+                          "shellCode": {
+                            "type": "string",
+                            "description": "Shell code for the snippet."
+                          }
+                        },
+                        "required": ["shellCode"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["ShellSnippet"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "ExampleSnippet": {
+                        "type": "object",
+                        "properties": {
+                          "exampleClassName": { "type": "string" },
+                          "exampleMethodName": { "type": "string" },
+                          "pageUid": { "type": "string" },
+                          "parentSnippetUid": {
+                            "type": "string",
+                            "description": "Optional uid of the parent snippet. If provided, the new snippet is added as a child of that snippet instead of as a top-level page snippet."
+                          }
+                        },
+                        "required": ["exampleClassName", "exampleMethodName"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["ExampleSnippet"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "required": ["snippets"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "removeLepiterSnippets",
+        "description": "Remove one or more Lepiter snippets using the knowledge base, page, and snippet identifiers.\r\rExample JSON arguments:\r{\r  \"snippets\": [\r    {\"knowledgeBaseUid\": \"UUID\", \"pageUid\": \"UUID\", \"snippetUid\": \"UUID\"},\r    {\"knowledgeBaseUid\": \"UUID\", \"pageUid\": \"UUID\", \"snippetUid\": \"UUID\"}\r  ]\r}\r\rExample JSON response:\r{\r  \"snippets\": [\r    {\"status\": \"removed\", \"pageUid\": \"UUID\", \"snippetUid\": \"UUID\"},\r    {\"status\": \"removed\", \"pageUid\": \"UUID\", \"snippetUid\": \"UUID\"}\r  ]\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "snippets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "knowledgeBaseUid": { "type": "string" },
+                  "pageUid": { "type": "string" },
+                  "snippetUid": { "type": "string" }
+                },
+                "required": ["knowledgeBaseUid", "pageUid", "snippetUid"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["snippets"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "exampleMethodRun",
+        "description": "Execute a gtExample method. It returns:\r- status: Succeess, Error, Failure, Skipped.\r- and the result:\r  1. if it succeeds: \r    - the resulting object as one or more JSON or image entries, each representing a view of the resulting object. Look at all of them to interpret the result.\r    - the object id that you can use as reference for other tool calls.\r    - the playgroundPageReference to the contextual playground page. Use that page to look for object specific snippets and explanations.\r  2. if there is an exception, it gets the errorDetails (errorMessage, stackTrace, errorClass). It can also get other JSON or image entries each representing a view of the exception. Look at all of them to interpret the result.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "exampleReference": {
+              "type": "object",
+              "properties": {
+                "classSide": { "type": "boolean" },
+                "exampleClassName": { "type": "string" },
+                "methodName": { "type": "string" }
+              },
+              "required": ["classSide", "exampleClassName", "methodName"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["exampleReference"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "examplesInClassesRun",
+        "description": "Execute multiple gtExample methods gathered from one or more classes and report the aggregated results. The argument `classNames` is mandatory and it must be a non empty array of space separated strings holding class names.\r\rExamples:\r- To run just one class, provide an array with one value as the `classNames` value:\r```\r\"classNames\": \"SomeClassWithExamples\"\r```\r\r- running multiple classes:\r```\r\"classNames\": \"SomeClassWithExamples SomeOtherClassWithExamples\"]\r```",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "classNames": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["classNames"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "smalltalkCodeEvaluation",
+        "description": "Executes the provided Smalltalk code. It returns\r1. if it succeeds: \r- the resulting object as one or more JSON or image entries, each representing a view of the resulting object. Look at all of them to interpret the result.\r- the object id that you can use as reference for other tool calls.\r- the playgroundPageReference to the contextual playground page. Use that page to look for object specific snippets and explanations.\r2. if there is an exception, it gets the errorDetails (errorMessage, stackTrace, errorClass). It can also get other JSON or image entries each representing a view of the exception. Look at all of them to interpret the result.\r\rDo not compile code using this tool. Do not delete files using this tool. Use this tool only as a last resort to investigate objects.\r\rArguments:\r- code: string\r- bindings: array of binding objects with name and objectId (pass empty array if not needed)\r\rExample JSON arguments:\r{\r  \"code\": \"1 + 2\",\r  \"bindings\": []\r}\r\rExample JSON arguments with bindings:\r{\r  \"code\": \"value + 2\",\r  \"bindings\": [{\"name\": \"value\", \"objectId\": \"uuid-string\"}]\r}\r\rExample JSON response:\r{\r  \"code\": \"1 + 2\",\r  \"objectValue\": {\r    \"objectClassName\": \"SmallInteger\",\r    \"superclassName\": \"Integer\",\r    \"packageName\": \"Kernel\",\r    \"objectPrintString\": \"3\",\r    \"phlowViews\": [{\"methodName\": \"gtPrintFor:\", \"title\": \"Print\"}],\r    \"allInstanceSlots\": []\r  },\r  \"objectId\": \"uuid-or-empty\",\r  \"playgroundPageReference\" : {\r\t\t\"databaseId\" : \"auhvwh3wo4eisu1kci9jdew92\",\r\t\t\"pageId\" : \"9fxzw74ztlk895vquuwasakr\"\r\t}\r}\r\rExample JSON error response:\r{\r\t\"errorReason\" : \"Error while evaluating smalltalk code\",\r\t\"errorDetails\" : {\r\t\t\"stackTrace\" : \"...\",\r\t\t\"errorClass\" : \"ZeroDivide\",\r\t\t\"errorMessage\" : \"ZeroDivide\"\r\t},\r\t\"code\" : \"1 / 0\"\r}",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "bindings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "objectId": { "type": "string" }
+                },
+                "required": ["name", "objectId"],
+                "additionalProperties": false
+              }
+            },
+            "code": { "type": "string" }
+          },
+          "required": ["code"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "getViewContent",
+        "description": "Returns a phlow view for an object given an object id and a method name",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "objectId": { "type": "string" },
+            "viewSelector": { "type": "string" }
+          },
+          "required": ["objectId", "viewSelector"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "listObjectStorage",
+        "description": "Lists the objects in the object storage of a chat.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "getObjectStorageValue",
+        "description": "Retrieves an object from the object storage and returns its serialized value, equivalent to inspecting it in the Smalltalk code evaluation tool.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "objectId": { "type": "string" } },
+          "required": ["objectId"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "getObjectStorageSlotValue",
+        "description": "Retrieves the value of a named slot from an object in the object storage and returns a serialized object value result for that slot value.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "objectId": { "type": "string" },
+            "slotName": { "type": "string" }
+          },
+          "required": ["objectId", "slotName"],
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  "id": 2
+}

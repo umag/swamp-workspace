@@ -1,0 +1,127 @@
+{
+  "spec": {
+    "methodSelector": null,
+    "viewName": "GtPhlowColumnedTreeViewSpecification",
+    "columnSpecifications": [
+      {
+        "cellWidth": null,
+        "title": "Name",
+        "spawnsObjects": false,
+        "type": "unknown",
+        "properties": []
+      },
+      {
+        "cellWidth": 100,
+        "title": "Size",
+        "spawnsObjects": false,
+        "type": "text",
+        "properties": []
+      },
+      {
+        "cellWidth": 150,
+        "title": "Creation",
+        "spawnsObjects": false,
+        "type": "text",
+        "properties": []
+      }
+    ],
+    "actionSpecifications": [
+      {
+        "__typeName": "GtPhlowButtonActionSpecification",
+        "priority": 51,
+        "__typeLabel": "phlowButtonActionSpecification",
+        "tooltipText": "Update",
+        "methodSelector": null,
+        "iconStencil": {
+          "__typeName": "GtPhlowPngBytesIconStencil",
+          "pngBytes": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAsUlEQVR4XmOgNdAAYiZKDGgA4gNALEqOZmYgng7E/4H4BRDbk6KxFojfQzXD8B8g1ifGgPVA/A+Iu4F4OVTzayB2JEZzCFRDIlIY7ANicWKdDwqwM0h8bVJj4RsQd+GRVyQUmI+AeD4e+RVA/IpQAH4CYkkscjJQF67FZ4AqVNFJIFZCEz8NxN+hqRMv8ATi39CovAbEN6Hsn0DsQWxgigBxBBAvAOJZQBwGxEIMgxIAALE4KGJZy8vuAAAAAElFTkSuQmCC"
+        }
+      }
+    ],
+    "priority": 1,
+    "title": "Tree",
+    "dataTransport": 2,
+    "__typeName": "GtPhlowColumnedTreeViewSpecification"
+  },
+  "total": 20,
+  "items": [
+    {
+      "nodeValue": {
+        "columnValues": [
+          {
+            "valueTypeName": "textualValue",
+            "__typeName": "GtRemotePhlowItemTextualValue",
+            "itemText": {
+              "__typeLabel": "gtPhlowRunBasedText",
+              "sourceString": "BrHorizontalPane @ 415874048 (nil)",
+              "attributeRuns": { "items": [], "__typeLabel": "phlowRunsGroup" }
+            }
+          },
+          {
+            "valueTypeName": "textualValue",
+            "__typeName": "GtRemotePhlowItemTextualValue",
+            "itemText": "--"
+          },
+          {
+            "valueTypeName": "textualValue",
+            "__typeName": "GtRemotePhlowItemTextualValue",
+            "itemText": "2024-08-04 12:31:41"
+          }
+        ]
+      },
+      "nodeId": 1
+    },
+    {
+      "nodeValue": {
+        "columnValues": [
+          {
+            "valueTypeName": "textualValue",
+            "__typeName": "GtRemotePhlowItemTextualValue",
+            "itemText": {
+              "__typeLabel": "gtPhlowRunBasedText",
+              "sourceString": "BrHorizontalPane @ 845831424 (nil)",
+              "attributeRuns": { "items": [], "__typeLabel": "phlowRunsGroup" }
+            }
+          },
+          {
+            "valueTypeName": "textualValue",
+            "__typeName": "GtRemotePhlowItemTextualValue",
+            "itemText": "--"
+          },
+          {
+            "valueTypeName": "textualValue",
+            "__typeName": "GtRemotePhlowItemTextualValue",
+            "itemText": "2026-09-27 14:09:38"
+          }
+        ]
+      },
+      "nodeId": 2
+    },
+    {
+      "nodeValue": {
+        "columnValues": [
+          {
+            "valueTypeName": "textualValue",
+            "__typeName": "GtRemotePhlowItemTextualValue",
+            "itemText": {
+              "__typeLabel": "gtPhlowRunBasedText",
+              "sourceString": "BrHorizontalPane @ 480677376 (nil)",
+              "attributeRuns": { "items": [], "__typeLabel": "phlowRunsGroup" }
+            }
+          },
+          {
+            "valueTypeName": "textualValue",
+            "__typeName": "GtRemotePhlowItemTextualValue",
+            "itemText": "--"
+          },
+          {
+            "valueTypeName": "textualValue",
+            "__typeName": "GtRemotePhlowItemTextualValue",
+            "itemText": "2026-08-21 18:14:28"
+          }
+        ]
+      },
+      "nodeId": 3
+    }
+  ]
+}

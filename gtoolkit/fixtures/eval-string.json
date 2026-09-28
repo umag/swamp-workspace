@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n\t\"code\" : \"'it''s' , ' ok'\",\n\t\"objectDetails\" : { },\n\t\"objectId\" : \"66mgx787s1p7rfl9kx53h78lo\",\n\t\"playgroundPageReference\" : null,\n\t\"objectValue\" : {\n\t\t\"allInstanceSlots\" : [ ],\n\t\t\"objectClassName\" : \"ByteString\",\n\t\t\"objectPrintString\" : \"''it''''s ok''\",\n\t\t\"packageName\" : \"Collections-Strings\",\n\t\t\"phlowViews\" : [\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtStringFor:\",\n\t\t\t\t\"title\" : \"String\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtLiveFor:\",\n\t\t\t\t\"title\" : \"Live\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtItemsFor:\",\n\t\t\t\t\"title\" : \"Characters\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtHexDumpFor:\",\n\t\t\t\t\"title\" : \"Hex dump\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtRawFor:\",\n\t\t\t\t\"title\" : \"Raw\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtPrintFor:\",\n\t\t\t\t\"title\" : \"Print\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtMetaFor:\",\n\t\t\t\t\"title\" : \"Meta\"\n\t\t\t}\n\t\t],\n\t\t\"superclassName\" : \"String\"\n\t}\n}"
+      }
+    ],
+    "isError": false
+  },
+  "id": 3
+}

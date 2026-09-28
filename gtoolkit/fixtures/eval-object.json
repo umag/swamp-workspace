@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n\t\"code\" : \"FileLocator root\",\n\t\"objectDetails\" : { },\n\t\"objectId\" : \"3llvzo3q3t2bqj09o507otze5\",\n\t\"playgroundPageReference\" : null,\n\t\"objectValue\" : {\n\t\t\"allInstanceSlots\" : [\n\t\t\t{\n\t\t\t\t\"name\" : \"path\",\n\t\t\t\t\"valueClassName\" : \"AbsolutePath\",\n\t\t\t\t\"valuePrintString\" : \"Path root\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"name\" : \"filesystem\",\n\t\t\t\t\"valueClassName\" : \"FileSystem\",\n\t\t\t\t\"valuePrintString\" : \"a FileSystem\"\n\t\t\t}\n\t\t],\n\t\t\"objectClassName\" : \"FileReference\",\n\t\t\"objectPrintString\" : \"File @ /\",\n\t\t\"packageName\" : \"FileSystem-Core\",\n\t\t\"phlowViews\" : [\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtTreeFor:\",\n\t\t\t\t\"title\" : \"Tree\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtItemsFor:\",\n\t\t\t\t\"title\" : \"Items\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtPathFor:\",\n\t\t\t\t\"title\" : \"Path\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtDetailsFor:\",\n\t\t\t\t\"title\" : \"Details\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtRawFor:\",\n\t\t\t\t\"title\" : \"Raw\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtPrintFor:\",\n\t\t\t\t\"title\" : \"Print\"\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"methodName\" : \"gtMetaFor:\",\n\t\t\t\t\"title\" : \"Meta\"\n\t\t\t}\n\t\t],\n\t\t\"superclassName\" : \"AbstractFileReference\"\n\t}\n}"
+      }
+    ],
+    "isError": false
+  },
+  "id": 5
+}
