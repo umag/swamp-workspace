@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.09.28.1
+
+- The bundled `gtoolkit` skill is now published with the extension (the manifest
+  lacked `skills:`).
+- Skill references: `pharo-syntax.md` (Smalltalk for evaluations), `gt-apis.md`
+  (Phlow views, examples, Lepiter, the UI thread, Brick widgets, windows and
+  screenshots, external processes, saving) and `pitfalls.md` (every failure seen
+  driving GT, with the fix).
+
 ## 2026.09.27.1
 
 - First release. `@magistr/gtoolkit` drives a running Glamorous Toolkit through

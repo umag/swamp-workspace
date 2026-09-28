@@ -5,6 +5,12 @@ description: Drive a running Glamorous Toolkit (GT, the moldable Pharo environme
 
 # Driving Glamorous Toolkit
 
+Before writing Smalltalk, read the references in this skill:
+[Pharo syntax](references/pharo-syntax.md), [GT APIs](references/gt-apis.md)
+(views, examples, Lepiter, the UI thread, widgets, processes, saving) and
+[pitfalls](references/pitfalls.md) — each pitfall there cost a real session
+time, one of them a hung GT.
+
 The `@magistr/gtoolkit` model talks to GT's built-in MCP server
 (`GtLMcpServer`). GT does the work; the model starts it, evaluates code, reads
 views and forwards tool calls. The instance in this repo is usually named `gt`
