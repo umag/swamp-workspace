@@ -52,7 +52,9 @@ swamp model method run gt tool --input name=searchForClasses --input 'arguments=
 ```
 
 The bundled skill (`.claude/skills/gtoolkit/SKILL.md`) teaches Claude this loop
-and the argument shapes of GT's tools.
+and the argument shapes of GT's tools. Its `references/` hold a Pharo syntax
+sheet, the GT APIs used most (views, examples, Lepiter, the UI thread, widgets,
+processes, saving) and the pitfalls met while driving GT.
 
 ## How views become data
 
