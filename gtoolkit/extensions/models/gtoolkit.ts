@@ -917,8 +917,16 @@ const method = (description: string, args: z.ZodType, run: Exec) => ({
 /** The `@magistr/gtoolkit` model type definition. */
 export const model = {
   type: "@magistr/gtoolkit",
-  version: "2026.09.27.1",
+  version: "2026.09.28.1",
   globalArguments: GlobalArgsSchema,
+  upgrades: [
+    {
+      fromVersion: "2026.09.27.1",
+      toVersion: "2026.09.28.1",
+      description: "Skill and references only; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   resources: {
     status: {
       description:
