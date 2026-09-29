@@ -1,0 +1,42 @@
+manifestVersion: 1
+name: "@magistr/restic"
+version: "2026.09.29.1"
+description: |
+  Drive restic backups from swamp: read repository state, initialize,
+  back up, list snapshots, verify integrity, apply retention and report
+  size — every run lands as versioned swamp data.
+
+  Methods:
+  - `status` — reachable / initialized / snapshot count / newest snapshot age
+    (read-only; use it as the pre-flight step of a backup workflow)
+  - `init` — create the repository; no-op when it already exists
+  - `backup` — back up paths; restic's summary plus unreadable-file errors
+    (exit 3 is recorded as `complete: false`, not thrown)
+  - `snapshots` — list snapshots, filtered by host/tag/latest
+  - `check` — integrity check, optionally reading a subset of pack data;
+    a failed check is data (`ok: false`), not an exception
+  - `forget` — keep policy, dry-run by default, optional prune
+  - `stats` — size and compression statistics
+
+  Works with any restic backend. Secrets (`password`, rest-server basic-auth)
+  are sensitive global arguments, passed to restic only via environment
+  variables and redacted from all errors. Requires the `restic` binary
+  (>= 0.17) on the host running the method.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/restic.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - CHANGELOG.md
+
+labels:
+  - restic
+  - backup
+  - snapshots
+  - rest-server
