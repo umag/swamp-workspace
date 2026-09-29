@@ -1,0 +1,5 @@
+.swamp/
+.swamp-sources.yaml
+.DS_Store
+node_modules/
+/models/
