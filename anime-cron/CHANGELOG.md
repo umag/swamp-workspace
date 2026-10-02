@@ -1,18 +1,25 @@
 # Changelog
 
-## 2026.09.19.2
+## 2026.10.02.1
 
-### Changed
-
-- Repo-wide maintenance release: version bump to republish the current source.
-  No schema change.
-
-## 2026.09.17.1
-
-### Changed
-
-- Repo-wide maintenance release: version bump to republish the current source.
-  No schema change.
+- **`fetch-airing` no longer takes an older season's release for a sequel
+  episode.** On 2026-10-02 "Kusuriya no Hitorigoto 3rd Season" ep 1 aired, no
+  season-3 release existed yet, the base-title fallback searched plain "Kusuriya
+  no Hitorigoto", and a January 2025 `[Half-Baked] … S02E01` was queued because
+  `pickBest` compared only the episode number. Hits now carry their RSS
+  `pubDate`; with a real AniList airing time, `pickBest` rejects releases
+  uploaded more than 14 days before the episode aired (pre-airs still pass) and
+  releases labelled with a different season (`parseSeason`).
+- **Continuous numbering.** SubsPlease numbers some sequels on from the previous
+  season (season 3 ep 1 = "- 49"). For the latest aired episode only, when
+  nothing carries the season number, a higher-numbered release uploaded in that
+  week's window is accepted if every such release agrees on one number. It is
+  renamed in Transmission (`torrent-rename-path`) to the season's own folder
+  name and episode number, so seanime, `mark-watched` and dedup read the right
+  episode.
+- **Dedup is keyed by download folder + episode** (`episodeKey`), not by a
+  season-stripped show name, so season 1's "- 01" can no longer block a sequel's
+  ep 1.
 
 ## 2026.09.01.3
 

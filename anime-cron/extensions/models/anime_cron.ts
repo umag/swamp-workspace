@@ -204,6 +204,8 @@ export interface NyaaHit {
   episode: number | null;
   resolution: number;
   sizeBytes: number;
+  /** Upload time (unix seconds) from the RSS `<pubDate>`; null if absent. */
+  pubDateSec?: number | null;
 }
 
 /** Parse nyaa's human-readable `<nyaa:size>` ("1.4 GiB") into bytes.
@@ -222,7 +224,8 @@ export function parseNyaaSize(raw: string): number {
   return Math.round(parseFloat(m[1]) * (scale[unit] ?? 0));
 }
 
-function parseRSS(xml: string): NyaaHit[] {
+/** Parse a nyaa RSS page into hits. */
+export function parseRSS(xml: string): NyaaHit[] {
   const hits: NyaaHit[] = [];
   for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
     const block = m[1];
@@ -237,6 +240,9 @@ function parseRSS(xml: string): NyaaHit[] {
       (block.match(/<nyaa:infoHash>(.*?)<\/nyaa:infoHash>/) ?? [])[1] ?? ""
     ).toLowerCase();
     if (!title || !infoHash) continue;
+    const pubMs = Date.parse(
+      (block.match(/<pubDate>(.*?)<\/pubDate>/) ?? [])[1] ?? "",
+    );
     hits.push({
       title,
       viewUrl: link.includes("nyaa.si/view")
@@ -250,6 +256,7 @@ function parseRSS(xml: string): NyaaHit[] {
       sizeBytes: parseNyaaSize(
         (block.match(/<nyaa:size>(.*?)<\/nyaa:size>/) ?? [])[1] ?? "",
       ),
+      pubDateSec: Number.isFinite(pubMs) ? Math.floor(pubMs / 1000) : null,
     });
   }
   return hits;
@@ -370,18 +377,102 @@ export function baseTitle(title: string): string | null {
 
 /** Choose the best release for an episode: hard resolution floor first, then
  *  rank by preferred group, seeders and an exact-resolution bonus. */
+const ROMAN_SEASONS: Record<string, number> = {
+  ii: 2,
+  iii: 3,
+  iv: 4,
+  v: 5,
+  vi: 6,
+  vii: 7,
+  viii: 8,
+  ix: 9,
+  x: 10,
+};
+
+/** Season number a title states explicitly, or null when it states none.
+ *  Reads AniList titles ("… 3rd Season", "Mushoku Tensei III: …") and release
+ *  titles ("S02E01", "Show S2 - 03", "Season 3", "Clevatess II - 13"). A roman
+ *  numeral only counts right after a word and right before ":", " - ", a
+ *  bracket or the end, so a bare "V" opening a title is not a season. */
+export function parseSeason(title: string): number | null {
+  const t = decodeEntities(title);
+  const sxe = t.match(/\bS(\d{1,2})E\d{1,4}\b/i);
+  if (sxe) return parseInt(sxe[1], 10);
+  const ord = t.match(/\b(\d{1,2})(?:st|nd|rd|th)\s+Season\b/i);
+  if (ord) return parseInt(ord[1], 10);
+  const word = t.match(/\bSeason\s+(\d{1,2})\b/i);
+  if (word) return parseInt(word[1], 10);
+  const bare = t.match(/\sS(\d{1,2})(?=\s*(?:-\s|[[(]|$))/);
+  if (bare) return parseInt(bare[1], 10);
+  const roman = t.match(
+    /\w\s+(II|III|IV|V|VI|VII|VIII|IX|X)(?=\s*(?::|-\s|[[(]|$))/,
+  );
+  if (roman) return ROMAN_SEASONS[roman[1].toLowerCase()];
+  return null;
+}
+
+/** How long before the broadcast a release may be uploaded and still count
+ *  for that episode (web/YouTube pre-airs). Anything older belongs to an
+ *  earlier season — 2026-10-02 picked a January 2025 S02E01 for a S3 ep 1. */
+export const PRE_AIR_SLACK_SECS = 14 * 86400;
+
+/** Window after the broadcast in which a continuously numbered release
+ *  ("- 49" for a season-3 ep 1) is taken to be this week's episode. */
+const ABSOLUTE_WINDOW_BEFORE_SECS = 86400;
+const ABSOLUTE_WINDOW_AFTER_SECS = 6 * 86400;
+
+/** Season and airing context for {@link pickBest}. */
+export interface PickContext {
+  /** Season of the AniList entry, from {@link parseSeason}; null if unknown. */
+  season?: number | null;
+  /** Real broadcast time of the episode (unix s); null when unknown. */
+  airedAtSec?: number | null;
+  /** True when the episode is the most recently aired one. */
+  latest?: boolean;
+}
+
+/** Choose the best release for an episode: hard resolution floor first, then
+ *  rank by preferred group, seeders and an exact-resolution bonus.
+ *
+ *  With a {@link PickContext} it also refuses releases from another season:
+ *  ones labelled with a different season, and ones uploaded more than
+ *  {@link PRE_AIR_SLACK_SECS} before the episode aired. When nothing carries
+ *  the episode number and this is the latest aired episode, a release with a
+ *  higher number uploaded in this week's window is accepted as the same
+ *  episode under continuous numbering — only if every such release agrees on
+ *  one number. The caller sees `pick.episode !== episode` in that case. */
 export function pickBest(
   hits: NyaaHit[],
   episode: number,
   targetRes = 1080,
+  ctx: PickContext = {},
 ): NyaaHit | null {
+  const { season = null, airedAtSec = null, latest = false } = ctx;
   // Resolution is a HARD floor, not a ranking bonus: a preferred group at
   // 720p must never beat an acceptable 1080p release. Soft-ranking it was
   // tried and rejected — below targetRes we would rather download nothing and
   // retry next hour than fill the library with the wrong master.
-  const matching = hits.filter(
-    (h) => h.episode === episode && h.resolution >= targetRes,
-  );
+  const eligible = hits.filter((h) => {
+    if (h.resolution < targetRes) return false;
+    if (season != null) {
+      const hs = parseSeason(h.title);
+      if (hs != null && hs !== season) return false;
+    }
+    if (
+      airedAtSec != null && h.pubDateSec != null &&
+      h.pubDateSec < airedAtSec - PRE_AIR_SLACK_SECS
+    ) return false;
+    return true;
+  });
+  let matching = eligible.filter((h) => h.episode === episode);
+  if (!matching.length && latest && airedAtSec != null) {
+    const abs = eligible.filter((h) =>
+      h.episode != null && h.episode > episode && h.pubDateSec != null &&
+      h.pubDateSec >= airedAtSec - ABSOLUTE_WINDOW_BEFORE_SECS &&
+      h.pubDateSec <= airedAtSec + ABSOLUTE_WINDOW_AFTER_SECS
+    );
+    if (new Set(abs.map((h) => h.episode)).size === 1) matching = abs;
+  }
   if (!matching.length) return null;
   return matching.sort((a, b) => {
     const sa = groupScore(a.title) * 10 +
@@ -392,6 +483,34 @@ export function pickBest(
       (b.resolution === targetRes ? 5 : 0);
     return sb - sa;
   })[0];
+}
+
+/** Rename a continuously numbered release to the AniList season's own
+ *  numbering, so seanime, mark-watched and dedup all read the right episode:
+ *  "[SubsPlease] Kusuriya no Hitorigoto - 49 (1080p).mkv" with 49 → 1 becomes
+ *  "[SubsPlease] Kusuriya no Hitorigoto 3rd Season - 01 (1080p).mkv".
+ *  Returns null when the name is not in "Show - NN" form. */
+export function renameToSeasonEpisode(
+  name: string,
+  absEpisode: number,
+  episode: number,
+  seasonTitle: string,
+): string | null {
+  const re = new RegExp(`\\s-\\s0*${absEpisode}(v\\d+)?\\s`);
+  if (!re.test(name)) return null;
+  const show = extractShowTitle(name);
+  if (!show) return null;
+  const ep = String(episode).padStart(2, "0");
+  return name
+    .replace(re, (_m, v) => ` - ${ep}${v ?? ""} `)
+    .replace(show, seasonTitle);
+}
+
+/** Dedup key for an episode already in Transmission. Scoped to the show's
+ *  download folder: a name-only key strips season markers, so season 1's
+ *  "- 01" used to block season 3's ep 1. */
+export function episodeKey(downloadDir: string, episode: number): string {
+  return `${downloadDir.replace(/\/+$/, "")}::${episode}`;
 }
 
 // ─── Transmission helpers ─────────────────────────────────────────────────────
@@ -456,6 +575,23 @@ async function txListTorrents(
     ],
   });
   return (res.arguments as { torrents: TxTorrent[] }).torrents ?? [];
+}
+
+/** Rename a torrent's top-level file or folder (Transmission
+ *  `torrent-rename-path`). */
+async function txRenamePath(
+  url: string,
+  user: string,
+  pass: string,
+  id: number,
+  path: string,
+  name: string,
+): Promise<void> {
+  await txRpc(url, user, pass, "torrent-rename-path", {
+    ids: [id],
+    path,
+    name,
+  });
 }
 
 async function txAdd(
@@ -881,15 +1017,7 @@ async function sendTg(modelName: string, text: string): Promise<void> {
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.09.19.2",
-  upgrades: [
-    {
-      toVersion: "2026.09.19.2",
-      description:
-        "Version bump — repo-wide maintenance release; no schema change",
-      upgradeAttributes: (old: Record<string, unknown>) => old,
-    },
-  ],
+  version: "2026.10.02.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     fetchResult: {
@@ -1090,29 +1218,15 @@ export const model = {
           transmissionUser,
           transmissionPass,
         ).catch(() => []);
-        // Normalize a show title for dedup: strip season markers so that
-        // "Youjo Senki S2" and "Youjo Senki II" both collapse to "Youjo Senki".
-        const normalizeTitle = (t: string): string => {
-          let s = t.toLowerCase().replace(/\s+/g, " ").trim();
-          // Strip ": subtitle" (e.g. "Koukaku Kidoutai: THE GHOST IN THE SHELL")
-          s = s.replace(/\s*:.*$/, "");
-          // Strip trailing parenthesized year (e.g. "Koukaku Kidoutai (2026)")
-          s = s.replace(/\s*\(\d{4}\)\s*$/, "");
-          s = s.replace(/\s+(?:ii|iii|iv|v|vi|vii|viii|ix|x)$/i, "");
-          s = s.replace(
-            /\s+(?:s\d+|\d+(?:st|nd|rd|th)?\s+season|season\s+\d+)$/i,
-            "",
-          );
-          s = s.replace(/\s+\d+$/, "");
-          return s.trim();
-        };
-        const existingKey = (title: string, ep: number) =>
-          `${normalizeTitle(title)}::${ep}`;
+        // Episodes already in Transmission, keyed by download folder + episode,
+        // so we never re-queue an episode whose torrent was removed before
+        // mark-watched could update AniList progress. Keyed by folder, not by
+        // show name: the name key stripped season markers, which let season
+        // 1's "- 01" collide with a sequel's ep 1.
         const existingSet = new Set(
           existingTorrents.map((t) => {
             const ep = parseEpisode(t.name);
-            const show = extractShowTitle(t.name);
-            return ep != null ? `${normalizeTitle(show)}::${ep}` : null;
+            return ep != null ? episodeKey(t.downloadDir, ep) : null;
           }).filter((k): k is string => k != null),
         );
 
@@ -1195,11 +1309,16 @@ export const model = {
             animeContainerDir.replace(/\/$/, "")
           }/${folderName}`;
 
+          const season = parseSeason(entry.romaji ?? "") ??
+            parseSeason(entry.english ?? "");
+          const WEEK_SECS = 7 * 24 * 3600;
+          // Only a live AniList answer gives a real schedule; a cached list's
+          // airing times are projections from the capture instant.
+          const airingTimeIsReal = listSource === "anilist";
+
           // Queue each available episode from startEp up to lastAiredEp
           for (let ep = startEp; ep <= lastAiredEp; ep++) {
-            // Name-based dedup: catch re-downloads when a torrent was removed from
-            // Transmission before mark-watched updated AniList progress.
-            const showKey = existingKey(entry.romaji || title, ep);
+            const showKey = episodeKey(downloadDir, ep);
             if (existingSet.has(showKey)) {
               duplicates++;
               outcomes.push({
@@ -1211,7 +1330,16 @@ export const model = {
               continue;
             }
 
-            const pick = pickBest(hits, ep, preferredResolution);
+            let airedAtSec: number | null = null;
+            if (entry.nextAiringEp != null && entry.nextAiringAt != null) {
+              const epsBehind = entry.nextAiringEp - ep;
+              airedAtSec = entry.nextAiringAt - epsBehind * WEEK_SECS;
+            }
+            const pick = pickBest(hits, ep, preferredResolution, {
+              season,
+              airedAtSec: airingTimeIsReal ? airedAtSec : null,
+              latest: ep === lastAiredEp && entry.nextAiringEp != null,
+            });
             if (!pick) {
               notFound++;
               outcomes.push({
@@ -1225,12 +1353,6 @@ export const model = {
               // For the most recently aired ep, estimate air time from nextAiringAt minus one week.
               // For older backlogged eps, they're always overdue.
               const GRACE_SECS = 30 * 60;
-              const WEEK_SECS = 7 * 24 * 3600;
-              let airedAtSec: number | null = null;
-              if (entry.nextAiringEp != null && entry.nextAiringAt != null) {
-                const epsBehind = entry.nextAiringEp - ep;
-                airedAtSec = entry.nextAiringAt - epsBehind * WEEK_SECS;
-              }
               const isOverdue = airedAtSec == null ||
                 (nowSec - airedAtSec) > GRACE_SECS;
               // An INFERRED airing time must never drive an alert. When the
@@ -1245,7 +1367,6 @@ export const model = {
               // The not-found outcome is still recorded either way, so the run
               // report shows exactly what was missing; only the page is held
               // back until AniList is answering and the times are real again.
-              const airingTimeIsReal = listSource === "anilist";
               if (isOverdue && !airingTimeIsReal) alertsSuppressed++;
               if (tg && isOverdue && airingTimeIsReal) {
                 const agoMin = airedAtSec
@@ -1294,17 +1415,52 @@ export const model = {
               } else if (result.added) {
                 queued++;
                 existingSet.add(showKey);
+                let torrentName = result.name ?? pick.title;
+                let reason: string | undefined;
+                // Continuous numbering ("- 49" for this season's ep 1): rename
+                // to the season's own number so seanime, mark-watched and
+                // dedup all read the right episode.
+                if (pick.episode != null && pick.episode !== ep) {
+                  reason = `absolute-episode-${pick.episode}`;
+                  const renamed = result.name && result.id != null
+                    ? renameToSeasonEpisode(
+                      result.name,
+                      pick.episode,
+                      ep,
+                      folderName,
+                    )
+                    : null;
+                  if (renamed && result.id != null && result.name) {
+                    try {
+                      await txRenamePath(
+                        transmissionRpcUrl,
+                        transmissionUser,
+                        transmissionPass,
+                        result.id,
+                        result.name,
+                        renamed,
+                      );
+                      torrentName = renamed;
+                      reason += "-renamed";
+                    } catch {
+                      reason += "-rename-failed";
+                    }
+                  } else {
+                    reason += "-not-renamed";
+                  }
+                }
                 outcomes.push({
                   mediaId: entry.mediaId,
                   title,
                   episode: ep,
                   status: "queued",
-                  torrentName: result.name ?? pick.title,
+                  torrentName,
+                  ...(reason ? { reason } : {}),
                 });
                 if (tg) {
                   await tg(
                     `<b>${title} ep${ep} queued</b>\n<code>${
-                      (result.name ?? pick.title).slice(0, 120)
+                      escapeHtml(torrentName.slice(0, 120))
                     }</code>`,
                   );
                 }
