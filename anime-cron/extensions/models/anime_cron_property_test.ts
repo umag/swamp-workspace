@@ -477,7 +477,7 @@ Deno.test("property: fetch-airing dedup idempotency — feeding run-1's queued t
         percentDone: 1,
         isFinished: true,
         doneDate: 1000,
-        downloadDir: "/anime/tv/x",
+        downloadDir: `/anime/tv/Fixture Prop ID${id}`,
         totalSize: 100,
         hashString: hashFor(i),
       }));
