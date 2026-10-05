@@ -1,0 +1,43 @@
+manifestVersion: 1
+name: "@magistr/led-badge"
+version: "2026.10.05.1"
+description: |
+  Drive a 44x11 LED name badge (USB 0416:5020, WCH CH583 "LSLED" / Badge
+  Magic family) from swamp.
+
+  Model `@magistr/led-badge`:
+  - `detect`  — find the badge's HID interface (no write).
+  - `preview` — render text / pixel art to ASCII frames without the device.
+  - `send`    — upload up to 8 messages (mode, speed, blink, border,
+    brightness). Replaces what is stored on the badge.
+
+  USB I/O uses a small Rust hidapi helper (bin/hid-send) built once with
+  cargo and cached in ~/.cache/swamp-led-badge. Works on macOS and Linux.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/led_badge.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+binaries:
+  - bin/hid-send/Cargo.toml
+  - bin/hid-send/Cargo.lock
+  - bin/hid-send/src/main.rs
+
+platforms:
+  - darwin-x86_64
+  - darwin-aarch64
+  - linux-x86_64
+  - linux-aarch64
+
+labels:
+  - led-badge
+  - hid
+  - usb
+  - hardware

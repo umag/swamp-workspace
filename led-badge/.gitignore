@@ -1,0 +1,4 @@
+.swamp/
+.swamp-sources.yaml
+.DS_Store
+bin/hid-send/target/
