@@ -1,0 +1,13 @@
+[package]
+name = "hid-send"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+btleplug = "=0.13.4"
+hidapi = "=2.6.3"
+serde_json = "=1.0.140"
+tokio = { version = "=1.53.2", features = ["rt", "macros", "time"] }
+
+[profile.release]
+opt-level = "s"
