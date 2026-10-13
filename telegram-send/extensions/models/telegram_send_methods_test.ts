@@ -23,7 +23,10 @@
  * appear in a thrown error, a written resource payload, or a logger call.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { model } from "./telegram_send.ts";
+import { model, RETRY_DELAYS_MS } from "./telegram_send.ts";
+
+// A rejected fetch is retried after RETRY_DELAYS_MS; no real waiting in tests.
+RETRY_DELAYS_MS.splice(0, RETRY_DELAYS_MS.length, 0, 0);
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -809,5 +812,60 @@ Deno.test("sendMessage: replyMarkup object is JSON-serialised; string passes thr
     );
     assertEquals((await requestJsonBody(calls[1])).reply_markup, '{"x":1}');
     assertEquals((await requestJsonBody(calls[2])).reply_markup, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Retry on a rejected fetch (2026.10.13.1)
+// ---------------------------------------------------------------------------
+
+const sentOk = () =>
+  json({ ok: true, result: { message_id: 7, chat: { id: 1 }, date: 0 } });
+
+Deno.test("sendMessage: retries a rejected fetch and succeeds on the third try", async () => {
+  const { ctx } = makeCtx();
+  let attempt = 0;
+  await withFetchStub([() => {
+    attempt++;
+    if (attempt < 3) throw new TypeError("fetch failed");
+    return sentOk();
+  }], async (calls) => {
+    await run("sendMessage", { text: "hi" }, ctx);
+    assertEquals(calls.length, 3);
+  });
+});
+
+Deno.test("sendMessage: gives up after three rejections, names the cause, never the token", async () => {
+  const { ctx } = makeCtx();
+  const cause = new Error(
+    `error sending request for url (https://api.telegram.org/bot${TOKEN}/sendMessage): dns error`,
+  );
+  await withFetchStub([() => {
+    throw new TypeError("fetch failed", { cause });
+  }], async (calls) => {
+    const err = await assertRejects(() =>
+      run("sendMessage", { text: "hi" }, ctx)
+    );
+    const msg = (err as Error).message;
+    assertEquals(calls.length, 3);
+    assert(msg.includes("after 3 attempts"), msg);
+    assert(msg.includes("dns error"), msg);
+    assert(!msg.includes(TOKEN), msg);
+  });
+});
+
+Deno.test("sendMessage: an HTTP error response is never retried", async () => {
+  const { ctx } = makeCtx();
+  await withFetchStub([() =>
+    json(
+      { ok: false, error_code: 400, description: "message is too long" },
+      400,
+    )], async (calls) => {
+    await assertRejects(
+      () => run("sendMessage", { text: "hi" }, ctx),
+      Error,
+      "message is too long",
+    );
+    assertEquals(calls.length, 1);
   });
 });

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026.10.13.1
+
+### Fixed
+
+- A Bot API request whose fetch itself rejects (DNS failure, connection refused
+  or reset) is retried twice, after 2 s and 5 s. One such rejection on
+  2026-10-13 cost the swamp morning-brief its whole Telegram send. An HTTP
+  response, error or not, is never retried. A rejection that happens after
+  Telegram already accepted the request can produce one duplicate message.
+- The final error names the redacted cause (for example `dns error`) and the
+  attempt count, instead of a bare `fetch failed`.
+
 ## 2026.09.24.1
 
 ### Added

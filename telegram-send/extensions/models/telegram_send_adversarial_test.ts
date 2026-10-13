@@ -15,7 +15,10 @@
  * explicitly. See fixtures/PROVENANCE.md for fixture provenance.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { model, redactToken } from "./telegram_send.ts";
+import { model, redactToken, RETRY_DELAYS_MS } from "./telegram_send.ts";
+
+// A rejected fetch is retried after RETRY_DELAYS_MS; no real waiting in tests.
+RETRY_DELAYS_MS.splice(0, RETRY_DELAYS_MS.length, 0, 0);
 import getMeFixture from "../../fixtures/getMe.json" with { type: "json" };
 import sendMessageFixture from "../../fixtures/sendMessage.json" with {
   type: "json",

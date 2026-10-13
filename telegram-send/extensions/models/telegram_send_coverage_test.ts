@@ -14,8 +14,12 @@ import {
   model,
   parseJsonArg,
   resolveChatId,
+  RETRY_DELAYS_MS,
   serializeReplyMarkup,
 } from "./telegram_send.ts";
+
+// A rejected fetch is retried after RETRY_DELAYS_MS; no real waiting in tests.
+RETRY_DELAYS_MS.splice(0, RETRY_DELAYS_MS.length, 0, 0);
 
 const TOKEN = "FAKE-BOT-TOKEN-SENTINEL-DO-NOT-LOG-0000";
 const DEFAULT_CHAT_ID = "555000111";
@@ -436,6 +440,6 @@ Deno.test("coverage: every ported method and resource is registered", () => {
   for (const r of ["webhookInfo", "downloadedFile"]) {
     assertEquals(r in model.resources, true, r);
   }
-  assertEquals(model.version, "2026.09.24.1");
+  assertEquals(model.version, "2026.10.13.1");
   assertEquals(model.upgrades.at(-1)?.toVersion, model.version);
 });
