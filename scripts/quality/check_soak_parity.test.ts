@@ -46,7 +46,10 @@ async function writeExtension(
   }
 
   if (opts.qualityYaml !== undefined) {
-    await Deno.writeTextFile(join(dir, "quality-standard.yaml"), opts.qualityYaml);
+    await Deno.writeTextFile(
+      join(dir, "quality-standard.yaml"),
+      opts.qualityYaml,
+    );
   }
 }
 

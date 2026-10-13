@@ -38,7 +38,10 @@ async function writeExtension(
   await Deno.mkdir(dirname(full), { recursive: true });
   await Deno.writeTextFile(full, "");
   if (opts.qualityYaml !== undefined) {
-    await Deno.writeTextFile(join(dir, "quality-standard.yaml"), opts.qualityYaml);
+    await Deno.writeTextFile(
+      join(dir, "quality-standard.yaml"),
+      opts.qualityYaml,
+    );
   }
 }
 
