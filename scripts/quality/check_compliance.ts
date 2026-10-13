@@ -178,7 +178,8 @@ export async function checkCompliance(
 }
 
 function printHelp() {
-  console.log(`check_compliance.ts — validate every extension's quality-standard.yaml
+  console.log(
+    `check_compliance.ts — validate every extension's quality-standard.yaml
 
 Usage:
   deno run --allow-read scripts/quality/check_compliance.ts [--help] [--json <path>] [<extension-name>]
@@ -196,7 +197,8 @@ Exit codes:
   0  every checked extension is compliant
   1  one or more violations found (also emits a GitHub ::error annotation
      per violation when running in CI)
-`);
+`,
+  );
 }
 
 if (import.meta.main) {

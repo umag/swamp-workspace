@@ -293,7 +293,10 @@ Deno.test("runRatchet reports a missing quality-standard.yaml as a benign 'skipp
     assertEquals(reports[0].extension, "widget");
     assertEquals(reports[0].outcome.status, "skipped");
     if (reports[0].outcome.status === "skipped") {
-      assertEquals(reports[0].outcome.reason, "no readable quality-standard.yaml");
+      assertEquals(
+        reports[0].outcome.reason,
+        "no readable quality-standard.yaml",
+      );
     }
   } finally {
     await Deno.remove(root, { recursive: true });

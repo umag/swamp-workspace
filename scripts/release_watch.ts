@@ -739,7 +739,9 @@ export async function discoverExtensionsWithQuality(
   for await (const entry of Deno.readDir(root)) {
     if (!entry.isDirectory) continue;
     try {
-      const stat = await Deno.stat(join(root, entry.name, "quality-standard.yaml"));
+      const stat = await Deno.stat(
+        join(root, entry.name, "quality-standard.yaml"),
+      );
       if (stat.isFile) found.push(entry.name);
     } catch {
       // no quality-standard.yaml in this extension yet — skip

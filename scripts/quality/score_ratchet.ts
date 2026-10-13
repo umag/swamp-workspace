@@ -190,7 +190,10 @@ export async function runRatchet(
     } catch {
       reports.push({
         extension: ext,
-        outcome: { status: "skipped", reason: "no readable quality-standard.yaml" },
+        outcome: {
+          status: "skipped",
+          reason: "no readable quality-standard.yaml",
+        },
       });
       continue;
     }
@@ -198,7 +201,10 @@ export async function runRatchet(
     if (!parsed.success) {
       reports.push({
         extension: ext,
-        outcome: { status: "skipped", reason: "quality-standard.yaml fails schema" },
+        outcome: {
+          status: "skipped",
+          reason: "quality-standard.yaml fails schema",
+        },
       });
       continue;
     }
