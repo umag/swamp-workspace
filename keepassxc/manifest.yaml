@@ -1,0 +1,41 @@
+manifestVersion: 1
+name: "@magistr/keepassxc"
+version: "2026.09.30.1"
+description: |
+  Swamp vault backed by a running KeePassXC, reached through its Browser
+  Integration protocol via `keepassxc-proxy` — the same channel the
+  KeePassXC-Browser extension uses. No master password is stored: the first
+  call pops KeePassXC's "new connection" dialog and the resulting association
+  key is kept in a 0600 file.
+
+  Each secret is one entry: URL `swamp://<namespace>/<key>`, username = key,
+  password = value, in a configurable group (default `swamp`). `list()`
+  returns every username under `swamp://<namespace>`.
+
+  Requires the KeePassXC GUI to be running with the database unlocked (a
+  locked database triggers the unlock dialog and is retried), so it suits a
+  workstation, not a headless `swamp serve`.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+vaults:
+  - extensions/vaults/keepassxc/mod.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms:
+  - darwin-x86_64
+  - darwin-aarch64
+  - linux-x86_64
+  - linux-aarch64
+
+labels:
+  - vault
+  - secrets
+  - keepassxc
+  - keepass
+  - password-manager

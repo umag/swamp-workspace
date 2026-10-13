@@ -1,0 +1,33 @@
+{
+  "keepassxcVersion": "2.7.11",
+  "changePublicKeysRequest": {
+    "action": "change-public-keys",
+    "publicKey": "<publicKey>",
+    "nonce": "<nonce>",
+    "clientID": "<clientID>"
+  },
+  "changePublicKeysReply": {
+    "action": "change-public-keys",
+    "nonce": "<nonce>",
+    "publicKey": "<publicKey>",
+    "success": "true",
+    "version": "2.7.11"
+  },
+  "encryptedRequest": {
+    "action": "get-logins",
+    "message": "<message>",
+    "nonce": "<nonce>",
+    "clientID": "<clientID>",
+    "triggerUnlock": "true"
+  },
+  "encryptedReply": {
+    "action": "get-logins",
+    "message": "<message>",
+    "nonce": "<nonce>"
+  },
+  "errorReply": {
+    "action": "get-logins",
+    "error": "No logins found",
+    "errorCode": "15"
+  }
+}
