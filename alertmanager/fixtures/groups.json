@@ -1,0 +1,23 @@
+[
+  {
+    "labels": { "alertname": "DiskSpaceWarning" },
+    "receiver": { "name": "default" },
+    "alerts": [
+      {
+        "labels": {
+          "alertname": "DiskSpaceWarning",
+          "severity": "warning",
+          "instance": "host-a:9100"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-01T10:00:00.000Z",
+        "endsAt": "2026-01-01T10:05:00.000Z",
+        "updatedAt": "2026-01-01T10:01:00.000Z",
+        "generatorURL": "",
+        "fingerprint": "a1b2c3d4e5f60718",
+        "receivers": [{ "name": "default" }],
+        "status": { "state": "active", "silencedBy": [], "inhibitedBy": [] }
+      }
+    ]
+  }
+]

@@ -1,0 +1,36 @@
+manifestVersion: 1
+name: "@magistr/alertmanager"
+version: "2026.10.13.1"
+description: |
+  Prometheus Alertmanager v2 API for swamp — list firing alerts, alert groups
+  and silences, read server status, and create/extend or expire silences
+  idempotently.
+
+  Model:
+  - `@magistr/alertmanager` — talks to `/api/v2/*` on an Alertmanager.
+    Methods: `alerts` (active, unsilenced, uninhibited by default, with label
+    matcher and receiver filters), `groups` (as the routing tree groups them),
+    `silences` (by state and matchers), `status` (version, uptime, cluster;
+    the running config is stored as a SHA-256 only, because it can hold
+    receiver secrets), `create-silence` (reuses or extends an existing
+    silence with the same matchers and comment), and `expire-silence` (reads
+    first; an already-expired silence is left alone).
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/alertmanager.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - alerting
+  - observability
+  - alertmanager
+  - prometheus
