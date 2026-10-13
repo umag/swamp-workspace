@@ -127,17 +127,37 @@ function redactedCause(err: unknown, token: string): unknown {
  * the raw rejection itself, since that would carry the token right back
  * through `cause`. Every Bot API and file-download request goes through here.
  */
+/**
+ * Waits before each retry of a request whose fetch itself rejected. One
+ * "fetch failed" on 2026-10-13 cost the whole morning-brief notify step.
+ * Only a rejection is retried, never an HTTP response (error or not). A
+ * rejection after Telegram already accepted the request can duplicate a
+ * message; one duplicate is the accepted cost of not losing the send.
+ */
+export const RETRY_DELAYS_MS: number[] = [2000, 5000];
+
 async function redactedFetch(
   url: string,
   init: RequestInit | undefined,
   token: string,
 ): Promise<Response> {
-  try {
-    return await fetch(url, init);
-  } catch (err) {
-    throw new Error(redactToken(err, token), {
-      cause: redactedCause(err, token),
-    });
+  for (let attempt = 0;; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      if (attempt >= RETRY_DELAYS_MS.length) {
+        // The run record keeps only the message, so name the cause (dns,
+        // connect, reset) there too, redacted like the message itself.
+        const cause = err instanceof Error && err.cause !== undefined
+          ? `: ${redactToken(err.cause, token)}`
+          : "";
+        throw new Error(
+          `${redactToken(err, token)}${cause} (after ${attempt + 1} attempts)`,
+          { cause: redactedCause(err, token) },
+        );
+      }
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+    }
   }
 }
 
@@ -281,7 +301,7 @@ export function isLocalPath(s: string): boolean {
  */
 export const model = {
   type: "@magistr/telegram/send",
-  version: "2026.09.24.1",
+  version: "2026.10.13.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -294,6 +314,13 @@ export const model = {
       description:
         "Adds the optional webhookSecret global argument (defaults to empty); " +
         "existing attributes carry over unchanged",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.13.1",
+      description:
+        "Bot API calls retry twice when the fetch itself rejects, and the " +
+        "error names the cause; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
