@@ -1,0 +1,40 @@
+[
+  {
+    "labels": {
+      "alertname": "DiskSpaceWarning",
+      "severity": "warning",
+      "instance": "host-a:9100",
+      "mountpoint": "/data"
+    },
+    "annotations": {
+      "summary": "Disk /data above 90%",
+      "description": "Usage is 93%"
+    },
+    "startsAt": "2026-01-01T10:00:00.000Z",
+    "endsAt": "2026-01-01T10:05:00.000Z",
+    "updatedAt": "2026-01-01T10:01:00.000Z",
+    "generatorURL": "http://vmalert.example:8880/vmalert/alert?group_id=1&alert_id=2",
+    "fingerprint": "a1b2c3d4e5f60718",
+    "receivers": [{ "name": "default" }],
+    "status": { "state": "active", "silencedBy": [], "inhibitedBy": [] }
+  },
+  {
+    "labels": {
+      "alertname": "ExporterDown",
+      "severity": "critical",
+      "job": "node"
+    },
+    "annotations": { "summary": "Exporter node is down" },
+    "startsAt": "2026-01-01T09:00:00.000Z",
+    "endsAt": "2026-01-01T10:05:00.000Z",
+    "updatedAt": "2026-01-01T10:01:00.000Z",
+    "generatorURL": "http://vmalert.example:8880/vmalert/alert?group_id=1&alert_id=3",
+    "fingerprint": "0f1e2d3c4b5a6978",
+    "receivers": [{ "name": "telegram" }],
+    "status": {
+      "state": "suppressed",
+      "silencedBy": ["7c0f2a4e-1111-4222-8333-944455556666"],
+      "inhibitedBy": []
+    }
+  }
+]

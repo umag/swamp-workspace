@@ -1,0 +1,19 @@
+{
+  "cluster": {
+    "name": "01ABCDEF",
+    "status": "ready",
+    "peers": [{ "name": "01ABCDEF", "address": "10.0.0.5:9094" }]
+  },
+  "versionInfo": {
+    "version": "0.28.1",
+    "revision": "abc123",
+    "branch": "HEAD",
+    "buildUser": "root@builder",
+    "buildDate": "20250101-00:00:00",
+    "goVersion": "go1.23.4"
+  },
+  "config": {
+    "original": "global:\n  resolve_timeout: 5m\nreceivers:\n- name: telegram\n  telegram_configs:\n  - bot_token: SECRET-TOKEN-DO-NOT-STORE\n    chat_id: 1\n"
+  },
+  "uptime": "2026-01-01T00:00:00.000Z"
+}
