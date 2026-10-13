@@ -1,8 +1,8 @@
 // Failing-first (TDD RED) tests for scripts/lib/watch_schema.ts.
 //
 // watch_schema.ts is the single executable contract for the `watch:` block
-// that lives inside each extension's `<ext>/quality.yaml` (approved amendment:
-// there is no standalone watch.yaml — Phase A owns the rest of quality.yaml
+// that lives inside each extension's `<ext>/quality-standard.yaml` (approved amendment:
+// there is no standalone watch.yaml — Phase A owns the rest of quality-standard.yaml
 // and treats `watch.sources[]` as passthrough; this module owns its deep
 // validation).
 import {
@@ -293,10 +293,10 @@ Deno.test("parseWatchDeclaration: throws WatchSchemaError (not a raw ZodError) o
 });
 
 // ---------------------------------------------------------------------------
-// loadQualityWatch — reads `<ext>/quality.yaml`, extracts + validates `watch:`
+// loadQualityWatch — reads `<ext>/quality-standard.yaml`, extracts + validates `watch:`
 // ---------------------------------------------------------------------------
 
-Deno.test("loadQualityWatch: reads a fixture quality.yaml with state=present", async () => {
+Deno.test("loadQualityWatch: reads a fixture quality-standard.yaml with state=present", async () => {
   const decl = await loadQualityWatch(
     "testdata/quality-present.yaml",
   );
@@ -307,7 +307,7 @@ Deno.test("loadQualityWatch: reads a fixture quality.yaml with state=present", a
   }
 });
 
-Deno.test("loadQualityWatch: reads a fixture quality.yaml with state=na", async () => {
+Deno.test("loadQualityWatch: reads a fixture quality-standard.yaml with state=na", async () => {
   const decl = await loadQualityWatch("testdata/quality-na.yaml");
   assertEquals(decl.state, "na");
 });
@@ -320,7 +320,7 @@ Deno.test("loadQualityWatch: throws a descriptive error when the watch: key is m
   );
 });
 
-Deno.test("loadQualityWatch: passthrough — ignores unrelated Phase A quality.yaml keys", async () => {
+Deno.test("loadQualityWatch: passthrough — ignores unrelated Phase A quality-standard.yaml keys", async () => {
   // Phase A owns schemaVersion/extension/other CI-gate keys; this module must
   // not choke on their presence, only validate `watch:` deeply.
   const decl = await loadQualityWatch(

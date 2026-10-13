@@ -22,7 +22,7 @@
  *      derivation would otherwise silently discard (the defect that dropped
  *      --v8-flags=--expose-gc from seanime's/seadex's derived soak argv and
  *      silently skipped their heap-pin regression tests every night), unsafe
- *      tokens/paths (checked on BOTH the quality.yaml `soak:` override, when
+ *      tokens/paths (checked on BOTH the quality-standard.yaml `soak:` override, when
  *      present, AND the argv derived straight from the test task — the
  *      48/51-extension default path), a `soak:` override that EXCEEDS its
  *      own `test` task's authority, a `soak:` override repeating
@@ -59,10 +59,10 @@ export interface Violation {
   why: string;
   fix: string;
   /** Set only for a violation whose real offending artifact is a file OTHER
-   * than quality.yaml (orphaned-property-file, unsafe-property-file-path) —
+   * than quality-standard.yaml (orphaned-property-file, unsafe-property-file-path) —
    * a repo-relative path (relative to the extension directory) the CLI
    * annotation should point `::error file=` at instead of the default
-   * `<extension>/quality.yaml`. */
+   * `<extension>/quality-standard.yaml`. */
   file?: string;
 }
 
@@ -105,7 +105,7 @@ interface SoakBlock {
   denoArgs?: unknown;
 }
 
-/** Best-effort read of `<ext>/quality.yaml`'s `soak:` key, loosely (this
+/** Best-effort read of `<ext>/quality-standard.yaml`'s `soak:` key, loosely (this
  * module only cares whether it's present/na/backlog and, if present, its
  * denoArgs — full schema enforcement is scripts/quality/schema.ts's job via
  * check_compliance.ts). `null` when missing/unreadable/malformed/absent. */
@@ -115,7 +115,7 @@ async function readSoakBlock(
 ): Promise<SoakBlock | null> {
   try {
     const raw = parseYaml(
-      await Deno.readTextFile(join(root, extension, "quality.yaml")),
+      await Deno.readTextFile(join(root, extension, "quality-standard.yaml")),
     );
     if (!raw || typeof raw !== "object") return null;
     const soak = (raw as Record<string, unknown>).soak;
@@ -215,7 +215,7 @@ export async function checkSoak(root: string): Promise<CheckSoakResult> {
     // no-op — see validateNoUnknownFlags's docblock for the seanime/seadex
     // --v8-flags=--expose-gc coverage hole this makes impossible to repeat.
     // Checked against the RAW test task string, independent of whether this
-    // extension also has a quality.yaml soak: override (a present override
+    // extension also has a quality-standard.yaml soak: override (a present override
     // is used verbatim by soak_schedule.ts's resolveDenoArgs, never
     // round-tripped through this derivation, so it has nothing to silently
     // drop).
@@ -233,7 +233,7 @@ export async function checkSoak(root: string): Promise<CheckSoakResult> {
     // alone — a --v8-flags/--unstable-* value now reaches the soaked child's
     // argv too, so it must clear the same charset discipline. Checked for
     // EVERY extension with an anchored property file, whether or not it
-    // also has a quality.yaml soak: override.
+    // also has a quality-standard.yaml soak: override.
     for (
       const v of validateTokenSafety(deriveSoakArgsFromTestTask(testTask))
     ) {
@@ -254,19 +254,19 @@ export async function checkSoak(root: string): Promise<CheckSoakResult> {
           what:
             `${extension}'s test task grants broad authority (--allow-all, ` +
             "or unscoped --allow-run/--allow-net/--allow-ffi/--allow-sys) " +
-            "with no narrowed quality.yaml soak: override",
+            "with no narrowed quality-standard.yaml soak: override",
           why: "an unattended nightly soak must never silently inherit a " +
             "broad permission grant — it needs a human-reviewed, narrowed " +
             "soak: override",
           fix: `add a soak: { state: present, denoArgs: [...] } block to ` +
-            `${extension}/quality.yaml, narrowed to only what the property ` +
+            `${extension}/quality-standard.yaml, narrowed to only what the property ` +
             "test actually needs",
         });
       }
       // Adequacy (FC_NUM_RUNS reachability) must ALSO be checked on this
       // DERIVED path — it is used verbatim by 48 of 51 extensions
       // (soak_schedule.ts's resolveDenoArgs fallback), not only when a
-      // quality.yaml soak: override exists. Without this, an extension with
+      // quality-standard.yaml soak: override exists. Without this, an extension with
       // e.g. a scoped --allow-env that omits FC_NUM_RUNS passes this gate
       // clean and then silently runs its nightly soak at the small fallback
       // iteration count instead of the intended high count.
@@ -285,13 +285,13 @@ export async function checkSoak(root: string): Promise<CheckSoakResult> {
         extension,
         rule: "soak-invalid-denoargs",
         what:
-          `${extension}'s quality.yaml soak.denoArgs is present but not an ` +
+          `${extension}'s quality-standard.yaml soak.denoArgs is present but not an ` +
           "array of strings",
         why:
           "check_soak.ts can only validate a soak: override whose denoArgs " +
           "is a plain string array",
         fix:
-          `fix ${extension}/quality.yaml's soak.denoArgs to be an array of ` +
+          `fix ${extension}/quality-standard.yaml's soak.denoArgs to be an array of ` +
           "deno permission flag strings",
       });
       continue;
@@ -363,9 +363,9 @@ Checks, in one pass, across every extension:
     --ignore) — that the derivation would otherwise silently drop instead of
     carrying into the soaked child's argv or reporting
   - unsafe tokens/paths (shell metacharacters, non-ASCII, etc.) — on BOTH the
-    quality.yaml soak: override (when present) AND the derived-from-test-task
+    quality-standard.yaml soak: override (when present) AND the derived-from-test-task
     argv (always, the 48/51-extension default path)
-  - a quality.yaml soak: override that EXCEEDS its own test task's authority
+  - a quality-standard.yaml soak: override that EXCEEDS its own test task's authority
   - a soak: override repeating --allow-net/--allow-env/--allow-run/--allow-sys
     (deno's CLI hard-rejects a second occurrence of these outright)
   - a soak: override combining --allow-all/-A with any other --allow-X flag
@@ -373,7 +373,7 @@ Checks, in one pass, across every extension:
   - inadequate FC_NUM_RUNS coverage — on BOTH the override (when present) AND
     the derived-from-test-task path (always)
   - a BROAD test-task grant (--allow-all / unscoped --allow-run/--allow-net/
-    --allow-ffi/--allow-sys) with no narrowed quality.yaml soak: override
+    --allow-ffi/--allow-sys) with no narrowed quality-standard.yaml soak: override
 
 Set QUALITY_REPO_ROOT to scan a tree other than this script's own repo
 (used by its tests; CI never needs it).
@@ -407,13 +407,13 @@ if (import.meta.main) {
       `${v.extension}: [${v.rule}] ${v.what}\n  WHY: ${v.why}\n  FIX: ${v.fix}`,
     );
     // orphaned-property-file / unsafe-property-file-path's real offending
-    // artifact is the *_property_test.ts file itself, not quality.yaml (that
+    // artifact is the *_property_test.ts file itself, not quality-standard.yaml (that
     // extension may not even have one) — point the annotation there so it
     // lands on the right file (and line, where GitHub can resolve one) in
-    // the PR diff. Every other rule's offending artifact IS quality.yaml.
+    // the PR diff. Every other rule's offending artifact IS quality-standard.yaml.
     const annotationFile = v.file
       ? `${v.extension}/${v.file}`
-      : `${v.extension}/quality.yaml`;
+      : `${v.extension}/quality-standard.yaml`;
     console.log(`::error file=${annotationFile}::${v.what} — ${v.fix}`);
   }
   if (jsonPath) {

@@ -1,9 +1,9 @@
 /**
  * AllowlistGuard domain service: the shrink-only guard over
  * quality-allowlist.txt, cross-checked against the immutable
- * quality-offenders.baseline.txt and against every extension's quality.yaml
+ * quality-offenders.baseline.txt and against every extension's quality-standard.yaml
  * backlog states, so the two sources of truth (the allowlist FILE and the
- * quality.yaml backlog declarations) can never drift apart.
+ * quality-standard.yaml backlog declarations) can never drift apart.
  */
 import { dirname, fromFileUrl, join } from "jsr:@std/path@1";
 import { parse as parseYaml } from "jsr:@std/yaml@1.0.10";
@@ -78,7 +78,7 @@ async function git(
  *
  * Seed-race exception: an added line is tolerated when that extension
  * EXISTED at the merge-base (its manifest.yaml is present there) but was
- * NOT yet gated (no quality.yaml at the merge-base). That is precisely an
+ * NOT yet gated (no quality-standard.yaml at the merge-base). That is precisely an
  * extension that entered master through a branch cut before the gate
  * landed — the baseline was seeded from a stale snapshot and is being
  * corrected, not grown. A genuinely new extension added in the same PR
@@ -126,12 +126,21 @@ export async function checkBaselineImmutable(
       "-e",
       `${mergeBaseSha}:${entry}/manifest.yaml`,
     );
-    const gatedAtBase = await git(
-      root,
-      "cat-file",
-      "-e",
-      `${mergeBaseSha}:${entry}/quality.yaml`,
-    );
+    // Before the rename to quality-standard.yaml the file was quality.yaml;
+    // swamp now reserves that name for its own acceptance sidecar.
+    const gatedAtBase = (await git(
+        root,
+        "cat-file",
+        "-e",
+        `${mergeBaseSha}:${entry}/quality-standard.yaml`,
+      )).success
+      ? { success: true }
+      : await git(
+        root,
+        "cat-file",
+        "-e",
+        `${mergeBaseSha}:${entry}/quality.yaml`,
+      );
     // Seed-race correction: existed at merge-base, not yet gated there.
     if (manifestAtBase.success && !gatedAtBase.success) continue;
     grownEntries.push(entry);
@@ -147,7 +156,7 @@ export async function checkBaselineImmutable(
         "the baseline is the write-once seed of allowed offenders; growing it " +
         "re-opens the exact regression path the allowlist guard exists to close " +
         "(only a seed-race correction — an extension present at the merge-base " +
-        "without a quality.yaml — may add a line)",
+        "without a quality-standard.yaml — may add a line)",
       fix:
         `revert the added line(s) in ${baselineRelPath} — the baseline must never ` +
         "grow after its initial seed commit",
@@ -163,7 +172,7 @@ export interface AllowlistCheckResult {
 /**
  * Full allowlist guard: growth-vs-baseline (both the plain subset check and
  * the merge-base diff), plus the cross-check against every extension's
- * quality.yaml backlog declarations in BOTH directions — a backlog offender
+ * quality-standard.yaml backlog declarations in BOTH directions — a backlog offender
  * missing from the allowlist, and a fully-compliant extension still
  * lingering on it.
  */
@@ -201,7 +210,9 @@ export async function checkAllowlist(
   for (const ext of extensions) {
     let raw: unknown;
     try {
-      raw = parseYaml(await Deno.readTextFile(join(root, ext, "quality.yaml")));
+      raw = parseYaml(
+        await Deno.readTextFile(join(root, ext, "quality-standard.yaml")),
+      );
     } catch {
       continue; // check_compliance.ts already reports missing/unreadable files
     }
@@ -272,7 +283,7 @@ Set QUALITY_REPO_ROOT to scan a tree other than this script's own repo
 
 Exit codes:
   0  allowlist and baseline are consistent
-  1  growth, baseline tampering, or allowlist/quality.yaml drift detected
+  1  growth, baseline tampering, or allowlist/quality-standard.yaml drift detected
 `,
   );
 }

@@ -1,7 +1,7 @@
 /**
  * Generic weekly release-watch resolver.
  *
- * Reads every top-level extension directory's `quality.yaml` `watch:` block
+ * Reads every top-level extension directory's `quality-standard.yaml` `watch:` block
  * (see scripts/lib/watch_schema.ts — the executable contract) and compares
  * each declared source's pinned/baseline reference against the live
  * upstream. Every upstream HTTP response is treated as UNTRUSTED input:
@@ -61,10 +61,10 @@ export interface ExtensionDriftReport {
   readonly hasDrift: boolean;
   readonly results: SourceResult[];
   readonly justification?: string;
-  /** Set when this extension's quality.yaml could not be loaded/validated at
+  /** Set when this extension's quality-standard.yaml could not be loaded/validated at
    * all (malformed YAML, invalid watch: block, an unexpectedly-thrown source
    * error). buildDriftReports ISOLATES this per extension — one broken
-   * quality.yaml must never abort the run for the other 47+ extensions. Never
+   * quality-standard.yaml must never abort the run for the other 47+ extensions. Never
    * raises a GitHub issue on its own (that's Phase A/ci.yml's job at PR time);
    * main() surfaces it as a warning and a non-zero exit so it stays visible. */
   readonly loadError?: string;
@@ -584,7 +584,7 @@ export async function resolveHttpFingerprintSource(
   source: HttpFingerprintWatchSource,
   opts: ResolveOpts = {},
 ): Promise<SourceResult> {
-  // Defense in depth: the SSRF guard already ran once at quality.yaml
+  // Defense in depth: the SSRF guard already ran once at quality-standard.yaml
   // schema-parse time (watch_schema.ts), but this resolver is also directly
   // callable (unit tests do exactly that). Re-enforcing it here means a
   // caller that ever constructs a WatchSource without going through the
@@ -672,7 +672,7 @@ export async function resolveOpenapiHashSource(
 // ============================================================================
 
 /** Resolve every source in `declaration` for `extension`. `opts.extensionDir`,
- * when given, is joined onto each npm source's `pin.file` (quality.yaml
+ * when given, is joined onto each npm source's `pin.file` (quality-standard.yaml
  * paths are relative to the extension's own directory); omit it when `file`
  * is already absolute (as the unit tests above do). */
 export async function resolveExtensionWatch(
@@ -729,7 +729,7 @@ export async function resolveExtensionWatch(
 // Discovery + top-level orchestration
 // ============================================================================
 
-/** Every top-level directory under `root` that has its own `quality.yaml`.
+/** Every top-level directory under `root` that has its own `quality-standard.yaml`.
  * Extensions that haven't migrated onto the Phase A schema yet are simply
  * absent from the result — forward-compatible as Phase A backfills them. */
 export async function discoverExtensionsWithQuality(
@@ -739,10 +739,10 @@ export async function discoverExtensionsWithQuality(
   for await (const entry of Deno.readDir(root)) {
     if (!entry.isDirectory) continue;
     try {
-      const stat = await Deno.stat(join(root, entry.name, "quality.yaml"));
+      const stat = await Deno.stat(join(root, entry.name, "quality-standard.yaml"));
       if (stat.isFile) found.push(entry.name);
     } catch {
-      // no quality.yaml in this extension yet — skip
+      // no quality-standard.yaml in this extension yet — skip
     }
   }
   return found.sort();
@@ -756,14 +756,14 @@ export async function buildDriftReports(
   const reports: ExtensionDriftReport[] = [];
   for (const extension of extensions) {
     const extensionDir = join(root, extension);
-    // Per-extension error isolation: a malformed quality.yaml (or any other
+    // Per-extension error isolation: a malformed quality-standard.yaml (or any other
     // unexpected failure) for ONE extension must not abort release-watch for
     // the other 47+. Catch here — not deeper in the pipeline — so genuine
     // upstream-resolution failures (which already return "unreachable"
     // results, never throw) are unaffected by this boundary.
     try {
       const declaration = await loadQualityWatch(
-        join(extensionDir, "quality.yaml"),
+        join(extensionDir, "quality-standard.yaml"),
       );
       reports.push(
         await resolveExtensionWatch(extension, declaration, {
@@ -809,7 +809,7 @@ function parseArgs(args: string[]): { root: string; out?: string } {
  * report set rather than on process exit code + stdout scraping.
  *
  * Never calls `Deno.exit` itself: a per-extension `loadError` (malformed
- * quality.yaml) is isolated by `buildDriftReports` and must NOT fail the
+ * quality-standard.yaml) is isolated by `buildDriftReports` and must NOT fail the
  * run — see the comment at the `main()` call site below for why. A genuine
  * crash (unreadable `root`, a rethrown non-isolated error) propagates as a
  * normal rejection, which is exactly what should abort the process.
@@ -836,7 +836,7 @@ export async function runReleaseWatch(
   );
   const loadErrors = reports.filter((r) => r.loadError !== undefined);
   console.log(
-    `release-watch: ${reports.length} extension(s) checked, ${drifted.length} drifted, ${unreachable.length} source(s) unreachable, ${loadErrors.length} quality.yaml load error(s)`,
+    `release-watch: ${reports.length} extension(s) checked, ${drifted.length} drifted, ${unreachable.length} source(s) unreachable, ${loadErrors.length} quality-standard.yaml load error(s)`,
   );
   for (const u of unreachable) {
     console.warn(`  warning: ${u.detail}`);
@@ -851,10 +851,10 @@ async function main(): Promise<void> {
   const { root, out } = parseArgs(Deno.args);
   const githubToken = Deno.env.get("GITHUB_TOKEN");
   await runReleaseWatch(root, out, { githubToken });
-  // Every extension with a broken quality.yaml is isolated by
+  // Every extension with a broken quality-standard.yaml is isolated by
   // buildDriftReports and surfaced above as a `loadError` — printed as an
   // error and present in the report JSON's `loadError` field, but NOT fatal.
-  // A malformed quality.yaml is Phase A/ci.yml's concern at PR time (that CI
+  // A malformed quality-standard.yaml is Phase A/ci.yml's concern at PR time (that CI
   // gate already blocks the PR that introduced it); by the time
   // release-watch runs against `main`, failing the whole job here would
   // stop it from reaching the "Raise or update per-extension drift issues"

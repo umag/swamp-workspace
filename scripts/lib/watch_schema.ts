@@ -1,10 +1,10 @@
 /**
  * The single executable contract for the `watch:` block that lives inside
- * each extension's `<ext>/quality.yaml`.
+ * each extension's `<ext>/quality-standard.yaml`.
  *
  * APPROVED AMENDMENT (decision 1, ext-quality-release-watch-soak): there is
  * NO standalone `watch.yaml`. Declarations live under each extension's
- * `quality.yaml` `watch:` block:
+ * `quality-standard.yaml` `watch:` block:
  *
  *   watch:
  *     state: present | na | backlog
@@ -21,7 +21,7 @@
  * from `na` only in connotation (temporary/undecided vs. permanent/decided);
  * both carry a `justification` and neither carries `sources`.
  *
- * Phase A (ext-quality-standard-ci-gate) owns the REST of quality.yaml
+ * Phase A (ext-quality-standard-ci-gate) owns the REST of quality-standard.yaml
  * (schemaVersion, extension name, other CI-gate keys) and treats
  * `watch.sources[]` as an opaque passthrough — THIS module owns the deep
  * validation of the `watch:` block. `loadQualityWatch` therefore parses the
@@ -304,7 +304,7 @@ export function parseWatchDeclaration(raw: unknown): WatchDeclaration {
 }
 
 /**
- * Read `<ext>/quality.yaml` at `path`, extract the `watch:` key, and validate
+ * Read `<ext>/quality-standard.yaml` at `path`, extract the `watch:` key, and validate
  * it. The rest of the document (schemaVersion, extension name, other Phase-A
  * CI-gate keys) is intentionally NOT validated here — Phase A owns that
  * shape; this module only owns `watch:`.

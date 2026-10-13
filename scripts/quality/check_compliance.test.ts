@@ -19,7 +19,7 @@ async function writeExtension(
   await Deno.mkdir(dir, { recursive: true });
   await Deno.writeTextFile(join(dir, "manifest.yaml"), `name: ${name}\n`);
   if (qualityYaml !== undefined) {
-    await Deno.writeTextFile(join(dir, "quality.yaml"), qualityYaml);
+    await Deno.writeTextFile(join(dir, "quality-standard.yaml"), qualityYaml);
   }
   for (const [path, content] of Object.entries(extraFiles)) {
     const full = join(dir, path);
@@ -93,7 +93,7 @@ Deno.test("checkExtension flags a present suite whose declared file does not exi
   }
 });
 
-Deno.test("checkExtension fails an extension with a missing quality.yaml", async () => {
+Deno.test("checkExtension fails an extension with a missing quality-standard.yaml", async () => {
   const root = await Deno.makeTempDir({ prefix: "quality-compliance-" });
   try {
     await writeExtension(root, "alpha", undefined);
@@ -134,7 +134,7 @@ Deno.test("checkExtension passes the same offender when it IS allowlisted", asyn
 Deno.test("checkCompliance AGGREGATES violations across multiple extensions instead of stopping at the first", async () => {
   const root = await Deno.makeTempDir({ prefix: "quality-compliance-" });
   try {
-    await writeExtension(root, "alpha", undefined); // missing quality.yaml
+    await writeExtension(root, "alpha", undefined); // missing quality-standard.yaml
     await writeExtension(root, "beta", OFFENDER_YAML("beta"), { // not allowlisted
       "README.md": "# beta\n",
     });
@@ -176,7 +176,7 @@ Deno.test("checkCompliance can be scoped to a single extension for local runs", 
   }
 });
 
-Deno.test("checkExtension flags a quality.yaml whose extension: field disagrees with its directory name", async () => {
+Deno.test("checkExtension flags a quality-standard.yaml whose extension: field disagrees with its directory name", async () => {
   // Wiring-level check: schema.test.ts already unit-tests parseQualityFile()
   // rejecting a name mismatch in isolation; this proves checkExtension() (the
   // orchestrator CI actually runs) surfaces the same rejection end to end,

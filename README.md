@@ -101,7 +101,7 @@ PR checks:
 - `deno-check` — `deno fmt --check`, `lint`, type `check`, and `test` (per
   extension). The most common red is `deno fmt --check` — run `deno fmt` first.
 - `compliance` — the [quality standard](STANDARD.md) gate: every extension's
-  `quality.yaml` (five suites + docs), the shrink-only allowlist, and a
+  `quality-standard.yaml` (five suites + docs), the shrink-only allowlist, and a
   never-regress registry score. Runs GLOBAL (every extension, every PR),
   tokenless. See `STANDARD.md` for how to run it locally and fix a failure.
 - `release-notes-cap` — fail-closed: every manifest this PR is about to

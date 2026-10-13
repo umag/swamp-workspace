@@ -1,5 +1,5 @@
 /**
- * Single source of truth for the shape of a per-extension quality.yaml (the
+ * Single source of truth for the shape of a per-extension quality-standard.yaml (the
  * "Extension Compliance" bounded context's serialized aggregate). Every
  * other module in scripts/quality/ (scaffold, check_compliance,
  * check_allowlist, score_ratchet) imports REQUIRED_SUITES and
@@ -18,7 +18,7 @@ export const SCHEMA_VERSION = 1;
  * convention. Real test file names are heterogeneous across this repo:
  * stripe-mpp uses `stripe_mpp_methods_test.ts`, swamp-go-brr uses co-located
  * `<model>.test.ts`, libvirt uses topical `_test.ts`, comfyui uses
- * `.test.ts`. A suite is "present" iff its quality.yaml entry declares
+ * `.test.ts`. A suite is "present" iff its quality-standard.yaml entry declares
  * files[] that exist on disk (checked by check_compliance.ts) — never by
  * scanning for a name pattern.
  */
@@ -33,7 +33,7 @@ export const REQUIRED_SUITES = [
 export type SuiteName = typeof REQUIRED_SUITES[number];
 
 /** Backlog states must cite this Phase D tracking issue so the backfill work
- * is traceable from every quality.yaml that carries debt. */
+ * is traceable from every quality-standard.yaml that carries debt. */
 export const BACKLOG_TRACKING_ISSUE = "ext-quality-test-backfill";
 
 /** A `soak:` block's "backlog" state cites THIS tracking issue instead of
@@ -75,7 +75,7 @@ function justificationSchema(requiredIssue?: string) {
  * justified, no allowlist gating. backlog: temporary debt, justified, valid
  * ONLY while the extension is on quality-allowlist.txt (checked by
  * parseQualityFile via the isAllowlisted option, not by this schema alone —
- * a standalone quality.yaml file has no notion of "the allowlist"). */
+ * a standalone quality-standard.yaml file has no notion of "the allowlist"). */
 const presentState = z.object({
   state: z.literal("present"),
   files: z.array(z.string().min(1)).min(1),
@@ -183,7 +183,7 @@ const RatchetSchema = z.object({
 
 /**
  * `soak:` block — the property-soak-permission-source-of-truth PR's
- * addition (scripts/lib/soak_permissions.ts). OPTIONAL: every quality.yaml
+ * addition (scripts/lib/soak_permissions.ts). OPTIONAL: every quality-standard.yaml
  * authored before this PR has no `soak:` key at all and must keep
  * validating unchanged, so this is NOT added to QualityFileSchema as a
  * required field (SCHEMA_VERSION is not bumped either — an optional field
@@ -265,7 +265,7 @@ export type QualityFile = z.infer<typeof QualityFileSchema>;
 export interface ParseQualityOptions {
   /** The extension directory / manifest name this file is expected to
    * describe — checked against the `extension` field so a copy-pasted
-   * quality.yaml can never silently apply to the wrong extension. */
+   * quality-standard.yaml can never silently apply to the wrong extension. */
   expectedExtension: string;
   /** Whether this extension currently appears on quality-allowlist.txt. Any
    * suite/docs-item/watch in "backlog" state is valid ONLY while its
@@ -317,7 +317,7 @@ export function hasAnyBacklog(data: QualityFile): boolean {
 }
 
 /**
- * Parse + validate a quality.yaml payload (already YAML-decoded to a plain
+ * Parse + validate a quality-standard.yaml payload (already YAML-decoded to a plain
  * value). Combines the structural zod schema with the two cross-field
  * business rules that need external context: the extension-name/manifest
  * match, and the backlog-requires-allowlisted invariant.

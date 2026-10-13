@@ -1,5 +1,5 @@
 // Failing-first (TDD RED) tests for scripts/release_watch.ts — the resolver
-// that reads each extension's `<ext>/quality.yaml` `watch:` block and
+// that reads each extension's `<ext>/quality-standard.yaml` `watch:` block and
 // compares pinned/baseline upstream references against the live source.
 //
 // Every upstream response is treated as UNTRUSTED input: safeParse'd, fetched
@@ -791,16 +791,16 @@ Deno.test("resolveExtensionWatch: aggregates multiple sources and flags hasDrift
   });
 });
 
-Deno.test("discoverExtensionsWithQuality: finds only top-level dirs with a quality.yaml", async () => {
+Deno.test("discoverExtensionsWithQuality: finds only top-level dirs with a quality-standard.yaml", async () => {
   const root = await Deno.makeTempDir();
   try {
     await Deno.mkdir(`${root}/ext-a`, { recursive: true });
     await Deno.writeTextFile(
-      `${root}/ext-a/quality.yaml`,
+      `${root}/ext-a/quality-standard.yaml`,
       "watch:\n  state: na\n  justification: x\n",
     );
     await Deno.mkdir(`${root}/ext-b`, { recursive: true });
-    // no quality.yaml in ext-b — not yet migrated onto Phase A's schema
+    // no quality-standard.yaml in ext-b — not yet migrated onto Phase A's schema
     await Deno.mkdir(`${root}/not-an-ext`, { recursive: true });
     const found = await discoverExtensionsWithQuality(root);
     assertEquals(found, ["ext-a"]);
@@ -820,7 +820,7 @@ Deno.test("buildDriftReports: end-to-end over a synthetic root with mixed presen
       'import x from "npm:demo@1.0.0";\n',
     );
     await Deno.writeTextFile(
-      `${root}/ext-drift/quality.yaml`,
+      `${root}/ext-drift/quality-standard.yaml`,
       [
         "watch:",
         "  state: present",
@@ -839,7 +839,7 @@ Deno.test("buildDriftReports: end-to-end over a synthetic root with mixed presen
     );
     await Deno.mkdir(`${root}/ext-quiet`, { recursive: true });
     await Deno.writeTextFile(
-      `${root}/ext-quiet/quality.yaml`,
+      `${root}/ext-quiet/quality-standard.yaml`,
       "watch:\n  state: na\n  justification: nothing upstream\n",
     );
 
@@ -860,20 +860,20 @@ Deno.test("buildDriftReports: end-to-end over a synthetic root with mixed presen
   }
 });
 
-Deno.test("buildDriftReports: one extension's malformed quality.yaml does not abort the run for the others (per-extension error isolation)", async () => {
+Deno.test("buildDriftReports: one extension's malformed quality-standard.yaml does not abort the run for the others (per-extension error isolation)", async () => {
   const root = await Deno.makeTempDir();
   try {
-    // ext-broken has a quality.yaml that fails watch_schema validation
+    // ext-broken has a quality-standard.yaml that fails watch_schema validation
     // entirely (missing required issueLabel for state=present).
     await Deno.mkdir(`${root}/ext-broken`, { recursive: true });
     await Deno.writeTextFile(
-      `${root}/ext-broken/quality.yaml`,
+      `${root}/ext-broken/quality-standard.yaml`,
       "watch:\n  state: present\n  sources:\n    - kind: npm\n      package: x\n      pin: {from: source, file: x.ts, pattern: 'x@([0-9]+)'}\n",
     );
     // ext-healthy is a normal, valid, state=na extension.
     await Deno.mkdir(`${root}/ext-healthy`, { recursive: true });
     await Deno.writeTextFile(
-      `${root}/ext-healthy/quality.yaml`,
+      `${root}/ext-healthy/quality-standard.yaml`,
       "watch:\n  state: na\n  justification: nothing upstream\n",
     );
 
@@ -895,19 +895,19 @@ Deno.test("buildDriftReports: one extension's malformed quality.yaml does not ab
 
 // ---------------------------------------------------------------------------
 // runReleaseWatch — load errors must never fail the run (Phase B fix: a
-// broken quality.yaml previously made the whole job exit 1, which SKIPS
+// broken quality-standard.yaml previously made the whole job exit 1, which SKIPS
 // release-watch.yml's un-guarded "Raise or update per-extension drift
 // issues" step and silently discards every OTHER extension's real drift).
 // ---------------------------------------------------------------------------
 
-Deno.test("runReleaseWatch: a malformed quality.yaml alongside a healthy drifting extension resolves without throwing (exit 0) and still reports the drift", async () => {
+Deno.test("runReleaseWatch: a malformed quality-standard.yaml alongside a healthy drifting extension resolves without throwing (exit 0) and still reports the drift", async () => {
   const root = await Deno.makeTempDir();
   try {
     // ext-broken: invalid watch: block (state=present with no issueLabel) —
     // fails to load entirely.
     await Deno.mkdir(`${root}/ext-broken`, { recursive: true });
     await Deno.writeTextFile(
-      `${root}/ext-broken/quality.yaml`,
+      `${root}/ext-broken/quality-standard.yaml`,
       "watch:\n  state: present\n  sources:\n    - kind: npm\n      package: x\n      pin: {from: source, file: x.ts, pattern: 'x@([0-9]+)'}\n",
     );
 
@@ -921,7 +921,7 @@ Deno.test("runReleaseWatch: a malformed quality.yaml alongside a healthy driftin
       'import x from "npm:demo@1.0.0";\n',
     );
     await Deno.writeTextFile(
-      `${root}/ext-drift/quality.yaml`,
+      `${root}/ext-drift/quality-standard.yaml`,
       [
         "watch:",
         "  state: present",

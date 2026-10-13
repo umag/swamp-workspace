@@ -1,5 +1,5 @@
 /**
- * ComplianceChecker domain service: validates every extension's quality.yaml
+ * ComplianceChecker domain service: validates every extension's quality-standard.yaml
  * against schema.ts, verifies every "present" suite/docs-item actually has
  * its declared files on disk, and aggregates EVERY violation across EVERY
  * extension before exiting — never aborts on the first bad file (a
@@ -63,7 +63,7 @@ async function checkDeclaredFiles(
 }
 
 /** Validate a single extension: schema + declared-file existence. Never
- * throws on a bad/missing quality.yaml — reports a violation instead, so the
+ * throws on a bad/missing quality-standard.yaml — reports a violation instead, so the
  * caller can keep aggregating across the rest of the tree. */
 export async function checkExtension(
   root: string,
@@ -72,7 +72,7 @@ export async function checkExtension(
 ): Promise<Violation[]> {
   const violations: Violation[] = [];
   const extDir = join(root, extension);
-  const qualityPath = join(extDir, "quality.yaml");
+  const qualityPath = join(extDir, "quality-standard.yaml");
 
   let raw: unknown;
   try {
@@ -82,7 +82,7 @@ export async function checkExtension(
       violations.push({
         extension,
         rule: "missing-quality-yaml",
-        what: "no quality.yaml found",
+        what: "no quality-standard.yaml found",
         why:
           "every extension must declare its suite/docs/watch/canary/ratchet " +
           "state so the compliance gate has something to check",
@@ -94,10 +94,10 @@ export async function checkExtension(
     violations.push({
       extension,
       rule: "quality-yaml-unreadable",
-      what: `quality.yaml could not be parsed as YAML: ${String(err)}`,
+      what: `quality-standard.yaml could not be parsed as YAML: ${String(err)}`,
       why:
         "a malformed file silently disables the whole gate for this extension",
-      fix: `fix the YAML syntax in ${extension}/quality.yaml`,
+      fix: `fix the YAML syntax in ${extension}/quality-standard.yaml`,
     });
     return violations;
   }
@@ -113,8 +113,8 @@ export async function checkExtension(
         rule: "schema-violation",
         what: message,
         why:
-          "quality.yaml must satisfy the schema in scripts/quality/schema.ts",
-        fix: `edit ${extension}/quality.yaml to satisfy: ${message}`,
+          "quality-standard.yaml must satisfy the schema in scripts/quality/schema.ts",
+        fix: `edit ${extension}/quality-standard.yaml to satisfy: ${message}`,
       });
     }
     return violations;
@@ -178,7 +178,7 @@ export async function checkCompliance(
 }
 
 function printHelp() {
-  console.log(`check_compliance.ts — validate every extension's quality.yaml
+  console.log(`check_compliance.ts — validate every extension's quality-standard.yaml
 
 Usage:
   deno run --allow-read scripts/quality/check_compliance.ts [--help] [--json <path>] [<extension-name>]
@@ -219,7 +219,7 @@ if (import.meta.main) {
       `${v.extension}: [${v.rule}] ${v.what}\n  WHY: ${v.why}\n  FIX: ${v.fix}`,
     );
     console.log(
-      `::error file=${v.extension}/quality.yaml::${v.what} — ${v.fix}`,
+      `::error file=${v.extension}/quality-standard.yaml::${v.what} — ${v.fix}`,
     );
   }
   if (jsonPath) {

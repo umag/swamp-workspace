@@ -1,5 +1,5 @@
 # Generic weekly release-watch for every extension that declares `watch:`
-# sources in its own quality.yaml (schema: scripts/lib/watch_schema.ts; docs:
+# sources in its own quality-standard.yaml (schema: scripts/lib/watch_schema.ts; docs:
 # scripts/README.md). Replaces stripe-mpp's bespoke release-watch workflow
 # (deleted in the SAME commit as this file lands — atomic migration, see the
 # commit message).
@@ -60,7 +60,7 @@ jobs:
         # upstream of this step can never again silently swallow drift
         # reporting for the rest of the fleet — which is exactly what
         # happened here before: release_watch.ts used to exit 1 whenever ANY
-        # single extension's quality.yaml failed to load, and this step had
+        # single extension's quality-standard.yaml failed to load, and this step had
         # no `if:`, so it was SKIPPED — discarding every OTHER extension's
         # real, already-detected drift along with it. release_watch.ts no
         # longer exits non-zero for an isolated per-extension load error (see
@@ -87,11 +87,11 @@ jobs:
             );
 
             for (const ext of report.extensions) {
-              // A config error (malformed quality.yaml) is Phase A/ci.yml's
+              // A config error (malformed quality-standard.yaml) is Phase A/ci.yml's
               // concern at PR time, not a release-watch issue — never file
               // one for it, just surface it in the run log.
               if (ext.loadError) {
-                core.warning(`${ext.extension}: quality.yaml load error — ${ext.loadError}`);
+                core.warning(`${ext.extension}: quality-standard.yaml load error — ${ext.loadError}`);
                 continue;
               }
               for (const r of ext.results) {

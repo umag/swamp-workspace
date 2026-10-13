@@ -1,7 +1,7 @@
 /**
- * Tests for the merge-preserving quality.yaml scaffolder. The two properties
+ * Tests for the merge-preserving quality-standard.yaml scaffolder. The two properties
  * that matter most: (1) it never overwrites an existing, human-authored
- * quality.yaml — a second run must be a byte-for-byte no-op — and (2) its
+ * quality-standard.yaml — a second run must be a byte-for-byte no-op — and (2) its
  * freshly-generated output must itself pass check_compliance.ts (the
  * round-trip the plan review flagged as missing in round 1).
  */
@@ -14,7 +14,7 @@ import { detectSuiteFiles, scaffoldQualityFile } from "./scaffold.ts";
 
 /** Builds `<root>/widget/...` (not just a bare temp dir) so tests that need
  * to run checkExtension(root, "widget", ...) — which looks up
- * `<root>/<extension>/quality.yaml` — see the same directory layout the
+ * `<root>/<extension>/quality-standard.yaml` — see the same directory layout the
  * real compliance checker expects. Returns the temp ROOT; the extension's
  * own directory is `join(root, "widget")`. */
 async function makeTempExtension(): Promise<string> {
@@ -33,7 +33,7 @@ async function makeTempExtension(): Promise<string> {
 Deno.test("scaffoldQualityFile creates a fresh file when absent, defaulting undetected suites to backlog", async () => {
   const root = await makeTempExtension();
   try {
-    const qualityPath = join(root, "widget", "quality.yaml");
+    const qualityPath = join(root, "widget", "quality-standard.yaml");
     const outcome = await scaffoldQualityFile({
       extensionName: "widget",
       qualityPath,
@@ -58,7 +58,7 @@ Deno.test("scaffoldQualityFile creates a fresh file when absent, defaulting unde
 Deno.test("scaffoldQualityFile is a no-op on a second run against an authored file", async () => {
   const root = await makeTempExtension();
   try {
-    const qualityPath = join(root, "widget", "quality.yaml");
+    const qualityPath = join(root, "widget", "quality-standard.yaml");
     await scaffoldQualityFile({ extensionName: "widget", qualityPath });
     const authored = await Deno.readTextFile(qualityPath);
     // Simulate a human editing the justification text after the initial
@@ -116,7 +116,7 @@ Deno.test("detectSuiteFiles classifies test files by role keyword, not a fixed f
 Deno.test("round-trip: scaffolder output passes check_compliance for an allowlisted extension", async () => {
   const root = await makeTempExtension();
   try {
-    const qualityPath = join(root, "widget", "quality.yaml");
+    const qualityPath = join(root, "widget", "quality-standard.yaml");
     await scaffoldQualityFile({
       extensionName: "widget",
       qualityPath,
@@ -137,7 +137,7 @@ Deno.test("round-trip: scaffolder output passes check_compliance for an allowlis
 Deno.test("round-trip: scaffolder output on disk parses back through parseYaml + the schema", async () => {
   const root = await makeTempExtension();
   try {
-    const qualityPath = join(root, "widget", "quality.yaml");
+    const qualityPath = join(root, "widget", "quality-standard.yaml");
     await scaffoldQualityFile({ extensionName: "widget", qualityPath });
     const raw = parseYaml(await Deno.readTextFile(qualityPath));
     assert(raw && typeof raw === "object");

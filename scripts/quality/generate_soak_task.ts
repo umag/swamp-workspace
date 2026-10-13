@@ -3,7 +3,7 @@
  * task string for an extension from the EXACT SAME single source of truth the
  * nightly soak already uses (scripts/soak_schedule.ts's resolveDenoArgs, which
  * itself defers to scripts/lib/soak_permissions.ts's deriveSoakArgsFromTestTask
- * whenever no narrowed quality.yaml `soak:` override exists). Nothing in this
+ * whenever no narrowed quality-standard.yaml `soak:` override exists). Nothing in this
  * file re-derives a permission set, re-parses a test task's flags, or
  * re-implements the override-vs-derive precedence rule — every one of those is
  * imported. Writing a SECOND copy of that reasoning here would be exactly the
@@ -36,13 +36,13 @@
  *      — see that module's own docblock for the seanime/seadex heap-pin
  *      regression-test coverage hole this fixes.
  *   2. Run counts are DECLARED, not inferred. `readSoakRuns` reads
- *      quality.yaml's `soak.runs` (see schema.ts) and falls back to
+ *      quality-standard.yaml's `soak.runs` (see schema.ts) and falls back to
  *      DEFAULT_SOAK_RUNS — it never tries to recover "5000" by parsing an
  *      extension's PREVIOUS test:soak string, which would make a hand-tuned
  *      "this suite is slow" fact silently unrecoverable the moment the
  *      generated string changed for any other reason (e.g. a permission
  *      narrowing).
- *   3. A narrowed `quality.yaml` `soak: { state: present, denoArgs: [...] }`
+ *   3. A narrowed `quality-standard.yaml` `soak: { state: present, denoArgs: [...] }`
  *      override (today: swamp-go-brr, stripe-mpp, jscad-cad) is used
  *      VERBATIM by resolveDenoArgs when present, in preference to the
  *      test-task derivation — so the generated `test:soak` matches what the
@@ -66,7 +66,7 @@ import {
 } from "../soak_schedule.ts";
 
 /** The fast-check iteration count baked into a generated `test:soak` task
- * when neither `quality.yaml` nor its `soak.runs` field says otherwise. */
+ * when neither `quality-standard.yaml` nor its `soak.runs` field says otherwise. */
 export const DEFAULT_SOAK_RUNS = 10000;
 
 export interface GeneratedSoakTask {
@@ -77,7 +77,7 @@ export interface GeneratedSoakTask {
   /** The resolved deno permission + runtime-flag argv (override or derived —
    * see resolveDenoArgs). */
   readonly denoArgs: readonly string[];
-  /** The FC_NUM_RUNS value baked into `task` (declared via quality.yaml
+  /** The FC_NUM_RUNS value baked into `task` (declared via quality-standard.yaml
    * `soak.runs`, or DEFAULT_SOAK_RUNS). */
   readonly runs: number;
   /** The full generated `test:soak` deno.json task value. */
@@ -110,9 +110,9 @@ export async function discoverFilesByExtension(
 }
 
 /**
- * Best-effort read of `<ext>/quality.yaml`'s `soak.runs` field — present on
+ * Best-effort read of `<ext>/quality-standard.yaml`'s `soak.runs` field — present on
  * ANY soak state (present/na/backlog; see schema.ts's soak-specific state
- * variants). Falls back to DEFAULT_SOAK_RUNS when quality.yaml is
+ * variants). Falls back to DEFAULT_SOAK_RUNS when quality-standard.yaml is
  * missing/unreadable/malformed, has no `soak:` block, or the block has no
  * `runs` (the common case — today only swamp-go-brr, herdr, jabber, and
  * jscad-stl-slicer declare a non-default value). Never throws: a missing
@@ -124,7 +124,7 @@ export async function readSoakRuns(
 ): Promise<number> {
   try {
     const raw = parseYaml(
-      await Deno.readTextFile(join(root, extension, "quality.yaml")),
+      await Deno.readTextFile(join(root, extension, "quality-standard.yaml")),
     );
     if (raw && typeof raw === "object") {
       const soak = (raw as Record<string, unknown>).soak;
@@ -136,7 +136,7 @@ export async function readSoakRuns(
       }
     }
   } catch {
-    // no quality.yaml, or unreadable/malformed — fall back to the default.
+    // no quality-standard.yaml, or unreadable/malformed — fall back to the default.
   }
   return DEFAULT_SOAK_RUNS;
 }
@@ -340,10 +340,10 @@ Usage:
 Derives each extension's "test:soak" task from the SAME single source of
 truth the nightly soak uses (scripts/soak_schedule.ts's resolveDenoArgs /
 scripts/lib/soak_permissions.ts's deriveSoakArgsFromTestTask) — runtime
-flags (--v8-flags=...) carried through, a narrowed quality.yaml soak:
+flags (--v8-flags=...) carried through, a narrowed quality-standard.yaml soak:
 override honored verbatim when present, multiple property-test files joined
 into one deno test invocation, and the FC_NUM_RUNS count taken from
-quality.yaml's soak.runs (default 10000).
+quality-standard.yaml's soak.runs (default 10000).
 
 With no <extension-name>, scans every extension (like the other quality:*
 gates' default). Extensions with no *_property_test.ts file are silently

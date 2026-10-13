@@ -48,7 +48,7 @@ Checksum everything that shaped the verification. At minimum:
 - `agent-constraints/*.md` — including `verification-controls.md`
 - the repo `CLAUDE.md`
 - `deno.json` (the task definitions the controls invoke)
-- `quality.yaml` where the repo has one
+- `quality-standard.yaml` where the repo has one
 
 Paths are repo-relative. A path that cannot be read makes `attest` **refuse**
 rather than silently omit the entry — an omitted checksum would let a deleted

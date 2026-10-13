@@ -2,7 +2,7 @@
  * Tests for scripts/quality/generate_soak_task.ts — the "test:soak" deno.json
  * task generator. Focused on the four load-bearing behaviors the module
  * docblock calls out (runtime flags carry, runs is DECLARED not inferred, a
- * narrowed quality.yaml soak: override applies verbatim, multiple
+ * narrowed quality-standard.yaml soak: override applies verbatim, multiple
  * property-test files join into one task), the text-level deno.json
  * find/insert (never a JSON.parse/stringify round-trip — see
  * upsertTestSoakLine's own docblock for why), and the CLI's check/write mode
@@ -57,7 +57,7 @@ async function writeExtension(
   }
 
   if (opts.qualityYaml !== undefined) {
-    await Deno.writeTextFile(join(dir, "quality.yaml"), opts.qualityYaml);
+    await Deno.writeTextFile(join(dir, "quality-standard.yaml"), opts.qualityYaml);
   }
 }
 
@@ -81,7 +81,7 @@ Deno.test("formatSoakTask: assembles FC_NUM_RUNS=<runs> deno test <denoArgs...> 
 // readSoakRuns — runs is DECLARED config, never inferred
 // ---------------------------------------------------------------------------
 
-Deno.test("readSoakRuns: DEFAULT_SOAK_RUNS when there is no quality.yaml at all", async () => {
+Deno.test("readSoakRuns: DEFAULT_SOAK_RUNS when there is no quality-standard.yaml at all", async () => {
   const root = await Deno.makeTempDir({ prefix: "gen-soak-runs-" });
   try {
     await writeExtension(root, "widget", { testTask: "deno test" });
@@ -171,7 +171,7 @@ Deno.test("discoverFilesByExtension: groups discovered *_property_test.ts files 
 // generateSoakTask — the four load-bearing behaviors
 // ---------------------------------------------------------------------------
 
-Deno.test("generateSoakTask: common case reuses deriveSoakArgsFromTestTask (no quality.yaml override)", async () => {
+Deno.test("generateSoakTask: common case reuses deriveSoakArgsFromTestTask (no quality-standard.yaml override)", async () => {
   const root = await Deno.makeTempDir({ prefix: "gen-soak-common-" });
   try {
     await writeExtension(root, "widget", {
@@ -207,7 +207,7 @@ Deno.test("generateSoakTask: --v8-flags=--expose-gc carries through (the seanime
   }
 });
 
-Deno.test("generateSoakTask: a narrowed quality.yaml soak: override applies VERBATIM, dropping a flag the test task grants", async () => {
+Deno.test("generateSoakTask: a narrowed quality-standard.yaml soak: override applies VERBATIM, dropping a flag the test task grants", async () => {
   const root = await Deno.makeTempDir({ prefix: "gen-soak-override-" });
   try {
     await writeExtension(root, "stripe-mpp", {

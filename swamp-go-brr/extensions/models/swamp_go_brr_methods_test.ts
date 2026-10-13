@@ -1,7 +1,7 @@
 // Method-level tests across all FIVE @magistr/swamp-go-brr models: gobrr,
 // source-integration, docker-verify, and preflight (otlp-export's export_run
 // method is already exercised at this level by the kept otlp_export.test.ts,
-// which stays in the "methods" role — see quality.yaml).
+// which stays in the "methods" role — see quality-standard.yaml).
 //
 // gobrr.ts / docker_verify.ts / source_integration.ts / preflight.ts / lib/*
 // are UNMODIFIED — every test here drives `model.methods.<m>.execute(...)`

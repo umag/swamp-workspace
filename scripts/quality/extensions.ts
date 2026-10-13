@@ -21,7 +21,7 @@ function defaultRoot(): string {
 
 /**
  * List every extension directory name (sorted) under `root` that has a
- * manifest.yaml. Read-only; does not touch quality.yaml or any other file.
+ * manifest.yaml. Read-only; does not touch quality-standard.yaml or any other file.
  * Excludes dot-directories, matching bash's `<dir>/manifest.yaml` glob
  * (which does not match dot-directories by default).
  */
