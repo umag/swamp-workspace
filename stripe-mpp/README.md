@@ -146,12 +146,12 @@ lowercase ISO.
 - **SPT is US-only** (Stripe). Paying agents/customers must be US-based.
 - Both deps ride **vendor preview channels** with exact pins. The generic weekly
   release-watch GitHub Actions cron (`.github/workflows/release-watch.yml` in
-  this workspace) reads `stripe-mpp/quality.yaml`'s `watch:` block, checks npm
+  this workspace) reads `stripe-mpp/quality-standard.yaml`'s `watch:` block, checks npm
   dist-tags against the pins parsed from `extensions/models/stripe_mpp.ts`, and
   raises one idempotent GH issue when they go stale (schema:
   `scripts/lib/watch_schema.ts`; docs: `scripts/README.md`). **If the import
   specifiers move to another file, update the `pin.file` path in
-  `stripe-mpp/quality.yaml` in the same change.** Pin bumps must pass the
+  `stripe-mpp/quality-standard.yaml` in the same change.** Pin bumps must pass the
   spec-fixture contract tests in `stripe_mpp_test.ts` — they pin the MPP wire
   format.
 - Plain-http resource URLs are refused unless `allowInsecure=true` AND the host

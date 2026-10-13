@@ -1,4 +1,4 @@
-# Fixture: a minimal Phase-A-shaped quality.yaml carrying a `watch:` block
+# Fixture: a minimal Phase-A-shaped quality-standard.yaml carrying a `watch:` block
 # with state=present. The extra top-level keys (schemaVersion, extension)
 # simulate fields OWNED by Phase A (ext-quality-standard-ci-gate) — this
 # module (watch_schema.ts) must ignore them and validate only `watch:`.

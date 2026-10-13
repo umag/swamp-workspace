@@ -98,7 +98,7 @@ export async function checkSoakParity(
         "5 of 52 extensions (a NotCapable failure the first time a " +
         "developer actually ran `deno task test:soak` locally) before this " +
         "gate existed — test:soak must always be a GENERATED artifact of " +
-        "the extension's own test task (and any narrowed quality.yaml " +
+        "the extension's own test task (and any narrowed quality-standard.yaml " +
         "soak: override), never hand-maintained again",
       fix: "run `cd scripts && deno task quality:generate-soak -- " +
         `${extension} --write\` (or with no extension name to regenerate ` +

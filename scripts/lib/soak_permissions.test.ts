@@ -14,7 +14,7 @@
 //   1. parsePermissionSet  — turn a raw `test` task string into a structured
 //      PermissionSet, keeping only --allow*/--deny* tokens.
 //   2. checkSoakAuthority  — the four narrowing rules that decide whether a
-//      quality.yaml `soak:` override is a legitimate NARROWING of the test
+//      quality-standard.yaml `soak:` override is a legitimate NARROWING of the test
 //      task's authority, or an illegitimate widening/omission.
 //   3. isBroadGrant        — the EXACT, narrow classifier for "this test
 //      task's authority is broad enough that an unattended nightly soak
@@ -24,7 +24,7 @@
 //      --allow-read are NOT broad, nor is any SCOPED grant (including a
 //      comma-scoped --allow-env). Getting this wrong — e.g. treating "needs
 //      more than the trivial FC_NUM_RUNS baseline" as broad — would force
-//      all 24 permission-needing extensions onto a hand-written quality.yaml
+//      all 24 permission-needing extensions onto a hand-written quality-standard.yaml
 //      soak: override, a scope explosion that inverts PR B's whole premise:
 //      the test task IS the source of truth; soak: is a RARE, human-reviewed
 //      narrowing exception for the three extensions that are actually broad
@@ -812,7 +812,7 @@ Deno.test("validateNoDuplicateHardRejectFlags: one violation per offending kind,
 // above (that one is about a REPEATED same-kind flag; this one fires on a
 // single co-occurrence of a DIFFERENT kind). Empirically verified live
 // against deno 2.7.13, end-to-end against the real exported functions:
-// swamp-go-brr's real test task is bare --allow-all with no quality.yaml
+// swamp-go-brr's real test task is bare --allow-all with no quality-standard.yaml
 // override today, so this is latent, not live — but a future human-authored
 // override combining --allow-all with e.g. --allow-env would previously
 // pass checkSoakAuthority + validateSoakAdequacy +

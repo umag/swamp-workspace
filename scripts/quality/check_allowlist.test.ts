@@ -1,7 +1,7 @@
 /**
  * Tests for the AllowlistGuard domain service: the shrink-only monotonicity
  * guard over quality-allowlist.txt, cross-checked against the immutable
- * quality-offenders.baseline.txt and against each extension's quality.yaml
+ * quality-offenders.baseline.txt and against each extension's quality-standard.yaml
  * backlog declarations so the two sources of truth cannot drift apart.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
@@ -151,11 +151,11 @@ Deno.test("checkBaselineImmutable flags a line ADDED to the baseline vs merge-ba
   }
 });
 
-Deno.test("checkBaselineImmutable tolerates a SEED-RACE correction (extension existed at merge-base without a quality.yaml)", async () => {
+Deno.test("checkBaselineImmutable tolerates a SEED-RACE correction (extension existed at merge-base without a quality-standard.yaml)", async () => {
   // The race this exception exists for: an extension merged to master via a
   // branch cut BEFORE the gate landed, so the baseline was seeded from a
   // stale snapshot. Adding that extension's line together with its first
-  // quality.yaml is a seed correction, not growth.
+  // quality-standard.yaml is a seed correction, not growth.
   const root = await makeGitRepo();
   try {
     await Deno.mkdir(join(root, "raced-ext"), { recursive: true });
@@ -177,7 +177,7 @@ Deno.test("checkBaselineImmutable tolerates a SEED-RACE correction (extension ex
     );
     await git(root, "checkout", "-q", "-b", "fix");
     await Deno.writeTextFile(
-      join(root, "raced-ext", "quality.yaml"),
+      join(root, "raced-ext", "quality-standard.yaml"),
       "schemaVersion: 1\nextension: raced-ext\n",
     );
     await Deno.writeTextFile(
@@ -208,7 +208,7 @@ Deno.test("checkBaselineImmutable still flags an added line for an extension ALR
       "name: gated-ext\n",
     );
     await Deno.writeTextFile(
-      join(root, "gated-ext", "quality.yaml"),
+      join(root, "gated-ext", "quality-standard.yaml"),
       "schemaVersion: 1\nextension: gated-ext\n",
     );
     await Deno.writeTextFile(
@@ -342,7 +342,7 @@ Deno.test("checkAllowlist flags a backlog offender that is missing from the allo
       "name: beta\n",
     );
     await Deno.writeTextFile(
-      join(root, "beta", "quality.yaml"),
+      join(root, "beta", "quality-standard.yaml"),
       `
 schemaVersion: 1
 extension: beta
@@ -379,7 +379,7 @@ Deno.test("checkAllowlist flags a fully-compliant extension still left on the al
       "name: gamma\n",
     );
     await Deno.writeTextFile(
-      join(root, "gamma", "quality.yaml"),
+      join(root, "gamma", "quality-standard.yaml"),
       `
 schemaVersion: 1
 extension: gamma

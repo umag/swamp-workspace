@@ -21,11 +21,11 @@ them below so Phases B/C have a stable contract to build against, but does
 
 ## The five required suites
 
-Every extension declares five test suites in its `quality.yaml`, named by
+Every extension declares five test suites in its `quality-standard.yaml`, named by
 **ROLE** — never by filename convention. Real test file names are heterogeneous
 across this repo (`stripe-mpp` uses `stripe_mpp_methods_test.ts`, `swamp-go-brr`
 uses co-located `<model>.test.ts`, `libvirt` uses topical `_test.ts`, `comfyui`
-uses `.test.ts`). A suite is **present** iff its `quality.yaml` entry declares
+uses `.test.ts`). A suite is **present** iff its `quality-standard.yaml` entry declares
 `files[]` that exist on disk — the compliance checker never scans for a filename
 pattern.
 
@@ -53,7 +53,7 @@ equal to it in `schema.test.ts`. If you edit one, edit the other.
 
 <!-- REQUIRED_SUITES:END -->
 
-## quality.yaml schema
+## quality-standard.yaml schema
 
 `schemaVersion: 1`. Every suite/docs-item/watch/canary entry is one of three
 states:
@@ -209,7 +209,7 @@ byte-identical.
 [`scripts/quality/check_soak_parity.ts`](scripts/quality/check_soak_parity.ts)
 (`deno task quality:soak-parity`) is the PR-time gate: it regenerates every
 extension's expected `test:soak` and fails the build the moment a hand-edit
-(or a `test`/`quality.yaml` change with no matching regeneration) makes the
+(or a `test`/`quality-standard.yaml` change with no matching regeneration) makes the
 two disagree again — the fix line it emits is exactly the write-mode command
 above.
 
@@ -231,7 +231,7 @@ extension live in CI and compares:
   Whoever bumps the rubric is expected to re-run the score gate and update every
   `ratchet.rubricVersion`/`baselinePercentage` deliberately.
 
-## Worked example: a fully compliant `quality.yaml`
+## Worked example: a fully compliant `quality-standard.yaml`
 
 ```yaml
 schemaVersion: 1
@@ -394,13 +394,13 @@ push) plus `registry-drift` (which would notice the publish never happened);
 there is no backstop at all for the indirect shapes (spread, hoisted
 identifier, call expression) beyond this gate.
 
-## Scaffolding a new extension's quality.yaml
+## Scaffolding a new extension's quality-standard.yaml
 
 ```bash
 deno run --allow-read --allow-write scripts/quality/scaffold.ts <extension-name>
 ```
 
-Generates a `quality.yaml` if one doesn't already exist (detecting suite files
+Generates a `quality-standard.yaml` if one doesn't already exist (detecting suite files
 by role keyword in their filename), defaulting any undetected suite to
 `backlog`. **Never overwrites an existing file** — safe to re-run against every
 extension; already-authored files (and their justifications) come back

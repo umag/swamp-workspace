@@ -129,7 +129,7 @@ Deno.test("score_ratchet.ts --json <path> writes a machine-parseable summary usi
       "name: widget\n",
     );
     await Deno.writeTextFile(
-      join(root, "widget", "quality.yaml"),
+      join(root, "widget", "quality-standard.yaml"),
       `
 schemaVersion: 1
 extension: widget
@@ -184,13 +184,13 @@ ratchet: { rubricVersion: 3, baselinePercentage: 100, label: "Grade A" }
 // --- "unscorable" vs benign "skipped" -------------------------------------
 //
 // The defect this section pins: runRatchet used to report BOTH "the live
-// score reader threw" and "this extension has no quality.yaml at all" as
+// score reader threw" and "this extension has no quality-standard.yaml at all" as
 // the same undifferentiated "skipped" outcome, and main() never failed the
 // gate on a skip — exactly how seanime's broken model-upgrade chain (which
 // makes `swamp extension quality` itself error) stayed invisible in CI.
 // These tests pin the split: a reader failure (or a malformed score) must
 // surface as "unscorable" and fail the gate; a genuinely absent
-// quality.yaml must stay a benign "skipped" and must NOT fail the gate.
+// quality-standard.yaml must stay a benign "skipped" and must NOT fail the gate.
 
 const WIDGET_QUALITY_YAML = `
 schemaVersion: 1
@@ -217,7 +217,7 @@ async function makeWidgetWithQualityYaml(root: string): Promise<void> {
     "name: widget\n",
   );
   await Deno.writeTextFile(
-    join(root, "widget", "quality.yaml"),
+    join(root, "widget", "quality-standard.yaml"),
     WIDGET_QUALITY_YAML,
   );
 }
@@ -272,7 +272,7 @@ Deno.test("runRatchet reports malformed score JSON from a successful reader as '
   }
 });
 
-Deno.test("runRatchet reports a missing quality.yaml as a benign 'skipped' and never calls the reader", async () => {
+Deno.test("runRatchet reports a missing quality-standard.yaml as a benign 'skipped' and never calls the reader", async () => {
   const root = await Deno.makeTempDir({ prefix: "quality-ratchet-skipped-" });
   try {
     await Deno.mkdir(join(root, "widget"), { recursive: true });
@@ -280,9 +280,9 @@ Deno.test("runRatchet reports a missing quality.yaml as a benign 'skipped' and n
       join(root, "widget", "manifest.yaml"),
       "name: widget\n",
     );
-    // No quality.yaml written — this extension is legitimately outside the
+    // No quality-standard.yaml written — this extension is legitimately outside the
     // ratchet's scope (check_compliance.ts is the gate that fails a
-    // missing quality.yaml). A reader that throws proves runRatchet never
+    // missing quality-standard.yaml). A reader that throws proves runRatchet never
     // even attempts to read a live score for it.
     const reports = await runRatchet(root, () => {
       return Promise.reject(
@@ -293,7 +293,7 @@ Deno.test("runRatchet reports a missing quality.yaml as a benign 'skipped' and n
     assertEquals(reports[0].extension, "widget");
     assertEquals(reports[0].outcome.status, "skipped");
     if (reports[0].outcome.status === "skipped") {
-      assertEquals(reports[0].outcome.reason, "no readable quality.yaml");
+      assertEquals(reports[0].outcome.reason, "no readable quality-standard.yaml");
     }
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -342,8 +342,8 @@ Deno.test("score_ratchet.ts's CLI exits 1 with a ::error annotation when the liv
     const out = new TextDecoder().decode(stdout);
     assertEquals(code, 1, out);
     assert(
-      out.includes("::error file=widget/quality.yaml::"),
-      `expected a ::error annotation naming widget/quality.yaml, got:\n${out}`,
+      out.includes("::error file=widget/quality-standard.yaml::"),
+      `expected a ::error annotation naming widget/quality-standard.yaml, got:\n${out}`,
     );
     assert(
       out.toUpperCase().includes("UNSCORABLE"),
@@ -359,7 +359,7 @@ Deno.test("score_ratchet.ts's CLI exits 1 with a ::error annotation when the liv
   }
 });
 
-Deno.test("score_ratchet.ts's CLI exits 0 when an extension has no quality.yaml at all (benign, out of scope)", async () => {
+Deno.test("score_ratchet.ts's CLI exits 0 when an extension has no quality-standard.yaml at all (benign, out of scope)", async () => {
   const root = await Deno.makeTempDir({ prefix: "quality-ratchet-cli-skip-" });
   try {
     await Deno.mkdir(join(root, "widget"), { recursive: true });
@@ -367,7 +367,7 @@ Deno.test("score_ratchet.ts's CLI exits 0 when an extension has no quality.yaml 
       join(root, "widget", "manifest.yaml"),
       "name: widget\n",
     );
-    // No quality.yaml, and deliberately no `swamp` shim on PATH at all —
+    // No quality-standard.yaml, and deliberately no `swamp` shim on PATH at all —
     // if runRatchet ever attempted to read a live score for this
     // extension the process would fail to spawn `swamp` and this test
     // would catch that regression too.

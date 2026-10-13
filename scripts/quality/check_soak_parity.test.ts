@@ -46,7 +46,7 @@ async function writeExtension(
   }
 
   if (opts.qualityYaml !== undefined) {
-    await Deno.writeTextFile(join(dir, "quality.yaml"), opts.qualityYaml);
+    await Deno.writeTextFile(join(dir, "quality-standard.yaml"), opts.qualityYaml);
   }
 }
 
@@ -112,7 +112,7 @@ Deno.test("checkSoakParity: a test:soak that is entirely ABSENT (the 3-extension
   }
 });
 
-Deno.test("checkSoakParity: a quality.yaml soak: override applied correctly (matching the narrowed args) produces no violation", async () => {
+Deno.test("checkSoakParity: a quality-standard.yaml soak: override applied correctly (matching the narrowed args) produces no violation", async () => {
   const root = await Deno.makeTempDir({ prefix: "soak-parity-override-ok-" });
   try {
     await writeExtension(root, "stripe-mpp", {

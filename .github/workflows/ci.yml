@@ -336,9 +336,12 @@ jobs:
       - name: Smoke-check — this job stays tokenless
         run: |
           set -eo pipefail
-          # `swamp extension quality` runs fully offline/local (verified
-          # 2026-07: scores stripe-mpp and pihole with no auth configured at
-          # all). This job must NEVER gain the publish-scoped SWAMP_API_KEY
+          # Since the October 2026 swamp releases every command except auth/help needs a
+          # swamp-club credential, `swamp extension quality` included. The
+          # score-ratchet step therefore gets a READ-ONLY collective token
+          # (scope extensions:read, secrets SWAMP_QUALITY_*) in its own step
+          # env — never at job level, so this guard still sees none.
+          # This job must NEVER gain the publish-scoped SWAMP_API_KEY
           # the extension-publish job uses — a future workflow edit that
           # reintroduces it here would hand that credential to every PR run
           # for no reason. Guard it explicitly so that drift is loud.
@@ -358,7 +361,7 @@ jobs:
       # applies across extensions, applied here across gates: one CI run
       # surfaces every finding instead of a fix-push-fail-fix-push cycle.
       # The job's own conclusion still fails if ANY step below fails.
-      - name: Check compliance (every extension's quality.yaml)
+      - name: Check compliance (every extension's quality-standard.yaml)
         if: ${{ !cancelled() }}
         working-directory: scripts
         run: deno task quality:check --json ../compliance-summary.json
@@ -371,6 +374,11 @@ jobs:
       - name: Check score ratchet (never regress, rubric-version-aware)
         if: ${{ !cancelled() }}
         working-directory: scripts
+        env:
+          # Read-only (extensions:read) collective token + its signin token.
+          # Not the publish key: see the tokenless smoke-check above.
+          SWAMP_API_KEY: ${{ secrets.SWAMP_QUALITY_API_KEY }}
+          SWAMP_SIGNIN_TOKEN: ${{ secrets.SWAMP_QUALITY_SIGNIN_TOKEN }}
         run: deno task quality:ratchet --json ../ratchet-summary.json
 
       - name: Check property-test harness (no .clone() in *_property_test.ts)

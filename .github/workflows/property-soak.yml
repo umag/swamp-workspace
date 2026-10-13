@@ -4,7 +4,7 @@
 # a much higher fast-check iteration count than CI's tuned default. Each
 # bucket entry carries the exact deno permission argv resolved from the
 # extension's own deno.json `test` task (or, for the three broad-grant
-# extensions, a narrowed `quality.yaml` `soak:` override) — scripts/
+# extensions, a narrowed `quality-standard.yaml` `soak:` override) — scripts/
 # run_soak.ts is invoked to actually run it, so the workflow YAML itself
 # never hardcodes a one-size-fits-all permission set (the defect that used
 # to silently NotCapable-fail 24 of 51 extensions every time the rotation

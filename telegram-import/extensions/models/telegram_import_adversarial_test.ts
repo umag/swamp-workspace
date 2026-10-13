@@ -4,7 +4,7 @@
  * LOCAL `telegram-import-latent-bugs` issue-lifecycle model (never filed to
  * the swamp.club Lab) has a real code fix in telegram_import.ts, and the
  * section below asserts the FIXED behavior, not the old bug. LB-0 (the
- * model-upgrade-chain break) was repaired in 2026.08.01.1 — quality.yaml's
+ * model-upgrade-chain break) was repaired in 2026.08.01.1 — quality-standard.yaml's
  * ratchet is restamped from UNSCORABLE to the honest score.
  *
  * LB-1 (HIGH path-traversal via export photo/file/video path escaping

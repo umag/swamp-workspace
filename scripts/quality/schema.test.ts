@@ -1,5 +1,5 @@
 /**
- * Tests for the quality.yaml schema — the single source of truth for what
+ * Tests for the quality-standard.yaml schema — the single source of truth for what
  * "compliant" means. Every invalid-mutation test below asserts a SPECIFIC
  * rejection reason, not just "parsing failed", so a future schema change
  * that silently loosens a rule shows up as a changed assertion, not a
@@ -320,9 +320,9 @@ Deno.test("watch present state REJECTS a malformed source (no more opaque passth
 // `test` task's authority — see scripts/lib/soak_permissions.ts.
 // ---------------------------------------------------------------------------
 
-Deno.test("soak: block is OPTIONAL — an existing quality.yaml with no soak: key at all still validates", () => {
+Deno.test("soak: block is OPTIONAL — an existing quality-standard.yaml with no soak: key at all still validates", () => {
   // validFixture() never sets `soak` — this pins that adding soak: support
-  // to the schema must not become a required field, so every quality.yaml
+  // to the schema must not become a required field, so every quality-standard.yaml
   // authored before this PR keeps validating unchanged.
   const result = QualityFileSchema.safeParse(validFixture());
   assert(
@@ -405,7 +405,7 @@ Deno.test("soak: backlog state with a justification citing NEITHER tracking issu
 
 Deno.test("soak: SCHEMA_VERSION is NOT bumped for the added optional soak: field", () => {
   // Adding an optional field is a backward-compatible schema change — every
-  // quality.yaml authored under schemaVersion 1 before this PR remains valid
+  // quality-standard.yaml authored under schemaVersion 1 before this PR remains valid
   // schemaVersion-1 content, so this PR must not bump SCHEMA_VERSION.
   assertEquals(SCHEMA_VERSION, 1);
 });

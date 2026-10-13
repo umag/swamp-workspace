@@ -15,7 +15,7 @@
  * NotCapable-failing every time the rotation reached them.
  *
  * The fix's premise: the extension's own `test` task IS the source of
- * authority. A `quality.yaml` `soak:` override is a RARE, human-reviewed
+ * authority. A `quality-standard.yaml` `soak:` override is a RARE, human-reviewed
  * NARROWING of that authority — never a way to grant more. Every validator
  * below RETURNS Violation[] and never throws: a raw throw in an unattended
  * nightly soak is exactly the failure mode this whole design exists to
@@ -156,7 +156,7 @@ export function parsePermissionSet(task: string): ParsedPermissionSet {
 /** The inverse of parsePermissionSet: serialize a PermissionSet back into an
  * argv-shaped array of flag tokens, in insertion order. Used by
  * soak_schedule.ts to derive a bucket entry's denoArgsJson directly from an
- * extension's own test task when no narrowed quality.yaml soak: override
+ * extension's own test task when no narrowed quality-standard.yaml soak: override
  * exists — the default, common-case path that closes 24/51 extensions'
  * permission gap with zero per-extension hand-authoring. */
 export function permissionSetToArgs(
@@ -197,7 +197,7 @@ export function permissionSetToArgs(
 // docblock: "Everything else ... is dropped by construction"), so
 // soak_schedule.ts's resolveDenoArgs fallback silently dropped --v8-flags on
 // the floor for every extension that isn't hand-overridden via
-// quality.yaml. seanime_property_test.ts's heap-pin regression tests (the
+// quality-standard.yaml. seanime_property_test.ts's heap-pin regression tests (the
 // guard for the req.clone() leak PR #182 fixed) declare `ignore:
 // heapPinSkipReason !== undefined`, where the skip reason is set when
 // `gc()` is not exposed to the running process — so those tests were
@@ -230,7 +230,7 @@ export function parseRuntimeFlags(task: string): string[] {
  * process itself starts up (V8 flags, unstable API surface) rather than
  * what it's authorized to touch — the natural "how to run" -> "what it may
  * do" reading order. This is what soak_schedule.ts's resolveDenoArgs calls
- * for the common (no quality.yaml `soak:` override) derivation path — see
+ * for the common (no quality-standard.yaml `soak:` override) derivation path — see
  * that module for the rare, human-reviewed narrowing exception. */
 export function deriveSoakArgsFromTestTask(task: string): string[] {
   return [
@@ -342,7 +342,7 @@ export function validateNoUnknownFlags(task: string): Violation[] {
  * ordinary temp-dir shape) and any SCOPED grant (including a comma-scoped
  * --allow-env) are NOT broad. Getting this wrong in the "wider" direction
  * would force every permission-needing extension onto a hand-written
- * quality.yaml soak: override — a scope explosion that inverts this
+ * quality-standard.yaml soak: override — a scope explosion that inverts this
  * design's whole premise (see the module docblock).
  *
  * --allow-ffi/--allow-sys are unscoped-only as broad as --allow-run/
@@ -622,7 +622,7 @@ export function validateTokenSafety(tokens: readonly string[]): Violation[] {
           "a soak permission token that reaches deno test's argv must never " +
           "carry a shell metacharacter (;, |, $(...), `...`, whitespace, " +
           "etc.) — even though argv never passes through a shell here, an " +
-          "unsafe token is a sign the source (quality.yaml or a test task) " +
+          "unsafe token is a sign the source (quality-standard.yaml or a test task) " +
           "was tampered with or malformed",
         fix: `remove the unsafe character(s) from "${token}", or express the ` +
           "intended value without shell syntax",
@@ -641,7 +641,7 @@ export function validateTokenSafety(tokens: readonly string[]): Violation[] {
 // hard-reject outright with "cannot be used multiple times"; a repeated
 // --allow-read / --allow-write / --allow-ffi (AND their --deny-*
 // counterparts) all UNION across occurrences instead (see mergeScope above)
-// — confirmed live, not assumed. A quality.yaml soak.denoArgs override that
+// — confirmed live, not assumed. A quality-standard.yaml soak.denoArgs override that
 // repeats one of the hard-reject kinds parses "fine" through
 // parsePermissionSet (which happily merges the token-level scopes) but
 // would hard-fail run_soak.ts's `deno test` invocation at 3am, long after

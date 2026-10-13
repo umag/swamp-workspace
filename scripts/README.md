@@ -18,7 +18,7 @@ deno task test        # deno test . (unit + property tests, network mocked)
 ## Extension quality program: watch declarations
 
 Every published extension may declare upstream sources it should be watched
-against in its own `<extension>/quality.yaml`, under a `watch:` key:
+against in its own `<extension>/quality-standard.yaml`, under a `watch:` key:
 
 ```yaml
 watch:
@@ -31,7 +31,7 @@ watch:
 ```
 
 **Ownership split:** Phase A (`ext-quality-standard-ci-gate`) owns the rest of
-`quality.yaml` (`schemaVersion`, `extension`, other CI-gate keys) and treats
+`quality-standard.yaml` (`schemaVersion`, `extension`, other CI-gate keys) and treats
 `watch.sources[]` as an opaque passthrough. **This directory
 (`scripts/lib/watch_schema.ts`) is the single executable contract for the
 `watch:` block** — `loadQualityWatch()` parses the whole YAML document loosely
@@ -135,7 +135,7 @@ issue) — a transient outage must never be reported as drift. See
 `scripts/release_watch.ts` and its test suite for the full resolver.
 
 `buildDriftReports()` isolates failures **per extension**: a malformed
-`quality.yaml` for one extension is recorded with a `loadError` and does **not**
+`quality-standard.yaml` for one extension is recorded with a `loadError` and does **not**
 abort the run for the other 47+ extensions; `release_watch.ts`'s CLI entrypoint
 exits non-zero at the end if any load errors occurred, so they stay visible
 without blocking drift detection for everyone else.
@@ -166,7 +166,7 @@ deno run --allow-read scripts/soak_schedule.ts --root .               # tonight'
 Each emitted bucket entry also carries `denoArgsJson` — a JSON-encoded STRING
 (never a bare array, since no GitHub Actions matrix field here is array-valued)
 of the exact `deno test` permission flags to run that file with. Resolved from,
-in priority order: (1) a narrowed `<extension>/quality.yaml` `soak:` override,
+in priority order: (1) a narrowed `<extension>/quality-standard.yaml` `soak:` override,
 when one exists and validates (`scripts/quality/check_soak.ts` is the PR-time
 gate that verifies it never exceeds its own test task's authority — see
 STANDARD.md's `soak:` block), or (2) failing that, derived directly from the

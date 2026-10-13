@@ -37,7 +37,7 @@ export interface DiscoveredFile {
 /** A DiscoveredFile enriched with the exact deno permission argv (as a
  * JSON-encoded STRING — see serializeBucketForOutputFile/main below for
  * why never a bare array) its property soak should run with, resolved from
- * either a narrowed quality.yaml `soak:` override or, in the common case,
+ * either a narrowed quality-standard.yaml `soak:` override or, in the common case,
  * derived directly from the extension's own deno.json `test` task. */
 export interface ScheduledFile extends DiscoveredFile {
   readonly denoArgsJson: string;
@@ -177,7 +177,7 @@ export async function readTestTaskLenient(
 }
 
 /** Resolve the deno permission argv for `extension`'s property soak: prefer
- * a narrowed `quality.yaml` `soak: { state: present, denoArgs: [...] } }`
+ * a narrowed `quality-standard.yaml` `soak: { state: present, denoArgs: [...] } }`
  * override when one exists (scripts/quality/check_soak.ts is the gate that
  * verifies it's a legitimate narrowing, not this scheduler); otherwise fall
  * back to deriving argv directly from the extension's own `test` task — the
@@ -201,7 +201,7 @@ export async function resolveDenoArgs(
 ): Promise<string[]> {
   try {
     const raw = parseYaml(
-      await Deno.readTextFile(join(root, extension, "quality.yaml")),
+      await Deno.readTextFile(join(root, extension, "quality-standard.yaml")),
     );
     if (raw && typeof raw === "object") {
       const soak = (raw as Record<string, unknown>).soak;
@@ -219,7 +219,7 @@ export async function resolveDenoArgs(
       }
     }
   } catch {
-    // no quality.yaml, or unreadable/malformed — fall back to the test task
+    // no quality-standard.yaml, or unreadable/malformed — fall back to the test task
   }
   // deriveSoakArgsFromTestTask carries runtime flags (--v8-flags=...,
   // --unstable-*) through ahead of the permission flags — see its docblock
