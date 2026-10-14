@@ -1,0 +1,46 @@
+schemaVersion: 1
+extension: yandex-mail
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/yandex_mail_test.ts
+      - extensions/models/yandex_mail_lib_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/yandex_mail_methods_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/yandex_mail_adversarial_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/yandex_mail_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/yandex_mail_property_test.ts
+watch:
+  state: backlog
+  justification: no release-watch source yet — tracked in ext-quality-test-backfill
+canary:
+  state: backlog
+  justification: no live canary mailbox yet — tracked in ext-quality-test-backfill
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: na
+    justification: yandex-mail bundles no Claude skill — a plain IMAP/SMTP model
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: Grade A

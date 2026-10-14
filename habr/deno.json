@@ -1,0 +1,20 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/*.ts",
+    "test": "deno test --allow-env=FC_NUM_RUNS extensions/models/ --permit-no-files",
+    "test:soak": "FC_NUM_RUNS=10000 deno test --allow-env=FC_NUM_RUNS extensions/models/habr_property_test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": { "zod": "npm:zod@4" },
+  "compilerOptions": { "noImplicitAny": false },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "exclude": ["fixtures"]
+  },
+  "lint": { "rules": { "tags": ["recommended"] } }
+}

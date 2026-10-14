@@ -1,0 +1,57 @@
+{
+  "payload": [
+    {
+      "code": "ASD",
+      "UICCode": "8400058",
+      "namen": {
+        "lang": "Amsterdam Centraal",
+        "middel": "Amsterdam C.",
+        "kort": "Amsterdm C"
+      },
+      "land": "NL",
+      "lat": 52.3788871765137,
+      "lng": 4.90027761459351
+    },
+    {
+      "code": "ASA",
+      "UICCode": "8400057",
+      "namen": {
+        "lang": "Amsterdam Amstel",
+        "middel": "Amsterdam Amstel",
+        "kort": "Amstel"
+      },
+      "land": "NL",
+      "lat": 52.3466682434082,
+      "lng": 4.91777801513672
+    },
+    {
+      "code": "UT",
+      "UICCode": "8400621",
+      "namen": {
+        "lang": "Utrecht Centraal",
+        "middel": "Utrecht C.",
+        "kort": "Utrecht C"
+      },
+      "land": "NL",
+      "lat": 52.0888900756836,
+      "lng": 5.11027765274048
+    },
+    {
+      "code": "BERHBT",
+      "UICCode": "8065969",
+      "namen": {
+        "lang": "Berlin Hbf",
+        "middel": "Berlin Hbf",
+        "kort": "Berlin Hbf"
+      },
+      "land": "D",
+      "lat": 52.525,
+      "lng": 13.369
+    },
+    {
+      "code": "XXNOUIC",
+      "namen": { "lang": "Station Without UIC" },
+      "land": "NL"
+    }
+  ]
+}

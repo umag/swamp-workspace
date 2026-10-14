@@ -1,0 +1,21 @@
+{
+  "count": 2,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 1001,
+      "name": "North",
+      "company": 1234,
+      "city": "Example City",
+      "address": "Example straat 1"
+    },
+    {
+      "id": 1002,
+      "name": "South",
+      "company": 1234,
+      "city": "Example City",
+      "address": "Example straat 2"
+    }
+  ]
+}

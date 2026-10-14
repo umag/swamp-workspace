@@ -1,0 +1,15 @@
+[
+  {
+    "id": "7001234",
+    "type": "MAINTENANCE",
+    "title": "Amsterdam Centraal - Utrecht Centraal",
+    "isActive": true,
+    "phase": { "id": "4", "label": "Werkzaamheden" }
+  },
+  {
+    "id": 7005678,
+    "type": "DISRUPTION",
+    "title": "Schiphol Airport - Leiden Centraal",
+    "isActive": true
+  }
+]

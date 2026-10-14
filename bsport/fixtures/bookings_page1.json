@@ -1,0 +1,26 @@
+{
+  "count": 3,
+  "next": "https://api.production.bsport.io/book/v1/booking/?page=2&page_size=2",
+  "next_page": 2,
+  "previous": null,
+  "results": [
+    {
+      "id": 7001,
+      "offer": 90211,
+      "status": 1,
+      "is_cancelled": false,
+      "date_start": "2026-09-16T08:00:00+02:00",
+      "date_booking": "2026-09-10T19:02:11+02:00",
+      "on_waiting_list": false
+    },
+    {
+      "id": 7002,
+      "offer": 90300,
+      "status": 1,
+      "is_cancelled": false,
+      "date_start": "2026-09-18T08:00:00+02:00",
+      "date_booking": "2026-09-11T07:45:00+02:00",
+      "on_waiting_list": false
+    }
+  ]
+}

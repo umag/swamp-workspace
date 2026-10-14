@@ -1,0 +1,21 @@
+{
+  "id": "900001",
+  "titleHtml": "Fixture &laquo;one&raquo; &mdash; <em>first</em> post",
+  "lang": "ru",
+  "timePublished": "2026-09-01T10:00:00+00:00",
+  "readingTime": 7,
+  "complexity": "medium",
+  "postType": "article",
+  "author": { "alias": "fixture_author" },
+  "tags": [{ "titleHtml": "testing" }],
+  "hubs": [{ "alias": "programming" }],
+  "statistics": {
+    "readingCount": 1234,
+    "commentsCount": 5,
+    "score": 12,
+    "votesCountPlus": 14,
+    "votesCountMinus": 2,
+    "favoritesCount": 30
+  },
+  "textHtml": "<div><h2>Intro</h2><p>Hello&nbsp;world &amp; friends.</p><ul><li>one</li><li>two</li></ul><p>Line<br/>break</p></div>"
+}
