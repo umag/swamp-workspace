@@ -371,11 +371,16 @@ interface ExecContext {
 /** The `@magistr/ns-international` swamp model definition. */
 export const model = {
   type: "@magistr/ns-international",
-  version: "2026.09.19.1",
+  version: "2026.10.15.1",
   upgrades: [
     {
       toVersion: "2026.09.19.1",
       description: "Initial release",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.1",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

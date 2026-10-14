@@ -668,7 +668,14 @@ const res = (description: string, schema: z.ZodType) => ({
  */
 export const model = {
   type: "@magistr/restic",
-  version: "2026.10.14.2",
+  version: "2026.10.15.1",
+  upgrades: [
+    {
+      toVersion: "2026.10.15.1",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     repoStatus: res(

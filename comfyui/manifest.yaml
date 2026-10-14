@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/comfyui"
-version: "2026.10.14.2"
+version: "2026.10.15.1"
 license: MIT
 description: |
   Drive a ComfyUI server over its HTTP API from swamp. Ships three bundled

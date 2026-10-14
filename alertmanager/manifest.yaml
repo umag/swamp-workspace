@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/alertmanager"
-version: "2026.10.14.2"
+version: "2026.10.15.1"
 license: MIT
 description: |
   Prometheus Alertmanager v2 API for swamp — list firing alerts, alert groups

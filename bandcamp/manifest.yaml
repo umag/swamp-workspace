@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/bandcamp"
-version: "2026.10.14.2"
+version: "2026.10.15.1"
 license: MIT
 description: |
   Bandcamp for swamp — search artists, albums, and tracks on the public

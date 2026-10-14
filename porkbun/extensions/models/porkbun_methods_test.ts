@@ -529,3 +529,177 @@ Deno.test("no method calls the logger at all today (pin — a future change that
   );
   assertEquals(logs.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// applyRecords
+// ---------------------------------------------------------------------------
+
+/** Route retrieveByNameType to `existing`, record create/delete calls. */
+function dnsRoutes(existing: unknown[] | Error) {
+  return [
+    (req: Request) => {
+      const p = new URL(req.url).pathname;
+      if (p.includes("/dns/retrieveByNameType/")) {
+        return existing instanceof Error
+          ? json({ status: "ERROR", message: existing.message })
+          : json({ status: "SUCCESS", records: existing });
+      }
+      if (p.includes("/dns/create/")) {
+        return json({ status: "SUCCESS", id: 999 });
+      }
+      if (p.includes("/dns/delete/")) return json({ status: "SUCCESS" });
+      return undefined;
+    },
+  ];
+}
+
+const paths = (calls: Request[]) => calls.map((c) => new URL(c.url).pathname);
+
+Deno.test("applyRecords: already-matching group creates and deletes nothing (idempotent)", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    dnsRoutes([{ id: "1", content: "203.0.113.1.", type: "A" }]),
+    async (calls) => {
+      await run("applyRecords", {
+        records: [{ subdomain: "www", type: "A", content: "203.0.113.1" }],
+      }, ctx);
+      assertEquals(
+        paths(calls).filter((p) => /create|delete/.test(p)),
+        [],
+      );
+    },
+  );
+  assertEquals(written[0].payload.changed, false);
+  assertEquals(written[0].payload.kept, 1);
+});
+
+Deno.test("applyRecords: deletes stale and creates missing within the group", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    dnsRoutes([{ id: "7", content: "203.0.113.9", type: "A" }]),
+    async (calls) => {
+      await run("applyRecords", {
+        records: [{ subdomain: "www", type: "A", content: "203.0.113.1" }],
+      }, ctx);
+      const p = paths(calls);
+      assert(p.includes("/api/json/v3/dns/delete/example.com/7"));
+      const create = calls.find((c) => c.url.includes("/dns/create/"))!;
+      const body = await requestBody(create);
+      assertEquals(body.name, "www");
+      assertEquals(body.content, "203.0.113.1");
+    },
+  );
+  assertEquals(written[0].payload.created, 1);
+  assertEquals(written[0].payload.deleted, 1);
+});
+
+Deno.test("applyRecords: dryRun reports the plan without writing DNS", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub(dnsRoutes([]), async (calls) => {
+    await run("applyRecords", {
+      records: [{ type: "TXT", content: "v=spf1 -all" }],
+      dryRun: true,
+    }, ctx);
+    assertEquals(paths(calls).filter((p) => /create|delete/.test(p)), []);
+  });
+  assertEquals(written[0].payload.created, 1);
+});
+
+Deno.test("applyRecords: a failed read aborts instead of re-creating records", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    dnsRoutes(new Error("Invalid API key.")),
+    async (calls) => {
+      await assertRejects(
+        () =>
+          run("applyRecords", {
+            records: [{ subdomain: "www", type: "A", content: "203.0.113.1" }],
+          }, ctx),
+        Error,
+        "Invalid API key",
+      );
+      assertEquals(paths(calls).filter((p) => /create|delete/.test(p)), []);
+    },
+  );
+  assertEquals(written.length, 0);
+});
+
+Deno.test("applyRecords: an explicit not-found read is an empty group", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    dnsRoutes(new Error("Record not found.")),
+    async (calls) => {
+      await run("applyRecords", {
+        records: [{ subdomain: "www", type: "A", content: "203.0.113.1" }],
+      }, ctx);
+      assertEquals(
+        paths(calls).filter((p) => p.includes("/create/")).length,
+        1,
+      );
+    },
+  );
+  assertEquals(written[0].payload.created, 1);
+});
+
+// ---------------------------------------------------------------------------
+// checkDomains
+// ---------------------------------------------------------------------------
+
+Deno.test("checkDomains: maps availability and prices, one resource per domain", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse(
+    {
+      status: "SUCCESS",
+      response: {
+        avail: "yes",
+        premium: "no",
+        price: "9.68",
+        regularPrice: "11.06",
+        firstYearPromo: "yes",
+        additional: {
+          renewal: { price: "11.06" },
+          transfer: { price: "9.68" },
+        },
+      },
+    },
+    200,
+    async (calls) => {
+      await run("checkDomains", {
+        domains: ["a.example", "b.example"],
+        delayMs: 0,
+      }, ctx);
+      assertEquals(calls.length, 2);
+    },
+  );
+  assertEquals(written.map((w) => w.name), [
+    "check-a.example",
+    "check-b.example",
+  ]);
+  assertEquals(written[0].payload.available, true);
+  assertEquals(written[0].payload.renewal, "11.06");
+  assertEquals(written[0].payload.firstYearPromo, true);
+  assertEquals(written[0].payload.error, null);
+});
+
+Deno.test("checkDomains: a failed check records the error, never a false availability", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse(ERROR_BODY, 200, async () => {
+    await run("checkDomains", { domains: ["a.example"], delayMs: 0 }, ctx);
+  });
+  assertEquals(written[0].payload.available, null);
+  assertEquals(written[0].payload.error, "Invalid API key.");
+  assert(!JSON.stringify(written).includes(API_KEY));
+});
+
+Deno.test("checkDomains: rejects a domain that would alter the request path", () => {
+  const m = (model.methods as MethodMap).checkDomains;
+  for (const bad of ["../dns/delete/x", "a.example/x", "nodot", ""]) {
+    let threw = false;
+    try {
+      m.arguments.parse({ domains: [bad] });
+    } catch {
+      threw = true;
+    }
+    assert(threw, `${JSON.stringify(bad)} must be rejected`);
+  }
+});

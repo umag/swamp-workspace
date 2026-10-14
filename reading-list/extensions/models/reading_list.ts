@@ -129,6 +129,15 @@ const GlobalArgsSchema = z.object({
       "Sources to read. Omit to use the built-in curated set (Swamp Club " +
         "at tier 1, Wardley mappers at tier 2).",
     ),
+  fetchDelayMs: z
+    .number()
+    .nonnegative()
+    .optional()
+    .describe(
+      "Delay between requests that share a host (default 2000). Hosts are " +
+        "read in parallel; only same-host requests are spaced. Raise if " +
+        "LinkedIn returns HTTP 999, which is an IP-level burst block.",
+    ),
   userAgent: z
     .string()
     .optional()
@@ -883,15 +892,70 @@ export function rankHosts(
 const feedInstance = (name: string): string => `feed-${name}`;
 const READ_INSTANCE = "read-state";
 
+function sourceHost(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return url;
+  }
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(t);
+      reject(signal.reason);
+    }, { once: true });
+  });
+}
+
+/**
+ * Read every source, spacing requests that share a host.
+ *
+ * Fetching all sources at once makes N simultaneous requests to the same host
+ * whenever several sources live there, which is what LinkedIn answers with
+ * `HTTP 999` (it blocks on burst rate from one IP, not per profile — 6 parallel
+ * profile reads took out even the one that had just succeeded). Hosts are still
+ * read in parallel with each other, so adding the delay costs nothing for the
+ * RSS sources, which are all on distinct hosts.
+ */
+async function readSourcesSpaced(
+  sources: Source[],
+  globalArgs: GlobalArgs,
+  priorFor: (index: number) => Map<string, string>,
+  signal?: AbortSignal,
+): Promise<FeedRecord[]> {
+  const delayMs = globalArgs.fetchDelayMs ?? 2000;
+  const byHost = new Map<string, number[]>();
+  sources.forEach((s, i) => {
+    const h = sourceHost(s.url);
+    const group = byHost.get(h);
+    if (group) group.push(i);
+    else byHost.set(h, [i]);
+  });
+
+  const out: FeedRecord[] = new Array(sources.length);
+  await Promise.all(
+    [...byHost.values()].map(async (indexes) => {
+      for (let k = 0; k < indexes.length; k++) {
+        const i = indexes[k];
+        if (k > 0 && delayMs > 0) await sleep(delayMs, signal);
+        out[i] = await readSource(sources[i], globalArgs, priorFor(i), signal);
+      }
+    }),
+  );
+  return out;
+}
+
 /** Fetch every enabled source fresh (self-contained; no cross-run state). */
 function collectFeeds(
   globalArgs: GlobalArgs,
   signal?: AbortSignal,
 ): Promise<FeedRecord[]> {
   const sources = resolveSources(globalArgs);
-  return Promise.all(
-    sources.map((s) => readSource(s, globalArgs, new Map(), signal)),
-  );
+  return readSourcesSpaced(sources, globalArgs, () => new Map(), signal);
 }
 
 /** Load the stored feed record for every configured source. */
@@ -913,7 +977,7 @@ async function loadStoredFeeds(
 /** Model definition for the curated reading list. */
 export const model = {
   type: "@magistr/reading-list",
-  version: "2026.10.14.2",
+  version: "2026.10.15.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -923,6 +987,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.14.2",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.1",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
@@ -1007,10 +1076,11 @@ export const model = {
           }),
         );
 
-        const feeds = await Promise.all(
-          sources.map((s, i) =>
-            readSource(s, context.globalArgs, priorSeen[i], context.signal)
-          ),
+        const feeds = await readSourcesSpaced(
+          sources,
+          context.globalArgs,
+          (i) => priorSeen[i],
+          context.signal,
         );
 
         const handles: Array<{ name: string }> = [];

@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026.10.15.1
+
+### Added
+
+- **`applyRecords`: reconcile DNS to a desired state in one run.** Records are
+  grouped by (subdomain, type); only named groups are touched. Within a group,
+  records not desired are deleted and missing ones created; matching is by
+  normalised content (case, trailing dot) and MX/SRV priority. Running it twice
+  changes nothing. `dryRun` reports the plan without writing. Writes a
+  `dns-reconciled` resource with per-group created/deleted/kept.
+- **`checkDomains`: availability and price for one or more domains**, including
+  registry premium, renewal and transfer price and first-year promo. Checks are
+  paced (`delayMs`, default 10.5 s) to stay under Porkbun's 1-per-10s limit. One
+  `domain-check` resource per domain; a failed check records its `error` and
+  leaves `available` null rather than reporting a false "no".
+
+### Fixed before release
+
+- `applyRecords` aborts when the read of existing records fails. Before, any
+  error (auth, network, rate limit) was read as "no records", so the plan
+  re-created records that already existed. Only an explicit not-found answer
+  counts as an empty group.
+- `checkDomains` rejects anything that is not a domain name, so a value such as
+  `../dns/delete/x` cannot change the API path.
+
 ## 2026.10.14.2
 
 ### Changed

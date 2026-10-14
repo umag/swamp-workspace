@@ -3,11 +3,72 @@ import { describe, it } from "jsr:@std/testing@1/bdd";
 import {
   type ApiGraph,
   applyIdeogramOverrides,
+  buildImg2Img,
   chainLoras,
   findNodesByClass,
   findNodesByTitle,
+  type Img2ImgConfig,
   patchWorkflow,
 } from "./workflow_patch.ts";
+
+/** A minimal txt2img graph: EmptyLatentImage → KSampler, VAELoader present. */
+function txt2imgGraph(): ApiGraph {
+  return {
+    empty: {
+      class_type: "EmptyLatentImage",
+      inputs: { width: 1024, height: 1024, batch_size: 1 },
+    },
+    vae: {
+      class_type: "VAELoader",
+      inputs: { vae_name: "qwen_image_vae.safetensors" },
+    },
+    sampler: {
+      class_type: "KSampler",
+      inputs: { denoise: 1, latent_image: ["empty", 0], model: ["m", 0] },
+    },
+  };
+}
+
+const i2iCfg: Img2ImgConfig = {
+  samplerNodeId: "sampler",
+  latentKey: "latent_image",
+  denoiseKey: "denoise",
+  vaeNodeId: "vae",
+  vaeSlot: 0,
+  loadImageClass: "LoadImage",
+  loadImageKey: "image",
+  vaeEncodeClass: "VAEEncode",
+  vaeEncodePixelsKey: "pixels",
+  vaeEncodeVaeKey: "vae",
+};
+
+describe("buildImg2Img", () => {
+  it("injects LoadImage → VAEEncode and repoints the sampler at denoise", () => {
+    const g = txt2imgGraph();
+    const out = buildImg2Img(g, i2iCfg, "char.png", 0.6);
+    assertEquals(out.i2i_load.class_type, "LoadImage");
+    assertEquals(out.i2i_load.inputs.image, "char.png");
+    assertEquals(out.i2i_encode.class_type, "VAEEncode");
+    assertEquals(out.i2i_encode.inputs.pixels, ["i2i_load", 0]);
+    assertEquals(out.i2i_encode.inputs.vae, ["vae", 0]);
+    assertEquals(out.sampler.inputs.latent_image, ["i2i_encode", 0]);
+    assertEquals(out.sampler.inputs.denoise, 0.6);
+    // Original graph untouched (deep-clone).
+    assertEquals(g.sampler.inputs.latent_image, ["empty", 0]);
+    assertEquals(g.sampler.inputs.denoise, 1);
+    assertEquals(g.i2i_load, undefined);
+  });
+
+  it("throws when the sampler node is absent", () => {
+    const g = txt2imgGraph();
+    delete g.sampler;
+    assertThrows(
+      () => buildImg2Img(g, i2iCfg, "char.png", 0.6),
+      Error,
+      "img2img sampler node 'sampler' not found",
+    );
+  });
+});
 
 /** A minimal Krea-like model chain: UNET → lora loader → switch. */
 function loraGraph(): ApiGraph {

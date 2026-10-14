@@ -580,12 +580,17 @@ async function writeSummary(
 /** bsport member API model: calendar offers, my bookings, and my waitlist. */
 export const model = {
   type: "@magistr/bsport",
-  version: "2026.09.15.1",
+  version: "2026.10.15.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
       toVersion: "2026.09.15.1",
       description: "Initial release",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.1",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

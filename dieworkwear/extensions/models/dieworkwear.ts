@@ -565,11 +565,16 @@ const GarmentSchema = z.enum(["jacket", "trousers", "casual", "any"]);
 /** @magistr/dieworkwear model type: corpus, figure classifier, and fit advisor. */
 export const model = {
   type: "@magistr/dieworkwear",
-  version: "2026.10.09.2",
+  version: "2026.10.15.1",
   upgrades: [
     {
       toVersion: "2026.10.09.2",
       description: "Multi-source bundled rules (adds ethandesu 'Gravitas')",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.1",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
