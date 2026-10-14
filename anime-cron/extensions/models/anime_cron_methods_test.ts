@@ -1084,13 +1084,15 @@ Deno.test("fetch-archive: an empty group list is rejected rather than sweeping a
   );
 });
 
-Deno.test("sanity: model exposes exactly the 6 documented methods", () => {
+Deno.test("sanity: model exposes exactly the 8 documented methods", () => {
   const methodNames = Object.keys(model.methods).sort();
   assertEquals(methodNames, [
     "disk-stats",
     "fetch-airing",
     "fetch-archive",
     "mark-watched",
+    "notify-downloaded",
+    "rate-episode",
     "seed-watchlist",
     "upgrade-bd",
   ]);

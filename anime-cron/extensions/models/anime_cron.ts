@@ -885,6 +885,34 @@ const MarkWatchedSchema = z.object({
   timestamp: z.string(),
 });
 
+const DownloadNoticeSchema = z.object({
+  listSource: z.enum(["anilist", "cache"]),
+  completed: z.number().describe("Finished anime torrents in this event"),
+  notified: z.number().describe("Notices Telegram accepted"),
+  outcomes: z.array(z.object({
+    torrentName: z.string(),
+    mediaId: z.number().nullable(),
+    title: z.string().nullable(),
+    episode: z.number().nullable(),
+    status: z.enum(["sent", "send-failed", "unmatched", "dry-run"]),
+    reason: z.string().optional(),
+  })),
+  timestamp: z.string(),
+});
+
+const RateResultSchema = z.object({
+  mediaId: z.number(),
+  title: z.string(),
+  episode: z.number(),
+  score: z.number().describe("Score sent, 1-10; 0 = marked watched only"),
+  progressBefore: z.number().nullable(),
+  progress: z.number(),
+  status: z.string(),
+  by: z.string(),
+  reply: z.string().describe("Confirmation text for the Telegram chat"),
+  timestamp: z.string(),
+});
+
 const UpgradeBdSchema = z.object({
   checked: z.number(),
   queued: z.number(),
@@ -1014,10 +1042,108 @@ async function sendTg(modelName: string, text: string): Promise<void> {
   }
 }
 
+/**
+ * Send a Telegram message with reply markup and wait for the result. Unlike
+ * sendTg the caller learns whether it was delivered, so a notice that failed
+ * to send is reported in the run's resource instead of vanishing.
+ */
+async function sendTgMarkup(
+  modelName: string,
+  text: string,
+  replyMarkup: Record<string, unknown>,
+): Promise<boolean> {
+  try {
+    const input = JSON.stringify({ text, parseMode: "HTML", replyMarkup });
+    const proc = new Deno.Command("swamp", {
+      args: ["model", "method", "run", modelName, "sendMessage", "--stdin"],
+      stdin: "piped",
+      stdout: "null",
+      stderr: "null",
+    }).spawn();
+    const writer = proc.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(input));
+    await writer.close();
+    return (await proc.output()).success;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Episode-ready notice + rating buttons ────────────────────────────────────
+
+/** callback_data prefix of the rating buttons; the telegram-callback workflow
+ *  routes taps with this kind to rate-episode. */
+export const RATE_CALLBACK_KIND = "anr";
+
+/**
+ * Inline keyboard for a downloaded episode: one "Watched" button (score 0 =
+ * progress only) and scores 1-10. callback_data is
+ * `anr:<mediaId>:<episode>:<score>` — at most ~22 bytes, under Telegram's 64.
+ */
+export function buildRateKeyboard(
+  mediaId: number,
+  episode: number,
+): { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } {
+  const btn = (text: string, score: number) => ({
+    text,
+    callback_data: `${RATE_CALLBACK_KIND}:${mediaId}:${episode}:${score}`,
+  });
+  const scores = (from: number) =>
+    Array.from({ length: 5 }, (_, i) => btn(String(from + i), from + i));
+  return {
+    inline_keyboard: [[btn("Watched", 0)], scores(1), scores(6)],
+  };
+}
+
+/** Parse the `arg` half of a rating tap (`<mediaId>:<episode>:<score>`).
+ *  Returns null for anything malformed or out of range. */
+export function parseRateCallback(
+  arg: string,
+): { mediaId: number; episode: number; score: number } | null {
+  const m = arg.trim().match(/^(\d{1,9}):(\d{1,4}):(\d{1,2})$/);
+  if (!m) return null;
+  const [mediaId, episode, score] = m.slice(1).map((s) => parseInt(s, 10));
+  if (mediaId < 1 || episode < 1 || score > 10) return null;
+  return { mediaId, episode, score };
+}
+
+/**
+ * The AniList list change a rating tap asks for. Progress never goes back —
+ * tapping an older episode's button after a newer one keeps the newer
+ * progress. Reaching the season's last episode completes the entry; a show
+ * not on the list yet becomes CURRENT.
+ */
+export function planRateUpdate(
+  current: { progress: number; status: string | null } | null,
+  episode: number,
+  totalEpisodes: number | null,
+): { progress: number; status: string | null } {
+  const progress = Math.max(current?.progress ?? 0, episode);
+  if (totalEpisodes != null && progress >= totalEpisodes) {
+    return { progress, status: "COMPLETED" };
+  }
+  return { progress, status: current ? null : "CURRENT" };
+}
+
+const MEDIA_LIST_ENTRY_QUERY = `
+query ($mediaId: Int!) {
+  Media(id: $mediaId, type: ANIME) {
+    id episodes title { romaji english }
+    mediaListEntry { progress status }
+  }
+}`;
+
+const RATE_MUTATION = `
+mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus, $scoreRaw: Int) {
+  SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status, scoreRaw: $scoreRaw) {
+    id mediaId status progress score(format: POINT_10)
+  }
+}`;
+
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.10.02.1",
+  version: "2026.10.14.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     fetchResult: {
@@ -1039,6 +1165,20 @@ export const model = {
       schema: MarkWatchedSchema,
       lifetime: "7d",
       garbageCollection: 10,
+    },
+    downloadNotice: {
+      description:
+        "Outcome of notify-downloaded: which finished episodes got a Telegram notice with rating buttons",
+      schema: DownloadNoticeSchema,
+      lifetime: "7d",
+      garbageCollection: 20,
+    },
+    rateResult: {
+      description:
+        "Outcome of rate-episode: the AniList progress/score a Telegram tap set",
+      schema: RateResultSchema,
+      lifetime: "30d",
+      garbageCollection: 50,
     },
     upgradeResult: {
       description: "Outcome of upgrade-bd: which BD releases were queued",
@@ -1497,6 +1637,215 @@ export const model = {
           outcomes,
           timestamp: new Date().toISOString(),
         });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    "notify-downloaded": {
+      description:
+        "Announce finished anime episodes on Telegram, each with inline buttons: Watched, or a 1-10 score. Fed by the Transmission completion event (unraid-transmission poll-completed newCompletions, in the transmission-complete-notify workflow); non-anime torrents are ignored. A tap goes through the telegram-callback workflow to rate-episode.",
+      arguments: z.object({
+        completions: z.array(
+          z.object({ name: z.string(), downloadDir: z.string() }).passthrough(),
+        ).describe(
+          "Newly finished torrents — poll-completed's newCompletions",
+        ),
+        dryRun: z.boolean().default(false).describe(
+          "Match finished torrents to shows but send nothing",
+        ),
+      }),
+      execute: async (
+        args: {
+          completions: Array<{ name: string; downloadDir: string }>;
+          dryRun: boolean;
+        },
+        context: {
+          globalArgs: z.infer<typeof GlobalArgsSchema>;
+          writeResource: (n: string, k: string, v: unknown) => Promise<unknown>;
+          readResource?: (name: string) => Promise<unknown>;
+        },
+      ) => {
+        const { anilistUser, animeContainerDir, telegramModel } =
+          context.globalArgs;
+        if (!telegramModel && !args.dryRun) {
+          throw new Error(
+            "telegramModel is empty — notify-downloaded has nowhere to send",
+          );
+        }
+
+        const animeDir = animeContainerDir.replace(/\/$/, "");
+        const finished = args.completions.filter((t) =>
+          t.downloadDir.startsWith(animeDir + "/")
+        );
+
+        // Map a show's download folder back to its AniList entry — fetch-airing
+        // queued into exactly this folder. Cache fallback keeps notices going
+        // while AniList is down; only ids and titles are read from it.
+        let listSource: "anilist" | "cache" = "anilist";
+        let entries: Array<
+          { mediaId: number; romaji: string; english: string | null }
+        > = [];
+        if (finished.length > 0) {
+          try {
+            entries = await getCurrentList(anilistUser);
+          } catch (err) {
+            const cached = await context.readResource?.("watchlist-current")
+              .catch(() => null) as
+                | z.infer<typeof WatchlistCacheSchema>
+                | null
+                | undefined;
+            if (!cached?.entries?.length) throw err;
+            entries = cached.entries;
+            listSource = "cache";
+          }
+        }
+        const byDir = new Map(entries.map((e) => {
+          const title = e.romaji || (e.english ?? "");
+          return [`${animeDir}/${toFolderName(title)}`, { ...e, title }];
+        }));
+
+        const outcomes: z.infer<typeof DownloadNoticeSchema>["outcomes"] = [];
+        let notified = 0;
+        for (const t of finished) {
+          const show = byDir.get(t.downloadDir.replace(/\/+$/, ""));
+          const episode = parseEpisode(t.name);
+          if (!show || episode == null) {
+            outcomes.push({
+              torrentName: t.name,
+              mediaId: show?.mediaId ?? null,
+              title: show?.title ?? null,
+              episode,
+              status: "unmatched",
+              reason: show ? "could-not-parse-episode" : "not-a-current-show",
+            });
+            continue;
+          }
+          const base = {
+            torrentName: t.name,
+            mediaId: show.mediaId,
+            title: show.title,
+            episode,
+          };
+          if (args.dryRun) {
+            outcomes.push({ ...base, status: "dry-run" });
+            continue;
+          }
+          const ok = await sendTgMarkup(
+            telegramModel,
+            `<b>${escapeHtml(show.title)} ep${episode} downloaded</b>\n` +
+              `Watched it? Tap Watched, or a score to rate the show.`,
+            buildRateKeyboard(show.mediaId, episode),
+          );
+          if (ok) notified++;
+          outcomes.push({ ...base, status: ok ? "sent" : "send-failed" });
+        }
+
+        const handle = await context.writeResource(
+          "downloadNotice",
+          "download-notice",
+          {
+            listSource,
+            completed: finished.length,
+            notified,
+            outcomes,
+            timestamp: new Date().toISOString(),
+          },
+        );
+        const failed = outcomes.filter((o) => o.status === "send-failed");
+        if (failed.length > 0) {
+          throw new Error(
+            `Telegram rejected ${failed.length} of ${finished.length} notices: ${
+              failed.map((o) => `${o.title} ep${o.episode}`).join(", ")
+            }`,
+          );
+        }
+        return { dataHandles: [handle] };
+      },
+    },
+
+    "rate-episode": {
+      description:
+        "Apply a Telegram rating tap to AniList: progress = max(current, episode) and, for a score 1-10, the show's score. Completes the entry at the last episode. Idempotent — a repeated tap sets the same values.",
+      arguments: z.object({
+        callback: z.string().describe(
+          "The tap's arg: <mediaId>:<episode>:<score>, score 0 = watched only",
+        ),
+        by: z.string().default("").describe("Who tapped"),
+      }),
+      execute: async (
+        args: { callback: string; by: string },
+        context: {
+          globalArgs: z.infer<typeof GlobalArgsSchema>;
+          writeResource: (n: string, k: string, v: unknown) => Promise<unknown>;
+        },
+      ) => {
+        const { anilistToken } = context.globalArgs;
+        if (!anilistToken) {
+          throw new Error("anilistToken is required for rate-episode");
+        }
+        const tap = parseRateCallback(args.callback);
+        if (!tap) {
+          throw new Error(`Malformed rating callback: "${args.callback}"`);
+        }
+
+        // Read the entry first: progress must never move backwards.
+        const data = await gqlRequest(
+          MEDIA_LIST_ENTRY_QUERY,
+          { mediaId: tap.mediaId },
+          anilistToken,
+        );
+        const media = data.Media as {
+          episodes: number | null;
+          title: { romaji: string | null; english: string | null };
+          mediaListEntry: { progress: number; status: string } | null;
+        } | null;
+        if (!media) throw new Error(`AniList has no anime ${tap.mediaId}`);
+        const title = media.title.romaji || media.title.english ||
+          String(tap.mediaId);
+
+        const plan = planRateUpdate(
+          media.mediaListEntry,
+          tap.episode,
+          media.episodes,
+        );
+        const saved = (await gqlRequest(
+          RATE_MUTATION,
+          {
+            mediaId: tap.mediaId,
+            progress: plan.progress,
+            ...(plan.status ? { status: plan.status } : {}),
+            ...(tap.score > 0 ? { scoreRaw: tap.score * 10 } : {}),
+          },
+          anilistToken,
+        )).SaveMediaListEntry as {
+          status: string;
+          progress: number;
+          score: number;
+        };
+
+        const parts = [`${title} ep${tap.episode}: watched`];
+        if (tap.score > 0) parts.push(`score ${tap.score}/10`);
+        if (saved.progress > tap.episode) {
+          parts.push(`progress stays ${saved.progress}`);
+        }
+        if (saved.status === "COMPLETED") parts.push("completed");
+
+        const handle = await context.writeResource(
+          "rateResult",
+          `rate-${tap.mediaId}-${tap.episode}`,
+          {
+            mediaId: tap.mediaId,
+            title,
+            episode: tap.episode,
+            score: tap.score,
+            progressBefore: media.mediaListEntry?.progress ?? null,
+            progress: saved.progress,
+            status: saved.status,
+            by: args.by,
+            reply: parts.join(", "),
+            timestamp: new Date().toISOString(),
+          },
+        );
         return { dataHandles: [handle] };
       },
     },

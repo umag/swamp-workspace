@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/anime-cron"
-version: "2026.10.02.1"
+version: "2026.10.14.1"
 description: |
   Anime automation pipeline: fetch airing episodes from Nyaa, sync watch
   progress back to AniList, queue Blu-ray upgrades via SeaDex, and archive
@@ -23,6 +23,12 @@ description: |
     credit, so collabs and suffixed aliases are caught but a title that only
     mentions the group is not. Idempotent via infoHash dedup against live
     Transmission state.
+  - `notify-downloaded` — fed the Transmission completion event
+    (`newCompletions`), post "<title> epN downloaded" on Telegram with inline
+    buttons: Watched, or a 1-10 score. Non-anime torrents are ignored.
+  - `rate-episode` — apply a button tap (`anr:<mediaId>:<ep>:<score>`) to
+    AniList: progress = max(current, episode), score 1-10 sets the show
+    score, the last episode completes the entry. Idempotent.
   - `disk-stats` — query Transmission for all anime torrents and return
     total/downloaded/remaining disk usage grouped by status.
 
