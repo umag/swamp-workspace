@@ -1,0 +1,19 @@
+{
+  "pagesCount": 2,
+  "publicationIds": ["900003", "900404"],
+  "publicationRefs": {
+    "900003": {
+      "id": "900003",
+      "titleHtml": "Third fixture post",
+      "lang": "en",
+      "timePublished": "2026-07-01T00:00:00+00:00",
+      "readingTime": 1,
+      "complexity": "easy",
+      "postType": "news",
+      "author": { "alias": "fixture_author" },
+      "tags": [{ "title": "plain-title-tag" }],
+      "hubs": [{ "alias": "news" }],
+      "statistics": { "readingCount": 10 }
+    }
+  }
+}

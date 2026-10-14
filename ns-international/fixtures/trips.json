@@ -1,0 +1,80 @@
+{
+  "trips": [
+    {
+      "plannedDurationInMinutes": 27,
+      "transfers": 0,
+      "status": "NORMAL",
+      "crowdForecast": "MEDIUM",
+      "optimal": true,
+      "productFare": {
+        "priceInCents": 940,
+        "product": "OVCHIPKAART_ENKELE_REIS",
+        "travelClass": "SECOND_CLASS",
+        "discountType": "NO_DISCOUNT"
+      },
+      "fares": [
+        {
+          "priceInCents": 1600,
+          "product": "OVCHIPKAART_ENKELE_REIS",
+          "travelClass": "FIRST_CLASS",
+          "discountType": "NO_DISCOUNT"
+        },
+        {
+          "priceInCents": 560,
+          "product": "OVCHIPKAART_ENKELE_REIS",
+          "travelClass": "SECOND_CLASS",
+          "discountType": "DISCOUNT_40_PERCENT"
+        }
+      ],
+      "legs": [
+        {
+          "product": { "displayName": "Intercity", "operatorName": "NS" },
+          "origin": {
+            "name": "Amsterdam Centraal",
+            "plannedDateTime": "2026-09-22T08:04:00+0200",
+            "actualDateTime": "2026-09-22T08:06:00+0200",
+            "plannedTrack": "5b"
+          },
+          "destination": {
+            "name": "Utrecht Centraal",
+            "plannedDateTime": "2026-09-22T08:31:00+0200",
+            "plannedTrack": "18"
+          },
+          "direction": "Nijmegen",
+          "crowdForecast": "MEDIUM",
+          "cancelled": false
+        }
+      ]
+    },
+    {
+      "plannedDurationInMinutes": 42,
+      "transfers": 1,
+      "status": "DISRUPTION",
+      "legs": [
+        {
+          "product": { "displayName": "Sprinter", "operatorName": "NS" },
+          "origin": {
+            "name": "Amsterdam Centraal",
+            "plannedDateTime": "2026-09-22T08:10:00+0200"
+          },
+          "destination": {
+            "name": "Amsterdam Amstel",
+            "plannedDateTime": "2026-09-22T08:18:00+0200"
+          }
+        },
+        {
+          "product": { "displayName": "Intercity", "operatorName": "NS" },
+          "origin": {
+            "name": "Amsterdam Amstel",
+            "plannedDateTime": "2026-09-22T08:25:00+0200"
+          },
+          "destination": {
+            "name": "Utrecht Centraal",
+            "plannedDateTime": "2026-09-22T08:52:00+0200"
+          },
+          "cancelled": true
+        }
+      ]
+    }
+  ]
+}

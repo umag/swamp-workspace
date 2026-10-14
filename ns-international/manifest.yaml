@@ -1,0 +1,53 @@
+manifestVersion: 1
+name: "@magistr/ns-international"
+version: "2026.09.19.1"
+license: MIT
+description: |
+  Plan train trips on NS and NS International via the official NS
+  Reisinformatie API (apiportal.ns.nl) — the only public, supported NS
+  interface. Covers PLANNING only: journey advice, prices, live departures and
+  disruptions, for domestic NL trains and the international connections NS
+  International sells (Belgium, Germany, France; Eurostar, Eurocity, ICE).
+
+  There is NO public booking/payment API for NS or NS International, so this
+  model does not purchase tickets. Each planned option carries a `bookingUrl`
+  deep-link into the NS / NS International site where the traveller completes
+  the booking with their own account and payment method.
+
+  Model `@magistr/ns-international`:
+  - `stations` — fetch and cache the station directory as a `station-index`
+    resource for name→code/UIC resolution; with `query`, print matches.
+  - `plan` — journey advice between two stations (name, NS code, or UIC).
+    Returns ranked options with times, transfers, per-leg train/operator,
+    crowding, the cheapest fare found, and a bookingUrl. Supports `dateTime`
+    (ISO-8601; empty = now) and `searchForArrival` (arrive-by vs depart-at).
+    International (cross-border) fares are often unavailable from this API and
+    surface as "price n/a"; times and routing are complete.
+  - `disruptions` — active disruptions and maintenance, with optional
+    `isActive` / `type` filters.
+
+  Auth: a free "Reisinformatie API" subscription key from apiportal.ns.nl,
+  sent as the `Ocp-Apim-Subscription-Key` header. Supply it through
+  globalArguments.apiKey via a `${{ vault.get(<vault>, NS_API_KEY) }}`
+  expression — never a literal.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/ns_international.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms: []
+
+labels:
+  - ns
+  - trains
+  - rail
+  - netherlands
+  - travel
+  - nsinternational

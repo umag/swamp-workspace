@@ -1,0 +1,35 @@
+manifestVersion: 1
+name: "@magistr/ryot"
+version: "2026.10.10.1"
+license: MIT
+description: |
+  Import a film history into a self-hosted Ryot
+  (https://github.com/IgnisDa/ryot) as one generic-JSON import job.
+
+  Methods:
+  - `import_films` — a `@jamesakeech/letterboxd` exportSnapshot plus owned
+    films (TMDB ids, e.g. from `@magistr/film-library`): watched/rated films
+    get one undated seen entry, ratings become 0–100 (stars × 20), watchlist
+    films go to the Watchlist collection, owned films to Owned. TMDB ids for
+    Letterboxd films are scraped from their film pages (host `curl`) and
+    cached. Guarded against re-import (Ryot would duplicate seen entries).
+  - `import_reports` — Ryot's import job reports (progress, failed items)
+
+  The auth token is a sensitive globalArgument.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/ryot.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - ryot
+  - movies
+  - letterboxd
+  - self-hosted

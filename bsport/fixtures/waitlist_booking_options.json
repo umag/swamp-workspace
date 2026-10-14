@@ -1,0 +1,9 @@
+{
+  "count": 2,
+  "next": null,
+  "previous": null,
+  "results": [
+    { "id": 333, "offer": 90211, "consumer": 88001, "rank": 2 },
+    { "id": 334, "offer": 90500, "consumer": 88001, "rank": 1 }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "count": 2,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 90211,
+      "name": "Reformer Beginner",
+      "date_start": "2026-09-16T08:00:00+02:00",
+      "date_end": "2026-09-16T08:50:00+02:00",
+      "company": 1234,
+      "establishment": 1001,
+      "level": 2,
+      "coaches": [5512],
+      "meta_activity": 801,
+      "effectif": 12,
+      "validated_booking_count": 12,
+      "full": true,
+      "waiting_list_disabled": false,
+      "waiting_list_max_size": 5,
+      "is_waiting_list_full": false
+    },
+    {
+      "id": 90212,
+      "name": "Reformer Intermediate",
+      "date_start": "2026-09-16T09:00:00+02:00",
+      "date_end": "2026-09-16T09:50:00+02:00",
+      "company": 1234,
+      "establishment": 1001,
+      "level": [3, 4],
+      "coaches": [5513],
+      "meta_activity": 801,
+      "effectif": 12,
+      "validated_booking_count": 7,
+      "full": false,
+      "waiting_list_disabled": false,
+      "waiting_list_max_size": 5,
+      "is_waiting_list_full": false
+    }
+  ]
+}

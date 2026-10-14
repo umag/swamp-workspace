@@ -1,0 +1,42 @@
+manifestVersion: 1
+name: "@magistr/yandex-mail"
+version: "2026.10.11.1"
+license: MIT
+description: |
+  Yandex Mail over IMAP (read, search, organise) and SMTP (send). Yandex has
+  no JMAP or public REST mail API, so this speaks the standard protocols with
+  an app password of type Mail or an OAuth token (XOAUTH2).
+
+  Methods:
+  - `get-account-summary`, `list-mailboxes` — folders with total/unread counts
+  - `create-mailbox`, `rename-mailbox`, `delete-mailbox` — idempotent folder ops
+  - `query-emails` — search a mailbox (date, from, to, subject, text, unread,
+    flagged), newest first
+  - `get-email`, `get-thread`, `get-attachment` — decoded body, conversation
+    via Message-ID/References, save an attachment to disk
+  - `send-email`, `reply-email`, `forward-email`, `create-draft`,
+    `send-draft` — SMTP sending with optional idempotent `messageId`
+  - `archive-mailbox` — incremental Maildir backup (raw .eml per message)
+  - `import-apple-mail` — fill server-unavailable messages from Apple Mail's cache
+  - `set-email`, `archive-email`, `delete-email`, `bulk-email-action` —
+    flags, moves, trash/spam, permanent delete
+
+  Emails are addressed as `<mailbox>:<uid>` (e.g. `INBOX:1234`).
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/yandex_mail.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - yandex
+  - email
+  - imap
+  - smtp
+  - mail
