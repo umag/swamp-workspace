@@ -1,0 +1,62 @@
+# Hand-maintained quality declaration — see STANDARD.md.
+#
+# Role map (each file assigned to exactly ONE role):
+#   contract-fixture        -> optchat_contract_test.ts (claude argv, a
+#                               sanitized real stream-json turn fixture, MCP
+#                               JSON-RPC over real stdio, gist prompt text)
+#   methods                 -> optchat_methods_test.ts (every method, claude
+#                               replaced by a scripted fake)
+#   adversarial             -> optchat_adversarial_test.ts
+#   coverage                -> optchat_coverage_test.ts
+#   property-invariant-flow -> optchat_property_test.ts (Taelin's push as the
+#                               oracle; random chat flows)
+schemaVersion: 1
+extension: optchat
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/optchat_contract_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/optchat_methods_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/optchat_adversarial_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/optchat_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/optchat_property_test.ts
+watch:
+  state: na
+  justification: no upstream package or API to watch — the claude CLI wire format is pinned by the contract fixture
+canary:
+  state: backlog
+  justification: live canary needs an authenticated claude CLI on the runner — tracked in ext-quality-test-backfill
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: present
+    files:
+      - .claude/skills/optchat/SKILL.md
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"
+soak:
+  state: na
+  justification: test task grants no broad authority, so the nightly soak inherits it unchanged
+  runs: 500

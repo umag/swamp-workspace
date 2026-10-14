@@ -1,0 +1,44 @@
+manifestVersion: 1
+name: "@magistr/dieworkwear"
+version: "2026.10.09.2"
+license: MIT
+description: |
+  Menswear fit advice grounded in Derek Guy's (@dieworkwear) thread corpus,
+  read through Thread Reader App. Focus: the larger / stocky figure
+  ("кабанчик") from the thread "DRESSING FOR LARGER MALE FIGURES".
+  Figure definitions and a curated, tweet-cited rule set ship as bundled
+  reference files; the corpus is fetched at runtime into swamp data.
+
+  Methods:
+  - `discover` — crawl the author's thread index (paginated, newest first)
+  - `fetch`    — fetch threads by id or index-preview regex into the corpus (idempotent)
+  - `figure`   — classify a body from measurements (kabanchik / big-tall / athletic / slim / average)
+  - `advise`   — ranked fit checklist with tweet citations; optional claude -p narrative over the corpus
+  - `extract`  — mine new tweet-cited rules from fetched threads via claude -p (resumable)
+  - `critique` — check an outfit photo against the figure's rules via claude -p vision
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+skills:
+  - dieworkwear
+
+models:
+  - extensions/models/dieworkwear.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - references/figures.json
+  - references/rules/kabanchik.json
+  - references/rules/ethandesu-gravitas.json
+  - references/rules/secondhand-larger.json
+
+labels:
+  - menswear
+  - style
+  - fit
+  - tailoring
+  - knowledge-base
+  - llm

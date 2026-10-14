@@ -1,0 +1,314 @@
+id: b8077fcc-f086-4042-b8d4-1c72c6395b90
+name: "@magistr/film-library-refresh"
+description: >-
+  Refresh the film catalog end to end, Jev first. scan lists
+  /mnt/user/films/cinema and /mnt/user/downloads/complete (bounded depth,
+  one SSH session) and parses every name into candidate readings. names
+  emits the open Jev questions; Jev (TypeSafe System One via
+  @webframp/typesafe-batch) classifies each entry (film / series / concert /
+  documentary / clip / not video) and confirms which readings are the real
+  title; names runs again and decides. tmdb match searches only the
+  Jev-confirmed titles of films. resolve accepts clear hits and sends
+  ambiguous searches back to Jev ("is candidate X this file?"), then decides
+  again. tmdb enrich fetches details for every decided id; catalog builds
+  the facts, dimensions and worklists. Idempotent: Jev answers and TMDB
+  results are cached, so a re-run only asks about what changed. Jev batches
+  per question type are capped by maxJevBatches; Jev steps are
+  allowFailure, so an outage falls back to the parser's reading.
+tags: {}
+version: 1
+inputs:
+  properties:
+    maxJevBatches:
+      type: number
+      default: 60
+      description: Jev batches (≤100 questions each) per question type per run, at most 60.
+    jevThreshold:
+      type: number
+      default: 0.7
+      description: Jev P(same film) needed to accept an ambiguous TMDB candidate.
+jobs:
+  - name: scan
+    description: >-
+      Read state: list and classify both roots; gate on a non-empty inventory with every root present.
+    dependsOn: []
+    weight: 0
+    steps:
+      - name: scan
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: films
+          methodName: scan
+      - name: assert-inventory
+        dependsOn:
+          - step: scan
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: size(data.query('modelName == "films" && specName == "inventory" && workflowRunId == "' + run.id + '" && version >= 0', 'attributes')) > 0 && size(data.query('modelName == "films" && specName == "inventory" && workflowRunId == "' + run.id + '" && version >= 0', 'attributes')[0].missingRoots) == 0 && size(data.query('modelName == "films" && specName == "inventory" && workflowRunId == "' + run.id + '" && version >= 0', 'attributes')[0].items) > 0
+          message: >-
+            scan produced no inventory or a configured root is missing on the host — swamp data query 'modelName == "films" && specName == "inventory"' --select content
+          severity: high
+
+  - name: names-pre
+    description: >-
+      Emit the open Jev name and kind questions.
+    dependsOn:
+      - job: scan
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: names-pre
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: films
+          methodName: names
+          inputs:
+            maxBatches: ${{ int(inputs.maxJevBatches) }}
+
+  - name: jev-names
+    description: >-
+      Jev: kind of every entry, and which readings are the real title.
+    dependsOn:
+      - job: names-pre
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: jev-kinds-${{ self.i }}
+        forEach:
+          item: i
+          in: ${{ [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59] }}
+        concurrency: 1
+        guard: ${{ size(data.query('modelName == "films" && specName == "names" && workflowRunId == "' + run.id + '" && stepName == "names-pre" && version >= 0', 'attributes')[0].kindBatches) <= self.i }}
+        dependsOn: []
+        weight: 0
+        allowFailure: true
+        task:
+          type: model_method
+          modelIdOrName: jev
+          methodName: triage_batch
+          inputs:
+            name: ${{ "films-kinds-" + run.id + "-" + string(self.i) }}
+            concurrency: 8
+            items: ${{ data.query('modelName == "films" && specName == "names" && workflowRunId == "' + run.id + '" && stepName == "names-pre" && version >= 0', 'attributes')[0].kindBatches[self.i] }}
+            questions: ${{ data.query('modelName == "films" && specName == "names" && workflowRunId == "' + run.id + '" && stepName == "names-pre" && version >= 0', 'attributes')[0].kindQuestions }}
+      - name: jev-names-${{ self.i }}
+        forEach:
+          item: i
+          in: ${{ [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59] }}
+        concurrency: 1
+        guard: ${{ size(data.query('modelName == "films" && specName == "names" && workflowRunId == "' + run.id + '" && stepName == "names-pre" && version >= 0', 'attributes')[0].nameBatches) <= self.i }}
+        dependsOn: []
+        weight: 0
+        allowFailure: true
+        task:
+          type: model_method
+          modelIdOrName: jev
+          methodName: triage_batch
+          inputs:
+            name: ${{ "films-names-" + run.id + "-" + string(self.i) }}
+            concurrency: 8
+            items: ${{ data.query('modelName == "films" && specName == "names" && workflowRunId == "' + run.id + '" && stepName == "names-pre" && version >= 0', 'attributes')[0].nameBatches[self.i] }}
+            questions: ${{ data.query('modelName == "films" && specName == "names" && workflowRunId == "' + run.id + '" && stepName == "names-pre" && version >= 0', 'attributes')[0].nameQuestions }}
+
+  - name: names-post
+    description: >-
+      Decide kinds and titles with Jev's answers; gate on having films to search.
+    dependsOn:
+      - job: jev-names
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: names-post
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: films
+          methodName: names
+          inputs:
+            maxBatches: ${{ int(inputs.maxJevBatches) }}
+      - name: assert-names
+        dependsOn:
+          - step: names-post
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: size(data.query('modelName == "films" && specName == "names" && workflowRunId == "' + run.id + '" && stepName == "names-post" && version >= 0', 'attributes')) > 0 && size(data.query('modelName == "films" && specName == "names" && workflowRunId == "' + run.id + '" && stepName == "names-post" && version >= 0', 'attributes')[0].matchQueries) > 0
+          message: >-
+            names produced no TMDB queries this run — check Jev answers and swamp data query 'modelName == "films" && specName == "names"' --select content
+          severity: high
+
+  - name: match
+    description: >-
+      TMDB search for every film's confirmed title.
+    dependsOn:
+      - job: names-post
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: tmdb-match
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: tmdb
+          methodName: match
+          inputs:
+            name: films
+            details: false
+            prune: true
+            items: ${{ data.query('modelName == "films" && specName == "names" && workflowRunId == "' + run.id + '" && stepName == "names-post" && version >= 0', 'attributes')[0].matchQueries }}
+      - name: assert-match
+        dependsOn:
+          - step: tmdb-match
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: size(data.query('modelName == "tmdb" && specName == "match" && workflowRunId == "' + run.id + '" && version >= 0', 'attributes')) > 0 && data.query('modelName == "tmdb" && specName == "match" && workflowRunId == "' + run.id + '" && version >= 0', 'attributes')[0].stats.errors < data.query('modelName == "tmdb" && specName == "match" && workflowRunId == "' + run.id + '" && version >= 0', 'attributes')[0].stats.requested
+          message: >-
+            tmdb match wrote nothing this run, or every item errored — swamp report get @swamp/method-summary --model tmdb --json
+          severity: high
+
+  - name: resolve-pre
+    description: >-
+      Accept clear hits; emit Jev questions for ambiguous searches.
+    dependsOn:
+      - job: match
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: resolve-pre
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: films
+          methodName: resolve
+          inputs:
+            threshold: ${{ inputs.jevThreshold }}
+            maxBatches: ${{ int(inputs.maxJevBatches) }}
+
+  - name: jev-pairs
+    description: >-
+      Jev: which TMDB candidate is this file (ambiguous searches only).
+    dependsOn:
+      - job: resolve-pre
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: jev-pairs-${{ self.i }}
+        forEach:
+          item: i
+          in: ${{ [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59] }}
+        concurrency: 1
+        guard: ${{ size(data.query('modelName == "films" && specName == "resolution" && workflowRunId == "' + run.id + '" && stepName == "resolve-pre" && version >= 0', 'attributes')[0].pairBatches) <= self.i }}
+        dependsOn: []
+        weight: 0
+        allowFailure: true
+        task:
+          type: model_method
+          modelIdOrName: jev
+          methodName: triage_batch
+          inputs:
+            name: ${{ "films-pairs-" + run.id + "-" + string(self.i) }}
+            concurrency: 8
+            items: ${{ data.query('modelName == "films" && specName == "resolution" && workflowRunId == "' + run.id + '" && stepName == "resolve-pre" && version >= 0', 'attributes')[0].pairBatches[self.i] }}
+            questions: ${{ data.query('modelName == "films" && specName == "resolution" && workflowRunId == "' + run.id + '" && stepName == "resolve-pre" && version >= 0', 'attributes')[0].pairQuestions }}
+
+  - name: resolve-post
+    description: >-
+      Decide again with Jev's answers.
+    dependsOn:
+      - job: jev-pairs
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: resolve-post
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: films
+          methodName: resolve
+          inputs:
+            threshold: ${{ inputs.jevThreshold }}
+            maxBatches: ${{ int(inputs.maxJevBatches) }}
+
+  - name: enrich
+    description: >-
+      TMDB details for every decided id.
+    dependsOn:
+      - job: resolve-post
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: tmdb-enrich
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: tmdb
+          methodName: enrich
+          inputs:
+            name: films
+            ids: ${{ data.query('modelName == "films" && specName == "resolution" && workflowRunId == "' + run.id + '" && stepName == "resolve-post" && version >= 0', 'attributes')[0].enrichIds }}
+
+  - name: catalog
+    description: >-
+      Build facts, dimensions and worklists; gate on a written summary.
+    dependsOn:
+      - job: enrich
+        condition:
+          type: succeeded
+    weight: 0
+    steps:
+      - name: catalog
+        dependsOn: []
+        weight: 0
+        allowFailure: false
+        task:
+          type: model_method
+          modelIdOrName: films
+          methodName: catalog
+      - name: assert-catalog
+        dependsOn:
+          - step: catalog
+            condition:
+              type: succeeded
+        weight: 0
+        allowFailure: false
+        task:
+          type: assert
+          expr: size(data.query('modelName == "films" && specName == "library" && workflowRunId == "' + run.id + '" && version >= 0', 'attributes')) > 0 && data.query('modelName == "films" && specName == "library" && workflowRunId == "' + run.id + '" && version >= 0', 'attributes')[0].films > 0
+          message: >-
+            catalog wrote no summary or zero films this run — swamp report get @swamp/method-summary --model films --json
+          severity: high

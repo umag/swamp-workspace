@@ -1,0 +1,49 @@
+manifestVersion: 1
+name: "@magistr/film-library"
+version: "2026.10.08.1"
+license: MIT
+description: |
+  Multidimensional film catalog for a home server, built from a bounded
+  SSH listing (no recursive find), name parsing, TMDB metadata, and Jev
+  (TypeSafe System One) judgments.
+
+  - `scan` — list each root to `maxDepth` levels in one SSH session,
+    classify every entry (film / series / episode / collection member /
+    subtitle / software / 3D models / archive / junk) and parse release
+    names into title, alternative titles, year and technical tags
+    (resolution, source, codec, HDR, audio, edition, language tags, group).
+    Handles scene names, Cyrillic + English double titles, translit, and
+    tracker noise.
+  - `names` — Jev resolves each entry before TMDB is called: what kind
+    of thing it is (film / series / concert / documentary / clip / not
+    video) and which of the parser's readings (Russian title, English
+    title, folder vs file parse) is the real title. Emits TMDB queries for
+    confirmed films only.
+  - `resolve` — accepts clear TMDB hits; Jev picks among the candidates of
+    ambiguous searches. Writes the TMDB ids to enrich.
+  - `catalog` — film facts, dimensions (genres, decades, countries,
+    languages, directors, resolutions, sources, HDR, collections) and
+    worklists: unmatched, non-film in film folders, library duplicates with
+    keep-best hints, downloads already owned (or upgrades), downloads to
+    import, series in the film library, non-film downloads.
+
+  Pairs with `@magistr/tmdb` (match + enrich) and `@swamp/typesafe-ai` +
+  `@webframp/typesafe-batch` (Jev). Ships the `@magistr/film-library-refresh`
+  workflow wiring the whole pipeline.
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+models:
+  - extensions/models/film_library.ts
+workflows:
+  - extensions/workflows/film-library-refresh.yaml
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - films
+  - movies
+  - library
+  - catalog
+  - tmdb
+  - unraid

@@ -1,0 +1,142 @@
+{
+  "source": {
+    "threadId": "secondhand-larger",
+    "author": "dieworkwear (retold)",
+    "title": "Second-hand buying and style for a larger figure (Mr Porter / Put This On, retold)",
+    "postedAt": "2023-10-19T00:00:00Z",
+    "url": "https://www.mrporter.com/en-fi/journal/fashion/die-workwear-how-to-dress-larger-man-body-type-24577248"
+  },
+  "note": "Paraphrased from a user-supplied summary of Derek Guy's second-hand advice and his Mr Porter column on larger men (also Put This On: 'Practical Advice For The Big Guy', https://putthison.com/?p=36603). Retold, not quoted.",
+  "rules": [
+    {
+      "id": "buy-by-measurements",
+      "figures": ["kabanchik", "big-tall", "athletic", "slim", "average"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "high",
+      "rule": "Shop second-hand by measurements, not the size label: measure your best-fitting jacket, coat and trousers flat and compare every listing against them.",
+      "why": "Vintage and cross-brand sizing is inconsistent; the size tag tells you little.",
+      "check": "Have your benchmark numbers (shoulders, pit-to-pit, back length, sleeve, waist, rise, thigh, hem) ready; ask the seller for any that are missing."
+    },
+    {
+      "id": "shoulders-length-not-alterable",
+      "figures": ["kabanchik", "big-tall", "athletic", "slim", "average"],
+      "garment": "jacket",
+      "occasions": ["any"],
+      "severity": "high",
+      "rule": "Reject a jacket or coat whose shoulders, length or chest are wrong; sleeves, waist and trouser hems are the cheap fixes.",
+      "why": "Shoulders, body length and a too-tight chest are hard or impossible to alter.",
+      "check": "Shoulders within ~1 cm of your benchmark and chest at least your benchmark; everything else is a tailor job."
+    },
+    {
+      "id": "check-seam-allowance",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "trousers",
+      "occasions": ["any"],
+      "severity": "medium",
+      "rule": "Check the seam allowance, especially in the trouser seat seam, before buying something that needs letting out.",
+      "why": "A stocky figure often needs the seat and waist let out; without spare cloth it cannot be done.",
+      "check": "Ask for a photo of the inside back seam; look for 2–4 cm of folded-in cloth."
+    },
+    {
+      "id": "saved-searches",
+      "figures": ["kabanchik", "big-tall", "athletic", "slim", "average"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "low",
+      "rule": "Set saved searches with alerts by brand, size and keywords; good pieces in large sizes sell quickly.",
+      "why": "Supply in larger sizes is thin and turns over fast.",
+      "check": "Run the same saved search regularly and act on new items."
+    },
+    {
+      "id": "portly-stout-cuts",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "high",
+      "rule": "Search for 'portly', 'stout', 'big & tall' or small-drop cuts; they are cut with room in the stomach.",
+      "why": "Standard tailoring assumes a 6–7 inch chest-to-waist drop; a small drop fights it. Brooks Brothers, Polo Ralph Lauren and Samuelsohn historically made portly versions.",
+      "check": "In the listing, waist width should be close to chest width."
+    },
+    {
+      "id": "quality-secondhand-brands",
+      "figures": ["kabanchik", "big-tall", "athletic", "slim", "average"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "low",
+      "rule": "Favour quality brands common second-hand: Brooks Brothers, J.Press, Polo Ralph Lauren, Southwick, Samuelsohn, Canali, Corneliani; higher up Isaia, Belvest, Oxxford.",
+      "why": "Classic makers resell cheaply, especially on Vinted and local boards where sellers misprice them.",
+      "check": "Prefer natural wool and canvassed or half-canvassed construction."
+    },
+    {
+      "id": "condition-check",
+      "figures": ["kabanchik", "big-tall", "athletic", "slim", "average"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "medium",
+      "rule": "Inspect condition: shine on elbows and seat, moth holes, snags, worn lining, underarm stains.",
+      "why": "These are costly or impossible to fix and reduce the garment's life.",
+      "check": "Ask for close-ups of elbows, seat, lining and underarms."
+    },
+    {
+      "id": "buy-larger-take-in",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "medium",
+      "rule": "When unsure between sizes, buy slightly larger and have it taken in.",
+      "why": "Taking in is easy; letting out depends on spare cloth that may not exist. Larger men often do better in vintage cuts.",
+      "check": "The shoulders still have to fit; take in only waist, seat or sleeves."
+    },
+    {
+      "id": "jacket-covers-seat",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "medium",
+      "rule": "The jacket must cover the seat.",
+      "why": "A short jacket squares off a heavy figure.",
+      "check": "From the side, the hem reaches past the curve of the seat."
+    },
+    {
+      "id": "single-breasted-deep-v",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "low",
+      "rule": "Prefer a two-button or 3-roll-2 single-breasted jacket for its deep V.",
+      "why": "A deep V lengthens the torso line.",
+      "check": "The lapel roll ends at or below the waist button."
+    },
+    {
+      "id": "fuller-top-small-drop",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "medium",
+      "rule": "With a small chest-to-waist drop, choose a jacket with a fuller top: wider lapels, fuller sleeves, a body that skims the hips.",
+      "why": "Advice from a large dresser in Derek's Mr Porter piece: room up top balances the midsection. Reference: Jackie Gleason in The Hustler (1961).",
+      "check": "No pulling across the upper back or sleeves when you reach forward."
+    },
+    {
+      "id": "larger-collar",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "any",
+      "occasions": ["work", "formal", "any"],
+      "severity": "low",
+      "rule": "Wear a larger shirt collar (spread, or classic with longer points).",
+      "why": "A small collar makes a large face and neck look bigger.",
+      "check": "Collar points and spread should look in scale with your jaw."
+    },
+    {
+      "id": "matte-textured-dark",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "medium",
+      "rule": "Choose dark-to-mid tones (navy, grey, brown) in matte, textured cloth such as flannel and tweed; avoid shiny, thin, clingy fabrics and knits that hug the stomach.",
+      "why": "Sheen and cling show every contour; matte texture drapes.",
+      "check": "Hold the fabric to light: no shine; knits should hang, not stretch over the stomach."
+    }
+  ]
+}

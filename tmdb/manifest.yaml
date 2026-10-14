@@ -1,0 +1,36 @@
+manifestVersion: 1
+name: "@magistr/tmdb"
+version: "2026.10.08.1"
+license: MIT
+description: |
+  The Movie Database (TMDB) v3 API for swamp — read-only metadata.
+
+  - `search` — free-text movie / tv / multi search, results scored against
+    the query.
+  - `details` — one movie or show with credits, keywords, external ids and
+    regional certification, normalized.
+  - `match` — fan-out: resolve a whole batch of parsed titles (title +
+    alternative titles + year) to TMDB candidates in one run. Every item
+    keeps its top-5 scored candidates and a string-score verdict
+    (matched / ambiguous / unmatched); a `tmdbId` on an item pins it.
+    Idempotent: verdicts younger than `ttlDays` with an unchanged query are
+    reused without a request.
+  - `enrich` — fan-out: fetch normalized details for many ids into one
+    `titles` resource, with the same TTL cache.
+
+  Auth: v4 read-access token (Bearer) or v3 API key; marked sensitive,
+  never persisted, redacted from errors. Requests are spaced
+  (`minIntervalMs`) and 429/5xx retried honouring Retry-After.
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+models:
+  - extensions/models/tmdb.ts
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - tmdb
+  - movies
+  - films
+  - metadata

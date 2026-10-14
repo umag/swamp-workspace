@@ -1,0 +1,36 @@
+manifestVersion: 1
+name: "@magistr/vinted"
+version: "2026.10.09.4"
+license: MIT
+description: |
+  Search Vinted and read listings without an account. Parses the catalog and
+  item pages' embedded Next.js RSC payload and schema.org ld+json (a homepage
+  session cookie is all that's needed).
+
+  Methods:
+  - `search` — saved searches with text, price, brand, size, condition and
+    category filters over N pages; each run flags items not seen last time
+  - `item`   — full listing by id or URL: description, price, size, condition,
+    material, colour, seller reputation, photos, and garment measurements
+    parsed from the description (FR/EN/NL/DE/IT; pit-to-pit doubled)
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+skills:
+  - vinted
+
+models:
+  - extensions/models/vinted.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+labels:
+  - vinted
+  - secondhand
+  - shopping
+  - search
+  - scraper

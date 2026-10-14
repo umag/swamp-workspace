@@ -1,0 +1,177 @@
+{
+  "source": {
+    "threadId": "1615828613731078146",
+    "author": "dieworkwear",
+    "title": "DRESSING FOR LARGER MALE FIGURES",
+    "postedAt": "2023-01-18T21:48:56Z",
+    "url": "https://threadreaderapp.com/thread/1615828613731078146.html"
+  },
+  "note": "Rules are paraphrased from the thread; each cites the tweet it comes from. Fetch the thread with the `fetch` method for the original text.",
+  "rules": [
+    {
+      "id": "jacket-hem-level",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "high",
+      "rule": "The jacket hem must sit level when seen from the side, or hang slightly lower at the front than at the back.",
+      "why": "Patterns graded up for a larger body often lack cloth at the front, so the belly lifts the front hem above the back hem.",
+      "check": "Stand side-on to a mirror. If the front of the hem rides higher than the back, ask a tailor (or an MTM maker) for more front length.",
+      "tweetId": "1615828643800059907"
+    },
+    {
+      "id": "high-rise-trousers",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "trousers",
+      "occasions": ["work", "formal", "casual", "any"],
+      "severity": "high",
+      "rule": "Wear high-waisted trousers; avoid low-rise.",
+      "why": "A high rise lengthens the leg line. A low rise sits under the stomach and is unflattering on a heavier figure.",
+      "check": "The waistband should sit at or above the navel and not slide below the belly.",
+      "tweetId": "1615828637730869248"
+    },
+    {
+      "id": "no-super-slim-trousers",
+      "figures": ["kabanchik", "big-tall", "athletic"],
+      "garment": "trousers",
+      "occasions": ["work", "formal", "casual", "any"],
+      "severity": "high",
+      "rule": "Do not wear super slim-fit trousers; the jacket or top should flow into the legs.",
+      "why": "Narrow legs under a large torso make a disjointed 'popsicle stick' silhouette.",
+      "check": "From the front, the trouser leg should continue the line of the jacket's side, not taper sharply away from it.",
+      "tweetId": "1615828646757031936"
+    },
+    {
+      "id": "clean-chest-drape",
+      "figures": ["kabanchik", "big-tall", "athletic"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "medium",
+      "rule": "Tailoring must fit without puckering or pulling, with clean drape across the chest.",
+      "why": "Pulling at the button or chest makes the jacket look too small and shows the body's widest point.",
+      "check": "Buttoned, there should be no X-shaped creases from the button and no gaps at the lapels.",
+      "tweetId": "1615828633863741443"
+    },
+    {
+      "id": "jacket-length-half",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "medium",
+      "rule": "The coat should end about halfway between the collar and the floor.",
+      "why": "Classic proportion. A short jacket cuts a large figure at its widest point.",
+      "check": "Measure collar-to-floor; the hem should sit near the midpoint.",
+      "tweetId": "1615828633863741443"
+    },
+    {
+      "id": "buttons-comfortably",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "medium",
+      "rule": "The jacket must button comfortably.",
+      "why": "A jacket worn open because it cannot close reads as the wrong size.",
+      "check": "Button it and sit down; it should not strain.",
+      "tweetId": "1615828637730869248"
+    },
+    {
+      "id": "lapel-width-half",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "low",
+      "rule": "The lapel should end about halfway between the collar and the shoulder seam.",
+      "why": "Narrow lapels look undersized on a broad chest; balanced lapels keep the proportions in scale.",
+      "check": "Compare lapel width with the distance from collar to shoulder seam.",
+      "tweetId": "1615828637730869248"
+    },
+    {
+      "id": "workwear-casual",
+      "figures": ["kabanchik", "big-tall", "athletic"],
+      "garment": "casual",
+      "occasions": ["casual", "any"],
+      "severity": "medium",
+      "rule": "Build casual clothes around workwear (chore coats, work jackets, denim, sturdy shirting).",
+      "why": "A larger or athletic build works with workwear; it often looks better on these builds than on very slim men. Better than squeezing into slim designer cuts.",
+      "check": "Prefer sturdy fabrics and roomy, boxy cuts over slim fashion cuts.",
+      "tweetId": "1615828650347356160"
+    },
+    {
+      "id": "textured-coat-with-denim",
+      "figures": ["kabanchik", "big-tall", "athletic", "slim", "average"],
+      "garment": "jacket",
+      "occasions": ["casual", "work", "any"],
+      "severity": "medium",
+      "rule": "With jeans, wear a sport coat in a textured cloth (tweed, hopsack), never a smooth suit jacket.",
+      "why": "Textured sport coats match denim. A smooth suit jacket looks like an orphaned suit.",
+      "check": "If the jacket has matching trousers, do not wear it with jeans.",
+      "tweetId": "1615828661214777344"
+    },
+    {
+      "id": "built-for-movement",
+      "figures": ["kabanchik", "big-tall", "athletic", "slim", "average"],
+      "garment": "any",
+      "occasions": ["work", "formal", "casual", "any"],
+      "severity": "high",
+      "rule": "Clothes must allow movement: you can hug someone, reach up, and bend down.",
+      "why": "A garment that is too small looks worse than one that fits, and restricts you.",
+      "check": "Hug test (top), reach-up test (top length), squat test (trouser rise).",
+      "tweetId": "1615828668563218434"
+    },
+    {
+      "id": "not-anonymous",
+      "figures": ["kabanchik", "big-tall", "athletic", "slim", "average"],
+      "garment": "any",
+      "occasions": ["work", "casual", "any"],
+      "severity": "low",
+      "rule": "Do not retreat into anonymous clothes; have a point of view (e.g. a fun suit, workwear with good outerwear).",
+      "why": "'I can't wear that' often means 'I don't want to be perceived'. A larger build does not limit you to flat-front chinos and a dress shirt.",
+      "check": "Can you name what the outfit says about you? If not, it is anonymous.",
+      "tweetId": "1615828666730295296"
+    },
+    {
+      "id": "styles-not-off-limits",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "low",
+      "rule": "Double-breasted suits and long coats are not off-limits for a larger figure.",
+      "why": "The common claim 'you can't wear that if you're big' comes from insecurity, not proportion.",
+      "check": "Judge a style by fit and proportion on your body, not by its category.",
+      "tweetId": "1615828624988581888"
+    },
+    {
+      "id": "coherent-combos",
+      "figures": ["kabanchik", "big-tall", "athletic", "slim", "average"],
+      "garment": "any",
+      "occasions": ["casual", "any"],
+      "severity": "low",
+      "rule": "Keep combinations coherent rather than wacky; dress for your lifestyle.",
+      "why": "Clothes that suit what you actually do look natural.",
+      "check": "Each piece should belong to the same register (workwear with workwear, tailoring with tailoring, textured tailoring as the bridge).",
+      "tweetId": "1615828656353611778"
+    },
+    {
+      "id": "grading-find-patterns",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "medium",
+      "rule": "Past roughly size 44, prefer makers who cut separate patterns for larger sizes, or use MTM and a good tailor.",
+      "why": "Most brands grade every size from one size-40 sample, which throws off proportions at larger sizes; that, plus the slim-fit trend, causes bad shopping experiences.",
+      "check": "Ask whether a brand's large sizes use their own block; budget for alterations.",
+      "tweetId": "1615828623596064768"
+    },
+    {
+      "id": "find-a-tailor",
+      "figures": ["kabanchik", "big-tall", "athletic"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "medium",
+      "rule": "Find what fits, decide what you want to communicate, and find a good tailor.",
+      "why": "Fit is the base; a tailor closes the gap that grading leaves.",
+      "check": "Have one trusted alteration tailor before you buy tailoring.",
+      "tweetId": "1615828677681623041"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "tasks": {
+    "check": "deno check extensions/models/*.ts extensions/models/lib/*.ts",
+    "test": "deno test --allow-read --allow-write --allow-env --allow-run=deno --allow-sys=hostname extensions/models/",
+    "test:soak": "FC_NUM_RUNS=500 deno test --allow-read --allow-write --allow-env --allow-run=deno --allow-sys=hostname extensions/models/optchat_property_test.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "zod": "npm:zod@4"
+  },
+  "compilerOptions": {
+    "noImplicitAny": false
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "exclude": ["fixtures"]
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}
