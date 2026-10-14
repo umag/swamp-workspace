@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026.10.14.2
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
+### Security
+
+- Bump the bundle-resolution pin `@modelcontextprotocol/sdk` 1.30.0 → 1.32.1 to
+  clear GHSA-6qxp-vccf-f47h (HIGH), which blocked the dependency-trust gate.
+
 ## 2026.09.19.2
 
 ### Changed

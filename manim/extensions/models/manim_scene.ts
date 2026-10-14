@@ -169,7 +169,7 @@ export async function runRender(
 /** The `@magistr/manim/scene` model — renders a manim Scene to a media file. */
 export const model = {
   type: "@magistr/manim/scene",
-  version: "2026.09.19.1",
+  version: "2026.10.14.2",
   globalArguments: GlobalArgsSchema,
 
   resources: {

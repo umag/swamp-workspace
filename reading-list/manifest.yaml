@@ -1,6 +1,7 @@
 manifestVersion: 1
 name: "@magistr/reading-list"
-version: "2026.09.19.2"
+version: "2026.10.14.2"
+license: MIT
 description: |
   A tiered reading list for a hand-picked set of writers — reads the Swamp
   Club feed first, then the Wardley-mapping crowd, and merges everything into

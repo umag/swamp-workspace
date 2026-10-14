@@ -485,7 +485,7 @@ function silenceId(id: string): string {
  */
 export const model = {
   type: "@magistr/alertmanager",
-  version: "2026.10.13.1",
+  version: "2026.10.14.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     "alerts": {

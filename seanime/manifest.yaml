@@ -1,6 +1,7 @@
 manifestVersion: 1
 name: "@magistr/seanime"
-version: "2026.09.19.2"
+version: "2026.10.14.2"
+license: MIT
 description: |
   Seanime self-hosted anime server API — library, search, downloads, playback.
 

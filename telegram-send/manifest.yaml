@@ -1,6 +1,7 @@
 manifestVersion: 1
 name: "@magistr/telegram-send"
-version: "2026.10.13.1"
+version: "2026.10.14.2"
+license: MIT
 description: |
   Send messages, photos, documents, and videos to Telegram chats and channels
   via the Telegram Bot API.

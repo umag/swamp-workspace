@@ -1,6 +1,7 @@
 manifestVersion: 1
 name: "@magistr/keepassxc"
-version: "2026.09.30.1"
+version: "2026.10.14.2"
+license: MIT
 description: |
   Swamp vault backed by a running KeePassXC, reached through its Browser
   Integration protocol via `keepassxc-proxy` — the same channel the

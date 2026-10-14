@@ -286,7 +286,7 @@ const RenderedSchema = z.object({
 /** The `@magistr/led-badge` model definition. */
 export const model = {
   type: "@magistr/led-badge",
-  version: "2026.10.05.1",
+  version: "2026.10.14.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     device: {

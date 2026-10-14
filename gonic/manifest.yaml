@@ -1,6 +1,7 @@
 manifestVersion: 1
 name: "@magistr/gonic"
-version: "2026.09.19.2"
+version: "2026.10.14.2"
+license: MIT
 description: |
   Gonic Subsonic-compatible music server API for swamp — browse, search,
   stream, and scrobble against the Subsonic REST API, manage podcasts, and
