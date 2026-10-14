@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/habr"
-version: "2026.10.15.1"
+version: "2026.10.15.2"
 license: MIT
 description: |
   Habr for swamp — read a Habr user's publications and full article bodies from

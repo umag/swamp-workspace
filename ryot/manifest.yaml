@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/ryot"
-version: "2026.10.15.1"
+version: "2026.10.15.2"
 license: MIT
 description: |
   Import a film history into a self-hosted Ryot

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/manim"
-version: "2026.10.15.1"
+version: "2026.10.15.2"
 license: MIT
 description: >-
   Drive the ManimCommunity CLI from swamp — render a Python-defined Scene into

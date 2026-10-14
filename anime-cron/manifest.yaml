@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/anime-cron"
-version: "2026.10.15.1"
+version: "2026.10.15.2"
 license: MIT
 description: |
   Anime automation pipeline: fetch airing episodes from Nyaa, sync watch

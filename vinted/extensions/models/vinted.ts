@@ -584,7 +584,7 @@ async function readOwn<T>(ctx: Ctx, dataName: string): Promise<T | null> {
 /** @magistr/vinted model type: catalog search and listing details. */
 export const model = {
   type: "@magistr/vinted",
-  version: "2026.10.15.1",
+  version: "2026.10.15.2",
   upgrades: [
     {
       toVersion: "2026.10.09.2",
@@ -605,6 +605,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.1",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.2",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
