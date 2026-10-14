@@ -1,6 +1,7 @@
 manifestVersion: 1
 name: "@magistr/headphones"
-version: "2026.09.19.2"
+version: "2026.10.14.2"
+license: MIT
 description: |
   Headphones music-download automation API for swamp — manage artists, albums,
   and the wanted queue on a Headphones instance over its JSON API.

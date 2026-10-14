@@ -1572,7 +1572,7 @@ const ActivityItemSchema = z.object({
  */
 export const model = {
   type: "@magistr/anilist",
-  version: "2026.09.26.1",
+  version: "2026.10.14.2",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -1629,6 +1629,11 @@ export const model = {
       toVersion: "2026.09.26.1",
       description:
         "seasonal now returns each title's synopsis (description, plain text), tags (name, rank, isMediaSpoiler) and relations (relationType + related node id/type/title). Purely additive: new fields on each seasonal result, no stored resource reshaped",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.14.2",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

@@ -1,5 +1,5 @@
 id: 75098440-81dd-44e9-9515-5a46f67aca0c
-name: '@magistr/datastore-maintenance'
+name: "@magistr/datastore-maintenance"
 description: >-
   Reclaim space in a MongoDB-backed swamp datastore: snapshot every namespace,
   prune tombstones past grace and blobs no live path references, then return

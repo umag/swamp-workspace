@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.10.14.2
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
 ## 2026.09.19.1
 
 - Initial release: `@magistr/manim/scene` model drives the ManimCommunity CLI to

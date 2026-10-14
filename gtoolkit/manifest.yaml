@@ -1,6 +1,7 @@
 manifestVersion: 1
 name: "@magistr/gtoolkit"
-version: "2026.09.28.1"
+version: "2026.10.14.2"
+license: MIT
 description: |
   Drive a running Glamorous Toolkit (GT) from swamp — and so from Claude.
 

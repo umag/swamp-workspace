@@ -668,7 +668,7 @@ const res = (description: string, schema: z.ZodType) => ({
  */
 export const model = {
   type: "@magistr/restic",
-  version: "2026.09.29.1",
+  version: "2026.10.14.2",
   globalArguments: GlobalArgsSchema,
   resources: {
     repoStatus: res(

@@ -301,7 +301,7 @@ export function isLocalPath(s: string): boolean {
  */
 export const model = {
   type: "@magistr/telegram/send",
-  version: "2026.10.13.1",
+  version: "2026.10.14.2",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -321,6 +321,11 @@ export const model = {
       description:
         "Bot API calls retry twice when the fetch itself rejects, and the " +
         "error names the cause; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.14.2",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

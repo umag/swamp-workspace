@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.10.14.2
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
 ## 2026.09.28.1
 
 - The bundled `gtoolkit` skill is now published with the extension (the manifest

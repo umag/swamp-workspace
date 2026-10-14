@@ -51,7 +51,7 @@ import Stripe from "npm:stripe@22.7.0-beta.1";
 // RESOLVE even though it is never executed, and an unresolved optional peer
 // fails the whole bundle. Importing it here puts it in the graph so mppx's
 // peer resolves. Pinned per this repo's explicit-version rule.
-import "npm:@modelcontextprotocol/sdk@1.30.0/types.js";
+import "npm:@modelcontextprotocol/sdk@1.32.1/types.js";
 import { callTool, type LinkCliConfig } from "./lib/link_cli.ts";
 
 // ============================================================================
@@ -1026,12 +1026,17 @@ async function retrievePaymentIntent(
  * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.09.19.2",
+  version: "2026.10.14.2",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
       description:
         "Version bump — repo-wide maintenance release; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.14.2",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
