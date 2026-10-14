@@ -1,0 +1,112 @@
+{
+  "source": {
+    "threadId": "ethandesu-gravitas",
+    "author": "ethandesu",
+    "title": "Gravitas",
+    "postedAt": "2017-04-16T00:00:00Z",
+    "url": "https://ethandesu.tumblr.com/post/159630981769/gravitas-it-is-no-secret-that-i-have-proportions"
+  },
+  "note": "Paraphrased from Ethan's post on tailoring for a big build (181 cm, 100-105 kg, 46\" chest / 39\" waist). He is one of the larger dressers Derek Guy interviewed for Mr Porter.",
+  "rules": [
+    {
+      "id": "deep-rise-seat",
+      "figures": ["kabanchik", "big-tall", "athletic"],
+      "garment": "trousers",
+      "occasions": ["work", "formal", "casual", "any"],
+      "severity": "high",
+      "rule": "Choose a rise deep enough to sit and stand without hitching; a higher back rise keeps the shirt tucked.",
+      "why": "A bigger man's hips and seat sit higher; skimpy hip-riding trousers slide under the stomach.",
+      "check": "Sit down: the waistband should not dig in or drop at the back, and the shirt should stay tucked."
+    },
+    {
+      "id": "braces-loose-waist",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "trousers",
+      "occasions": ["work", "formal", "any"],
+      "severity": "medium",
+      "rule": "Wear braces rather than a belt, with the waistband about 1.5 cm loose when standing.",
+      "why": "Trousers hung from the shoulders drape cleanly; a belt cinched under the stomach bunches the leg.",
+      "check": "Standing, you can slip two fingers into the waistband; seated, it does not cut in."
+    },
+    {
+      "id": "thigh-room-then-taper",
+      "figures": ["kabanchik", "big-tall", "athletic"],
+      "garment": "trousers",
+      "occasions": ["work", "formal", "casual", "any"],
+      "severity": "high",
+      "rule": "Keep room through the thigh and upper leg, then taper moderately to the hem.",
+      "why": "A grabbing thigh strains the back rise and creases at the inseam; an extreme taper makes a pear shape over a thin ankle.",
+      "check": "Seated, no horizontal pull lines across the thigh; the hem width looks in scale with your shoe."
+    },
+    {
+      "id": "pleats-high-waist",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "trousers",
+      "occasions": ["work", "formal", "any"],
+      "severity": "medium",
+      "rule": "Use one or two pleats on a medium-to-high waist, never on a low waist.",
+      "why": "Pleats open when you sit and close when you stand, breaking up the lap and slimming the front.",
+      "check": "Standing, pleats lie closed and flat; if they splay open, the waist is too tight."
+    },
+    {
+      "id": "gentle-break-deep-cuff",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "trousers",
+      "occasions": ["work", "formal", "any"],
+      "severity": "low",
+      "rule": "Finish with a gentle front break covering the top two or three eyelets, and a deeper cuff.",
+      "why": "A cuff adds weight so the trouser sits on the shoe; overly long, full legs flap.",
+      "check": "From the side, the hem rests on the shoe with one soft fold."
+    },
+    {
+      "id": "soft-extended-shoulder",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "medium",
+      "rule": "Prefer a slightly extended, soft shoulder and a softly draped chest.",
+      "why": "A longer shoulder line visually balances a larger waist and creates a chest-to-waist drop; drape reads relaxed rather than strained.",
+      "check": "The sleeve falls cleanly from the shoulder with no divot; the chest shows soft vertical folds, not pulling."
+    },
+    {
+      "id": "generous-lapels-db",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "low",
+      "rule": "Generous lapels and double-breasted fronts suit a fuller girth.",
+      "why": "The wide overlap and lapel are in scale with a big frame; they only overwhelm smaller men.",
+      "check": "Lapel width looks proportional to the chest, not like a narrow strip."
+    },
+    {
+      "id": "three-piece-waistcoat",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "jacket",
+      "occasions": ["work", "formal", "any"],
+      "severity": "low",
+      "rule": "Consider a three-piece suit in dark cloth with a short, trim waistcoat over high-waisted trousers.",
+      "why": "The waistcoat smooths the midsection and covers the trouser waist; dark cloth emphasises verticals.",
+      "check": "No shirt shows between waistcoat and trouser waistband."
+    },
+    {
+      "id": "avoid-shrunken-casual",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "casual",
+      "occasions": ["casual", "any"],
+      "severity": "medium",
+      "rule": "Avoid ankle-choking jeans, bermudas and clingy T-shirts.",
+      "why": "Shrunken casualwear exaggerates girth and shortens the leg line.",
+      "check": "Casual trousers keep a straight or gently tapered leg; tops skim rather than cling."
+    },
+    {
+      "id": "sturdy-shoes",
+      "figures": ["kabanchik", "big-tall"],
+      "garment": "any",
+      "occasions": ["any"],
+      "severity": "low",
+      "rule": "Choose shoes with some visual weight: rounder toes, thicker soles, a slightly taller heel.",
+      "why": "Dainty, sleek shoes look undersized under a heavy frame.",
+      "check": "From a distance the shoe should anchor the trouser, not disappear under it."
+    }
+  ]
+}

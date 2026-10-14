@@ -1,0 +1,51 @@
+manifestVersion: 1
+name: "@magistr/optchat"
+version: "2026.10.08.1"
+license: MIT
+description: |
+  One chat that never ends — Victor Taelin's OptChat / UniiChat design as a
+  swamp model. Every message is logged word for word in an append-only chat
+  directory. A cheap model compresses the log into a binary tree of 512-byte
+  lines; each turn sees the view — lines covering the whole chat, fine when
+  recent and coarse when old, 64-128 KB — and zooms into a line when it needs
+  more. The view's merge order is Taelin's rollback push (a binary counter),
+  generalised by the `due` rule and batched so the prompt prefix stays cached.
+  Turns and compactions run through the local `claude -p` (Claude Code
+  subscription, no API key); zoom and date reach the agent over a bundled
+  stdio MCP server.
+
+  Methods:
+  - `turn`    — answer a user message with the view, log replies, tool calls and results, then compact
+  - `compact` — build every ready tree node, up to 8 model calls at once (ruler, retries)
+  - `append`  — log notes, subagent reports or user messages without a model call
+  - `view`    — render the view the next turn will see
+  - `zoom`    — open a line into its two halves, or a message whole
+  - `status`  — chat size, tree progress, view bytes and lines per level
+
+  Ships the `optchat` skill.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+skills:
+  - optchat
+
+models:
+  - extensions/models/optchat.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - extensions/models/lib/mcp_server.ts
+  - extensions/models/lib/store.ts
+  - extensions/models/lib/tree.ts
+
+labels:
+  - ai
+  - agent
+  - memory
+  - chat
+  - claude
+  - context-compaction
+  - mcp

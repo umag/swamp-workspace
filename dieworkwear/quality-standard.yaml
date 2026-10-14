@@ -1,0 +1,46 @@
+schemaVersion: 1
+extension: dieworkwear
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/dieworkwear_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/dieworkwear_methods_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/dieworkwear_adversarial_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/dieworkwear_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/dieworkwear_property_test.ts
+watch:
+  state: backlog
+  justification: no release-watch source yet — tracked in ext-quality-test-backfill
+canary:
+  state: backlog
+  justification: no live canary instance yet — tracked in ext-quality-test-backfill
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: present
+    files:
+      - .claude/skills/dieworkwear/SKILL.md
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"

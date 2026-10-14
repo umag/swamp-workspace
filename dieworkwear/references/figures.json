@@ -1,0 +1,39 @@
+{
+  "figures": [
+    {
+      "id": "kabanchik",
+      "label": "Stocky / larger build (кабанчик)",
+      "aliases": ["kabanchik", "кабанчик", "stocky", "larger", "husky", "barrel", "heavyset", "big"],
+      "description": "Short-to-average height with a heavy, round torso: chest and waist close in girth (small or negative drop), thick neck, solid thighs. Off-the-rack clothing graded up from a size-40 sample tends to run short in front, tight across the stomach, and low in the rise.",
+      "rulesFiles": ["rules/kabanchik.json", "rules/ethandesu-gravitas.json", "rules/secondhand-larger.json"]
+    },
+    {
+      "id": "big-tall",
+      "label": "Big and tall",
+      "aliases": ["big-tall", "big and tall", "large tall"],
+      "description": "Larger build at 185 cm or taller. Shares most stocky-build fit problems; jacket length and sleeve length become the second constraint.",
+      "rulesFiles": ["rules/kabanchik.json", "rules/ethandesu-gravitas.json", "rules/secondhand-larger.json"]
+    },
+    {
+      "id": "athletic",
+      "label": "Athletic / V-shaped",
+      "aliases": ["athletic", "muscular", "v-shape"],
+      "description": "Large chest-to-waist drop (15 cm or more). Slim-fit garments pull at the chest and thighs while fitting the waist.",
+      "rulesFiles": ["rules/kabanchik.json", "rules/ethandesu-gravitas.json", "rules/secondhand-larger.json"]
+    },
+    {
+      "id": "slim",
+      "label": "Slim",
+      "aliases": ["slim", "thin", "skinny"],
+      "description": "BMI under 21. No bundled rule set yet; run `extract` over the corpus to grow one.",
+      "rulesFiles": ["rules/secondhand-larger.json"]
+    },
+    {
+      "id": "average",
+      "label": "Average",
+      "aliases": ["average", "regular"],
+      "description": "None of the other figures apply. No bundled rule set yet; run `extract` over the corpus to grow one.",
+      "rulesFiles": ["rules/secondhand-larger.json"]
+    }
+  ]
+}
