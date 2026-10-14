@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/jscad-stl-validator"
-version: "2026.10.14.2"
+version: "2026.10.15.1"
 license: MIT
 description: "STL file validator — checks triangle count, degenerate faces, bounding box"
 repository: "https://github.com/umag/swamp-workspace"

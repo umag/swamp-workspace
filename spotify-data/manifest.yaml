@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/spotify-data"
-version: "2026.10.14.2"
+version: "2026.10.15.1"
 license: MIT
 description: |
   Import a Spotify "Extended streaming history" GDPR export into swamp — one

@@ -30,7 +30,7 @@ const reportSchema = z.object({
 /** Swamp model that validates STL geometry from a @magistr/jscad-cad model output or a file on disk. */
 export const model = {
   type: "@magistr/jscad-stl-validator",
-  version: "2026.10.14.2",
+  version: "2026.10.15.1",
 
   upgrades: [
     {
@@ -58,6 +58,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.14.2",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.1",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

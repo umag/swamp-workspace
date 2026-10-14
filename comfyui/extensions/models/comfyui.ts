@@ -8,9 +8,11 @@ import {
 import {
   type ApiGraph,
   applyIdeogramOverrides,
+  buildImg2Img,
   buildReferences,
   chainLoras,
   chainModelPatchers,
+  type Img2ImgConfig,
   type LoraSpec,
   type ModelPatcherSpec,
   patchWorkflow,
@@ -111,6 +113,14 @@ interface WorkflowTemplate {
     defaultResolution: number;
     upscalerDefaults: Record<string, unknown>;
   };
+  /**
+   * Img2img wiring for text-to-image templates: when `generate` gets a
+   * `refImage`, `applyI2I` injects `LoadImage → VAEEncode` and repoints the
+   * sampler's latent input at the encoded reference (`buildImg2Img`), with
+   * `denoise` controlling how far the result travels from it. `defaultDenoise`
+   * applies when `denoise` is omitted.
+   */
+  i2i?: Img2ImgConfig & { defaultDenoise: number };
   /** Diffusion-model loader (UNETLoader), if the template lets you swap it. */
   model?: { nodeId: string; key: string };
   /** Reference sizing input (e.g. `match`|`max`), if the template exposes it. */
@@ -179,6 +189,21 @@ const TEMPLATES: Record<string, WorkflowTemplate> = {
       consumerKey: "on_true",
       enableNodeId: "30:23",
       enableKey: "value",
+    },
+    // img2img: KSampler 30:3 fed by VAELoader 30:12 (qwen_image_vae). A refImage
+    // is encoded to latent and denoised in place of the EmptyLatentImage.
+    i2i: {
+      samplerNodeId: "30:3",
+      latentKey: "latent_image",
+      denoiseKey: "denoise",
+      vaeNodeId: "30:12",
+      vaeSlot: 0,
+      loadImageClass: "LoadImage",
+      loadImageKey: "image",
+      vaeEncodeClass: "VAEEncode",
+      vaeEncodePixelsKey: "pixels",
+      vaeEncodeVaeKey: "vae",
+      defaultDenoise: 0.65,
     },
   },
   minimax_h3: {
@@ -426,6 +451,11 @@ const GenerateArgs = z.object({
   refImageSize: z.enum(["match", "max"]).optional(),
   refImage: z.string().optional(),
   refImages: z.array(z.string()).optional(),
+  // img2img strength for text-to-image templates that expose `i2i` (e.g. krea):
+  // how far the sampler travels from `refImage` (1 = ignore it, ~0.5–0.7 =
+  // transform it). Omit to use the template's defaultDenoise. No effect unless a
+  // refImage is given and the template has i2i wiring.
+  denoise: z.number().min(0).max(1).optional(),
   refVideo: z.string().optional(),
   refVideos: z.array(z.string()).optional(),
   keepRefAudio: z.boolean().optional(),
@@ -737,6 +767,30 @@ async function applyReferences(
 }
 
 /**
+ * Apply img2img for a text-to-image template that exposes `i2i` (e.g. krea):
+ * when a `refImage`/`refImages[0]` is given, upload it, inject `LoadImage →
+ * VAEEncode`, and repoint the sampler's latent input at the encoded reference
+ * (`buildImg2Img`) at `denoise` (or the template's `defaultDenoise`). A no-op
+ * for templates without `i2i`, or when no image reference is given (leaving the
+ * template's txt2img path intact).
+ */
+async function applyI2I(
+  graph: ApiGraph,
+  args: GenArgs,
+  tpl: WorkflowTemplate | undefined,
+  client: ComfyClient,
+): Promise<ApiGraph> {
+  if (!tpl?.i2i) return graph;
+  const ref = args.refImages && args.refImages.length > 0
+    ? args.refImages[0]
+    : args.refImage;
+  if (ref === undefined) return graph;
+  const name = await resolveReferenceName(client, ref);
+  const { defaultDenoise, ...cfg } = tpl.i2i;
+  return buildImg2Img(graph, cfg, name, args.denoise ?? defaultDenoise);
+}
+
+/**
  * Set the reference-sizing input (`match`|`max`) on the H3 ref node when
  * `refImageSize` is given. `max` feeds references at 2048px for much stronger
  * reference adherence (identity/clothes) at a speed cost. A no-op unless the
@@ -1013,6 +1067,7 @@ async function renderClip(
   base = applyModelOverride(base, eArgs, tpl);
   base = applyVideoOverrides(base, eArgs, tpl);
   base = await applyReferences(base, eArgs, tpl, client);
+  base = await applyI2I(base, eArgs, tpl, client);
   base = applyRefImageSize(base, eArgs, tpl);
   base = applyKeepRefAudio(base, eArgs, tpl);
   base = applySpeed(base, eArgs, tpl, installed);
@@ -1382,7 +1437,7 @@ async function snapshotServer(
  */
 export const model = {
   type: "@magistr/comfyui/instance" as const,
-  version: "2026.10.14.2",
+  version: "2026.10.15.1",
   upgrades: [
     {
       fromVersion: "2026.07.21.1",
@@ -1501,6 +1556,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.14.2",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.1",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
@@ -1705,6 +1765,7 @@ export const model = {
         let base = applyContentOverrides(graph, eArgs, tpl);
         base = applyVideoOverrides(base, eArgs, tpl);
         base = await applyReferences(base, eArgs, tpl, client);
+        base = await applyI2I(base, eArgs, tpl, client);
         base = applyKeepRefAudio(base, eArgs, tpl);
         const installed = (tpl?.speed || (eArgs.upscale && tpl?.upscale))
           ? await client.fetchInstalledClasses()

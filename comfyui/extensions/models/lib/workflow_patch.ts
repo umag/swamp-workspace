@@ -260,6 +260,67 @@ export function buildReferences(
   return clone;
 }
 
+/** Wiring to convert a txt2img graph's sampler to img2img (denoise a reference). */
+export interface Img2ImgConfig {
+  /** The sampler whose latent input is repointed and whose denoise is set. */
+  samplerNodeId: string;
+  /** The sampler's latent input key (e.g. `latent_image`). */
+  latentKey: string;
+  /** The sampler's denoise input key (e.g. `denoise`). */
+  denoiseKey: string;
+  /** The VAE source node + output slot the encoder reads (e.g. VAELoader, 0). */
+  vaeNodeId: string;
+  vaeSlot: number;
+  /** Image loader class + its filename input key (`LoadImage`, `image`). */
+  loadImageClass: string;
+  loadImageKey: string;
+  /** Pixel→latent encoder class + its pixel/vae input keys (`VAEEncode`). */
+  vaeEncodeClass: string;
+  vaeEncodePixelsKey: string;
+  vaeEncodeVaeKey: string;
+}
+
+/**
+ * Turn a txt2img graph into img2img: inject a `LoadImage` (server-side filename
+ * `refName`) → `VAEEncode` (using the graph's existing VAE) and repoint the
+ * sampler's latent input at the encoded reference, replacing whatever empty
+ * latent it fed from. `denoise` sets how far the sampler travels from the
+ * reference (1 = ignore it, ~0.5–0.7 = transform it). Injected node ids are
+ * string-keyed (`i2i_load`, `i2i_encode`) so they never collide with numeric
+ * ids. Deep-clones; never mutates the input. Throws if the sampler is absent.
+ */
+export function buildImg2Img(
+  graph: ApiGraph,
+  cfg: Img2ImgConfig,
+  refName: string,
+  denoise: number,
+): ApiGraph {
+  const clone = structuredClone(graph);
+  const sampler = clone[cfg.samplerNodeId];
+  if (sampler === undefined) {
+    throw new Error(`img2img sampler node '${cfg.samplerNodeId}' not found`);
+  }
+  const loadId = "i2i_load";
+  const encId = "i2i_encode";
+  clone[loadId] = {
+    class_type: cfg.loadImageClass,
+    inputs: { [cfg.loadImageKey]: refName },
+  };
+  clone[encId] = {
+    class_type: cfg.vaeEncodeClass,
+    inputs: {
+      [cfg.vaeEncodePixelsKey]: [loadId, 0],
+      [cfg.vaeEncodeVaeKey]: [cfg.vaeNodeId, cfg.vaeSlot],
+    },
+  };
+  sampler.inputs = {
+    ...sampler.inputs,
+    [cfg.latentKey]: [encId, 0],
+    [cfg.denoiseKey]: denoise,
+  };
+  return clone;
+}
+
 /** One MODEL→MODEL patcher to splice into a model chain. */
 export interface ModelPatcherSpec {
   /** Node class (e.g. `ModelAttentionBackend`, `SpectrumApplyMiniMaxH3`). */

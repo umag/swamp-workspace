@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026.10.15.1
+
+### Added
+
+- **img2img for text-to-image templates.** A template can declare `i2i` wiring
+  (krea does: KSampler `30:3`, VAELoader `30:12`). When `generate` gets a
+  `refImage` (or `refImages[0]`), the reference is uploaded, a
+  `LoadImage → VAEEncode` pair is injected and the sampler's latent input is
+  repointed at it. The new `denoise` argument (0–1) sets how far the result
+  moves from the reference; omitted, the template's `defaultDenoise` (krea:
+  0.65) applies. Templates without `i2i`, or calls without a reference, keep the
+  plain txt2img path. Pure graph builder `buildImg2Img` deep-clones and never
+  mutates its input.
+
 ## 2026.10.14.2
 
 ### Changed

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.10.15.1
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
 ## 2026.10.08.1
 
 - Initial release: `scan` (bounded SSH listing, classification, release-name

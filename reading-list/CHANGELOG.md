@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.10.15.1
+
+### Changed
+
+- **Sources sharing a host are read with a delay between them.** All sources
+  used to be fetched at once; several LinkedIn profiles in one run then got
+  `HTTP 999`, an IP-level burst block that also failed the profile that had just
+  succeeded. Distinct hosts are still read in parallel, so RSS sources are
+  unaffected. New global argument `fetchDelayMs` (default 2000) sets the
+  same-host spacing.
+
 ## 2026.10.14.2
 
 ### Changed

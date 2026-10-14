@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/dawarich"
-version: "2026.10.14.2"
+version: "2026.10.15.1"
 license: MIT
 description: |
   Dawarich self-hosted location-tracking API for swamp — read points, visits,
