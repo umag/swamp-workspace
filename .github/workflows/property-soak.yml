@@ -143,7 +143,7 @@ jobs:
           # the child's non-zero exit propagating through the `tee`. The
           # redirect is the runner shell's own write, OUTSIDE deno's
           # permission set — the child still gets no --allow-write. $EXTENSION
-          # (not a `${{ }}` splice) names the file, per the anti-injection
+          # (not an expression splice) names the file, per the anti-injection
           # discipline above.
           deno run --allow-read --allow-run --allow-env \
             scripts/run_soak.ts \
