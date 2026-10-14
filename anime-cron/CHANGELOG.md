@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026.10.14.1
+
+- **Rating buttons when an episode finishes downloading.** New
+  `notify-downloaded` takes the finished torrents from the Transmission
+  completion event (`@transmission/api` `poll-completed` `newCompletions`),
+  keeps those under `animeContainerDir`, maps each download folder back to its
+  AniList CURRENT entry and sends "<title> epN downloaded" with inline buttons
+  Watched and 1-10 (`callback_data` `anr:<mediaId>:<episode>:<score>`, 0 =
+  watched only). A send Telegram rejects fails the method rather than vanishing.
+- **`rate-episode`** applies a tap, routed by a `telegram-callback` workflow on
+  `kind == "anr"`: progress becomes max(current, episode) so an older button
+  never rewinds it, a score sets the show score (AniList has no per-episode
+  score, `scoreRaw` = score x 10), and reaching the last episode completes the
+  entry. Re-tapping sets the same values.
+
 ## 2026.10.02.1
 
 - **`fetch-airing` no longer takes an older season's release for a sequel
