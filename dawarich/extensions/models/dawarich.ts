@@ -68,7 +68,7 @@ async function apiRequest(
  */
 export const model = {
   type: "@magistr/dawarich",
-  version: "2026.10.15.3",
+  version: "2026.10.15.4",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -93,6 +93,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.3",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.4",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

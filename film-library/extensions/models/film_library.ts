@@ -1871,7 +1871,7 @@ const reviewArgs = {
  * the enriched result as a star-schema cube. */
 export const model = {
   type: "@magistr/film-library",
-  version: "2026.10.15.3",
+  version: "2026.10.15.4",
   upgrades: [
     {
       toVersion: "2026.10.15.1",
@@ -1885,6 +1885,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.3",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.4",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

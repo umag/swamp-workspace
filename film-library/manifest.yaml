@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/film-library"
-version: "2026.10.15.3"
+version: "2026.10.15.4"
 license: MIT
 description: |
   Multidimensional film catalog for a home server, built from a bounded

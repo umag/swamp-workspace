@@ -11,7 +11,7 @@ const render = model.methods.render;
 
 Deno.test("model metadata declares the expected type, specs, and version", () => {
   assertEquals(model.type, "@magistr/manim/scene");
-  assertEquals(model.version, "2026.10.15.3");
+  assertEquals(model.version, "2026.10.15.4");
   assertEquals(Object.keys(model.resources), ["result"]);
   assertEquals(Object.keys(model.files).sort(), ["log", "output"]);
 });

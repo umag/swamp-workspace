@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/vinted"
-version: "2026.10.15.3"
+version: "2026.10.15.4"
 license: MIT
 description: |
   Search Vinted and read listings without an account. Parses the catalog and

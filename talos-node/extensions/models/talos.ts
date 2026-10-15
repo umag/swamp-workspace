@@ -132,7 +132,7 @@ const ResultSchema = z.object({
 /** Swamp model for managing Talos Linux nodes via the talosctl CLI: version, services, etcd members, kubeconfig, config apply/patch, bootstrap, reboot, shutdown, reset, upgrade, and cluster health. */
 export const model = {
   type: "@magistr/talos-node",
-  version: "2026.10.15.3",
+  version: "2026.10.15.4",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -157,6 +157,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.3",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.4",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

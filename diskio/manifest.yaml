@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/diskio"
-version: "2026.10.15.3"
+version: "2026.10.15.4"
 license: MIT
 description: |
   Answer "what is actually reading this disk?" on a Linux host whose storage

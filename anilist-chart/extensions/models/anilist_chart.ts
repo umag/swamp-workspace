@@ -347,7 +347,7 @@ function configFrom(g: Record<string, unknown>): ClickHouseConfig | null {
  */
 export const model = {
   type: "@magistr/anilist-chart",
-  version: "2026.10.15.3",
+  version: "2026.10.15.4",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -392,6 +392,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.3",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.4",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
