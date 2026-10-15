@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/bsport"
-version: "2026.10.15.6"
+version: "2026.10.15.7"
 license: MIT
 description: "bsport member API client — read the class calendar (with waitlist sizing), your upcoming/past bookings, registered offers, and your waitlist positions; email/password login → Token auth, DRF pagination, and 429 back-off"
 repository: "https://github.com/umag/swamp-workspace"

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/skype"
-version: "2026.10.15.6"
+version: "2026.10.15.7"
 license: MIT
 description: "Skype SQLite database reader — conversations, contacts, messages, search, Obsidian export"
 repository: "https://github.com/umag/swamp-workspace"

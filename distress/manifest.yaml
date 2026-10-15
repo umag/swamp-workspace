@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/distress"
-version: "2026.10.15.6"
+version: "2026.10.15.7"
 license: MIT
 description: |
   A distress-call beacon for AI agents.

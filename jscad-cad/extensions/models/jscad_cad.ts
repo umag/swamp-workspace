@@ -9,7 +9,7 @@ import { ScriptEvaluator } from "./jscad/script_evaluator.ts";
 /** The @magistr/jscad-cad model — evaluates a JSCAD v2 CadScript main() and serializes the result to STL/DXF/SVG/OBJ/3MF. */
 export const model = {
   type: "@magistr/jscad-cad",
-  version: "2026.10.15.6",
+  version: "2026.10.15.7",
   upgrades: [
     {
       fromVersion: "2026.08.01.1",
@@ -76,6 +76,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.6",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.7",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

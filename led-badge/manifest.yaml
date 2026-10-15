@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/led-badge"
-version: "2026.10.15.6"
+version: "2026.10.15.7"
 license: MIT
 description: |
   Drive a 44x11 LED name badge (USB 0416:5020, WCH CH583 "LSLED" / Badge

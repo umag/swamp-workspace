@@ -52,7 +52,7 @@ import basicFixture from "../../fixtures/basic/result.json" with {
 
 Deno.test("contract: model type is unchanged; version tracks the current release", () => {
   assertEquals(model.type, "@magistr/telegram/import");
-  assertEquals(model.version, "2026.10.15.6");
+  assertEquals(model.version, "2026.10.15.7");
 });
 
 Deno.test("contract: exposes exactly one method — import", () => {

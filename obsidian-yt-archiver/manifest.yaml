@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/obsidian-yt-archiver"
-version: "2026.10.15.6"
+version: "2026.10.15.7"
 license: MIT
 description: "Scan Obsidian vault for YouTube links, archive in TubeArchivist, generate reference notes"
 repository: "https://github.com/umag/swamp-workspace"

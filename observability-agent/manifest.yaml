@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/observability-agent"
-version: "2026.10.15.6"
+version: "2026.10.15.7"
 license: MIT
 description: |
   Install and configure a host-native metrics + logs agent on a remote
