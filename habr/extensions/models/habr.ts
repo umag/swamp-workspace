@@ -453,7 +453,7 @@ const ArticleSchema = SummarySchema.extend({
  */
 export const model = {
   type: "@magistr/habr",
-  version: "2026.10.15.2",
+  version: "2026.10.15.3",
   upgrades: [
     {
       fromVersion: "2026.09.09.1",
@@ -470,6 +470,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.2",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.3",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

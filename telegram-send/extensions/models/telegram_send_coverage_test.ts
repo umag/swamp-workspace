@@ -440,6 +440,6 @@ Deno.test("coverage: every ported method and resource is registered", () => {
   for (const r of ["webhookInfo", "downloadedFile"]) {
     assertEquals(r in model.resources, true, r);
   }
-  assertEquals(model.version, "2026.10.15.2");
+  assertEquals(model.version, "2026.10.15.3");
   assertEquals(model.upgrades.at(-1)?.toVersion, model.version);
 });
