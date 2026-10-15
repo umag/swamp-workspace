@@ -282,7 +282,7 @@ sinks:
  */
 export const model = {
   type: "@magistr/observability/agent",
-  version: "2026.10.15.7",
+  version: "2026.10.15.8",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -327,6 +327,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.7",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.8",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

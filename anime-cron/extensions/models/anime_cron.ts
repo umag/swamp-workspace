@@ -1143,7 +1143,7 @@ mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus, $scoreRaw: 
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.10.15.7",
+  version: "2026.10.15.8",
   upgrades: [
     {
       toVersion: "2026.10.15.1",
@@ -1177,6 +1177,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.7",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.8",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

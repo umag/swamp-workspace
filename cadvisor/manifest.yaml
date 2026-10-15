@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/cadvisor"
-version: "2026.10.15.7"
+version: "2026.10.15.8"
 license: MIT
 description: |
   cAdvisor container metrics for swamp — deploy a cAdvisor container over SSH,

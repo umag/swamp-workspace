@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/herdr"
-version: "2026.10.15.7"
+version: "2026.10.15.8"
 license: MIT
 description: |
   Drive a herdr terminal-agent runtime from swamp.

@@ -239,13 +239,20 @@ export const MAX_PAGES = 500;
  * clamped so the fan-out loop cannot run unbounded.
  */
 export function normalizePagesCount(raw: unknown): number {
-  const n = Math.floor(Number(raw));
+  const n = Math.floor(toNumber(raw));
   if (!Number.isFinite(n) || n < 1) return 1;
   return Math.min(n, MAX_PAGES);
 }
 
+/** Numeric value of an untrusted JSON scalar, NaN for anything that is not a
+ * number or a string. `Number()` on an object can throw (no callable
+ * valueOf/toString), so objects never reach it. */
+function toNumber(raw: unknown): number {
+  return typeof raw === "number" || typeof raw === "string" ? Number(raw) : NaN;
+}
+
 function count(raw: unknown): number {
-  const n = Number(raw ?? 0);
+  const n = raw == null ? 0 : toNumber(raw);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -334,6 +341,15 @@ async function fetchJson(url: string, context: Ctx): Promise<unknown> {
 // deno-lint-ignore no-explicit-any
 type Ref = any;
 
+/** Text of an untrusted JSON scalar: strings and finite numbers pass, anything
+ * else (objects, arrays, null) is "". `String()` on hostile JSON can throw —
+ * e.g. an array holding `{"toString": ""}` has no callable toString. */
+function str(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return "";
+}
+
 /**
  * Project a Habr publication ref (from publicationRefs or the single-article
  * endpoint) into a stable article summary. Pure — no I/O.
@@ -359,15 +375,13 @@ export function parseSummary(ref: Ref, baseUrl: string, l: string): {
     bookmarks: number;
   };
 } {
-  const id = String(ref?.id ?? "");
+  const id = str(ref?.id ?? "");
   const tags = Array.isArray(ref?.tags)
-    ? ref.tags.map((t: Ref) =>
-      stripHtml(String(t?.titleHtml ?? t?.title ?? ""))
-    )
+    ? ref.tags.map((t: Ref) => stripHtml(str(t?.titleHtml ?? t?.title ?? "")))
       .filter((s: string) => s.length > 0)
     : [];
   const hubs = Array.isArray(ref?.hubs)
-    ? ref.hubs.map((h: Ref) => String(h?.alias ?? "")).filter((s: string) =>
+    ? ref.hubs.map((h: Ref) => str(h?.alias ?? "")).filter((s: string) =>
       s.length > 0
     )
     : [];
@@ -380,19 +394,19 @@ export function parseSummary(ref: Ref, baseUrl: string, l: string): {
     : l;
   return {
     id,
-    title: stripHtml(String(ref?.titleHtml ?? "")),
+    title: stripHtml(str(ref?.titleHtml ?? "")),
     url: articleUrl(id, baseUrl, refLang),
     lang: refLang,
-    timePublished: ref?.timePublished ? String(ref.timePublished) : null,
+    timePublished: ref?.timePublished ? str(ref.timePublished) : null,
     readingTime: typeof ref?.readingTime === "number" &&
         Number.isFinite(ref.readingTime)
       ? ref.readingTime
       : null,
-    complexity: ref?.complexity ? String(ref.complexity) : null,
-    postType: ref?.postType ? String(ref.postType) : null,
+    complexity: ref?.complexity ? str(ref.complexity) : null,
+    postType: ref?.postType ? str(ref.postType) : null,
     tags,
     hubs,
-    author: ref?.author?.alias ? String(ref.author.alias) : null,
+    author: ref?.author?.alias ? str(ref.author.alias) : null,
     statistics: {
       reads: count(st?.readingCount),
       comments: count(st?.commentsCount),
@@ -453,7 +467,7 @@ const ArticleSchema = SummarySchema.extend({
  */
 export const model = {
   type: "@magistr/habr",
-  version: "2026.10.15.7",
+  version: "2026.10.15.8",
   upgrades: [
     {
       fromVersion: "2026.09.09.1",
@@ -495,6 +509,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.7",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.8",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
@@ -554,7 +573,7 @@ export const model = {
 
         const collect = (payload: Ref): ReturnType<typeof parseSummary>[] => {
           const ids: string[] = Array.isArray(payload?.publicationIds)
-            ? payload.publicationIds.map((x: unknown) => String(x))
+            ? payload.publicationIds.map((x: unknown) => str(x))
             : [];
           const refs = payload?.publicationRefs ?? {};
           return ids
@@ -634,7 +653,7 @@ async function fetchArticle(id: string, context: Ctx) {
     context,
   ) as Ref;
   const summary = parseSummary(ref, b, l);
-  const textHtml = String(ref?.textHtml ?? "");
+  const textHtml = str(ref?.textHtml ?? "");
   return await context.writeResource("article", id, {
     ...summary,
     textHtml,

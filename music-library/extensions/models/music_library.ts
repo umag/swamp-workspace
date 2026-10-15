@@ -2340,7 +2340,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.10.15.7",
+  version: "2026.10.15.8",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2446,6 +2446,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.7",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.8",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/victoriametrics"
-version: "2026.10.15.7"
+version: "2026.10.15.8"
 license: MIT
 description: |
   VictoriaMetrics query API for swamp — instant/range PromQL, scrape-target

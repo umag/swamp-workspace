@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026.10.15.8
+
+### Fixed
+
+- `parseSummary`, `articles` and `article` no longer crash on a malformed API
+  response. `String()` and `Number()` on a JSON object whose `toString` /
+  `valueOf` is not callable (e.g. `{"toString": ""}`) threw "Cannot convert
+  object to primitive value" and aborted the run. Untrusted scalars now go
+  through `str()` / `toNumber()`, which accept only strings and numbers. Found
+  by the property suite at nightly-soak scale; both counterexamples are pinned
+  as regression tests.
+
+### Changed
+
+- Repo-wide maintenance release: version bump to republish the current source.
+  No schema change.
+
 ## 2026.10.15.7
 
 ### Changed

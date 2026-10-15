@@ -4,7 +4,13 @@
  * server responses.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { decodeEntities, MAX_PAGES, model } from "./habr.ts";
+import {
+  decodeEntities,
+  MAX_PAGES,
+  model,
+  normalizePagesCount,
+  parseSummary,
+} from "./habr.ts";
 import {
   BASE,
   habrRoute,
@@ -250,4 +256,28 @@ Deno.test("out-of-range numeric entities do not throw", () => {
   assertEquals(decodeEntities("a&#99999999;b"), "a&#99999999;b");
   assertEquals(decodeEntities("&#x110000;"), "&#x110000;");
   assertEquals(decodeEntities("&#x10FFFF;"), String.fromCodePoint(0x10ffff));
+});
+
+// Counterexamples the nightly-scale property run found: JSON objects whose
+// `toString` is not callable made `String()` / `Number()` throw
+// "Cannot convert object to primitive value" and abort the whole run.
+Deno.test("parseSummary: objects with a non-callable toString do not throw", () => {
+  const s = parseSummary(
+    {
+      id: [{ toString: "" }],
+      titleHtml: { toString: false },
+      statistics: { readingCount: { toString: false } },
+      author: { alias: { valueOf: 1 } },
+    },
+    "https://habr.com",
+    "ru",
+  );
+  assertEquals(s.id, "");
+  assertEquals(s.title, "");
+  assertEquals(s.statistics.reads, 0);
+});
+
+Deno.test("normalizePagesCount: an object pagesCount is one page, not a throw", () => {
+  assertEquals(normalizePagesCount({ toString: false }), 1);
+  assertEquals(normalizePagesCount("3"), 3);
 });
