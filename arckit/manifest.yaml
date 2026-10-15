@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/arckit"
-version: "2026.10.15.5"
+version: "2026.10.15.6"
 license: MIT
 description: |
   Standalone swamp port of ArcKit (https://github.com/tractorjuice/arc-kit —

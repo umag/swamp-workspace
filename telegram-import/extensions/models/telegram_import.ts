@@ -527,7 +527,7 @@ async function safeCopyMedia(
  */
 export const model = {
   type: "@magistr/telegram/import",
-  version: "2026.10.15.5",
+  version: "2026.10.15.6",
   globalArguments: GlobalArgsSchema,
   resources: {
     result: {
@@ -629,6 +629,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.5",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.6",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

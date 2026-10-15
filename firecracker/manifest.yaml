@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/firecracker"
-version: "2026.10.15.5"
+version: "2026.10.15.6"
 license: MIT
 description: |
   Firecracker microVM lifecycle management via SSH + the Unix-socket REST API.
