@@ -613,7 +613,7 @@ const TaskResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/bandcamp",
-  version: "2026.10.15.8",
+  version: "2026.10.15.9",
   upgrades: [
     {
       fromVersion: "2026.07.31.1",
@@ -689,6 +689,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.8",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

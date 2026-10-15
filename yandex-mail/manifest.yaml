@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/yandex-mail"
-version: "2026.10.15.8"
+version: "2026.10.15.9"
 license: MIT
 description: |
   Yandex Mail over IMAP (read, search, organise) and SMTP (send). Yandex has

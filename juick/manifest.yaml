@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/juick"
-version: "2026.10.15.8"
+version: "2026.10.15.9"
 license: MIT
 description: "Juick.com microblogging API - fetch posts, comments, threads, and import to Obsidian"
 repository: "https://github.com/umag/swamp-workspace"
