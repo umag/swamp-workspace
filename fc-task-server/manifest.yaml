@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/fc-task-server"
-version: "2026.10.15.4"
+version: "2026.10.15.5"
 license: MIT
 description: |
   Host↔guest task/result control-plane server for Firecracker microVM agents.

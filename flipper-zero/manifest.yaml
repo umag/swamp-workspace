@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/flipper-zero"
-version: "2026.10.15.4"
+version: "2026.10.15.5"
 license: MIT
 description: |
   Control a Flipper Zero over its USB serial CLI from swamp.

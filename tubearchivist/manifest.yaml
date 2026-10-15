@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/tubearchivist"
-version: "2026.10.15.4"
+version: "2026.10.15.5"
 license: MIT
 description: "TubeArchivist API integration — manage videos, channels, downloads, and search"
 repository: "https://github.com/umag/swamp-workspace"

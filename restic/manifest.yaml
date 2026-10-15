@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/restic"
-version: "2026.10.15.4"
+version: "2026.10.15.5"
 license: MIT
 description: |
   Drive restic backups from swamp: read repository state, initialize,

@@ -104,7 +104,7 @@ const ActionResultSchema = z.object({
  */
 export const model = {
   type: "@bad-at-naming/libvirt/storage",
-  version: "2026.10.15.4",
+  version: "2026.10.15.5",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -134,6 +134,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.4",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.5",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

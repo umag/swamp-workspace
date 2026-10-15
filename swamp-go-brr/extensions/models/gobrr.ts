@@ -1351,7 +1351,7 @@ function persist(context: Ctx, run: Run): Promise<unknown> {
 /** @internal — recursively references private Zod internals; call via the CLI. */
 export const model = {
   type: "@magistr/swamp-go-brr/gobrr",
-  version: "2026.10.15.4",
+  version: "2026.10.15.5",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1406,6 +1406,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.4",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.15.5",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
