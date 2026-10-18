@@ -375,6 +375,41 @@ export function baseTitle(title: string): string | null {
   return t !== title && t.length > 0 ? t : null;
 }
 
+/** Shorter Nyaa queries for when neither full title finds the episode.
+ *  Nyaa matches every query word literally, while releases drop the English
+ *  title's punctuation and shorten long romaji titles
+ *  ("Mezametara Saikyou Soubi to Uchuusen-mochi datta node, Ikkodate …" is
+ *  posted as "… Uchuusenmochi Datta node"). In order: English without
+ *  punctuation, English before ":", romaji before ",", romaji without
+ *  punctuation, first three romaji words. Queries under two words or equal
+ *  to a full title are dropped, so short plain titles add nothing. */
+export function shortTitleQueries(
+  romaji: string,
+  english: string | null,
+): string[] {
+  const clean = (s: string) =>
+    s.replace(/[:!?,.~♪☆★]/g, " ").replace(/\s+/g, " ").trim();
+  const before = (s: string, sep: string) => {
+    const i = s.indexOf(sep);
+    return i > 0 ? s.slice(0, i).trim() : "";
+  };
+  const romajiWords = clean(romaji).split(" ");
+  const candidates = [
+    english ? clean(english) : "",
+    english ? before(english, ":") : "",
+    before(romaji, ","),
+    clean(romaji),
+    romajiWords.length > 3 ? romajiWords.slice(0, 3).join(" ") : "",
+  ];
+  const out: string[] = [];
+  for (const q of candidates) {
+    if (q.split(" ").length < 2 || q.length < 8) continue;
+    if (q === romaji || q === english || out.includes(q)) continue;
+    out.push(q);
+  }
+  return out;
+}
+
 /** Choose the best release for an episode: hard resolution floor first, then
  *  rank by preferred group, seeders and an exact-resolution bonus. */
 const ROMAN_SEASONS: Record<string, number> = {
@@ -1143,7 +1178,7 @@ mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus, $scoreRaw: 
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.10.15.9",
+  version: "2026.10.18.1",
   upgrades: [
     {
       toVersion: "2026.10.15.1",
@@ -1188,6 +1223,11 @@ export const model = {
     {
       toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.18.1",
+      description: "Shorter fallback Nyaa queries; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1464,7 +1504,12 @@ export const model = {
           let hits: NyaaHit[] = [];
           try {
             hits = await nyaaSearch(title);
-            const needsEp = (ep: number) => !hits.some((h) => h.episode === ep);
+            // Keep searching until a release at the target resolution turns up:
+            // a 720p dub found by the English title must not end the search.
+            const needsEp = (ep: number) =>
+              !hits.some((h) =>
+                h.episode === ep && h.resolution >= preferredResolution
+              );
             if (needsEp(startEp) && entry.english && entry.english !== title) {
               hits = [...hits, ...await nyaaSearch(entry.english)];
             }
@@ -1479,6 +1524,14 @@ export const model = {
             if (needsEp(startEp)) {
               const base = baseTitle(title);
               if (base) hits = [...hits, ...await nyaaSearch(base)];
+            }
+            if (needsEp(startEp)) {
+              for (
+                const q of shortTitleQueries(title, entry.english ?? null)
+              ) {
+                hits = [...hits, ...await nyaaSearch(q)];
+                if (!needsEp(startEp)) break;
+              }
             }
           } catch {
             outcomes.push({

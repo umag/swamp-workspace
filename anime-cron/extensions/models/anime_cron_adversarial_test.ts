@@ -198,6 +198,8 @@ const CHRONICLES_FALLBACK_QUERIES = [
   "Fixture Chronicles: English Cut",
   "FC",
   "Fixture-chan",
+  // shortTitleQueries fallback (English without punctuation)
+  "Fixture Chronicles English Cut",
 ];
 const WANDERERS_FALLBACK_QUERIES = ["Fixture Wanderers"];
 
