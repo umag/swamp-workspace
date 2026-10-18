@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026.10.18.1
+
+- **`fetch-airing` keeps searching until it finds the target resolution.** The
+  search stopped as soon as ANY release of the episode turned up, so on
+  2026-10-18 a 720p English dub found by the English title ended the search for
+  "Mezametara Saikyou Soubi to Uchuusen-mochi datta node, …" ep 3, and the
+  synonym search that finds SubsPlease ("Saikyosoubi") never ran.
+- **Shorter fallback queries (`shortTitleQueries`).** Nyaa matches every query
+  word literally, and releases drop the English title's punctuation and shorten
+  long romaji titles. After the full titles, synonyms and base title, the search
+  now tries the English title without punctuation, the English title before ":",
+  the romaji before ",", the romaji without punctuation and its first three
+  words.
+
 ## 2026.10.15.9
 
 ### Changed
