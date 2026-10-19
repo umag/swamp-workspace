@@ -2030,3 +2030,52 @@ Deno.test("ci.yml PARITY: NO line of any run: SHELL BODY contains an Actions-exp
     }`,
   );
 });
+
+// ============================================================================
+// .no-publish opt-out
+// ============================================================================
+
+Deno.test("selectPublishable: noPublish suppresses a changed coordinate (mutation: drop the noPublish check -> a brand-new marked package is selected and published)", () => {
+  const { selected, errors } = selectPublishable([
+    {
+      headPath: "pkgc/manifest.yaml",
+      head: { name: "@fixture/pkgc", version: "1.0.0" },
+      base: null,
+      noPublish: true,
+    },
+  ]);
+  assertEquals(selected, []);
+  assertEquals(errors, []);
+});
+
+Deno.test("selectPublishableManifests: a new package with <dir>/.no-publish is not selected, while a sibling bump in the same push still is", async () => {
+  const root = await makeTwoPackageRepo();
+  try {
+    await writeManifestFile(root, "pkgc", "@fixture/pkgc", "2026.03.03.1");
+    await Deno.writeTextFile(join(root, "pkgc", ".no-publish"), "");
+    await writeManifestFile(root, "pkga", "@fixture/pkga", "2026.01.02.1");
+    await commitAll(root, "add unpublished pkgc, bump pkga");
+    assertEquals(await selectPublishableManifests("HEAD~1", root), [
+      "pkga/manifest.yaml",
+    ]);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+Deno.test("selectPublishableManifests: removing .no-publish together with a bump selects the package again", async () => {
+  const root = await initRepo();
+  try {
+    await writeManifestFile(root, "pkgc", "@fixture/pkgc", "2026.03.03.1");
+    await Deno.writeTextFile(join(root, "pkgc", ".no-publish"), "");
+    await commitAll(root, "add unpublished pkgc");
+    await Deno.remove(join(root, "pkgc", ".no-publish"));
+    await writeManifestFile(root, "pkgc", "@fixture/pkgc", "2026.03.03.2");
+    await commitAll(root, "publish pkgc");
+    assertEquals(await selectPublishableManifests("HEAD~1", root), [
+      "pkgc/manifest.yaml",
+    ]);
+  } finally {
+    await cleanup(root);
+  }
+});

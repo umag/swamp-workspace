@@ -639,6 +639,8 @@ jobs:
         with:
           deno-version: v2.9.6
 
+      # A `<dir>/.no-publish` marker at HEAD keeps that extension out of the
+      # publish set even when its manifest coordinate changed (release_notes_gate).
       - name: Detect manifest version changes
         id: manifest-changed
         working-directory: scripts
