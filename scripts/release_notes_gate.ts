@@ -113,6 +113,9 @@ interface SelectionInput {
   readonly headPath: string;
   readonly head: Coordinate | null;
   readonly base: Coordinate | null;
+  /** HEAD has a `<dir>/.no-publish` marker: never select, even when the
+   * coordinate changed. Lets an extension live on master unpublished. */
+  readonly noPublish?: boolean;
 }
 
 interface SelectedManifest {
@@ -263,6 +266,7 @@ export function selectPublishable(
       rec.base.name !== rec.head.name ||
       rec.base.version !== rec.head.version;
     if (!changed) continue;
+    if (rec.noPublish) continue;
     if (!isValidManifestPath(rec.headPath)) {
       errors.push({
         rule: "manifest-path-unsupported",
@@ -452,6 +456,20 @@ async function manifestCoordinateAt(
   return parseManifest(new TextDecoder().decode(out.stdout));
 }
 
+/** True when `<dir>/.no-publish` exists at HEAD next to `<dir>/manifest.yaml`. */
+async function noPublishAt(
+  manifestPath: string,
+  root: string,
+): Promise<boolean> {
+  const dir = manifestPath.slice(0, manifestPath.lastIndexOf("/") + 1);
+  const out = await new Deno.Command("git", {
+    args: ["-C", root, "cat-file", "-e", `HEAD:${dir}.no-publish`],
+    stdout: "null",
+    stderr: "null",
+  }).output();
+  return out.success;
+}
+
 function commitExistsSync(sha: string, root: string): boolean {
   if (sha === "") return false;
   const cmd = new Deno.Command("git", {
@@ -525,6 +543,7 @@ async function selectPublishableRecords(
         headPath: rec.headPath,
         head: await manifestCoordinateAt("HEAD", rec.headPath, root),
         base: null,
+        noPublish: await noPublishAt(rec.headPath, root),
       });
       continue;
     }
@@ -532,7 +551,12 @@ async function selectPublishableRecords(
       manifestCoordinateAt("HEAD", rec.headPath, root),
       manifestCoordinateAt(base, rec.basePath, root),
     ]);
-    inputs.push({ headPath: rec.headPath, head, base: baseCoord });
+    inputs.push({
+      headPath: rec.headPath,
+      head,
+      base: baseCoord,
+      noPublish: await noPublishAt(rec.headPath, root),
+    });
   }
   const { selected, errors } = selectPublishable(inputs);
 

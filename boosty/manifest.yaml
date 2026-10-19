@@ -1,0 +1,28 @@
+manifestVersion: 1
+name: "@magistr/boosty"
+version: "2026.10.19.1"
+license: MIT
+description: |
+  Boosty for swamp — archive a Boosty blog (boosty.to/<blog>) to Markdown notes
+  with images downloaded locally, shaped for an Obsidian vault. Uses Boosty's
+  public JSON API; an optional subscriber access token unlocks paid posts.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/boosty.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - CHANGELOG.md
+
+platforms: []
+
+labels:
+  - boosty
+  - blog
+  - archive
+  - obsidian
