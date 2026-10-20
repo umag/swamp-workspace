@@ -199,6 +199,7 @@ interface RssHitSpec {
   seeders?: number;
   link?: string;
   size?: string;
+  pubDate?: string;
 }
 
 function rss(hits: RssHitSpec[]): string {
@@ -207,6 +208,7 @@ function rss(hits: RssHitSpec[]): string {
     return `<item><title><![CDATA[${h.title}]]></title><link>${link}</link>` +
       `<nyaa:seeders>${h.seeders ?? 10}</nyaa:seeders>` +
       `<nyaa:size>${h.size ?? "1.0 GiB"}</nyaa:size>` +
+      (h.pubDate ? `<pubDate>${h.pubDate}</pubDate>` : "") +
       `<nyaa:infoHash>${h.infoHash}</nyaa:infoHash></item>`;
   }).join("");
   return `<?xml version="1.0"?><rss version="2.0"><channel>${items}</channel></rss>`;
@@ -233,7 +235,7 @@ function nyaaRoute(byQuery: Record<string, RssHitSpec[]>): Route {
  * invocation starts with no session id, so a fresh 409+retry dance happens
  * per call — this stub's per-request header check reproduces that exactly. */
 interface TxHandlers {
-  torrentGet?: () => unknown[];
+  torrentGet?: (args: Record<string, unknown>) => unknown[];
   torrentAdd?: (args: Record<string, unknown>) => unknown;
   torrentSet?: (args: Record<string, unknown>) => unknown;
   sid?: string;
@@ -255,7 +257,11 @@ function txRoute(handlers: TxHandlers): Route {
     if (body.method === "torrent-get" && handlers.torrentGet) {
       return json({
         result: "success",
-        arguments: { torrents: handlers.torrentGet() },
+        arguments: {
+          torrents: handlers.torrentGet(
+            (body.arguments ?? {}) as Record<string, unknown>,
+          ),
+        },
       });
     }
     if (body.method === "torrent-add" && handlers.torrentAdd) {
@@ -1339,4 +1345,243 @@ Deno.test("fetch-airing: a cache-backed run SUPPRESSES the overdue alert; an Ani
   const viaAniList = live.written.find((w) => w.spec === "fetchResult")!;
   assertEquals(viaAniList.payload.listSource, "anilist");
   assertEquals(viaAniList.payload.alertsSuppressed, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Whole-season drops (2026-10-20, "Cyberpunk: Edgerunners 2"): Netflix put
+// all 10 episodes out at once, Nyaa carried only batches, and the hourly run
+// sent eight "not found" alerts — then the same eight again every hour.
+// ---------------------------------------------------------------------------
+
+const EDGE_ID = 195539;
+const EDGE_DIR = "/anime/tv/Cyberpunk Edgerunners 2";
+
+function edgerunnersWatching() {
+  return {
+    data: {
+      MediaListCollection: {
+        lists: [{
+          entries: [{
+            progress: 2,
+            media: {
+              id: EDGE_ID,
+              title: {
+                romaji: "Cyberpunk: Edgerunners 2",
+                english: "Cyberpunk: Edgerunners 2",
+              },
+              synonyms: [],
+              episodes: 10,
+              status: "FINISHED",
+              startDate: { year: 2026, month: 10, day: 15 },
+              nextAiringEpisode: null,
+            },
+          }],
+        }],
+      },
+    },
+  };
+}
+
+/** Every Nyaa query answers with the same hits — the fallback chain fires a
+ *  handful of searches when no single-episode release matches. */
+function anyNyaa(hits: RssHitSpec[]): Route {
+  return (req) => {
+    const url = new URL(req.url);
+    if (url.hostname !== "nyaa.si") return undefined;
+    return new Response(rss(hits), { status: 200 });
+  };
+}
+
+const SEASON1_BATCH: RssHitSpec = {
+  title:
+    "[Judas] Cyberpunk Edgerunners (Season 1) [1080p][HEVC x265 10bit][Multi-Subs] (Batch)",
+  infoHash: "1111111111111111111111111111111111111111",
+  seeders: 113,
+  pubDate: "Wed, 14 Sep 2022 10:00:00 -0000",
+};
+const SEASON2_BATCH: RssHitSpec = {
+  title:
+    "[Erai-raws] Cyberpunk: Edgerunners 2 - 01 ~ 10 [1080p NF WEB-DL HEVC EAC3][MultiSub] [BATCH]",
+  infoHash: "2222222222222222222222222222222222222222",
+  seeders: 616,
+  link: "https://nyaa.si/view/2176432",
+  pubDate: "Tue, 20 Oct 2026 07:51:40 -0000",
+};
+
+const EDGE_ON_DISK = [
+  {
+    id: 2318,
+    name:
+      "Cyberpunk.Edgerunners.S02E01.1080p.TWITCH.WEB-DL.ENG.AAC2.0.H.264-ToonsHub.mkv",
+    downloadDir: EDGE_DIR,
+  },
+  {
+    id: 2319,
+    name: "Cyberpunk Edgerunners - S01E02.mkv",
+    downloadDir: EDGE_DIR,
+  },
+];
+
+Deno.test("fetch-airing: a whole-season drop with only batches on Nyaa queues ONE season-2 batch for every missing episode, deselecting files already on disk", async () => {
+  const { ctx, written } = makeCtx();
+  const adds: Record<string, unknown>[] = [];
+  const sets: Record<string, unknown>[] = [];
+  await withFetchStub(
+    [
+      aniListRoute({ watching: edgerunnersWatching }),
+      txRoute({
+        torrentGet: (args) =>
+          args.ids
+            ? [{
+              id: 77,
+              files: Array.from({ length: 10 }, (_, i) => ({
+                name:
+                  `[Erai-raws] Cyberpunk - Edgerunners 2 - 01 ~ 10/[Erai-raws] Cyberpunk - Edgerunners 2 - ${
+                    String(i + 1).padStart(2, "0")
+                  } [1080p NF WEB-DL HEVC EAC3][MultiSub].mkv`,
+              })),
+            }]
+            : EDGE_ON_DISK,
+        torrentAdd: (args) => {
+          adds.push(args);
+          return {
+            "torrent-added": {
+              id: 77,
+              name:
+                "[Erai-raws] Cyberpunk - Edgerunners 2 - 01 ~ 10 [1080p NF WEB-DL HEVC EAC3][MultiSub]",
+            },
+          };
+        },
+        torrentSet: (args) => {
+          sets.push(args);
+          return {};
+        },
+      }),
+      anyNyaa([SEASON1_BATCH, SEASON2_BATCH]),
+    ],
+    async () => {
+      await run("fetch-airing", {}, ctx);
+    },
+  );
+  assertEquals(adds.length, 1, "one torrent covers eps 3–10");
+  assertEquals(adds[0].filename, "https://nyaa.si/download/2176432.torrent");
+  assertEquals(adds[0]["download-dir"], EDGE_DIR);
+  assertEquals(sets.length, 1);
+  assertEquals(sets[0]["files-unwanted"], [0, 1], "eps 1–2 already on disk");
+  const res = written.find((w) => w.spec === "fetchResult")!;
+  const outcomes = res.payload.outcomes as Array<
+    { episode: number; status: string; reason?: string }
+  >;
+  assertEquals(res.payload.duplicates, 0, "eps 1–2 are below progress");
+  assertEquals(res.payload.queued, 8);
+  assertEquals(res.payload.notFound, 0);
+  assertEquals(
+    outcomes.filter((o) => o.status === "queued").map((o) => o.episode),
+    [3, 4, 5, 6, 7, 8, 9, 10],
+  );
+  assertEquals(
+    outcomes.find((o) => o.status === "queued")!.reason,
+    "batch-skipped-2-files",
+  );
+});
+
+Deno.test("fetch-airing: a season-1 batch from 2022 never stands in for season 2 — the episodes stay not-found and nothing is added", async () => {
+  const { ctx, written } = makeCtx();
+  const adds: Record<string, unknown>[] = [];
+  await withFetchStub(
+    [
+      aniListRoute({ watching: edgerunnersWatching }),
+      txRoute({
+        torrentGet: () => EDGE_ON_DISK,
+        torrentAdd: (args) => {
+          adds.push(args);
+          return {};
+        },
+      }),
+      anyNyaa([SEASON1_BATCH]),
+    ],
+    async () => {
+      await run("fetch-airing", {}, ctx);
+    },
+  );
+  assertEquals(adds.length, 0);
+  const res = written.find((w) => w.spec === "fetchResult")!;
+  assertEquals(res.payload.notFound, 8);
+});
+
+Deno.test("fetch-airing: a batch already in Transmission covers its whole range — the next run records duplicates, not not-found", async () => {
+  const { ctx, written } = makeCtx();
+  await withFetchStub(
+    [
+      aniListRoute({ watching: edgerunnersWatching }),
+      txRoute({
+        torrentGet: () => [...EDGE_ON_DISK, {
+          id: 2320,
+          name:
+            "[Erai-raws] Cyberpunk - Edgerunners 2 - 01 ~ 10 [1080p NF WEB-DL HEVC EAC3][MultiSub]",
+          downloadDir: EDGE_DIR,
+        }],
+      }),
+      anyNyaa([]),
+    ],
+    async () => {
+      await run("fetch-airing", {}, ctx);
+    },
+  );
+  const res = written.find((w) => w.spec === "fetchResult")!;
+  assertEquals(res.payload.duplicates, 8, "eps 3–10, all inside 01 ~ 10");
+  assertEquals(res.payload.notFound, 0);
+});
+
+Deno.test("fetch-airing: missing episodes alert ONCE — one message per show, and episodes alerted on an earlier run are not re-sent", async () => {
+  const runOnce = async (alerted: string[] | null) => {
+    const cmdStub = installSpawnCmdStub();
+    const made = makeCtx({ ...GLOBAL_ARGS, telegramModel: "tg-instance" });
+    const ctx = {
+      ...made.ctx,
+      readResource: (name: string) =>
+        Promise.resolve(
+          name === "notfound-alerted" && alerted
+            ? { keys: alerted, updatedAt: "2026-10-20T11:10:00Z" }
+            : null,
+        ),
+    };
+    try {
+      await withFetchStub(
+        [
+          aniListRoute({ watching: edgerunnersWatching }),
+          txRoute({ torrentGet: () => EDGE_ON_DISK }),
+          anyNyaa([]),
+        ],
+        async () => {
+          await run("fetch-airing", {}, ctx);
+        },
+      );
+    } finally {
+      cmdStub.restore();
+    }
+    return { cmdStub, written: made.written };
+  };
+
+  const first = await runOnce(null);
+  assertEquals(first.cmdStub.invocations.length, 1, "one message, not eight");
+  assert(first.cmdStub.stdinText().includes("ep3–10 not found"));
+  const state = first.written.find((w) => w.spec === "notFoundAlerts")!;
+  const keys = state.payload.keys as string[];
+  assertEquals(keys.length, 8);
+
+  const second = await runOnce(keys);
+  assertEquals(second.cmdStub.invocations.length, 0, "nothing new to say");
+  const res = second.written.find((w) => w.spec === "fetchResult")!;
+  assertEquals(res.payload.alertsDeduped, 8);
+  assertEquals(res.payload.notFound, 8, "still recorded in the run result");
+  assertEquals(
+    second.written.filter((w) => w.spec === "notFoundAlerts").length,
+    0,
+    "unchanged state is not rewritten",
+  );
+
+  const third = await runOnce(keys.filter((k) => k !== `${EDGE_ID}:10`));
+  assertEquals(third.cmdStub.invocations.length, 1);
+  assert(third.cmdStub.stdinText().includes("ep10 not found"));
 });
