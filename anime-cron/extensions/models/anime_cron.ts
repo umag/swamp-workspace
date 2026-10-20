@@ -8,8 +8,37 @@
  */
 import { z } from "npm:zod@4";
 
-/** Extract episode number from a fansub torrent title. */
+/** Extract episode number from a fansub torrent title. Null for a batch: its
+ *  "- 01 ~ 10" would otherwise read as episode 1. */
 export function parseEpisode(title: string): number | null {
+  return parseBatchRange(title) ? null : parseSingleEpisode(title);
+}
+
+/** Episodes a batch release covers. "- 01 ~ 10" and "[01-10]" give both
+ *  ends; a season pack with no range ("S02 1080p … Batch", "(Season 1)")
+ *  gives `to: null`. Null for a single-episode release.
+ *
+ *  Netflix-style shows drop a whole season at once, and Nyaa then carries
+ *  only batches — 2026-10-20 "Cyberpunk: Edgerunners 2" eps 3–10 never
+ *  matched a single-episode search. */
+export function parseBatchRange(
+  title: string,
+): { from: number; to: number | null } | null {
+  const range = title.match(/(?<!\d)(\d{1,3})\s*~\s*(\d{1,3})(?!\d)/) ??
+    title.match(/(?<![\d.])(\d{2,3})-(\d{2,3})(?![\d.])/);
+  if (range) {
+    const from = parseInt(range[1], 10);
+    const to = parseInt(range[2], 10);
+    if (to > from) return { from, to };
+  }
+  if (parseSingleEpisode(title) != null) return null;
+  if (/\bbatch\b|\bS\d{1,2}\b(?!E)|\bSeason\s+\d{1,2}\b/i.test(title)) {
+    return { from: 1, to: null };
+  }
+  return null;
+}
+
+function parseSingleEpisode(title: string): number | null {
   const m1 = title.match(/\s-\s(\d{1,3})(?:v\d+)?\s/);
   if (m1) return parseInt(m1[1], 10);
   // "S01E09": the bare E-prefix below never matches it — a digit and the E
@@ -72,6 +101,7 @@ query ($userName: String!) {
           synonyms
           episodes
           status
+          startDate { year month day }
           nextAiringEpisode { episode airingAt timeUntilAiring }
         }
       }
@@ -114,6 +144,8 @@ interface WatchEntry {
   mediaStatus: string | null;
   nextAiringEp: number | null;
   nextAiringAt: number | null;
+  /** Season premiere (unix s, UTC midnight); null when AniList lacks it. */
+  startDateSec?: number | null;
 }
 
 async function getCurrentList(userName: string): Promise<WatchEntry[]> {
@@ -128,6 +160,11 @@ async function getCurrentList(userName: string): Promise<WatchEntry[]> {
           synonyms: string[] | null;
           episodes: number | null;
           status: string | null;
+          startDate?: {
+            year: number | null;
+            month: number | null;
+            day: number | null;
+          } | null;
           nextAiringEpisode: { episode: number; airingAt: number } | null;
         };
       }>;
@@ -144,8 +181,21 @@ async function getCurrentList(userName: string): Promise<WatchEntry[]> {
       mediaStatus: e.media.status,
       nextAiringEp: e.media.nextAiringEpisode?.episode ?? null,
       nextAiringAt: e.media.nextAiringEpisode?.airingAt ?? null,
+      startDateSec: fuzzyDateSec(e.media.startDate),
     }))
   );
+}
+
+/** AniList FuzzyDate → unix seconds at UTC midnight. A missing day reads as
+ *  the 1st; a missing year or month gives null. */
+export function fuzzyDateSec(
+  d:
+    | { year: number | null; month: number | null; day: number | null }
+    | null
+    | undefined,
+): number | null {
+  if (!d?.year || !d.month) return null;
+  return Date.UTC(d.year, d.month - 1, d.day ?? 1) / 1000;
 }
 
 // ─── Nyaa helpers ─────────────────────────────────────────────────────────────
@@ -206,6 +256,8 @@ export interface NyaaHit {
   sizeBytes: number;
   /** Upload time (unix seconds) from the RSS `<pubDate>`; null if absent. */
   pubDateSec?: number | null;
+  /** Episodes a batch covers, from {@link parseBatchRange}; null otherwise. */
+  batch?: { from: number; to: number | null } | null;
 }
 
 /** Parse nyaa's human-readable `<nyaa:size>` ("1.4 GiB") into bytes.
@@ -252,6 +304,7 @@ export function parseRSS(xml: string): NyaaHit[] {
       infoHash,
       seeders,
       episode: parseEpisode(title),
+      batch: parseBatchRange(title),
       resolution: parseResolution(title),
       sizeBytes: parseNyaaSize(
         (block.match(/<nyaa:size>(.*?)<\/nyaa:size>/) ?? [])[1] ?? "",
@@ -509,15 +562,69 @@ export function pickBest(
     if (new Set(abs.map((h) => h.episode)).size === 1) matching = abs;
   }
   if (!matching.length) return null;
-  return matching.sort((a, b) => {
-    const sa = groupScore(a.title) * 10 +
-      Math.min(a.seeders, 100) * 0.1 +
-      (a.resolution === targetRes ? 5 : 0);
-    const sb = groupScore(b.title) * 10 +
-      Math.min(b.seeders, 100) * 0.1 +
-      (b.resolution === targetRes ? 5 : 0);
-    return sb - sa;
-  })[0];
+  return bestRanked(matching, targetRes);
+}
+
+/** Highest-ranked hit: preferred group, then seeders, then exact resolution. */
+function bestRanked(hits: NyaaHit[], targetRes: number): NyaaHit {
+  const score = (h: NyaaHit) =>
+    groupScore(h.title) * 10 + Math.min(h.seeders, 100) * 0.1 +
+    (h.resolution === targetRes ? 5 : 0);
+  return [...hits].sort((a, b) => score(b) - score(a))[0];
+}
+
+/** Context for {@link pickBatch}. */
+export interface BatchContext {
+  /** Season of the AniList entry, from {@link parseSeason}; null if unknown. */
+  season?: number | null;
+  /** Season premiere (unix s); null when unknown — no batch is accepted. */
+  startDateSec?: number | null;
+  /** True when AniList has no next episode, i.e. the season is fully out. */
+  finished?: boolean;
+}
+
+/** Choose a batch release covering every episode in `episodes`, for when no
+ *  single-episode release exists. Same resolution floor and ranking as
+ *  {@link pickBest}.
+ *
+ *  An earlier season's batch is the danger here — Nyaa's search for
+ *  "Cyberpunk Edgerunners" returns season-1 packs from 2022 next to the
+ *  season-2 ones. So a batch must be uploaded no more than
+ *  {@link PRE_AIR_SLACK_SECS} before the season premiered, and with no
+ *  premiere date nothing is accepted. A pack with no stated range only counts
+ *  once the season is finished: mid-season it holds whatever had aired at
+ *  upload time. */
+export function pickBatch(
+  hits: NyaaHit[],
+  episodes: number[],
+  targetRes = 1080,
+  ctx: BatchContext = {},
+): NyaaHit | null {
+  const { season = null, startDateSec = null, finished = false } = ctx;
+  if (!episodes.length || startDateSec == null) return null;
+  const lo = Math.min(...episodes);
+  const hi = Math.max(...episodes);
+  const eligible = hits.filter((h) => {
+    if (!h.batch || h.resolution < targetRes) return false;
+    if (h.pubDateSec == null) return false;
+    if (h.pubDateSec < startDateSec - PRE_AIR_SLACK_SECS) return false;
+    if (season != null) {
+      const hs = parseSeason(h.title);
+      if (hs != null && hs !== season) return false;
+    }
+    if (h.batch.from > lo) return false;
+    return h.batch.to == null ? finished : h.batch.to >= hi;
+  });
+  return eligible.length ? bestRanked(eligible, targetRes) : null;
+}
+
+/** "3–10" for a consecutive run, "3, 5, 7" otherwise. */
+export function formatEpisodes(episodes: number[]): string {
+  const s = [...episodes].sort((a, b) => a - b);
+  if (s.length > 2 && s[s.length - 1] - s[0] === s.length - 1) {
+    return `${s[0]}–${s[s.length - 1]}`;
+  }
+  return s.join(", ");
 }
 
 /** Rename a continuously numbered release to the AniList season's own
@@ -690,6 +797,45 @@ async function txSeedForever(
   });
 }
 
+/** Indexes of a batch's files to skip: every episode file outside `wanted`.
+ *  Files with no readable episode number (extras, NCOP) are kept. */
+export function unwantedBatchFiles(
+  files: Array<{ name: string }>,
+  wanted: number[],
+): number[] {
+  const out: number[] = [];
+  files.forEach((f, i) => {
+    const ep = parseEpisode(f.name.split("/").pop() ?? f.name);
+    if (ep != null && !wanted.includes(ep)) out.push(i);
+  });
+  return out;
+}
+
+/** Deselect a batch's files for episodes already on disk. Returns how many
+ *  files were deselected. */
+async function txSkipBatchFiles(
+  url: string,
+  user: string,
+  pass: string,
+  id: number,
+  wanted: number[],
+): Promise<number> {
+  const res = await txRpc(url, user, pass, "torrent-get", {
+    ids: [id],
+    fields: ["id", "files"],
+  });
+  const t = (res.arguments as {
+    torrents?: Array<{ id: number; files?: Array<{ name: string }> }>;
+  }).torrents?.find((x) => x.id === id);
+  const unwanted = unwantedBatchFiles(t?.files ?? [], wanted);
+  if (!unwanted.length) return 0;
+  await txRpc(url, user, pass, "torrent-set", {
+    ids: [id],
+    "files-unwanted": unwanted,
+  });
+  return unwanted.length;
+}
+
 // ─── SeaDex helpers ───────────────────────────────────────────────────────────
 
 interface SeadexTorrent {
@@ -765,6 +911,7 @@ const CachedEntrySchema = z.object({
   mediaStatus: z.string().nullable(),
   nextAiringEp: z.number().nullable(),
   nextAiringAt: z.number().nullable(),
+  startDateSec: z.number().nullable().optional(),
 });
 
 const WatchlistCacheSchema = z.object({
@@ -902,7 +1049,18 @@ const FetchResultSchema = z.object({
   alertsSuppressed: z.number().default(0).describe(
     "Overdue not-found alerts withheld because the airing time was inferred from a cached list rather than read from AniList",
   ),
+  alertsDeduped: z.number().default(0).describe(
+    "Not-found episodes left unannounced because an earlier run already alerted them",
+  ),
   timestamp: z.string(),
+});
+
+// Episodes a not-found alert has already gone out for, as "mediaId:ep". An
+// episode stays missing for hours — or for good, when only batches exist — and
+// the hourly run used to re-send the alert every time.
+const NotFoundAlertsSchema = z.object({
+  keys: z.array(z.string()),
+  updatedAt: z.string(),
 });
 
 const MarkWatchedSchema = z.object({
@@ -1178,7 +1336,7 @@ mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus, $scoreRaw: 
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.10.18.1",
+  version: "2026.10.20.1",
   upgrades: [
     {
       toVersion: "2026.10.15.1",
@@ -1230,6 +1388,12 @@ export const model = {
       description: "Shorter fallback Nyaa queries; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.10.20.1",
+      description:
+        "Batch fallback for whole-season drops, one deduplicated not-found alert per show; additive schema change only",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   globalArguments: GlobalArgsSchema,
   resources: {
@@ -1243,6 +1407,13 @@ export const model = {
       description:
         "Last CURRENT list successfully read from AniList, used to keep downloading while AniList is unreachable",
       schema: WatchlistCacheSchema,
+      lifetime: "infinite",
+      garbageCollection: 5,
+    },
+    notFoundAlerts: {
+      description:
+        "Episodes fetch-airing has already sent a not-found alert for, so each is announced once",
+      schema: NotFoundAlertsSchema,
       lifetime: "infinite",
       garbageCollection: 5,
     },
@@ -1450,12 +1621,38 @@ export const model = {
         // mark-watched could update AniList progress. Keyed by folder, not by
         // show name: the name key stripped season markers, which let season
         // 1's "- 01" collide with a sequel's ep 1.
-        const existingSet = new Set(
-          existingTorrents.map((t) => {
-            const ep = parseEpisode(t.name);
-            return ep != null ? episodeKey(t.downloadDir, ep) : null;
-          }).filter((k): k is string => k != null),
+        // A batch counts for every episode in its range; a pack with no range
+        // counts for the whole folder.
+        const existingSet = new Set<string>();
+        const packDirs = new Set<string>();
+        for (const t of existingTorrents) {
+          const range = parseBatchRange(t.name);
+          if (range?.to == null && range) {
+            packDirs.add(t.downloadDir.replace(/\/+$/, ""));
+            continue;
+          }
+          const from = range?.from ?? parseEpisode(t.name);
+          const to = range?.to ?? from;
+          if (from == null || to == null) continue;
+          for (let ep = from; ep <= to; ep++) {
+            existingSet.add(episodeKey(t.downloadDir, ep));
+          }
+        }
+        const have = (dir: string, ep: number) =>
+          existingSet.has(episodeKey(dir, ep)) ||
+          packDirs.has(dir.replace(/\/+$/, ""));
+
+        const alertState =
+          await context.readResource?.("notfound-alerted").catch(() => null) ??
+            null;
+        const alertedBefore = new Set(
+          (alertState as z.infer<typeof NotFoundAlertsSchema> | null)?.keys ??
+            [],
         );
+        // Keys still missing this run that were — or now are — alerted. An
+        // episode that turned up drops out, so a later regression re-alerts.
+        const alertedNow = new Set<string>();
+        let alertsDeduped = 0;
 
         for (const entry of watching) {
           const startEp = entry.progress + 1;
@@ -1556,10 +1753,13 @@ export const model = {
           // airing times are projections from the capture instant.
           const airingTimeIsReal = listSource === "anilist";
 
+          // Episodes with no single-episode release, tried as a batch below.
+          const missing: Array<{ ep: number; airedAtSec: number | null }> = [];
+
           // Queue each available episode from startEp up to lastAiredEp
           for (let ep = startEp; ep <= lastAiredEp; ep++) {
             const showKey = episodeKey(downloadDir, ep);
-            if (existingSet.has(showKey)) {
+            if (have(downloadDir, ep)) {
               duplicates++;
               outcomes.push({
                 mediaId: entry.mediaId,
@@ -1581,44 +1781,7 @@ export const model = {
               latest: ep === lastAiredEp && entry.nextAiringEp != null,
             });
             if (!pick) {
-              notFound++;
-              outcomes.push({
-                mediaId: entry.mediaId,
-                title,
-                episode: ep,
-                status: "not-found",
-              });
-
-              // Alert if episode has been aired for more than 30 minutes.
-              // For the most recently aired ep, estimate air time from nextAiringAt minus one week.
-              // For older backlogged eps, they're always overdue.
-              const GRACE_SECS = 30 * 60;
-              const isOverdue = airedAtSec == null ||
-                (nowSec - airedAtSec) > GRACE_SECS;
-              // An INFERRED airing time must never drive an alert. When the
-              // watch list came from the cache, nextAiringAt is either the
-              // capture instant (a seeded list, which knows no real schedule)
-              // or a weekly projection from one — so `airedAtSec` measures the
-              // age of the CACHE, not of the episode. Left ungated this fires
-              // for every show on every run: a seeded list produced identical
-              // "Aired 298min ago" alerts hourly across 13 shows, 298min being
-              // simply how old the seed was.
-              //
-              // The not-found outcome is still recorded either way, so the run
-              // report shows exactly what was missing; only the page is held
-              // back until AniList is answering and the times are real again.
-              if (isOverdue && !airingTimeIsReal) alertsSuppressed++;
-              if (tg && isOverdue && airingTimeIsReal) {
-                const agoMin = airedAtSec
-                  ? Math.round((nowSec - airedAtSec) / 60)
-                  : null;
-                await tg(
-                  `<b>${title} ep${ep} not found</b>\n` +
-                    `Aired ${
-                      agoMin != null ? `${agoMin}min ago` : "earlier"
-                    } — not yet on Nyaa`,
-                );
-              }
+              missing.push({ ep, airedAtSec });
               continue;
             }
 
@@ -1723,11 +1886,167 @@ export const model = {
               });
             }
           }
+
+          // No single-episode release: a whole-season drop may exist only as
+          // a batch. One torrent covers every missing episode.
+          const missingEps = missing.map((m) => m.ep);
+          const batch = pickBatch(hits, missingEps, preferredResolution, {
+            season,
+            startDateSec: entry.startDateSec ?? null,
+            finished: entry.nextAiringEp == null,
+          });
+          if (batch && args.dryRun) {
+            for (const ep of missingEps) {
+              queued++;
+              outcomes.push({
+                mediaId: entry.mediaId,
+                title,
+                episode: ep,
+                status: "queued",
+                torrentName: batch.title,
+                reason: "dry-run-batch",
+              });
+            }
+            missing.length = 0;
+          } else if (batch) {
+            let failure: string | null = null;
+            try {
+              const result = await txAdd(
+                transmissionRpcUrl,
+                transmissionUser,
+                transmissionPass,
+                batch.viewUrl,
+                downloadDir,
+              );
+              if (result.added || result.duplicate) {
+                const torrentName = result.name ?? batch.title;
+                let reason = "batch";
+                if (result.added && result.id != null) {
+                  // Episodes already on disk stay deselected in the batch.
+                  try {
+                    const n = await txSkipBatchFiles(
+                      transmissionRpcUrl,
+                      transmissionUser,
+                      transmissionPass,
+                      result.id,
+                      missingEps,
+                    );
+                    if (n) reason += `-skipped-${n}-files`;
+                  } catch {
+                    reason += "-file-select-failed";
+                  }
+                }
+                for (const ep of missingEps) {
+                  if (result.added) queued++;
+                  else duplicates++;
+                  existingSet.add(episodeKey(downloadDir, ep));
+                  outcomes.push({
+                    mediaId: entry.mediaId,
+                    title,
+                    episode: ep,
+                    status: result.added ? "queued" : "duplicate",
+                    torrentName,
+                    reason,
+                  });
+                }
+                if (result.added && tg) {
+                  await tg(
+                    `<b>${title} ep${formatEpisodes(missingEps)} queued</b>\n` +
+                      `<code>${escapeHtml(torrentName.slice(0, 120))}</code>`,
+                  );
+                }
+              } else {
+                failure = "transmission-add-failed";
+              }
+            } catch (e) {
+              failure = (e as Error).message.slice(0, 100);
+            }
+            if (failure) {
+              for (const ep of missingEps) {
+                outcomes.push({
+                  mediaId: entry.mediaId,
+                  title,
+                  episode: ep,
+                  status: "error",
+                  reason: failure,
+                });
+              }
+            }
+            missing.length = 0;
+          }
+
+          // Alert once an episode has been aired for more than 30 minutes; an
+          // episode with no known airing time (backlog, or a finished season)
+          // is always overdue. One message per show, and only for episodes
+          // not alerted on an earlier run.
+          const GRACE_SECS = 30 * 60;
+          const toAlert: typeof missing = [];
+          for (const m of missing) {
+            notFound++;
+            outcomes.push({
+              mediaId: entry.mediaId,
+              title,
+              episode: m.ep,
+              status: "not-found",
+            });
+            const key = `${entry.mediaId}:${m.ep}`;
+            if (alertedBefore.has(key)) alertedNow.add(key);
+            const isOverdue = m.airedAtSec == null ||
+              (nowSec - m.airedAtSec) > GRACE_SECS;
+            if (!isOverdue) continue;
+            // An INFERRED airing time must never drive an alert. When the
+            // watch list came from the cache, nextAiringAt is either the
+            // capture instant (a seeded list, which knows no real schedule)
+            // or a weekly projection from one — so `airedAtSec` measures the
+            // age of the CACHE, not of the episode. Left ungated this fires
+            // for every show on every run: a seeded list produced identical
+            // "Aired 298min ago" alerts hourly across 13 shows, 298min being
+            // simply how old the seed was.
+            //
+            // The not-found outcome is still recorded either way, so the run
+            // report shows exactly what was missing; only the page is held
+            // back until AniList is answering and the times are real again.
+            if (!airingTimeIsReal) {
+              alertsSuppressed++;
+              continue;
+            }
+            if (!tg) continue;
+            if (alertedBefore.has(key)) {
+              alertsDeduped++;
+              continue;
+            }
+            alertedNow.add(key);
+            toAlert.push(m);
+          }
+          if (tg && toAlert.length) {
+            const last = toAlert[toAlert.length - 1];
+            const agoMin = last.airedAtSec != null
+              ? Math.round((nowSec - last.airedAtSec) / 60)
+              : null;
+            await tg(
+              `<b>${title} ep${
+                formatEpisodes(toAlert.map((m) => m.ep))
+              } not found</b>\n` +
+                `Aired ${
+                  agoMin != null ? `${agoMin}min ago` : "earlier"
+                } — not yet on Nyaa`,
+            );
+          }
+        }
+
+        const changed = alertedNow.size !== alertedBefore.size ||
+          [...alertedNow].some((k) => !alertedBefore.has(k));
+        if (changed) {
+          await context.writeResource("notFoundAlerts", "notfound-alerted", {
+            keys: [...alertedNow].sort(),
+            updatedAt: new Date().toISOString(),
+          });
         }
 
         const handle = await context.writeResource("fetchResult", "current", {
           listSource,
           alertsSuppressed,
+          alertsDeduped,
           listAgeSeconds,
           checked: watching.length,
           skipped,

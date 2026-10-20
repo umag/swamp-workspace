@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026.10.20.1
+
+- **`fetch-airing` falls back to batch releases.** Netflix released all of
+  "Cyberpunk: Edgerunners 2" at once, and Nyaa carried it only as batches ("- 01
+  ~ 10", "S02 … Batch"), so on 2026-10-20 eps 3–10 never matched a
+  single-episode pick. When episodes have no single-episode release, one batch
+  covering all of them is added, and its files for episodes already on disk are
+  deselected. A batch must be uploaded no more than 14 days before the season
+  premiered (AniList `startDate`), which keeps season-1 packs out; with no
+  premiere date no batch is taken. A pack with no stated range only counts once
+  the season is finished.
+- **`parseEpisode` returns null for batches** (new `parseBatchRange`), so "- 01
+  ~ 10" no longer reads as episode 1. Transmission dedup counts a batch for
+  every episode in its range.
+- **Not-found alerts go out once.** One Telegram message per show lists every
+  missing episode ("ep3–10 not found"), and a new `notFoundAlerts` resource
+  records what was already announced, so the hourly run stops repeating them.
+  `fetchResult` gains `alertsDeduped`.
+
 ## 2026.10.18.1
 
 - **`fetch-airing` keeps searching until it finds the target resolution.** The
