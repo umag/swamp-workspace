@@ -1,5 +1,5 @@
 import { z } from "npm:zod@4";
-import { normalize as posixNormalize } from "jsr:@std/path@1/posix";
+import { normalize as posixNormalize } from "jsr:@std/path@1.1.4/posix";
 
 const GlobalArgsSchema = z.object({
   zipPath: z.string().describe("Path to Telegram channel export zip file"),

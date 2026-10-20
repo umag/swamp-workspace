@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026.10.21.1
+
+### Fixed
+
+- The type failed to register on 2026.10.15.1–2026.10.15.9 ("Upgrades ... are
+  not in chronological order"): repo-wide version bumps had rewritten every
+  earlier identity upgrade entry to the new version, duplicating `toVersion`.
+  The chain is restored with distinct versions and a test now pins it strictly
+  ascending. No schema change.
+
 ## 2026.10.15.9
 
 ### Changed

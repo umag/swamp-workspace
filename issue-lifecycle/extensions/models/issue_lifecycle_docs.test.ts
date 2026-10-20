@@ -174,3 +174,30 @@ Deno.test("MODEL_VERSION equals the declaration's literal version", () => {
     `MODEL_VERSION '${MODEL_VERSION}' != model.version '${model.version}'`,
   );
 });
+
+Deno.test("upgrades chain is strictly ascending and ends at model.version", () => {
+  // Swamp refuses to register a type whose upgrades are out of order, so a
+  // duplicated toVersion (2026.10.15.x: repo-wide bumps rewrote every prior
+  // identity entry) makes every method fail. Versions are zero-padded-free
+  // dotted dates, so compare numerically per component.
+  const key = (v: string) => v.split(".").map(Number);
+  const cmp = (a: string, b: string) => {
+    const [x, y] = [key(a), key(b)];
+    for (let i = 0; i < Math.max(x.length, y.length); i++) {
+      const d = (x[i] ?? 0) - (y[i] ?? 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  };
+  const versions = model.upgrades.map((u) => u.toVersion);
+  for (let i = 1; i < versions.length; i++) {
+    assert(
+      cmp(versions[i - 1], versions[i]) < 0,
+      `upgrade '${versions[i - 1]}' must be before '${versions[i]}'`,
+    );
+  }
+  assert(
+    versions.at(-1) === model.version,
+    `last toVersion '${versions.at(-1)}' != model.version '${model.version}'`,
+  );
+});

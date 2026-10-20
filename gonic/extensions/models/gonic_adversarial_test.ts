@@ -31,7 +31,7 @@
  * Deno.Command`.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { crypto as stdCrypto } from "jsr:@std/crypto@1";
+import { crypto as stdCrypto } from "jsr:@std/crypto@1.1.0";
 import { model } from "./gonic.ts";
 import pingFixture from "../../fixtures/ping.json" with { type: "json" };
 import getPodcastsFixture from "../../fixtures/get-podcasts.json" with {

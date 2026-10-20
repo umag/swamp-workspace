@@ -1,5 +1,5 @@
 import { z } from "npm:zod@4";
-import { isAbsolute, relative, resolve } from "jsr:@std/path@1";
+import { isAbsolute, relative, resolve } from "jsr:@std/path@1.1.4";
 
 // Skype message database reader
 // Reads SQLite main.db files from Skype profile directories
