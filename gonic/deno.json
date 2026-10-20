@@ -9,7 +9,7 @@
   },
   "imports": {
     "zod": "npm:zod@4",
-    "@std/crypto": "jsr:@std/crypto@1"
+    "@std/crypto": "jsr:@std/crypto@1.1.0"
   },
   "compilerOptions": { "noImplicitAny": false },
   "fmt": {

@@ -1,5 +1,5 @@
 import { z } from "npm:zod@4";
-import { isAbsolute, relative, resolve } from "jsr:@std/path@1";
+import { isAbsolute, relative, resolve } from "jsr:@std/path@1.1.4";
 
 const GlobalArgsSchema = z.object({
   vaultPath: z.string().describe("Absolute path to Obsidian vault"),

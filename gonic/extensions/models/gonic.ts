@@ -1,5 +1,5 @@
 import { z } from "npm:zod@4";
-import { crypto as stdCrypto } from "jsr:@std/crypto@1";
+import { crypto as stdCrypto } from "jsr:@std/crypto@1.1.0";
 
 const GlobalArgsSchema = z.object({
   host: z.string().describe("Gonic host (IP or hostname)"),

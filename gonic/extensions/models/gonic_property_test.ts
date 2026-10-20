@@ -20,7 +20,7 @@
  *      exactly, in order; empty stdout always yields []/0.
  */
 import { assert } from "jsr:@std/assert@1";
-import { crypto as stdCrypto } from "jsr:@std/crypto@1";
+import { crypto as stdCrypto } from "jsr:@std/crypto@1.1.0";
 import fc from "npm:fast-check@4.8.0";
 import { model } from "./gonic.ts";
 
