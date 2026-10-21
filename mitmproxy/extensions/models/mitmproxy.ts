@@ -46,9 +46,19 @@ const GlobalArgsSchema = z.object({
   webPort: z.number().int().min(1).max(65535).default(8081).describe(
     "mitmweb UI port",
   ),
-  options: z.record(
-    z.string().regex(/^[a-z_]+$/),
-    z.union([z.string(), z.number(), z.boolean()]),
+  options: z.preprocess(
+    (v, ctx) => {
+      // z.record skips an own `__proto__` key instead of validating it, so
+      // the option would vanish silently; reject it before the record sees it.
+      if (v && typeof v === "object" && Object.hasOwn(v, "__proto__")) {
+        ctx.addIssue({ code: "custom", message: "invalid option key" });
+      }
+      return v;
+    },
+    z.record(
+      z.string().regex(/^[a-z][a-z0-9_]*$/),
+      z.union([z.string(), z.number(), z.boolean()]),
+    ),
   ).default({}).describe(
     "Extra mitmproxy options passed as --set key=value " +
       "(e.g. ignore_hosts, allow_hosts, ssl_insecure, scripts)",
@@ -424,7 +434,14 @@ const FlowsArgsSchema = z.object({
 /** The `@magistr/mitmproxy` model definition. */
 export const model = {
   type: "@magistr/mitmproxy",
-  version: "2026.10.21.1",
+  version: "2026.10.21.2",
+  upgrades: [
+    {
+      toVersion: "2026.10.21.2",
+      description: "First published release; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   globalArguments: GlobalArgsSchema,
   resources: {
     installation: {
