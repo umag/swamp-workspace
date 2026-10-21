@@ -1,0 +1,45 @@
+manifestVersion: 1
+name: "@magistr/openssl"
+version: "2026.10.21.1"
+license: MIT
+description: |
+  Inspect, create and convert X.509 material with the local `openssl` CLI.
+
+  Model `@magistr/openssl`:
+  - `version`  — which openssl binary runs (OpenSSL / LibreSSL)
+  - `inspect`  — certificates from files (PEM bundles, DER) and live TLS
+    endpoints (full chain) in one run, with days-to-expiry
+  - `genkey`   — RSA / EC / Ed25519 private key, mode 0600
+  - `csr`      — certificate signing request with subject and SANs
+  - `selfsign` — self-signed TLS leaf or CA root
+  - `sign`     — sign a CSR with your CA (SANs copied from the CSR)
+  - `verify`   — chain trust, cert/key match and hostname
+  - `convert`  — PEM ↔ DER, PEM → PKCS#12, PKCS#12 → PEM
+
+  Private keys never enter swamp data; only paths and public facts are
+  recorded. Passwords reach openssl through the environment, never argv.
+  Every write is idempotent: an existing output is kept unless `overwrite`.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/openssl.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms:
+  - darwin-x86_64
+  - darwin-aarch64
+  - linux-x86_64
+  - linux-aarch64
+
+labels:
+  - openssl
+  - tls
+  - x509
+  - certificates
+  - pki

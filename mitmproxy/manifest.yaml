@@ -1,0 +1,44 @@
+manifestVersion: 1
+name: "@magistr/mitmproxy"
+version: "2026.10.21.1"
+license: MIT
+description: |
+  Install, run and inspect a local mitmproxy (HTTP/HTTPS intercepting proxy)
+  from swamp.
+
+  Model `@magistr/mitmproxy`:
+  - `install`     — `uv tool install --no-build mitmproxy` (wheels only)
+  - `status`      — version, process, listener and CA certificate state
+  - `start`       — run mitmdump or mitmweb in the background (idempotent)
+  - `stop`        — stop the background proxy (idempotent)
+  - `flows`       — summarise captured flows, filtered by a mitmproxy
+    filter expression
+  - `clear_flows` — empty the capture file
+  - `trust_ca`    — trust the mitmproxy CA in the macOS login keychain
+
+  Flows stream to `<stateDir>/flows.mitm` and are read back through
+  mitmdump's built-in HAR export, so no Python addon is required.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/mitmproxy.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+
+platforms:
+  - darwin-x86_64
+  - darwin-aarch64
+  - linux-x86_64
+  - linux-aarch64
+
+labels:
+  - mitmproxy
+  - proxy
+  - http
+  - debugging
+  - tls
