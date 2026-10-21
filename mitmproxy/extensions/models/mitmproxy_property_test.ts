@@ -28,7 +28,7 @@ const G = model.globalArguments;
 
 const dirArb = fc.stringMatching(/^\/[a-z0-9_/-]{0,30}[a-z0-9]$/);
 const optionsArb = fc.dictionary(
-  fc.stringMatching(/^[a-z_]{1,16}$/),
+  fc.stringMatching(/^[a-z][a-z0-9_]{0,15}$/),
   fc.oneof(fc.string(), fc.integer(), fc.boolean()),
   { maxKeys: 6 },
 );
@@ -61,7 +61,7 @@ Deno.test("(a) startArgs maps options and flags faithfully", () => {
         );
         // Every --set is followed by exactly one key=value element.
         a.forEach((x, i) => {
-          if (x === "--set") assert(/^[a-z_]+=/.test(a[i + 1]));
+          if (x === "--set") assert(/^[a-z][a-z0-9_]*=/.test(a[i + 1]));
         });
       },
     ),

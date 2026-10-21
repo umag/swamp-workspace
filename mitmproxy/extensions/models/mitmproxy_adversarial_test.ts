@@ -362,3 +362,11 @@ Deno.test("flows: the filter is one argv element, never split", () =>
       assertEquals(f.writes[0].data.filter, filter);
     },
   ));
+
+Deno.test("options: prototype keys are rejected, digit keys accepted", () => {
+  const G = model.globalArguments;
+  // `__proto__` would be swallowed by the record and silently dropped.
+  assert(!G.safeParse(JSON.parse('{"options":{"__proto__":"x"}}')).success);
+  assert(!G.safeParse({ options: { _private: "x" } }).success);
+  assert(G.safeParse({ options: { http2: false } }).success);
+});
