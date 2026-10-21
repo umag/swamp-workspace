@@ -1,0 +1,51 @@
+# HAND-MAINTAINED. New extension (2026-10-21): fully compliant on arrival —
+# every suite drives model.methods.<m>.execute() against stubbed
+# Deno.Command / Deno.connect / Deno.kill and a fake context (no real
+# mitmproxy, uv, ps or security binary is executed); the property suite
+# covers the pure helpers (startArgs, resolvePaths, summarizeHar,
+# webUrlFromLog).
+schemaVersion: 1
+extension: mitmproxy
+tests:
+  contract-fixture:
+    state: present
+    files:
+      - extensions/models/mitmproxy_test.ts
+  methods:
+    state: present
+    files:
+      - extensions/models/mitmproxy_methods_test.ts
+  adversarial:
+    state: present
+    files:
+      - extensions/models/mitmproxy_adversarial_test.ts
+  coverage:
+    state: present
+    files:
+      - extensions/models/mitmproxy_coverage_test.ts
+  property-invariant-flow:
+    state: present
+    files:
+      - extensions/models/mitmproxy_property_test.ts
+watch:
+  state: na
+  justification: wraps a locally installed CLI, not a remote API — the only upstream contract is mitmdump's argv and HAR output, pinned by the tests; mitmproxy upgrades go through the install method's explicit version pin
+canary:
+  state: na
+  justification: local-process extension — a canary would need mitmproxy installed and a free port on the CI runner; there is no network API to probe
+docs:
+  readme:
+    state: present
+    files:
+      - README.md
+  changelog:
+    state: present
+    files:
+      - CHANGELOG.md
+  skill:
+    state: na
+    justification: mitmproxy bundles no Claude skill — seven self-describing methods, documented in README
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"
