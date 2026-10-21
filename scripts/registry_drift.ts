@@ -213,6 +213,14 @@ export async function discover(root: string): Promise<Declared[]> {
     } catch {
       continue;
     }
+    // `<dir>/.no-publish` keeps a package out of the publish set
+    // (release_notes_gate), so it can never be on the registry — not drift.
+    try {
+      await Deno.stat(join(root, entry.name, ".no-publish"));
+      continue;
+    } catch {
+      // no marker: a publishable package
+    }
     const parsed = parseManifest(text);
     if (parsed === null) {
       throw new Error(

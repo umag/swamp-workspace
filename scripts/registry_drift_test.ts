@@ -2,6 +2,7 @@ import { assertEquals, assertThrows } from "jsr:@std/assert@1";
 import {
   classify,
   type Declared,
+  discover,
   drifted,
   type DriftRow,
   formatReport,
@@ -187,4 +188,21 @@ Deno.test("formatReport omits the drift block entirely when all in sync", () => 
 Deno.test("parseArgs defaults root to the working directory", () => {
   assertEquals(parseArgs([]), { root: "." });
   assertEquals(parseArgs(["--root", "/repo"]), { root: "/repo" });
+});
+
+Deno.test("discover skips a package carrying <dir>/.no-publish (mutation: drop the marker check -> reddens; an opted-out package is never published, so it would report absent on every master run)", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    for (const dir of ["pkga", "pkgb"]) {
+      await Deno.mkdir(`${root}/${dir}`);
+      await Deno.writeTextFile(
+        `${root}/${dir}/manifest.yaml`,
+        `name: "@magistr/${dir}"\nversion: "2026.10.19.1"\n`,
+      );
+    }
+    await Deno.writeTextFile(`${root}/pkgb/.no-publish`, "");
+    assertEquals((await discover(root)).map((d) => d.dir), ["pkga"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });
