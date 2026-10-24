@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026.10.25.3
+
+### Added
+
+- `vm.consoleCapture` (#262): a bounded, read-only capture of a domain's serial
+  console, for diagnosing guests that hang before they reach the network.
+  - Arguments: `name`, optional `device` (`--devname`, for domains with more
+    than one console), required `timeoutSeconds` (1-300), and `force` (default
+    true: passes `--force`, which disconnects an existing console session).
+  - SSH mode runs
+    `env SHELL=/bin/sh timeout -k 5 <n> script -qec '<virsh console …>' /dev/null`
+    on the hypervisor (needs coreutils `timeout` and util-linux `script` there),
+    with a Deno-side kill timer on the ssh process as a backstop. Local mode
+    runs `script` on the swamp host (`-qec` on Linux, `script -q /dev/null …` on
+    macOS/BSD) under a Deno-side kill timer (SIGTERM at the deadline, SIGKILL 3
+    s later).
+  - Read-only: the process's stdin is held open and never written, so no input
+    reaches the guest console.
+  - Terminal control sequences are stripped. The last 256 KiB of text is kept
+    (`truncated` flags a cut).
+  - Stored in the new `console` resource (instance `<name>` or
+    `<name>-<device>`) with `ended: deadline | exited`, `bytes`, and `text`.
+    `text` is marked sensitive (`.meta({ sensitive: true })`), so swamp stores
+    it in a vault. It is never logged. A virsh/ssh failure throws with only the
+    `error:` lines and stderr, never console content.
+  - Domain names may not start with `-` or contain control characters. Device
+    aliases must match `[A-Za-z0-9][A-Za-z0-9_.-]*`. In SSH mode the inner
+    command is shell-quoted for both shells it passes through.
+
 ## 2026.10.25.2
 
 ### Added

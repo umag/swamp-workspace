@@ -67,7 +67,7 @@ const DeviceListSchema = z.object({
  */
 export const model = {
   type: "@bad-at-naming/libvirt/host",
-  version: "2026.10.25.2",
+  version: "2026.10.25.3",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -135,6 +135,12 @@ export const model = {
       toVersion: "2026.10.25.2",
       description:
         "Adds optional hostKeyPolicy (default accept-new) and knownHosts global arguments for strict/pinned SSH host keys; existing definitions unchanged",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.3",
+      description:
+        "Version bump — vm.consoleCapture added; no schema change in this model",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

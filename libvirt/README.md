@@ -8,12 +8,12 @@ URI**.
 
 ## Models
 
-| Model                            | What it manages                                                                                                                              |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@bad-at-naming/libvirt/vm`      | Domain lifecycle (start/stop/define/undefine/snapshot), CPU/memory tuning, disk/NIC hotplug, block/net/CPU/memory stats, guest-agent queries |
-| `@bad-at-naming/libvirt/network` | Virtual network lifecycle (list/get/define/start/stop/autostart) and DHCP lease inspection                                                   |
-| `@bad-at-naming/libvirt/storage` | Storage pool and volume management (create/build/resize/clone/delete)                                                                        |
-| `@bad-at-naming/libvirt/host`    | Hypervisor host info, capabilities, SMBIOS sysinfo, node CPU/memory stats, device list, static routes                                        |
+| Model                            | What it manages                                                                                                                                                      |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@bad-at-naming/libvirt/vm`      | Domain lifecycle (start/stop/define/undefine/snapshot), CPU/memory tuning, disk/NIC hotplug, block/net/CPU/memory stats, guest-agent queries, serial console capture |
+| `@bad-at-naming/libvirt/network` | Virtual network lifecycle (list/get/define/start/stop/autostart) and DHCP lease inspection                                                                           |
+| `@bad-at-naming/libvirt/storage` | Storage pool and volume management (create/build/resize/clone/delete)                                                                                                |
+| `@bad-at-naming/libvirt/host`    | Hypervisor host info, capabilities, SMBIOS sysinfo, node CPU/memory stats, device list, static routes                                                                |
 
 ## Connection modes
 
@@ -74,6 +74,34 @@ Several methods are safe to re-run:
 
 Idempotency is detected by matching anchored substrings in `virsh` stderr (see
 `lib/connection.ts` `IDEMPOTENT_ERRORS`); unrelated failures still raise.
+
+## Serial console capture
+
+`vm.consoleCapture` captures a domain's serial console for a bounded time. It is
+useful when a guest hangs before it reaches the network (bad kernel cmdline,
+cloud-init failure, missing disk, firmware prompt), where
+`guestInfo`/`interfaceAddresses` have nothing to show:
+
+```bash
+swamp model method run vms consoleCapture --input name=web --input timeoutSeconds=30
+# a domain with several consoles
+swamp model method run vms consoleCapture --input name=web --input device=serial1 --input timeoutSeconds=10
+```
+
+- `timeoutSeconds` is required (1-300). The capture always ends by then. In SSH
+  mode it is bounded on the hypervisor by `timeout`, with a local kill timer as
+  a backstop. In local mode the local kill timer bounds it.
+- It is read-only. No input is sent to the console. `force` (default `true`)
+  passes `virsh console --force`, which disconnects an existing console session
+  such as an operator's. Set `force: false` to fail instead.
+- `virsh console` needs a TTY, so it runs under `script`. SSH mode needs
+  `timeout` (coreutils) and `script` (util-linux) on the hypervisor. Local mode
+  needs `script` on the swamp host (Linux, macOS or BSD; not Windows).
+- Terminal control sequences are stripped, and the last 256 KiB of text is kept.
+  The result is the `console` resource (`ended` is `deadline` or `exited`, plus
+  `bytes`, `truncated` and `text`). Boot output can include credentials or
+  tokens, so `text` is a **sensitive** field: swamp stores it in a vault, and
+  the method never logs it.
 
 ## Strict host-key pinning (SSH mode)
 

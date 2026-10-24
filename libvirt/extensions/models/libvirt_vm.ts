@@ -9,7 +9,16 @@ import {
   SshHostKeyArgs,
   virsh,
   virshTry,
+  withHostKeys,
 } from "./lib/connection.ts";
+import {
+  buildConsoleInvocation,
+  CONSOLE_MAX_BYTES,
+  ConsoleCaptureArgs,
+  consoleDeadlineMs,
+  runBounded,
+  stripTerminalControl,
+} from "./lib/console.ts";
 import {
   parseKV,
   parseTableOutput,
@@ -98,6 +107,21 @@ const ActionResultSchema = z.object({
   timestamp: z.string(),
 });
 
+const ConsoleCaptureSchema = z.object({
+  name: z.string(),
+  device: z.string(),
+  host: z.string(),
+  timeoutSeconds: z.number(),
+  // "deadline": the capture ran until timeoutSeconds (the normal case);
+  // "exited": the console closed earlier (e.g. the domain shut down).
+  ended: z.enum(["deadline", "exited"]),
+  bytes: z.number(),
+  truncated: z.boolean(),
+  // Boot output can carry credentials or tokens: stored via the vault.
+  text: z.string().meta({ sensitive: true }),
+  timestamp: z.string(),
+});
+
 // Guest-agent info types virsh accepts; user input is validated against this
 // allowlist so it cannot inject an arbitrary `--flag` into the argv.
 const GUEST_INFO_TYPES = [
@@ -161,7 +185,8 @@ async function reportState(
  * suspends, resumes; defines (idempotent — redefines an existing domain),
  * undefines, renames, saves/restores; tunes vCPUs/memory; attaches/detaches
  * disks and interfaces; changes media; reports block/interface/memory/CPU
- * stats; manages snapshots; and queries the guest agent. start/stop/forceStop/
+ * stats; manages snapshots; captures the serial console (bounded, read-only);
+ * and queries the guest agent. start/stop/forceStop/
  * undefine/detachDisk are idempotent. Connects over SSH when `host` is set,
  * otherwise runs `virsh` locally against `uri` (default qemu:///system).
  *
@@ -172,7 +197,7 @@ async function reportState(
  */
 export const model = {
   type: "@bad-at-naming/libvirt/vm",
-  version: "2026.10.25.2",
+  version: "2026.10.25.3",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -242,6 +267,12 @@ export const model = {
         "Adds optional hostKeyPolicy (default accept-new) and knownHosts global arguments for strict/pinned SSH host keys; existing definitions unchanged",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.10.25.3",
+      description:
+        "Adds vm.consoleCapture and a new console resource (text field sensitive); additive, no globalArguments change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   globalArguments: GlobalArgsSchema,
   resources: {
@@ -268,6 +299,13 @@ export const model = {
       schema: StatsSchema,
       lifetime: "1h",
       garbageCollection: 5,
+    },
+    console: {
+      description:
+        "Serial console text captured by consoleCapture (text is sensitive)",
+      schema: ConsoleCaptureSchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
     },
   },
   methods: {
@@ -1309,6 +1347,70 @@ export const model = {
             action: "snapshotDumpxml",
             message: result.stdout,
             state: "",
+            timestamp: new Date().toISOString(),
+          },
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    // ==================== Serial Console ====================
+
+    consoleCapture: {
+      description:
+        `Capture a domain's serial console for a bounded time, read-only (sends no input), and store the text with terminal control sequences stripped. Runs \`virsh console [--devname] [--force]\` under \`script\` for a pty; SSH mode needs \`timeout\` (coreutils) and \`script\` (util-linux) on the hypervisor. The captured text is stored as a sensitive field. Keeps the last ${CONSOLE_MAX_BYTES} bytes.`,
+      arguments: ConsoleCaptureArgs,
+      execute: async (args, context) => {
+        const conn = context.globalArgs;
+        const res = await withHostKeys(conn, (kh) => {
+          const { command, args: argv } = buildConsoleInvocation(conn, args, {
+            // @ts-ignore Deno global is available at bundle/runtime.
+            os: Deno.build.os,
+            knownHostsFile: kh,
+          });
+          return runBounded(command, argv, {
+            deadlineMs: consoleDeadlineMs(conn, args.timeoutSeconds),
+            killGraceMs: 3_000,
+            maxBytes: CONSOLE_MAX_BYTES,
+          });
+        });
+        // SSH: 124/137 = the remote `timeout` ended the capture (normal).
+        const deadline = res.timedOut ||
+          (!!conn.host && (res.code === 124 || res.code === 137));
+        if (!deadline && res.code !== 0) {
+          // Report virsh/ssh errors only — never console content, which may
+          // hold secrets: `error:` lines from the pty stream plus stderr
+          // (ssh / timeout / script diagnostics, not the console).
+          const text = stripTerminalControl(res.stdout);
+          const errorLines = text.split("\n").filter((l) =>
+            l.startsWith("error:")
+          );
+          const detail = [...errorLines, stripTerminalControl(res.stderr)]
+            .join("\n").trim().slice(-500);
+          throw new Error(
+            `virsh console ${args.name} failed (exit ${res.code}): ${detail}`,
+          );
+        }
+        const text = stripTerminalControl(res.stdout);
+        const bytes = new TextEncoder().encode(text).length;
+        const ended = deadline ? "deadline" : "exited";
+        context.logger.info(
+          `Captured ${bytes} bytes from ${args.name} console${
+            args.device ? ` (${args.device})` : ""
+          }; ended=${ended}${res.truncated ? ", truncated to the tail" : ""}`,
+        );
+        const handle = await context.writeResource(
+          "console",
+          args.device ? `${args.name}-${args.device}` : args.name,
+          {
+            name: args.name,
+            device: args.device ?? "",
+            host: connLabel(conn),
+            timeoutSeconds: args.timeoutSeconds,
+            ended,
+            bytes,
+            truncated: res.truncated,
+            text,
             timestamp: new Date().toISOString(),
           },
         );
