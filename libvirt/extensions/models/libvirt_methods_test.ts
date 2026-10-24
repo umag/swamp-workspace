@@ -1842,22 +1842,191 @@ Deno.test("storage.volResize: default omits --shrink", async () => {
   });
 });
 
-Deno.test("storage.volClone: builds newName/--pool argv", async () => {
+// storage.volClone is idempotent by TARGET name (issue #261): a pre-check
+// `vol-info <newName> --pool <pool>` short-circuits to a no-op success when
+// the target already exists, so a re-run never clones over it; a lost race
+// (target appears between the pre-check and the clone) is caught by the
+// `alreadyExists` needle on vol-clone's stderr. Format/capacity are read
+// best-effort from `vol-dumpxml` of the target in both paths.
+
+const VOL_NOT_FOUND = fail(
+  "error: failed to get vol 'disk-copy.qcow2'\n" +
+    "error: Storage volume not found: no storage vol with matching path 'disk-copy.qcow2'",
+);
+const CLONE_XML = `<volume type='file'>
+  <name>disk-copy.qcow2</name>
+  <capacity unit='bytes'>21474836480</capacity>
+  <allocation unit='bytes'>200704</allocation>
+  <target>
+    <path>/var/lib/libvirt/images/disk-copy.qcow2</path>
+    <format type='qcow2'/>
+  </target>
+</volume>`;
+const CLONE_ARGS = {
+  name: "disk.qcow2",
+  newName: "disk-copy.qcow2",
+  pool: "default",
+};
+
+Deno.test("storage.volClone: absent target is pre-checked, cloned, then described from vol-dumpxml", async () => {
+  const { ctx, written } = makeCtx(LOCAL);
+  await withCommandStub([
+    on(["vol-info", "disk-copy.qcow2", "--pool", "default"], VOL_NOT_FOUND),
+    on(
+      ["vol-clone", "disk.qcow2", "disk-copy.qcow2", "--pool", "default"],
+      ok("Vol disk-copy.qcow2 cloned from disk.qcow2"),
+    ),
+    on(["vol-dumpxml", "disk-copy.qcow2", "--pool", "default"], ok(CLONE_XML)),
+  ], async (calls) => {
+    await run(storageModel, "volClone", CLONE_ARGS, ctx);
+    assertEquals(calls.map((c) => logicalArgv(c)[0]), [
+      "vol-info",
+      "vol-clone",
+      "vol-dumpxml",
+    ]);
+  });
+  const rec = written.find((w) => w.name === "disk-copy.qcow2");
+  assert(rec);
+  assertEquals(rec.spec, "actionResult");
+  assertEquals(rec.payload.resource, "default/disk-copy.qcow2");
+  assertEquals(rec.payload.action, "volClone");
+  assertEquals(rec.payload.idempotent, false);
+  assertEquals(rec.payload.format, "qcow2");
+  assertEquals(rec.payload.capacityBytes, 21474836480);
+  assertStringIncludes(rec.payload.message as string, "cloned");
+});
+
+Deno.test("storage.volClone: an existing target is a no-op success and vol-clone is NEVER issued", async () => {
   const { ctx, written } = makeCtx(LOCAL);
   await withCommandStub([
     on(
-      ["vol-clone", "disk.qcow2", "disk-copy.qcow2", "--pool", "default"],
-      ok("Vol disk-copy.qcow2 cloned"),
+      ["vol-info", "disk-copy.qcow2", "--pool", "default"],
+      ok("Name:           disk-copy.qcow2\nType:           file"),
     ),
+    on(["vol-dumpxml", "disk-copy.qcow2", "--pool", "default"], ok(CLONE_XML)),
+  ], async (calls) => {
+    await run(storageModel, "volClone", CLONE_ARGS, ctx);
+    assert(
+      !calls.some((c) => logicalArgv(c)[0] === "vol-clone"),
+      "must never clone over an existing target",
+    );
+  });
+  const rec = written.find((w) => w.name === "disk-copy.qcow2");
+  assert(rec);
+  assertEquals(
+    rec.payload.message,
+    "default/disk-copy.qcow2 already exists (idempotent)",
+  );
+  assertEquals(rec.payload.idempotent, true);
+  assertEquals(rec.payload.format, "qcow2");
+  assertEquals(rec.payload.capacityBytes, 21474836480);
+});
+
+Deno.test("storage.volClone: a target that appears between pre-check and clone (already exists) is idempotent", async () => {
+  const { ctx, written } = makeCtx(LOCAL);
+  await withCommandStub([
+    on(["vol-info", "disk-copy.qcow2", "--pool", "default"], VOL_NOT_FOUND),
+    on(
+      ["vol-clone", "disk.qcow2", "disk-copy.qcow2", "--pool", "default"],
+      fail(
+        "error: Failed to clone vol from disk.qcow2\n" +
+          "error: storage volume already exists: storage volume name 'disk-copy.qcow2' already in use.",
+      ),
+    ),
+    on(["vol-dumpxml", "disk-copy.qcow2", "--pool", "default"], ok(CLONE_XML)),
+  ], async () => {
+    await run(storageModel, "volClone", CLONE_ARGS, ctx);
+  });
+  const rec = written.find((w) => w.name === "disk-copy.qcow2");
+  assert(rec);
+  assertEquals(rec.payload.idempotent, true);
+  assertStringIncludes(rec.payload.message as string, "(idempotent)");
+});
+
+Deno.test("storage.volClone: a genuine clone failure throws and writes nothing", async () => {
+  const { ctx, written } = makeCtx(LOCAL);
+  await withCommandStub([
+    on(["vol-info", "disk-copy.qcow2", "--pool", "default"], VOL_NOT_FOUND),
+    on(
+      ["vol-clone", "disk.qcow2", "disk-copy.qcow2", "--pool", "default"],
+      fail("error: Storage volume not found: no storage vol 'disk.qcow2'"),
+    ),
+  ], async () => {
+    const err = await assertRejects(
+      () => run(storageModel, "volClone", CLONE_ARGS, ctx),
+      Error,
+    );
+    assertStringIncludes(err.message, "vol-clone failed");
+  });
+  assertEquals(written.length, 0);
+});
+
+Deno.test("storage.volClone: a failing vol-dumpxml is non-fatal — warns and omits format/capacity", async () => {
+  const { ctx, written, warn } = makeCtx(LOCAL);
+  await withCommandStub([
+    on(["vol-info", "disk-copy.qcow2", "--pool", "default"], VOL_NOT_FOUND),
+    on(
+      ["vol-clone", "disk.qcow2", "disk-copy.qcow2", "--pool", "default"],
+      ok("Vol disk-copy.qcow2 cloned from disk.qcow2"),
+    ),
+    on(
+      ["vol-dumpxml", "disk-copy.qcow2", "--pool", "default"],
+      fail("error: internal error"),
+    ),
+  ], async () => {
+    await run(storageModel, "volClone", CLONE_ARGS, ctx);
+  });
+  const rec = written.find((w) => w.name === "disk-copy.qcow2");
+  assert(rec);
+  assertEquals(rec.payload.format, undefined);
+  assertEquals(rec.payload.capacityBytes, undefined);
+  assert(warn.some((m) => m.includes("vol-dumpxml")));
+});
+
+Deno.test("storage.volClone: zfs zvol target (block volume, no <format>) records capacity only", async () => {
+  const { ctx, written } = makeCtx(LOCAL);
+  const zvolXml = `<volume type='block'>
+  <name>node-1</name>
+  <capacity unit='bytes'>10737418240</capacity>
+  <target>
+    <path>/dev/zvol/tank/vms/node-1</path>
+  </target>
+</volume>`;
+  await withCommandStub([
+    on(["vol-info", "node-1", "--pool", "tank"], ok("Type: block")),
+    on(["vol-dumpxml", "node-1", "--pool", "tank"], ok(zvolXml)),
   ], async (calls) => {
     await run(storageModel, "volClone", {
-      name: "disk.qcow2",
-      newName: "disk-copy.qcow2",
-      pool: "default",
+      name: "golden",
+      newName: "node-1",
+      pool: "tank",
     }, ctx);
-    assertEquals(logicalArgv(calls[0])[0], "vol-clone");
+    assert(!calls.some((c) => logicalArgv(c)[0] === "vol-clone"));
   });
-  assert(written.find((w) => w.name === "disk-copy.qcow2"));
+  const rec = written.find((w) => w.name === "node-1");
+  assert(rec);
+  assertEquals(rec.payload.idempotent, true);
+  assertEquals(rec.payload.format, undefined);
+  assertEquals(rec.payload.capacityBytes, 10737418240);
+});
+
+Deno.test("storage.volClone SSH mode: pre-check and clone are quoted-remote virsh calls", async () => {
+  const { ctx } = makeCtx(SSH);
+  await withCommandStub([
+    on(["vol-info", "disk-copy.qcow2", "--pool", "default"], VOL_NOT_FOUND),
+    on(
+      ["vol-clone", "disk.qcow2", "disk-copy.qcow2", "--pool", "default"],
+      ok("Vol disk-copy.qcow2 cloned from disk.qcow2"),
+    ),
+    on(["vol-dumpxml", "disk-copy.qcow2", "--pool", "default"], ok(CLONE_XML)),
+  ], async (calls) => {
+    await run(storageModel, "volClone", CLONE_ARGS, ctx);
+    assert(calls.every((c) => c.command === "ssh"));
+    assertEquals(
+      calls[1].args[calls[1].args.length - 1],
+      "'virsh' 'vol-clone' 'disk.qcow2' 'disk-copy.qcow2' '--pool' 'default'",
+    );
+  });
 });
 
 // ===========================================================================

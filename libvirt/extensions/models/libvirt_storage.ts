@@ -6,7 +6,12 @@ import {
   virsh,
   virshTry,
 } from "./lib/connection.ts";
-import { parseKV, parsePoolList, parseVolList } from "./lib/parse.ts";
+import {
+  parseKV,
+  parsePoolList,
+  parseVolList,
+  parseXmlVolume,
+} from "./lib/parse.ts";
 
 const GlobalArgsSchema = z.object({
   host: z.string().optional().describe(
@@ -85,6 +90,12 @@ const ActionResultSchema = z.object({
   action: z.string(),
   message: z.string(),
   timestamp: z.string(),
+  // Set by volClone only (optional, so every other action's record is
+  // unchanged): whether the call was a no-op because the target already
+  // existed, and the target's format/byte capacity read from vol-dumpxml.
+  idempotent: z.boolean().optional(),
+  format: z.string().optional(),
+  capacityBytes: z.number().optional(),
 });
 
 /**
@@ -92,8 +103,8 @@ const ActionResultSchema = z.object({
  *
  * Lists/describes pools and volumes, and creates, builds, starts, stops,
  * defines, undefines, autostarts, refreshes, resizes, clones, and deletes
- * them. Pool start / pool define / volume create are idempotent (an
- * already-active pool or already-existing object is reported as success).
+ * them. Pool start / pool define / volume create / volume clone are idempotent
+ * (an already-active pool or already-existing object is reported as success).
  * Connects over SSH when `host` is set, otherwise runs `virsh` locally
  * against `uri` (default qemu:///system).
  *
@@ -104,7 +115,7 @@ const ActionResultSchema = z.object({
  */
 export const model = {
   type: "@bad-at-naming/libvirt/storage",
-  version: "2026.10.15.9",
+  version: "2026.10.25.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -160,6 +171,12 @@ export const model = {
     {
       toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.1",
+      description:
+        "storage.volClone idempotent by target name; actionResult gains optional idempotent/format/capacityBytes fields (additive, existing records valid as-is)",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -630,7 +647,8 @@ export const model = {
     },
 
     volClone: {
-      description: "Clone a storage volume",
+      description:
+        "Clone a storage volume. Idempotent by target name: succeeds as a no-op if newName already exists in the pool (never clones over it). Records the target's format and byte capacity from vol-dumpxml.",
       arguments: z.object({
         name: z.string().describe("Source volume name"),
         pool: z.string().describe("Pool name"),
@@ -638,21 +656,71 @@ export const model = {
       }),
       execute: async (args, context) => {
         const conn = context.globalArgs;
-        const result = await virsh(conn, [
-          "vol-clone",
-          args.name,
+        const target = `${args.pool}/${args.newName}`;
+        const existsMessage = `${target} already exists (idempotent)`;
+        // Pre-check the TARGET: an existing volume is the desired state, so
+        // a re-run is a no-op and vol-clone is never issued. A failing
+        // vol-info (not found, or anything else) falls through to the clone,
+        // whose own error decides — virsh refuses to clone onto an existing
+        // name, so nothing can be overwritten either way.
+        const info = await virshTry(conn, [
+          "vol-info",
           args.newName,
           "--pool",
           args.pool,
         ]);
-        context.logger.info(result.stdout.trim());
+        let message: string;
+        let idempotent: boolean;
+        if (info.code === 0) {
+          message = existsMessage;
+          idempotent = true;
+        } else {
+          const res = await virshTry(conn, [
+            "vol-clone",
+            args.name,
+            args.newName,
+            "--pool",
+            args.pool,
+          ]);
+          if (res.code === 0) {
+            message = res.stdout.trim();
+            idempotent = false;
+          } else if (isIdempotent(res, IDEMPOTENT_ERRORS.alreadyExists)) {
+            // Lost a race: the target appeared after the pre-check.
+            message = existsMessage;
+            idempotent = true;
+          } else {
+            throw new Error(
+              `virsh vol-clone failed (exit ${res.code}): ${
+                (res.stderr || res.stdout).slice(-500)
+              }`,
+            );
+          }
+        }
+        context.logger.info(message);
+        // Best-effort description of the target so a caller can confirm
+        // what is there (especially on the no-op path); never fatal.
+        const xml = await virshTry(conn, [
+          "vol-dumpxml",
+          args.newName,
+          "--pool",
+          args.pool,
+        ]);
+        const described = xml.code === 0 ? parseXmlVolume(xml.stdout) : {};
+        if (xml.code !== 0) {
+          context.logger.warn(
+            `vol-dumpxml ${target} failed (exit ${xml.code}); format/capacity not recorded`,
+          );
+        }
         const handle = await context.writeResource(
           "actionResult",
           args.newName,
           {
-            resource: `${args.pool}/${args.newName}`,
+            resource: target,
             action: "volClone",
-            message: result.stdout.trim(),
+            message,
+            idempotent,
+            ...described,
             timestamp: new Date().toISOString(),
           },
         );

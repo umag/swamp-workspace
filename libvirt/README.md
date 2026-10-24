@@ -66,6 +66,11 @@ Several methods are safe to re-run:
 - `vm.undefine` / `vm.detachDisk` — succeed if the target is already gone.
 - `storage.poolStart` / `storage.poolDefine` / `storage.volCreate` — succeed if
   the pool/volume already exists or is already active.
+- `storage.volClone` — a no-op if the target `newName` already exists in the
+  pool (checked with `vol-info` first; it never clones over an existing volume —
+  `volDelete` it first for a fresh copy). The `actionResult` records
+  `idempotent` plus the target's `format` and `capacityBytes` from
+  `vol-dumpxml`. This covers zfs pools (zvol golden images) too.
 
 Idempotency is detected by matching anchored substrings in `virsh` stderr (see
 `lib/connection.ts` `IDEMPOTENT_ERRORS`); unrelated failures still raise.

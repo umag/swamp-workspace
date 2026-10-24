@@ -15,6 +15,7 @@ import {
   parseXmlDisks,
   parseXmlGraphics,
   parseXmlInterfaces,
+  parseXmlVolume,
 } from "./lib/parse.ts";
 
 Deno.test("parseKV splits on the first colon and trims", () => {
@@ -150,4 +151,41 @@ Deno.test("parseXmlGraphics extracts type/port/listen", () => {
   assertEquals(parseXmlGraphics(xml), [
     { type: "vnc", port: "5900", listen: "0.0.0.0" },
   ]);
+});
+
+Deno.test("parseXmlVolume reads the target format and byte capacity, not the backing store's format", () => {
+  const xml = `<volume type='file'>
+  <name>node-1.qcow2</name>
+  <capacity unit='bytes'>21474836480</capacity>
+  <allocation unit='bytes'>200704</allocation>
+  <target>
+    <path>/var/lib/libvirt/images/node-1.qcow2</path>
+    <format type='qcow2'/>
+  </target>
+  <backingStore>
+    <path>/var/lib/libvirt/images/golden.raw</path>
+    <format type='raw'/>
+  </backingStore>
+</volume>`;
+  assertEquals(parseXmlVolume(xml), {
+    format: "qcow2",
+    capacityBytes: 21474836480,
+  });
+});
+
+Deno.test("parseXmlVolume: a zvol/block volume without <format> yields capacity only", () => {
+  const xml = `<volume type='block'>
+  <name>node-1</name>
+  <capacity unit='bytes'>10737418240</capacity>
+  <target><path>/dev/zvol/tank/vms/node-1</path></target>
+</volume>`;
+  assertEquals(parseXmlVolume(xml), { capacityBytes: 10737418240 });
+});
+
+Deno.test("parseXmlVolume: a non-byte capacity unit or garbage input yields nothing", () => {
+  assertEquals(
+    parseXmlVolume("<volume><capacity unit='GiB'>20</capacity></volume>"),
+    {},
+  );
+  assertEquals(parseXmlVolume("not xml"), {});
 });
