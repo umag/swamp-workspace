@@ -19,9 +19,9 @@ import { z } from "npm:zod@4";
 import { Buffer } from "node:buffer";
 import { DatabaseSync } from "node:sqlite";
 import { ImapFlow } from "npm:imapflow@2.0.5";
-import nodemailer from "npm:nodemailer@10.0.10";
-import MailComposer from "npm:nodemailer@10.0.10/lib/mail-composer/index.js";
-import PostalMime from "npm:postal-mime@3.0.0";
+import nodemailer from "npm:nodemailer@10.2.1";
+import MailComposer from "npm:nodemailer@10.2.1/lib/mail-composer/index.js";
+import PostalMime from "npm:postal-mime@4.1.4";
 import {
   type Addr,
   appleMailboxUrl,
@@ -627,7 +627,7 @@ const sendResultSchema = z.object({
 /** Yandex Mail model: IMAP read/organise + SMTP send. */
 export const model = {
   type: "@magistr/yandex-mail",
-  version: "2026.10.15.9",
+  version: "2026.10.25.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -678,6 +678,12 @@ export const model = {
     {
       toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.1",
+      description:
+        "Dependency security update (postal-mime 4.1.4, nodemailer 10.2.1); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
