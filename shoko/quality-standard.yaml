@@ -48,6 +48,6 @@ docs:
     state: na
     justification: shoko bundles no Claude skill — a bare REST v3 read/action wrapper, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

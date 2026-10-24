@@ -104,7 +104,7 @@ docs:
     state: na
     justification: livejournal-import bundles no Claude skill — a blog-export importer, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: >-
     Grade A — the model upgrade chain is repaired and stays continuous

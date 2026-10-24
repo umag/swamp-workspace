@@ -52,7 +52,7 @@ docs:
     state: na
     justification: seanime bundles no Claude skill — a bare REST/AniList wrapper model, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: >-
     Grade A (14/14, 100%) — the broken model upgrade chain that made `swamp

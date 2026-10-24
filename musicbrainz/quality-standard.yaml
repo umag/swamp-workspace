@@ -67,6 +67,6 @@ docs:
     state: na
     justification: musicbrainz bundles no Claude skill — a search/lookup/browse + scraping model, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

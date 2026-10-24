@@ -52,6 +52,6 @@ docs:
     state: na
     justification: fc-task-server bundles no Claude skill — a bare host↔guest control-plane deployer, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

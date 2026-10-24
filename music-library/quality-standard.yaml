@@ -74,6 +74,6 @@ docs:
     state: na
     justification: music-library bundles no Claude skill — a gonic-index catalog model, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

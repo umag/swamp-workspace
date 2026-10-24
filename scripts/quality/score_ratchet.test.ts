@@ -9,6 +9,7 @@ import { join } from "jsr:@std/path@1";
 import {
   evaluateRatchet,
   parseScoreJson,
+  rewriteRatchetBaseline,
   runRatchet,
 } from "./score_ratchet.ts";
 
@@ -399,5 +400,142 @@ Deno.test("score_ratchet.ts's CLI exits 0 when an extension has no quality-stand
     assertEquals(summary.reports[0].outcome.status, "skipped");
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+// --- rebaseline: record a new baseline after a rubric bump ----------------
+
+const BLOCK_FORM = `# hand-maintained comment that must survive
+schemaVersion: 1
+extension: widget
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 100
+  label: "Grade A"
+`;
+
+Deno.test("rewriteRatchetBaseline rewrites the block-form ratchet and keeps every other line byte-for-byte", () => {
+  const out = rewriteRatchetBaseline(BLOCK_FORM, {
+    rubricVersion: 4,
+    percentage: 92,
+  });
+  assertEquals(
+    out,
+    BLOCK_FORM.replace("rubricVersion: 3", "rubricVersion: 4").replace(
+      "baselinePercentage: 100",
+      "baselinePercentage: 92",
+    ),
+  );
+});
+
+Deno.test("rewriteRatchetBaseline rewrites the flow-form ratchet", () => {
+  const out = rewriteRatchetBaseline(WIDGET_QUALITY_YAML, {
+    rubricVersion: 4,
+    percentage: 84,
+  });
+  assert(
+    out.includes(
+      'ratchet: { rubricVersion: 4, baselinePercentage: 84, label: "Grade A" }',
+    ),
+  );
+});
+
+Deno.test("rewriteRatchetBaseline only touches keys inside the ratchet section", () => {
+  const text = `notes:
+  rubricVersion: 1
+  baselinePercentage: 50
+ratchet:
+  rubricVersion: 3
+  baselinePercentage: 0
+`;
+  const out = rewriteRatchetBaseline(text, {
+    rubricVersion: 4,
+    percentage: 77,
+  });
+  assertEquals(
+    out,
+    `notes:
+  rubricVersion: 1
+  baselinePercentage: 50
+ratchet:
+  rubricVersion: 4
+  baselinePercentage: 77
+`,
+  );
+});
+
+Deno.test("rewriteRatchetBaseline throws when there is no ratchet section to rewrite", () => {
+  let threw = false;
+  try {
+    rewriteRatchetBaseline("schemaVersion: 1\n", {
+      rubricVersion: 4,
+      percentage: 90,
+    });
+  } catch {
+    threw = true;
+  }
+  assert(threw, "a file without a ratchet block must not be silently skipped");
+});
+
+Deno.test("runRatchet carries the live score on every scored report", async () => {
+  const root = await Deno.makeTempDir({ prefix: "quality-ratchet-score-" });
+  try {
+    await makeWidgetWithQualityYaml(root);
+    const reports = await runRatchet(
+      root,
+      () => Promise.resolve('{"rubricVersion":4,"percentage":92}'),
+    );
+    assertEquals(reports[0].outcome.status, "rebaseline");
+    assertEquals(reports[0].score, { rubricVersion: 4, percentage: 92 });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("score_ratchet.ts --rebaseline writes the live score into quality-standard.yaml for rebaseline outcomes only", async () => {
+  const root = await Deno.makeTempDir({ prefix: "quality-ratchet-rebase-" });
+  const binDir = await Deno.makeTempDir({ prefix: "quality-ratchet-bin-" });
+  try {
+    const shimPath = join(binDir, "swamp");
+    await Deno.writeTextFile(
+      shimPath,
+      `#!/bin/sh\necho '{"rubricVersion":4,"percentage":92}'\n`,
+    );
+    await Deno.chmod(shimPath, 0o755);
+    await makeWidgetWithQualityYaml(root);
+
+    const scriptUrl = new URL("./score_ratchet.ts", import.meta.url);
+    const cmd = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-read",
+        "--allow-write",
+        "--allow-run=swamp",
+        "--allow-env",
+        scriptUrl.pathname,
+        "--rebaseline",
+      ],
+      env: {
+        QUALITY_REPO_ROOT: root,
+        PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { code, stdout, stderr } = await cmd.output();
+    assertEquals(code, 0, new TextDecoder().decode(stderr));
+    assert(new TextDecoder().decode(stdout).includes("widget: rebaselined"));
+    const written = await Deno.readTextFile(
+      join(root, "widget", "quality-standard.yaml"),
+    );
+    assert(
+      written.includes(
+        'ratchet: { rubricVersion: 4, baselinePercentage: 92, label: "Grade A" }',
+      ),
+      written,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(binDir, { recursive: true });
   }
 });

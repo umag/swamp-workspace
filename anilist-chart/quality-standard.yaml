@@ -117,7 +117,7 @@ docs:
     state: na
     justification: anilist-chart bundles no Claude skill — a chart-rendering/publish pipeline, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: >-
     100% (14/14, rubricVersion 3) — Grade A. Five suites present, docs

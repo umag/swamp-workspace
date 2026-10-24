@@ -40,6 +40,6 @@ docs:
     state: na
     justification: thin wrapper over the restic CLI; README covers usage
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "100% (client-earnable, allPassed, rubricV3) — measured via `swamp extension quality restic/manifest.yaml --json` at 2026.09.29.1; repository-verified is provisional until publish"

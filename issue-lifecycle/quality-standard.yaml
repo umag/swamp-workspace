@@ -84,6 +84,6 @@ docs:
     files:
       - .claude/skills/issue-lifecycle/SKILL.md
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

@@ -56,6 +56,6 @@ docs:
     state: na
     justification: kaiten bundles no Claude skill — a read-only REST wrapper, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
-  baselinePercentage: 100
+  rubricVersion: 4
+  baselinePercentage: 92
   label: "Grade A"
