@@ -10,8 +10,8 @@
  * as a file with no tests.
  */
 import { Buffer } from "node:buffer";
-import MailComposer from "npm:nodemailer@10.0.10/lib/mail-composer/index.js";
-import PostalMime from "npm:postal-mime@3.0.0";
+import MailComposer from "npm:nodemailer@10.2.1/lib/mail-composer/index.js";
+import PostalMime from "npm:postal-mime@4.1.4";
 import { type ImapOptions, transport } from "./yandex_mail.ts";
 
 /** The app password every test uses; asserted never to leak. */

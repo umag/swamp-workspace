@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026.10.25.1
+
+### Security
+
+- Update `postal-mime` 3.0.0 → 4.1.4 for GHSA-f2hq-32vh-53cc (HIGH): decoding a
+  header with many RFC 2047 encoded words took quadratic CPU time, so one large
+  message could stall the event loop.
+- Update `nodemailer` 10.0.10 → 10.2.1 for GHSA-85x2-q946-cp5h,
+  GHSA-8c8m-p3m8-cjg8 and GHSA-m943-m63m-w62w (MEDIUM): address-parser bugs that
+  could turn quoted text or comments into recipients.
+
+No schema change.
+
 ## 2026.10.15.9
 
 ### Changed

@@ -6,7 +6,9 @@
     "npm:fast-check@4.8.0": "4.8.0",
     "npm:imapflow@2.0.5": "2.0.5",
     "npm:nodemailer@10.0.10": "10.0.10",
+    "npm:nodemailer@10.2.1": "10.2.1",
     "npm:postal-mime@3.0.0": "3.0.0",
+    "npm:postal-mime@4.1.4": "4.1.4",
     "npm:zod@4": "4.5.4"
   },
   "jsr": {
@@ -84,6 +86,9 @@
     "nodemailer@10.0.10": {
       "integrity": "sha512-He9XskOFms62SyAKkLu8CcGcYHAo+BSHSsORI8s4PJH8qZgZY4L4lDfvyN0twvmbpyG+eGrxpyBlskj9d9rJ8A=="
     },
+    "nodemailer@10.2.1": {
+      "integrity": "sha512-ZrDNsPFoDMwefNs7sJwrYiEJ/CG4ClJWDZv05iNJsEBWa8GRDry1QJHTJxsuTAY9eDDKjX4k+q3SxslXJOao7w=="
+    },
     "on-exit-leak-free@2.1.2": {
       "integrity": "sha512-0eJJY6hXLGf1udHwfNftBqH+g73EU4B504nZeKpz1sYRKafAghwxEJunB2O7rDZkL4PGfsMVnTXZ2EjibbqcsA=="
     },
@@ -115,6 +120,9 @@
     },
     "postal-mime@3.0.0": {
       "integrity": "sha512-Z4a9ar2Bv3YpK3IXag+Yda30k7bMZfpRuUGyqtHnZ2pjHG8Bl62EhZIk4n1dzv00gfzP9g+94e9kd8+XmjVWLA=="
+    },
+    "postal-mime@4.1.4": {
+      "integrity": "sha512-+6Qsn7Q2TSLMScfN4X2VQIclPRKgDAtKhytQex3fVSV/+HgVaawtsQGzKYDQLQIBR7b4Vfg+88WRGvuF/kwLSw=="
     },
     "process-warning@5.1.0": {
       "integrity": "sha512-jQSaVHsPgtyw60e1rQ/A+/ArPEj/S8pS/vFnyGa/gYFXrKk/6RuDkoqVDQ5NI5MmS01698ltlAk0NoDBNLujRw=="
