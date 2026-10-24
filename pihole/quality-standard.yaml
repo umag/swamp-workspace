@@ -58,5 +58,5 @@ docs:
     justification: this extension bundles no Claude skill
 ratchet:
   rubricVersion: 4
-  baselinePercentage: 92
+  baselinePercentage: 100
   label: "Grade A"

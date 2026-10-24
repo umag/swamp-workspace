@@ -28,7 +28,7 @@ Store the API token in a vault first:
 
 ```bash
 swamp vault create local_encryption my-vault --json
-swamp vault put my-vault TA_TOKEN=your-api-token-here -f --json
+swamp vault put my-vault TA_TOKEN  # prompts for the value (hidden input)
 ```
 
 ## Usage

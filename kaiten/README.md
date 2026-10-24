@@ -34,7 +34,7 @@ model's `globalArguments`.
 ```bash
 # Store the token in a local-encryption vault
 swamp vault create local_encryption kaiten
-swamp vault put kaiten API_TOKEN=<your-token> -f
+swamp vault put kaiten API_TOKEN  # prompts for the value (hidden input)
 
 # Create the model instance
 swamp model @magistr/kaiten create kaiten

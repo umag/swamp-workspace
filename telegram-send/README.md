@@ -41,8 +41,8 @@ then store the token in a vault:
 # 1. create a vault (one-time)
 swamp vault create local_encryption telegram
 
-# 2. store the token (prefix the line with a space so it stays out of history)
- swamp vault put telegram BOT_TOKEN='123456:ABCdef...' -f
+# 2. store the token (it is prompted for, so it never lands in shell history)
+swamp vault put telegram BOT_TOKEN  # prompts for the value (hidden input)
 ```
 
 Get your numeric `chat_id` by messaging [@userinfobot](https://t.me/userinfobot)
