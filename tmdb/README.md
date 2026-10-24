@@ -13,7 +13,7 @@ Access Token" or the v3 "API Key" works), store it in a vault, and point the
 instance at it:
 
 ```bash
-swamp vault put tmdb TMDB_API_TOKEN=<token>
+swamp vault put tmdb TMDB_API_TOKEN  # prompts for the value (hidden input)
 swamp model create @magistr/tmdb tmdb \
   --global-arg 'apiToken=${{ vault.get(tmdb, TMDB_API_TOKEN) }}'
 ```

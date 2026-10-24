@@ -50,7 +50,7 @@ Settings → Browser Integration** and delete that file.
 ## Use
 
 ```bash
-swamp vault put keepass GITHUB_TOKEN=ghp_xxx
+swamp vault put keepass GITHUB_TOKEN  # prompts for the value (hidden input)
 swamp vault get keepass GITHUB_TOKEN
 ```
 

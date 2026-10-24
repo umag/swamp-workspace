@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.10.25.1
+
+### Changed
+
+- README: `swamp vault put` now prompts for secrets (hidden input) instead of
+  taking them on the command line, where shell history keeps them.
+
 ## 2026.10.15.9
 
 ### Changed

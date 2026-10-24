@@ -48,7 +48,7 @@ methods: {}
 ```bash
 # Store the API key in a vault
 swamp vault create local_encryption dawarich-secrets --json
-swamp vault put dawarich-secrets API_KEY=your-api-key -f --json
+swamp vault put dawarich-secrets API_KEY  # prompts for the value (hidden input)
 
 # Create and configure the model instance
 swamp model create @magistr/dawarich my-dawarich --json

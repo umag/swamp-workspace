@@ -25,8 +25,8 @@ Go to <https://anilist.co/settings/developer> → create a token. Required for
 
 ```bash
 swamp vault create local-encryption anime-secrets
-swamp vault set anime-secrets ANILIST_TOKEN   <your-token>
-swamp vault set anime-secrets TX_PASSWORD     <transmission-password>
+swamp vault put anime-secrets ANILIST_TOKEN  # prompts for the value (hidden input)
+swamp vault put anime-secrets TX_PASSWORD  # prompts for the value (hidden input)
 ```
 
 ### 3. Create the model instance

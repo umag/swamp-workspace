@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.10.25.1
+
+### Changed
+
+- Document every exported symbol (JSDoc), so the generated API docs cover the
+  whole module.
+
 ## 2026.10.15.9
 
 ### Changed

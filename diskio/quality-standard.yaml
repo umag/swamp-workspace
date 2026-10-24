@@ -46,5 +46,5 @@ docs:
       FUSE indirection that the methods exist to expose
 ratchet:
   rubricVersion: 4
-  baselinePercentage: 92
+  baselinePercentage: 100
   label: unscored

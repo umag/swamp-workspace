@@ -33,7 +33,7 @@ Create the vault and store the token:
 
 ```bash
 swamp vault create local_encryption home-assistant --json
-swamp vault put home-assistant HA_TOKEN=eyJhbGci... -f --json
+swamp vault put home-assistant HA_TOKEN  # prompts for the value (hidden input)
 ```
 
 ## Methods

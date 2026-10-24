@@ -839,7 +839,7 @@ function resourceContent(r: unknown): Record<string, unknown> | null {
  * The Movie Database. */
 export const model = {
   type: "@magistr/tmdb",
-  version: "2026.10.15.9",
+  version: "2026.10.25.1",
   upgrades: [
     {
       toVersion: "2026.10.15.1",
@@ -884,6 +884,12 @@ export const model = {
     {
       toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.1",
+      description:
+        "Docs: vault secrets are prompted for instead of typed on the command line; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

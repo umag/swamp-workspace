@@ -38,12 +38,15 @@ import { sshExecRaw } from "./lib/ssh.ts";
  * host's answers without spawning ssh.
  * ---------------------------------------------------------------------- */
 
+/** Runs one shell command on `host` as `user` over SSH and returns its exit
+ * code and captured output. Injected so tests can replace the transport. */
 export type SshRunner = (
   host: string,
   user: string,
   command: string,
 ) => Promise<{ code: number; stdout: string; stderr: string }>;
 
+/** The real SSH transport used outside tests. */
 export const defaultRunner: SshRunner = sshExecRaw;
 
 const GlobalArgsSchema = z.object({
@@ -286,6 +289,9 @@ function classify(
   return "other";
 }
 
+/** Map every block device on the host: physical disks, partitions, md/dm
+ * layers and array slots, each with its mountpoint and the physical disk it
+ * sits on. */
 export async function probeDeviceMap(
   run: SshRunner,
   host: string,
@@ -446,6 +452,10 @@ function commName(cmd: string): string {
   return (first.replace(/^\[|\]$/g, "").split("/").pop() ?? "").trim();
 }
 
+/** Sample per-process disk I/O over `seconds` and return the `topN` readers
+ * in MB/s, attributed to their container where there is one. Processes named
+ * in `proxies` (FUSE layers such as shfs) are kept apart because they read on
+ * behalf of others. Throws if `seconds` is below 1. */
 export async function probeReaders(
   run: SshRunner,
   host: string,
@@ -547,6 +557,8 @@ function dedupeConsumers<
   });
 }
 
+/** List up to `limit` processes holding regular files open under `path`,
+ * so a FUSE-held file can be matched back to the container that opened it. */
 export async function probeOpenFiles(
   run: SshRunner,
   host: string,
@@ -753,8 +765,11 @@ const AttributeArgsSchema = z.object({
   limit: z.number().min(0).default(20).describe("How many open files to keep"),
 });
 
+/** Arguments of the `readers` method. */
 export type ReadersArgs = z.infer<typeof ReadersArgsSchema>;
+/** Arguments of the `open-files` method. */
 export type OpenFilesArgs = z.infer<typeof OpenFilesArgsSchema>;
+/** Arguments of the `attribute` method. */
 export type AttributeArgs = z.infer<typeof AttributeArgsSchema>;
 
 function proxyList(context: MethodContext): string[] {
@@ -766,6 +781,8 @@ function proxyList(context: MethodContext): string[] {
 
 /* ------------------------------------------------------------------- impls */
 
+/** `device-map` method: probe the device map and write it as the
+ * `deviceMap` resource. */
 export async function deviceMapImpl(run: SshRunner, context: MethodContext) {
   const { sshHost, sshUser } = context.globalArgs;
   const map = await probeDeviceMap(run, sshHost, sshUser ?? "root");
@@ -780,6 +797,8 @@ export async function deviceMapImpl(run: SshRunner, context: MethodContext) {
   return { dataHandles: [handle] };
 }
 
+/** `readers` method: sample the top disk readers and write them as the
+ * `readers` resource. */
 export async function readersImpl(
   run: SshRunner,
   args: ReadersArgs,
@@ -801,6 +820,8 @@ export async function readersImpl(
   return { dataHandles: [handle] };
 }
 
+/** `open-files` method: list processes holding files open under a path and
+ * write them as an `openFiles` resource. */
 export async function openFilesImpl(
   run: SshRunner,
   args: OpenFilesArgs,
@@ -823,6 +844,9 @@ export async function openFilesImpl(
   return { dataHandles: [handle] };
 }
 
+/** `attribute` method: resolve a disk, array slot or mountpoint to its
+ * physical spindle, report which processes and containers are reading it,
+ * and write the result with a plain-language summary as `attribution`. */
 export async function attributeImpl(
   run: SshRunner,
   args: AttributeArgs,
@@ -908,9 +932,11 @@ export async function attributeImpl(
 
 /* ------------------------------------------------------------------- model */
 
+/** The `@magistr/diskio` swamp model: read-only answers to "what is reading
+ * this disk?" on a Linux host over SSH. */
 export const model = {
   type: "@magistr/diskio",
-  version: "2026.10.15.9",
+  version: "2026.10.25.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -966,6 +992,11 @@ export const model = {
     {
       toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.1",
+      description: "Docs: JSDoc on every exported symbol; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

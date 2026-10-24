@@ -68,7 +68,7 @@ async function apiRequest(
  */
 export const model = {
   type: "@magistr/dawarich",
-  version: "2026.10.24.1",
+  version: "2026.10.25.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -130,6 +130,12 @@ export const model = {
       toVersion: "2026.10.24.1",
       description:
         "Add recalculate method + recalculation resource; no change to existing data",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.1",
+      description:
+        "Docs: vault secrets are prompted for instead of typed on the command line; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

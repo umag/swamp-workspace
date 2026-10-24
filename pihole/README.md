@@ -42,7 +42,7 @@ gate still reflects reality while the audit artifact is always written.
 ```bash
 # 1. Store the web password in a vault (never inline it)
 swamp vault create local_encryption my-vault --json
-swamp vault put my-vault PIHOLE_PASSWORD=your-pihole-password -f --json
+swamp vault put my-vault PIHOLE_PASSWORD  # prompts for the value (hidden input)
 
 # 2. Create and configure the model instance
 swamp model create @magistr/pihole my-dns --json
