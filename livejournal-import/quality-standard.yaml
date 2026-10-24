@@ -65,10 +65,15 @@ tests:
 watch:
   # Owned by Phase B (ext-quality-release-watch-soak): the executable
   # contract is scripts/lib/watch_schema.ts, consumed by the generic
-  # .github/workflows/release-watch.yml. Two versioned upstream deps pinned
-  # in livejournal_import.ts: cheerio (HTML parsing) and domhandler (its
-  # node-type imports) — the LiveJournal export format itself has no release
-  # channel.
+  # .github/workflows/release-watch.yml. One independently versioned upstream
+  # dep: cheerio (HTML parsing). livejournal_import.ts also pins domhandler,
+  # but only for type-only node imports (AnyNode/Element/Text) that must
+  # describe the objects cheerio builds at runtime, so that pin FOLLOWS
+  # cheerio's declared domhandler range (enforced by
+  # livejournal_import_test.ts against deno.lock) and is deliberately not
+  # watched against domhandler's own `latest` — doing so filed #227 and pulled
+  # in a second, mismatched domhandler major. The LiveJournal export format
+  # itself has no release channel.
   state: present
   issueLabel: livejournal-import-release-watch
   sources:
@@ -79,14 +84,6 @@ watch:
         from: source
         file: extensions/models/livejournal_import.ts
         pattern: 'npm:cheerio@([0-9][^/"]*)'
-        required: true
-    - kind: npm
-      package: domhandler
-      channel: latest
-      pin:
-        from: source
-        file: extensions/models/livejournal_import.ts
-        pattern: 'npm:domhandler@([0-9][^/"]*)'
         required: true
 canary:
   state: backlog
