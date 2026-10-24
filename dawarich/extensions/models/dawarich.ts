@@ -68,7 +68,7 @@ async function apiRequest(
  */
 export const model = {
   type: "@magistr/dawarich",
-  version: "2026.10.15.9",
+  version: "2026.10.24.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -124,6 +124,12 @@ export const model = {
     {
       toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.24.1",
+      description:
+        "Add recalculate method + recalculation resource; no change to existing data",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -213,6 +219,17 @@ export const model = {
       schema: z.object({
         photos: z.array(z.unknown()),
         count: z.number(),
+        timestamp: z.string(),
+      }),
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
+    "recalculation": {
+      description: "Outcome of a tracks/stats/digests recalculation request",
+      schema: z.object({
+        status: z.enum(["queued", "already_in_progress"]),
+        year: z.number().nullable(),
+        message: z.string(),
         timestamp: z.string(),
       }),
       lifetime: "infinite",
@@ -474,6 +491,50 @@ export const model = {
           count: photos.length,
           timestamp: new Date().toISOString(),
         });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    recalculate: {
+      description:
+        "Queue a recalculation of tracks, stats and digests (Settings → Recalculate tracks & stats), optionally for one year",
+      arguments: z.object({
+        year: z.number().int().optional().describe(
+          "Only recalculate this year (default: all data)",
+        ),
+      }),
+      execute: async (args, context) => {
+        const { baseUrl, apiKey } = context.globalArgs;
+        const year = args.year ?? null;
+        const body: Record<string, unknown> = {};
+        if (year !== null) body.year = year;
+
+        let status: "queued" | "already_in_progress" = "queued";
+        let message: string;
+        try {
+          const result = await apiRequest(
+            baseUrl,
+            apiKey,
+            "/api/v1/recalculations",
+            "POST",
+            body,
+          );
+          const data = result.data as { message?: unknown } | null;
+          message = typeof data?.message === "string" ? data.message : "";
+        } catch (err) {
+          // 409 = a recalculation for this user is already queued or running;
+          // the requested outcome already holds, so record it instead of failing.
+          const text = err instanceof Error ? err.message : String(err);
+          if (!text.startsWith("Dawarich API error 409")) throw err;
+          status = "already_in_progress";
+          message = text;
+        }
+
+        const handle = await context.writeResource(
+          "recalculation",
+          year === null ? "all" : `${year}`,
+          { status, year, message, timestamp: new Date().toISOString() },
+        );
         return { dataHandles: [handle] };
       },
     },

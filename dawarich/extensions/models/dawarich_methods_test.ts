@@ -1,5 +1,5 @@
 /**
- * Method-level tests for @magistr/dawarich — every one of the 10 methods,
+ * Method-level tests for @magistr/dawarich — every one of the 11 methods,
  * happy path + error path, driven through
  * `model.methods.<m>.arguments.parse()` + `.execute()` against a stubbed
  * `globalThis.fetch` and a fake context.
@@ -591,6 +591,58 @@ Deno.test("photos: error path — non-ok HTTP status throws", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// recalculate
+// ---------------------------------------------------------------------------
+
+Deno.test("recalculate: happy path — POSTs /api/v1/recalculations and records the queued message", async () => {
+  const { ctx, written } = makeCtx();
+  const fixture = { message: "Recalculation queued" };
+  await withOneResponse(fixture, 202, async (calls) => {
+    await run("recalculate", {}, ctx);
+    assertEquals(new URL(calls[0].url).pathname, "/api/v1/recalculations");
+    assertEquals(calls[0].method, "POST");
+    assertEquals(await requestBody(calls[0]), {});
+  });
+  const res = written.find((w) => w.spec === "recalculation");
+  assert(res);
+  assertEquals(res.name, "all");
+  assertEquals(res.payload.status, "queued");
+  assertEquals(res.payload.message, "Recalculation queued");
+  assertEquals(res.payload.year, null);
+});
+
+Deno.test("recalculate: year scopes the body and the resource name", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse({ message: "q" }, 202, async (calls) => {
+    await run("recalculate", { year: 2025 }, ctx);
+    assertEquals((await requestBody(calls[0])).year, 2025);
+  });
+  const res = written.find((w) => w.spec === "recalculation")!;
+  assertEquals(res.name, "2025");
+  assertEquals(res.payload.year, 2025);
+});
+
+Deno.test("recalculate: 409 (already running) is recorded as already_in_progress, not thrown", async () => {
+  const { ctx, written } = makeCtx();
+  await withOneResponse(
+    { error: "Recalculation already in progress" },
+    409,
+    async () => {
+      await run("recalculate", {}, ctx);
+    },
+  );
+  const res = written.find((w) => w.spec === "recalculation")!;
+  assertEquals(res.payload.status, "already_in_progress");
+});
+
+Deno.test("recalculate: other non-ok statuses throw", async () => {
+  const { ctx } = makeCtx();
+  await withOneResponse({ error: "Invalid year" }, 400, async () => {
+    await assertRejects(() => run("recalculate", { year: 1999 }, ctx), Error);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // api_key transport boundary — shared across every method
 // ---------------------------------------------------------------------------
 
@@ -607,12 +659,13 @@ const ALL_METHOD_SCENARIOS: Array<
   ["update-settings", { timezone: "UTC" }, {}],
   ["digests", { year: 2026 }, {}],
   ["photos", {}, []],
+  ["recalculate", {}, { message: "queued" }],
 ];
 
-Deno.test("the api_key rides in an Authorization: Bearer header (never the request URL query) for all 10 methods", async () => {
+Deno.test("the api_key rides in an Authorization: Bearer header (never the request URL query) for all 11 methods", async () => {
   assertEquals(
     ALL_METHOD_SCENARIOS.length,
-    10,
+    11,
     "sanity: every method must be covered by the transport-boundary sweep",
   );
   for (const [name, args, response] of ALL_METHOD_SCENARIOS) {
@@ -634,7 +687,7 @@ Deno.test("the api_key rides in an Authorization: Bearer header (never the reque
   }
 });
 
-Deno.test("the api_key never appears in any written resource across all 10 methods", async () => {
+Deno.test("the api_key never appears in any written resource across all 11 methods", async () => {
   for (const [name, args, response] of ALL_METHOD_SCENARIOS) {
     const { ctx, written, logs } = makeCtx();
     await withOneResponse(response, 200, async () => {
