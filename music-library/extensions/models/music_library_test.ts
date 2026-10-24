@@ -18,6 +18,7 @@ import {
   fixEncoding,
   hash8,
   isPlaceholder,
+  normalizeEncodingName,
   normDupeKey,
   parseAlbumDir,
   parseBpmLine,
@@ -155,6 +156,56 @@ Deno.test("fixEncoding: ASCII-heavy string with cp1251 words is recovered", () =
   const r = fixEncoding("Îïåðà Îðôåé ( L'Orfeo ) (John Eliott Gardiner)");
   assert(r.fixed, `expected fix, got ${JSON.stringify(r)}`);
   assertEquals(r.value, "Опера Орфей ( L'Orfeo ) (John Eliott Gardiner)");
+});
+
+Deno.test("fixEncoding: koi8-r mojibake is not mis-recovered as windows-1251 (jschardet 4)", () => {
+  // jschardet 4 reports these koi8-r bytes as windows-1251; decoding them
+  // that way yields case-shifted garbage ("пРЕТБ пТЖЕК") that still clears
+  // the letter-frequency gate, so the charset is chosen by scoring every
+  // allowed Cyrillic decode instead of trusting the detector's member.
+  const koi8 = (t: string) => {
+    const d = new TextDecoder("koi8-r");
+    const m = new Map<string, number>();
+    for (let b = 0x80; b < 0x100; b++) {
+      m.set(d.decode(new Uint8Array([b])), b);
+    }
+    return [...t].map((c) =>
+      String.fromCharCode(c.charCodeAt(0) < 0x80 ? c.charCodeAt(0) : m.get(c)!)
+    ).join("");
+  };
+  for (const t of ["Опера Орфей", "Машина времени", "Ночные Снайперы"]) {
+    const r = fixEncoding(koi8(t));
+    assertEquals(r.value, t);
+    assertEquals(r.encoding, "koi8-r");
+  }
+});
+
+Deno.test("normalizeEncodingName: jschardet 4 names map onto the allowlist vocabulary", () => {
+  assertEquals(normalizeEncodingName("CP932"), "shift_jis");
+  assertEquals(normalizeEncodingName("GB18030"), "gbk");
+  assertEquals(normalizeEncodingName("IBM866"), "ibm866");
+  assertEquals(normalizeEncodingName("Windows-1251"), "windows-1251");
+  assertEquals(normalizeEncodingName(null), "");
+});
+
+Deno.test("fixEncoding: Shift_JIS mojibake is recovered at jschardet 4 confidence", () => {
+  // jschardet 4 scores this ~0.28 as "CP932" — below jschardet 3's 0.75
+  // bar and under a different name; the CJK-script gate replaces both.
+  const t = "椎名林檎 - 丸の内サディスティック";
+  const d = new TextDecoder("shift_jis");
+  const m = new Map<string, number[]>();
+  for (let a = 0x81; a < 0xf0; a++) {
+    for (let b = 0x40; b < 0xfd; b++) {
+      const c = d.decode(new Uint8Array([a, b]));
+      if ([...c].length === 1 && !m.has(c)) m.set(c, [a, b]);
+    }
+  }
+  const bytes = [...t].flatMap((c) =>
+    c.charCodeAt(0) < 0x80 ? [c.charCodeAt(0)] : m.get(c)!
+  );
+  const r = fixEncoding(String.fromCharCode(...bytes));
+  assertEquals(r.value, t);
+  assertEquals(r.encoding, "shift_jis");
 });
 
 // --- isPlaceholder ---

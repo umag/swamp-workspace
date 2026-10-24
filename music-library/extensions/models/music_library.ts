@@ -19,7 +19,7 @@
 // "NN - Title", disc subdirs, …).
 
 import { z } from "npm:zod@4";
-import jschardet from "npm:jschardet@3.1.4";
+import jschardet from "npm:jschardet@4.0.0";
 import { buildRunning, type RunTrack } from "../lib/running.ts";
 import {
   type Candidate,
@@ -330,20 +330,73 @@ function cyrillicScore(decoded: string): number {
   return common.length / cyr.length;
 }
 
+// jschardet 4 (a port of chardet 7) reports some charsets under chardet's
+// names where jschardet 3 used the WHATWG-ish ones. The `legacyEncodings`
+// allowlist and DECODER_LABELS keep the jschardet 3 vocabulary, so map the
+// new spellings back onto it.
+const DETECTED_ALIASES: Record<string, string> = {
+  "cp932": "shift_jis",
+  "shift_jis_2004": "shift_jis",
+  "gb18030": "gbk",
+  "cp949": "euc-kr",
+  "cp874": "tis-620",
+  "cp866": "ibm866",
+  "mac-cyrillic": "maccyrillic",
+  "x-mac-cyrillic": "maccyrillic",
+  "cp1251": "windows-1251",
+};
+
+/** Lower-cased detector name, mapped onto the jschardet 3 vocabulary. */
+export function normalizeEncodingName(name: string | null): string {
+  const n = (name || "").toLowerCase();
+  return DETECTED_ALIASES[n] ?? n;
+}
+
+// Multi-byte East Asian charsets. jschardet 4's confidence scale is far lower
+// than jschardet 3's (a correct Shift_JIS guess on a short tag scores ~0.3,
+// not ~0.9), so these are accepted at a lower confidence but only when the
+// re-decoded text is dominated by CJK script — the structural gate that
+// replaces jschardet 3's high-confidence threshold.
+const CJK_MULTI_BYTE = new Set([
+  "shift_jis",
+  "sjis",
+  "gbk",
+  "gb2312",
+  "big5",
+  "euc-jp",
+  "euc-kr",
+]);
+
+function cjkShare(decoded: string): number {
+  const nonAscii = [...decoded].filter((c) => c.charCodeAt(0) > 0x7f);
+  if (nonAscii.length === 0) return 0;
+  const cjk = nonAscii.filter((c) =>
+    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]/u
+      .test(c)
+  );
+  return cjk.length / nonAscii.length;
+}
+
+/**
+ * Share of Cyrillic words with a lower-case letter directly followed by an
+ * upper-case one ("пРЕТБ") — the signature of decoding koi8-r bytes as
+ * windows-1251 or vice versa. Real titles are Title Case or ALL CAPS.
+ */
+function caseShiftedShare(decoded: string): number {
+  const words = decoded.split(/[^\p{Script=Cyrillic}]+/u).filter((w) =>
+    w.length >= 2
+  );
+  if (words.length === 0) return 0;
+  const shifted = words.filter((w) => /\p{Ll}\p{Lu}/u.test(w));
+  return shifted.length / words.length;
+}
+
 function detectCandidates(
   s: string,
 ): { encoding: string | null; confidence: number }[] {
-  const jd = jschardet as unknown as {
-    detect: (x: string) => { encoding: string | null; confidence: number };
-    detectAll?: (
-      x: string,
-    ) => { encoding: string | null; confidence: number }[];
-  };
-  if (typeof jd.detectAll === "function") {
-    const all = jd.detectAll(s);
-    if (Array.isArray(all) && all.length > 0) return all;
-  }
-  return [jd.detect(s)];
+  const all = jschardet.detectAll(s);
+  if (Array.isArray(all) && all.length > 0) return all;
+  return [jschardet.detect(s)];
 }
 
 /**
@@ -393,15 +446,20 @@ export function fixEncoding(
     .join(" ");
   if (!highWords) return { value: s, fixed: false, encoding: null };
   for (const det of detectCandidates(highWords)) {
-    const detName = (det.encoding || "").toLowerCase();
+    const rawName = (det.encoding || "").toLowerCase();
+    const detName = normalizeEncodingName(rawName);
     if (!detName || NOOP_ENCODINGS.has(detName)) continue;
-    if (!allowed.has(detName)) continue;
+    if (!allowed.has(detName) && !allowed.has(rawName)) continue;
     const label = DECODER_LABELS[detName];
     if (!label) continue;
     if (CYRILLIC_SINGLE_BYTE.has(detName)) {
-      // the word-shape gate is a strong structural signal, so a lower
-      // detector confidence is acceptable for ranked candidates
-      if (!wordShapeOk || det.confidence < 0.5) continue;
+      // jschardet 4 names the Cyrillic family reliably but often picks the
+      // wrong member (koi8-r bytes reported as windows-1251), so the
+      // detector only says "single-byte Cyrillic"; the member is chosen by
+      // the Russian letter-frequency gate in step 3 below.
+      continue;
+    } else if (CJK_MULTI_BYTE.has(detName)) {
+      if (det.confidence < 0.2) continue;
     } else if (det.confidence < 0.75) {
       continue;
     }
@@ -411,14 +469,7 @@ export function fixEncoding(
     try {
       const decoded = new TextDecoder(label).decode(bytes);
       if (decoded === s || decoded.includes("\uFFFD")) continue;
-      if (CYRILLIC_SINGLE_BYTE.has(detName)) {
-        // re-decoded text must actually be Cyrillic-dominated
-        const nonAscii = [...decoded].filter((c) => c.charCodeAt(0) > 0x7f);
-        const cyr = nonAscii.filter((c) => /\p{Script=Cyrillic}/u.test(c));
-        if (nonAscii.length === 0 || cyr.length / nonAscii.length < 0.85) {
-          continue;
-        }
-      }
+      if (CJK_MULTI_BYTE.has(detName) && cjkShare(decoded) < 0.9) continue;
       return { value: decoded, fixed: true, encoding: detName };
     } catch {
       // decoder label unsupported — try the next candidate
@@ -431,7 +482,14 @@ export function fixEncoding(
   //    charsets in allowlist order and accept the first decode that passes
   //    the Russian letter-frequency gate — which rejects the shifted-case
   //    garbage a wrong Cyrillic charset produces.
+  //    Every allowed charset is scored and the best one wins (fewest
+  //    case-shifted words, then highest letter-frequency score, then
+  //    allowlist order): koi8-r and windows-1251 swap letter case against
+  //    each other, so the wrong one can still clear the frequency gate.
   if (wordShapeOk) {
+    let best:
+      | { value: string; encoding: string; anomaly: number; score: number }
+      | null = null;
     for (const name of allowed) {
       if (!CYRILLIC_SINGLE_BYTE.has(name)) continue;
       const label = DECODER_LABELS[name];
@@ -439,12 +497,21 @@ export function fixEncoding(
       try {
         const decoded = new TextDecoder(label).decode(bytes);
         if (decoded === s || decoded.includes("\uFFFD")) continue;
-        if (cyrillicScore(decoded) >= 0.45) {
-          return { value: decoded, fixed: true, encoding: name };
+        const score = cyrillicScore(decoded);
+        if (score < 0.45) continue;
+        const anomaly = caseShiftedShare(decoded);
+        if (
+          !best || anomaly < best.anomaly ||
+          (anomaly === best.anomaly && score > best.score)
+        ) {
+          best = { value: decoded, encoding: name, anomaly, score };
         }
       } catch {
         // decoder label unsupported — try the next charset
       }
+    }
+    if (best) {
+      return { value: best.value, fixed: true, encoding: best.encoding };
     }
   }
   return { value: s, fixed: false, encoding: null };
@@ -2340,7 +2407,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.10.15.9",
+  version: "2026.10.25.1",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2457,6 +2524,12 @@ export const model = {
     {
       toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.1",
+      description:
+        "jschardet 3.1.4 -> 4.0.0: tag-encoding recovery adapted to the new detector (chardet names mapped back, Cyrillic charset chosen by letter-frequency/case scoring, CJK accepted via a script gate); no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

@@ -45,8 +45,12 @@ UTF-8 ("BÃ¶ses" → "Böses") is unwrapped first.
 Two structural gates prevent false positives on genuine Western accented text:
 every word containing a high byte must be ≥85% high-byte letters (legacy
 Cyrillic words are all-high-byte, Icelandic "Blóð" is not), and the re-decoded
-result must be Cyrillic-dominated for Cyrillic charsets. Every fix is recorded
-in `issues.encodingFixes` with before/after and the detected charset.
+result must match the charset's script. For single-byte Cyrillic the detector
+(jschardet 4) only signals the family: every allowed Cyrillic charset is tried
+and the decode with the fewest case-shifted words ("пРЕТБ" is koi8-r read as
+windows-1251) and the highest Russian letter frequency wins. Multi-byte CJK
+candidates must re-decode to ≥90% CJK script. Every fix is recorded in
+`issues.encodingFixes` with before/after and the detected charset.
 
 ## Directory-naming fallback
 

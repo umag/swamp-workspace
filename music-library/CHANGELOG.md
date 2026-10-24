@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026.10.25.1
+
+### Changed
+
+- Bumped `npm:jschardet` 3.1.4 -> 4.0.0 (major: a TypeScript port of chardet 7).
+  Fixes the upstream release drift tracked in #246.
+- Tag-encoding recovery adapted to jschardet 4, whose results differ from 3:
+  - chardet-spelled names (`CP932`, `GB18030`, `CP949`, `CP874`) are mapped back
+    onto the jschardet 3 vocabulary used by `legacyEncodings`, so existing
+    allowlists keep their meaning;
+  - jschardet 4 often reports koi8-r bytes as windows-1251; the detector now
+    only signals "single-byte Cyrillic" and the member is chosen by scoring
+    every allowed Cyrillic decode (fewest case-shifted words such as "пРЕТБ",
+    then Russian letter frequency);
+  - multi-byte CJK candidates are accepted at jschardet 4's lower confidence
+    scale (>= 0.2) only when the re-decoded text is >= 90% CJK script.
+- On a 181-string differential corpus (cp1251 / koi8-r / cp866 / Shift_JIS / GBK
+  mojibake, accented Western text, double-encoded UTF-8) the adapted recovery
+  fixes 159 strings correctly vs 156 with jschardet 3, with no new false
+  positives on Western text.
+
 ## 2026.10.15.9
 
 ### Changed
