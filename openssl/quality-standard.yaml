@@ -47,6 +47,6 @@ docs:
     state: na
     justification: openssl bundles no Claude skill — eight self-describing methods, documented in README
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

@@ -166,6 +166,41 @@ export async function readScoreViaSwamp(
 export interface RatchetReport {
   extension: string;
   outcome: RatchetReportOutcome;
+  /** The live score, present whenever one was read and parsed — what
+   * `--rebaseline` records as the new baseline. */
+  score?: ScoreSnapshot;
+}
+
+/**
+ * Return `text` with the ratchet's `rubricVersion` and `baselinePercentage`
+ * set to `score`. Only the first occurrence of each key AFTER the top-level
+ * `ratchet:` key is touched, as a text edit, so the hand-maintained file
+ * keeps its comments, ordering and quoting. Works for the block form and the
+ * flow form (`ratchet: { rubricVersion: 3, ... }`). Throws when there is no
+ * ratchet section or a key is missing, rather than silently not rebaselining.
+ */
+export function rewriteRatchetBaseline(
+  text: string,
+  score: ScoreSnapshot,
+): string {
+  const start = text.search(/^ratchet:/m);
+  if (start < 0) throw new Error("no top-level ratchet: section");
+  const head = text.slice(0, start);
+  let tail = text.slice(start);
+  const keys: Array<[RegExp, string]> = [
+    [/rubricVersion:\s*\d+/, `rubricVersion: ${score.rubricVersion}`],
+    [
+      /baselinePercentage:\s*\d+(\.\d+)?/,
+      `baselinePercentage: ${score.percentage}`,
+    ],
+  ];
+  for (const [re, replacement] of keys) {
+    if (!re.test(tail)) {
+      throw new Error(`ratchet section has no ${replacement.split(":")[0]}`);
+    }
+    tail = tail.replace(re, replacement);
+  }
+  return head + tail;
 }
 
 /**
@@ -239,6 +274,7 @@ export async function runRatchet(
         rubricVersion: parsed.data.ratchet.rubricVersion,
         baselinePercentage: parsed.data.ratchet.baselinePercentage,
       }),
+      score: score.data,
     });
   }
   return reports;
@@ -248,7 +284,7 @@ function printHelp() {
   console.log(`score_ratchet.ts — never regress an extension's quality score
 
 Usage:
-  deno run --allow-read --allow-run=swamp scripts/quality/score_ratchet.ts [--help] [--json <path>]
+  deno run --allow-read --allow-write --allow-run=swamp scripts/quality/score_ratchet.ts [--help] [--json <path>] [--rebaseline]
 
 Runs GLOBAL: every extension with a quality-standard.yaml. For each, compares the
 LIVE \`swamp extension quality <manifest> --json\` percentage against the
@@ -263,6 +299,9 @@ it).
 
 --json <path>  also write {reports} as JSON to <path> (the sticky
                PR-comment report reads this — see scripts/build-ci-report.ts).
+--rebaseline   for every "rebaseline" outcome, write the live rubricVersion
+               and percentage into that extension's quality-standard.yaml
+               ratchet section (run locally after a rubric bump, then commit).
 
 Exit codes:
   0  every extension passed, was skipped (out of scope), or rebaselined
@@ -281,11 +320,21 @@ if (import.meta.main) {
   const jsonPath = jsonFlagIndex >= 0 ? args[jsonFlagIndex + 1] : undefined;
   const root = Deno.env.get("QUALITY_REPO_ROOT") ??
     join(dirname(fromFileUrl(import.meta.url)), "..", "..");
+  const rebaseline = args.includes("--rebaseline");
   const reports = await runRatchet(root);
   let failed = 0;
   for (const r of reports) {
     if (r.outcome.status === "pass") {
       console.log(`${r.extension}: pass`);
+    } else if (r.outcome.status === "rebaseline" && rebaseline && r.score) {
+      const path = join(root, r.extension, "quality-standard.yaml");
+      await Deno.writeTextFile(
+        path,
+        rewriteRatchetBaseline(await Deno.readTextFile(path), r.score),
+      );
+      console.log(
+        `${r.extension}: rebaselined — rubricVersion ${r.score.rubricVersion}, baseline ${r.score.percentage}%`,
+      );
     } else if (r.outcome.status === "rebaseline") {
       console.log(`${r.extension}: rebaseline — ${r.outcome.message}`);
     } else if (r.outcome.status === "skipped") {

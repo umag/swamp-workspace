@@ -40,6 +40,6 @@ docs:
     state: na
     justification: boosty bundles no Claude skill — a plain archiver model
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: Grade A

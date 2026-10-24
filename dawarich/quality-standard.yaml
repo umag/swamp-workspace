@@ -48,6 +48,6 @@ docs:
     state: na
     justification: dawarich bundles no Claude skill — a REST API wrapper, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
-  baselinePercentage: 100
+  rubricVersion: 4
+  baselinePercentage: 92
   label: "Grade A"

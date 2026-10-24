@@ -60,7 +60,7 @@ docs:
       swamp-watch bundles no Claude skill — two read-only introspection methods
       whose whole interface is documented in the README and the alert rules.
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: >-
     Grade A on first release. `swamp extension quality manifest.yaml --json`

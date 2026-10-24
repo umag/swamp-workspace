@@ -49,6 +49,6 @@ docs:
     state: na
     justification: talos-node bundles no Claude skill — a bare talosctl CLI wrapper, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

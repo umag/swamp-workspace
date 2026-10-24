@@ -45,6 +45,6 @@ docs:
       four model methods, and the README documents the two counters and the
       FUSE indirection that the methods exist to expose
 ratchet:
-  rubricVersion: 3
-  baselinePercentage: 0
+  rubricVersion: 4
+  baselinePercentage: 92
   label: unscored

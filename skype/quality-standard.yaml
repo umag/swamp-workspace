@@ -61,6 +61,6 @@ docs:
     state: na
     justification: skype bundles no Claude skill — a chat-history importer, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

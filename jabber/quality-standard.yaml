@@ -71,6 +71,6 @@ docs:
     state: na
     justification: jabber bundles no Claude skill — an XMPP-history importer, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

@@ -68,6 +68,6 @@ docs:
     files:
       - .claude/skills/good-planning/SKILL.md
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

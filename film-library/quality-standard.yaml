@@ -41,6 +41,6 @@ docs:
     state: na
     justification: film-library bundles no Claude skill — methods and the workflow are self-describing
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

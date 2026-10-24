@@ -43,6 +43,6 @@ docs:
     state: na
     justification: keepassxc is a vault backend with no methods to drive; the swamp vault skill already covers usage
 ratchet:
-  rubricVersion: 3
-  baselinePercentage: 100
+  rubricVersion: 4
+  baselinePercentage: 92
   label: "Grade A"

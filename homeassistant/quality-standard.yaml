@@ -59,6 +59,6 @@ docs:
     state: na
     justification: homeassistant bundles no Claude skill — a bare REST/WS model, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
-  baselinePercentage: 100
+  rubricVersion: 4
+  baselinePercentage: 92
   label: "Grade A"

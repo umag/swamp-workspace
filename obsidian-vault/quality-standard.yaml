@@ -70,6 +70,6 @@ docs:
     state: na
     justification: obsidian-vault bundles no Claude skill — no .claude/skills/obsidian-vault/SKILL.md exists in this repo
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

@@ -64,6 +64,6 @@ docs:
     state: na
     justification: herdr bundles no Claude skill — the model's own method descriptions are the interface, there is no multi-step workflow to document
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

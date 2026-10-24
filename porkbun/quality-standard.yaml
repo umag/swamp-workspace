@@ -48,6 +48,6 @@ docs:
     state: na
     justification: porkbun bundles no Claude skill — a bare DNS CRUD model, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"

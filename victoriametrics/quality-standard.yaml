@@ -60,7 +60,7 @@ docs:
     state: na
     justification: victoriametrics bundles no Claude skill — a bare PromQL query/overview model, nothing to document as a skill
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: >-
     Grade A — re-stamped for 2026.09.02.1, which restores the `push` method and

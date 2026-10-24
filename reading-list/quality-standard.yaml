@@ -83,6 +83,6 @@ docs:
       a Telegram digest composer, driven entirely by model methods and a
       workflow, with nothing skill-shaped to document
 ratchet:
-  rubricVersion: 3
+  rubricVersion: 4
   baselinePercentage: 100
   label: "Grade A"
