@@ -1,5 +1,5 @@
 /**
- * Contract tests pinning mppx@0.9.3 behavior to the MPP specs:
+ * Contract tests pinning mppx@0.13.5 behavior to the MPP specs:
  *  - draft-ryan-httpauth-payment-01 (the "Payment" HTTP auth scheme)
  *  - mpp-specs draft-stripe-charge-00 (the stripe charge method)
  *
@@ -17,8 +17,8 @@ import {
   assertNotEquals,
   assertRejects,
 } from "jsr:@std/assert@1";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.9.3";
-import { Mppx, stripe as stripeServer } from "npm:mppx@0.9.3/server";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.13.5";
+import { Mppx, stripe as stripeServer } from "npm:mppx@0.13.5/server";
 
 // ---------------------------------------------------------------------------
 // Spec fixtures (draft-stripe-charge-00 §request / §credential)

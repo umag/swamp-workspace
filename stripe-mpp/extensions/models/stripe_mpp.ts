@@ -39,9 +39,9 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.9.3";
-import { Mppx, stripe as stripeServer } from "npm:mppx@0.9.3/server";
-import Stripe from "npm:stripe@22.7.0-beta.1";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.13.5";
+import { Mppx, stripe as stripeServer } from "npm:mppx@0.13.5/server";
+import Stripe from "npm:stripe@23.1.0-beta.1";
 // BUNDLE RESOLUTION ONLY — not used by this model's code paths.
 // mppx declares @modelcontextprotocol/sdk as an OPTIONAL peer and reaches for
 // it via `await import("@modelcontextprotocol/sdk/types.js")` inside
@@ -107,7 +107,7 @@ const GlobalArgsSchema = z.object({
       "executable runs. Requires an authenticated link-cli device session " +
       "(`link-cli auth login`, US Link account) on the same host.",
   ),
-  linkCliVersion: z.string().default("0.19.1").describe(
+  linkCliVersion: z.string().default("0.28.0").describe(
     "Pinned link-cli version. The MCP initialize serverInfo.version is " +
       "checked against it as DRIFT DETECTION only (a shadow binary can spoof " +
       "it — this is not an integrity guarantee).",
@@ -1026,7 +1026,7 @@ async function retrievePaymentIntent(
  * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.10.15.9",
+  version: "2026.10.25.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -1082,6 +1082,12 @@ export const model = {
     {
       toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.1",
+      description:
+        "Dependency bump: mppx 0.9.3 -> 0.13.5, stripe 22.7.0-beta.1 -> 23.1.0-beta.1, linkCliVersion default 0.19.1 -> 0.28.0; README stores secrets via prompting vault put; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
