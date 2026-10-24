@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/dawarich"
-version: "2026.10.15.9"
+version: "2026.10.24.1"
 license: MIT
 description: |
   Dawarich self-hosted location-tracking API for swamp — read points, visits,
@@ -10,7 +10,8 @@ description: |
   Model:
   - `@magistr/dawarich` — wraps the Dawarich `/api/v1/*` API. Methods: `health`,
     `stats`, `points`, `tracked-months`, `visits`, `tracks`, `settings`,
-    `update-settings`, `digests`, and `photos`. Each call persists its result as
+    `update-settings`, `digests`, `photos`, and `recalculate` (queue a
+    tracks/stats/digests rebuild). Each call persists its result as
     a swamp data resource for later CEL querying.
 
   Authenticates with an API key from the Dawarich Account settings page; supply
