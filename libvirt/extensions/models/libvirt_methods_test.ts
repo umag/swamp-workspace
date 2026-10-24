@@ -2161,3 +2161,294 @@ Deno.test("host.addRoute: local mode throws (no remote shell to target — see l
     "requires SSH host mode",
   );
 });
+
+// ===========================================================================
+// SSH host-key policy (issue #260) — strict/pinned known_hosts per call
+// ===========================================================================
+//
+// With hostKeyPolicy "strict" every ssh spawn gets its own temp known_hosts
+// file holding exactly the definition's `knownHosts` lines: created by
+// Deno.makeTempFile, chmod 0600 BEFORE the keys are written, passed as
+// UserKnownHostsFile, and removed in `finally` — even when ssh/virsh fails or
+// the spawn itself throws. Misconfiguration fails closed before any file or
+// process is created.
+
+interface KnownHostsFsEvents {
+  log: string[];
+  made: { path: string; opts: unknown }[];
+  written: { path: string; content: string }[];
+}
+
+async function withKnownHostsFsStub(
+  fn: (fs: KnownHostsFsEvents) => Promise<void>,
+) {
+  const originalMake = Deno.makeTempFile;
+  const originalWrite = Deno.writeTextFile;
+  const originalRemove = Deno.remove;
+  const originalChmod = Deno.chmod;
+  const fs: KnownHostsFsEvents = { log: [], made: [], written: [] };
+  let n = 0;
+  // deno-lint-ignore no-explicit-any
+  const D = Deno as any;
+  D.makeTempFile = (opts?: unknown) => {
+    const path = `/tmp/swamp-libvirt-kh${++n}.known_hosts`;
+    fs.made.push({ path, opts });
+    fs.log.push(`make ${path}`);
+    return Promise.resolve(path);
+  };
+  D.chmod = (path: string, mode: number) => {
+    fs.log.push(`chmod ${path} ${mode.toString(8)}`);
+    return Promise.resolve();
+  };
+  D.writeTextFile = (path: string, content: string) => {
+    fs.written.push({ path, content });
+    fs.log.push(`write ${path}`);
+    return Promise.resolve();
+  };
+  D.remove = (path: string) => {
+    fs.log.push(`remove ${path}`);
+    return Promise.resolve();
+  };
+  try {
+    await fn(fs);
+  } finally {
+    Deno.makeTempFile = originalMake;
+    Deno.writeTextFile = originalWrite;
+    Deno.remove = originalRemove;
+    Deno.chmod = originalChmod;
+  }
+}
+
+const PINNED_KEY =
+  "10.0.0.5 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+const STRICT: Record<string, unknown> = {
+  host: "10.0.0.5",
+  hostKeyPolicy: "strict",
+  knownHosts: [PINNED_KEY],
+};
+
+function optValue(call: CommandCall, name: string): string | undefined {
+  for (let i = 0; i < call.args.length - 1; i++) {
+    if (call.args[i] === "-o" && call.args[i + 1].startsWith(`${name}=`)) {
+      return call.args[i + 1].slice(name.length + 1);
+    }
+  }
+  return undefined;
+}
+
+Deno.test("hostKeyPolicy strict: ssh pins the supplied key via a 0600 per-call known_hosts file that is removed afterwards", async () => {
+  const { ctx } = makeCtx(STRICT);
+  await withKnownHostsFsStub(async (fs) => {
+    await withCommandStub([
+      on(["pool-start", "default"], ok("Pool default started")),
+    ], async (calls) => {
+      await run(storageModel, "poolStart", { name: "default" }, ctx);
+      assertEquals(calls.length, 1);
+      const path = fs.made[0].path;
+      assertEquals(optValue(calls[0], "StrictHostKeyChecking"), "yes");
+      assertEquals(optValue(calls[0], "UserKnownHostsFile"), path);
+      assertEquals(optValue(calls[0], "GlobalKnownHostsFile"), "/dev/null");
+      assert(!calls[0].args.join(" ").includes("accept-new"));
+    });
+    const path = fs.made[0].path;
+    assertEquals(fs.log, [
+      `make ${path}`,
+      `chmod ${path} 600`,
+      `write ${path}`,
+      `remove ${path}`,
+    ]);
+    assertEquals(fs.written[0].content, `${PINNED_KEY}\n`);
+  });
+});
+
+Deno.test("hostKeyPolicy strict: each ssh call gets its own file, each removed", async () => {
+  const { ctx } = makeCtx(STRICT);
+  await withKnownHostsFsStub(async (fs) => {
+    await withCommandStub([
+      on(["pool-info", "default"], ok("UUID: u\nState: running")),
+      on(["pool-dumpxml", "default"], ok("<pool/>")),
+    ], async (calls) => {
+      await run(storageModel, "poolGet", { name: "default" }, ctx);
+      assertEquals(calls.length, 2);
+      const used = calls.map((c) => optValue(c, "UserKnownHostsFile")).sort();
+      assertEquals(used, fs.made.map((m) => m.path).sort());
+      assert(used[0] !== used[1]);
+    });
+    assertEquals(
+      fs.log.filter((l) => l.startsWith("remove")).length,
+      fs.made.length,
+    );
+  });
+});
+
+Deno.test("hostKeyPolicy strict: the known_hosts file is removed even when ssh/virsh fails (e.g. host key mismatch)", async () => {
+  const { ctx } = makeCtx(STRICT);
+  await withKnownHostsFsStub(async (fs) => {
+    await withCommandStub([
+      on(
+        ["pool-start", "default"],
+        fail(
+          "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n" +
+            "Host key verification failed.",
+          255,
+        ),
+      ),
+    ], async () => {
+      await assertRejects(
+        () => run(storageModel, "poolStart", { name: "default" }, ctx),
+        Error,
+        "Host key verification failed",
+      );
+    });
+    assertEquals(fs.log.at(-1), `remove ${fs.made[0].path}`);
+  });
+});
+
+Deno.test("hostKeyPolicy strict: the known_hosts file is removed even when the spawn itself throws", async () => {
+  const { ctx } = makeCtx(STRICT);
+  await withKnownHostsFsStub(async (fs) => {
+    // No routes: the fake Command throws "unrouted" from output().
+    await withCommandStub([], async () => {
+      await assertRejects(
+        () => run(storageModel, "poolStart", { name: "default" }, ctx),
+        Error,
+        "unrouted",
+      );
+    });
+    assertEquals(fs.log.at(-1), `remove ${fs.made[0].path}`);
+  });
+});
+
+Deno.test("hostKeyPolicy strict without knownHosts fails closed before any file or process", async () => {
+  for (const knownHosts of [undefined, []]) {
+    const { ctx } = makeCtx({ ...STRICT, knownHosts });
+    await withKnownHostsFsStub(async (fs) => {
+      await withCommandStub([], async (calls) => {
+        await assertRejects(
+          () => run(storageModel, "poolStart", { name: "default" }, ctx),
+          Error,
+          "hostKeyPolicy 'strict' requires knownHosts",
+        );
+        assertEquals(calls.length, 0);
+      });
+      assertEquals(fs.log, []);
+    });
+  }
+});
+
+Deno.test("hostKeyPolicy strict: an injected multi-line knownHosts entry is rejected before any file or process", async () => {
+  const { ctx } = makeCtx({
+    ...STRICT,
+    knownHosts: [`${PINNED_KEY}\n* ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAB`],
+  });
+  await withKnownHostsFsStub(async (fs) => {
+    await withCommandStub([], async (calls) => {
+      await assertRejects(
+        () => run(storageModel, "poolStart", { name: "default" }, ctx),
+        Error,
+        "knownHosts[0]",
+      );
+      assertEquals(calls.length, 0);
+    });
+    assertEquals(fs.log, []);
+  });
+});
+
+Deno.test("hostKeyPolicy strict in local/URI mode is refused before any process (incl. define's temp-file path)", async () => {
+  const { ctx } = makeCtx({
+    uri: "qemu+ssh://root@10.0.0.5/system",
+    hostKeyPolicy: "strict",
+    knownHosts: [PINNED_KEY],
+  });
+  await withKnownHostsFsStub(async (fs) => {
+    await withCommandStub([], async (calls) => {
+      await assertRejects(
+        () => run(storageModel, "poolStart", { name: "default" }, ctx),
+        Error,
+        "SSH mode",
+      );
+      await assertRejects(
+        () => run(vmModel, "define", { xml: "<domain/>" }, ctx),
+        Error,
+        "SSH mode",
+      );
+      assertEquals(calls.length, 0);
+    });
+    assertEquals(fs.log, []);
+  });
+});
+
+Deno.test("knownHosts with the default accept-new policy is refused (it would silently pin nothing)", async () => {
+  const { ctx } = makeCtx({ host: "10.0.0.5", knownHosts: [PINNED_KEY] });
+  await withCommandStub([], async (calls) => {
+    await assertRejects(
+      () => run(storageModel, "poolStart", { name: "default" }, ctx),
+      Error,
+      "hostKeyPolicy",
+    );
+    assertEquals(calls.length, 0);
+  });
+});
+
+Deno.test("hostKeyPolicy default (accept-new): no temp file, original ssh options unchanged", async () => {
+  const { ctx } = makeCtx(SSH);
+  await withKnownHostsFsStub(async (fs) => {
+    await withCommandStub([
+      on(["pool-start", "default"], ok("Pool default started")),
+    ], async (calls) => {
+      await run(storageModel, "poolStart", { name: "default" }, ctx);
+      assertEquals(optValue(calls[0], "StrictHostKeyChecking"), "accept-new");
+      assertEquals(optValue(calls[0], "UserKnownHostsFile"), undefined);
+    });
+    assertEquals(fs.log, []);
+  });
+});
+
+Deno.test("hostKeyPolicy strict: vm.define over SSH still streams XML on stdin and uses the pinned file", async () => {
+  const { ctx } = makeCtx(STRICT);
+  await withKnownHostsFsStub(async (fs) => {
+    await withCommandStub([
+      on(["define", "/dev/stdin"], ok("Domain web defined")),
+    ], async (calls) => {
+      await run(vmModel, "define", { xml: "<domain/>" }, ctx);
+      const def = calls.find((c) => c.stdinMode === "piped");
+      assert(def);
+      assertEquals(def.stdinText, "<domain/>");
+      assertEquals(optValue(def, "StrictHostKeyChecking"), "yes");
+      assertEquals(optValue(def, "UserKnownHostsFile"), fs.made[0].path);
+    });
+    assertEquals(fs.log.at(-1), `remove ${fs.made[0].path}`);
+  });
+});
+
+Deno.test("hostKeyPolicy strict: host.addRoute's raw ssh command is pinned too", async () => {
+  const { ctx } = makeCtx(STRICT);
+  await withKnownHostsFsStub(async (fs) => {
+    await withCommandStub([
+      on(["ip", "route", "replace"], ok("")),
+    ], async (calls) => {
+      await run(hostModel, "addRoute", {
+        destination: "10.244.0.0/16",
+        gateway: "10.0.0.1",
+      }, ctx);
+      assertEquals(optValue(calls[0], "StrictHostKeyChecking"), "yes");
+      assertEquals(optValue(calls[0], "UserKnownHostsFile"), fs.made[0].path);
+    });
+  });
+});
+
+Deno.test("hostKeyPolicy/knownHosts are global arguments of every libvirt model, defaulting to accept-new", () => {
+  for (const m of [vmModel, networkModel, storageModel, hostModel]) {
+    const parsed = m.globalArguments.parse({ host: "h" });
+    assertEquals(parsed.hostKeyPolicy, "accept-new", m.type);
+    assertEquals(parsed.knownHosts, undefined, m.type);
+    assert(
+      !m.globalArguments.safeParse({
+        host: "h",
+        hostKeyPolicy: "strict",
+        knownHosts: [`${PINNED_KEY}\nevil`],
+      }).success,
+      `${m.type} must reject a multi-line knownHosts entry`,
+    );
+  }
+});

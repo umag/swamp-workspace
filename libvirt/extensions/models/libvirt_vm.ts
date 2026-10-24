@@ -6,6 +6,7 @@ import {
   isIdempotent,
   type LibvirtConn,
   redactSecrets,
+  SshHostKeyArgs,
   virsh,
   virshTry,
 } from "./lib/connection.ts";
@@ -28,6 +29,7 @@ const GlobalArgsSchema = z.object({
   uri: z.string().optional().describe(
     "Libvirt connection URI. Local mode (no host) defaults to qemu:///system; in SSH mode it is passed to the remote virsh via -c when set.",
   ),
+  ...SshHostKeyArgs,
 });
 
 const VmSchema = z.object({
@@ -170,7 +172,7 @@ async function reportState(
  */
 export const model = {
   type: "@bad-at-naming/libvirt/vm",
-  version: "2026.10.25.1",
+  version: "2026.10.25.2",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -232,6 +234,12 @@ export const model = {
       toVersion: "2026.10.25.1",
       description:
         "Version bump — storage.volClone is now idempotent by target name; no schema change in this model",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.2",
+      description:
+        "Adds optional hostKeyPolicy (default accept-new) and knownHosts global arguments for strict/pinned SSH host keys; existing definitions unchanged",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
