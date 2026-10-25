@@ -1026,7 +1026,7 @@ async function retrievePaymentIntent(
  * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.10.25.1",
+  version: "2026.10.25.2",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -1088,6 +1088,12 @@ export const model = {
       toVersion: "2026.10.25.1",
       description:
         "Dependency bump: mppx 0.9.3 -> 0.13.5, stripe 22.7.0-beta.1 -> 23.1.0-beta.1, linkCliVersion default 0.19.1 -> 0.28.0; README stores secrets via prompting vault put; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.2",
+      description:
+        "Fix: consumer-buyer link-cli calls go through link-cli 0.28.0's MCP wrapper tools (call_write_tool) and unwrap streamed results; paySpendRequest records an HTTP-error mpp_pay as pay-failed and sends report's required domain; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -2612,18 +2618,34 @@ export const model = {
         let outcome: "paid" | "pay-failed" = "paid";
         let payErr: string | undefined;
         try {
-          await callTool({ tool: "mpp_pay", args: payArgs }, cfg, red);
+          const paid = await callTool(
+            { tool: "mpp_pay", args: payArgs },
+            cfg,
+            red,
+          );
+          // mpp_pay returns the paid request's HTTP response ({ status,
+          // headers, body }) as a SUCCESSFUL tool result even when the seller
+          // rejected it — an HTTP error status is a failed payment, not "paid".
+          const httpStatus = isRecord(paid) && typeof paid.status === "number"
+            ? paid.status
+            : undefined;
+          if (httpStatus !== undefined && httpStatus >= 400) {
+            outcome = "pay-failed";
+            payErr = `mpp_pay: paid request returned HTTP ${httpStatus}`;
+          }
         } catch (e) {
           outcome = "pay-failed";
           payErr = (e as Error).message;
         }
 
         // Close out the grant with link-cli's outcome telemetry (best-effort).
+        // `domain` is required by link-cli's report schema.
         try {
           await callTool(
             {
               tool: "report",
               args: {
+                domain: new URL(args.url).hostname,
                 spendRequestId: args.id,
                 outcome: outcome === "paid" ? "success" : "blocked",
               },

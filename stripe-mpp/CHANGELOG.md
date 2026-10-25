@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026.10.25.2
+
+### Fixed
+
+- **Consumer-buyer methods were broken against link-cli 0.19.1+ (including the
+  pinned 0.28.0).** link-cli's stdio MCP server (built on `incur`) uses
+  progressive tool discovery: `tools/list` returns only `search_tools`,
+  `get_tool_details`, `call_read_tool` and `call_write_tool`, and a direct
+  `tools/call` of `spend-request_create` (or any other inner tool) fails with
+  JSON-RPC -32602 "Tool … not found". `lib/link_cli.ts` now reaches every inner
+  tool as `call_write_tool { name, arguments }`. The reads go through
+  `call_write_tool` too: link-cli 0.28.0 annotates no tool `readOnlyHint`, and
+  `call_read_tool` refuses such tools ("Tool is not read-only"). The routing is
+  a pinned per-tool table; the strict `linkCliVersion` check still guards it.
+- **Streamed results are unwrapped.** `spend-request_create`,
+  `spend-request_retrieve` and `mpp_pay` are generator commands, so their result
+  is a JSON array of chunks; the model now uses the last chunk. An empty array
+  is a failure: incur drops a generator's `c.error` (for example NOT_FOUND,
+  POLLING_TIMEOUT or a duplicate spend request) and returns `[]`.
+- Error results are unwrapped to their message (the wrapper's `{"error": …}`, an
+  inner validation error's `code: message`, or plain text), and the
+  call-to-action text incur appends after a success result is stripped before
+  parsing.
+- `paySpendRequest` records `pay-failed` when `mpp_pay` returns the paid
+  request's HTTP response with a status of 400 or above (link-cli reports that
+  as a successful tool result), and sends `domain`, which link-cli's `report`
+  schema requires.
+
+Method names, arguments and resource schemas are unchanged.
+
 ## 2026.10.25.1
 
 Dependency bump for the upstream release drift tracked in #231:
