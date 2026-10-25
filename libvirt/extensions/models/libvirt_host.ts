@@ -69,7 +69,7 @@ const DeviceListSchema = z.object({
  */
 export const model = {
   type: "@bad-at-naming/libvirt/host",
-  version: "2026.10.25.4",
+  version: "2026.10.25.5",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -149,6 +149,12 @@ export const model = {
       toVersion: "2026.10.25.4",
       description:
         "Adds optional SSH transport global arguments (port, identityFile, jumpHost, sshConfig, become default false, multiplex default true); existing definitions unchanged",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.5",
+      description:
+        "Version bump — vm.provision/connection/plan/sync added; no schema change in this model",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

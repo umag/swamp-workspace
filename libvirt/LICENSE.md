@@ -22,3 +22,11 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---
+
+`extensions/models/lib/provision.ts` contains `makeNoCloudIso`, adapted from
+`@evrardjp/cloud-init-nocloud` (github.com/evrardjp/swamp-extensions, Copyright
+(c) 2026 evrardjp), licensed under the Apache License, Version 2.0 — see
+[LICENSE-APACHE-2.0.txt](LICENSE-APACHE-2.0.txt). Changes from the original: a
+root-directory size guard and comments.

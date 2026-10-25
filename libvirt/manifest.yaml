@@ -1,7 +1,7 @@
 manifestVersion: 1
 name: "@bad-at-naming/libvirt"
-version: "2026.10.25.4"
-license: MIT
+version: "2026.10.25.5"
+license: "MIT AND Apache-2.0"
 description: |
   Comprehensive libvirt/virsh management — VMs, networks, storage pools,
   volumes, snapshots, and host info — over SSH OR locally via a connection URI.
@@ -15,7 +15,9 @@ description: |
 
   Models:
   - `@bad-at-naming/libvirt/vm` — domain lifecycle, tuning, monitoring, snapshots,
-    guest agent
+    guest agent, provisioning from cloud images (cloud-init seed built
+    in TypeScript, no virt-install), connection facts, and a desired-state
+    plan/sync reconciler
   - `@bad-at-naming/libvirt/network` — virtual network lifecycle + DHCP leases
   - `@bad-at-naming/libvirt/storage` — storage pool and volume management
   - `@bad-at-naming/libvirt/host` — hypervisor host info, capabilities, node stats
@@ -36,6 +38,7 @@ models:
 additionalFiles:
   - README.md
   - LICENSE.md
+  - LICENSE-APACHE-2.0.txt
 
 platforms: []
 
