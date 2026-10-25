@@ -8,6 +8,8 @@ providers:
   - id: 'anthropic:messages:claude-sonnet-5-5'
     config:
       max_tokens: 64
+      thinking:
+        type: disabled
 prompts:
   - id: routing
     raw: |

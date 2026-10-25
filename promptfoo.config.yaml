@@ -19,8 +19,12 @@ providers:
   - id: anthropic:messages:claude-sonnet-5-5
     config:
       max_tokens: 64
-      # No `temperature`: claude-sonnet-5-5 rejects it (400 "temperature is
-      # deprecated for this model").
+      # Sonnet 5 runs adaptive thinking when `thinking` is omitted, which would
+      # spend the 64-token budget before the one-word routing answer. No
+      # `temperature`: Claude 5 models reject sampling params (400), and
+      # promptfoo >= 0.125 omits its own default for them.
+      thinking:
+        type: disabled
 
 prompts:
   - id: routing

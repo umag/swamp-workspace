@@ -513,7 +513,7 @@ jobs:
           # rate), and promptfoo still writes the --output JSON on a 100 exit.
           # Any OTHER non-zero exit is a genuine error and must fail the step.
           ec=0
-          npx --yes promptfoo@0.121.12 eval \
+          npx --yes promptfoo@0.125.1 eval \
             -c promptfoo.generated.yaml \
             --output promptfoo-results.json || ec=$?
           if [ "$ec" -ne 0 ] && [ "$ec" -ne 100 ]; then

@@ -215,7 +215,7 @@ async function buildPromptfoo(): Promise<string> {
     "<!-- ci-report:promptfoo -->",
     "## promptfoo trigger-eval — full report",
     "",
-    `\`promptfoo@0.121.12\` · model \`claude-sonnet-5-5\` · gate ≥90%${runLine}`,
+    `\`promptfoo@0.125.1\` · model \`claude-sonnet-5-5\` · gate ≥90%${runLine}`,
     "",
     `${rate >= 90 ? "✅" : "❌"} **${ok}/${total} = ${
       rate.toFixed(1)
