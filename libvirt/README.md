@@ -118,6 +118,104 @@ Several methods are safe to re-run:
 Idempotency is detected by matching anchored substrings in `virsh` stderr (see
 `lib/connection.ts` `IDEMPOTENT_ERRORS`); unrelated failures still raise.
 
+## Provisioning VMs from cloud images
+
+`vm.provision` creates a VM from a cloud image in one call. It needs only
+`qemu-img`, `curl`, `sha256sum` (or `sha512sum`) and `sh` on the hypervisor — no
+`virt-install`, ISO tool or libvirt storage pool, so it works on Unraid.
+
+```bash
+swamp model method run vms provision --input-file web1.yaml
+```
+
+```yaml
+# web1.yaml
+name: web1
+storageDir: /mnt/user/domains # gets web1/web1.qcow2 + web1-cidata.iso
+image:
+  url: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+  # checksum: sha256:<hex>             # pin it; otherwise SHA256SUMS beside the image
+diskSizeGb: 20
+memoryMiB: 2048
+vcpus: 2
+network: { type: bridge, source: br0 } # or { type: network, source: default }
+cloudInit:
+  user: ops # passwordless sudo; omit to use the image's default user
+  sshAuthorizedKeys: ["ssh-ed25519 AAAA… me@laptop"]
+  packages: [htop]
+  # staticIp: { address: 192.0.2.10/24, gateway: 192.0.2.1, nameservers: [192.0.2.53] }
+```
+
+What it does:
+
+1. Claims `<storageDir>/<name>/` with a plain `mkdir`: if the folder already
+   exists (a leftover, or another provision of the same name running now) it
+   fails and touches nothing.
+2. Downloads the image once into `cacheDir` (default
+   `<storageDir>/.swamp-image-cache`), to a temporary `.part` file that is kept
+   only if its checksum matches, then made read-only (0444). A cached file is
+   checked again before each use, and must be the declared format with **no
+   backing file** (a qcow2 can name any host file, such as `/dev/sda`, as its
+   backing file). Debian publishes only `SHA512SUMS`, so set
+   `image.checksumsUrl` for it. An `http://` image or checksum file needs a
+   pinned `image.checksum`.
+3. Copies it into `<storageDir>/<name>/<name>.qcow2` (mode 0600) and grows it to
+   `diskSizeGb`, which may not be smaller than the image (`diskMode:
+   overlay`
+   makes a qcow2 backed by the cached file instead).
+4. Builds the cloud-init NoCloud seed ISO in TypeScript and writes it beside the
+   disk. It is attached as a read-only **virtio disk**, not a CD-ROM, because
+   virtio-only kernels (Ubuntu's minimal images) have no CD-ROM driver. The
+   user-data installs and starts `qemu-guest-agent` (`guestAgent: false` to
+   skip) and turns SSH password logins off.
+5. Defines the domain (q35, virtio disk/NIC, serial console, guest-agent
+   channel, a MAC derived from the name) with swamp metadata, then starts it.
+6. Waits up to `waitForIpSeconds` (default 600) for the guest agent to report an
+   address and stores it as `connection/<name>`. A DHCP lease is used only if
+   the agent does not answer in time: a lease left by an earlier boot with the
+   same MAC can name an address the new guest never gets. With raw `userData`
+   (which may not install the agent) leases are accepted after 60 s.
+
+It is idempotent: an existing swamp-created domain is never rebuilt, only
+started (or resumed); a same-named domain that swamp did not create is an error.
+If a step fails after the folder claim, the domain, the files and the folder
+from that run are removed again. In local mode the files are written on the
+swamp host, so a remote `uri` (`qemu+ssh://…`) is refused: use `host` instead.
+
+`vm.connection` re-reads the addresses at any time. The `connection` resource
+(`ip`, `mac`, `addresses`, `source`, `sshUser`, `hostname`) is meant for later
+steps, e.g. `data.latest("vms", "web1").attributes.ip` in a workflow.
+
+### Desired state: `vm.plan` and `vm.sync`
+
+Both take `vms`: a list of the same fields plus `state` (`running`, `stopped` or
+`absent`; `image` is needed only to create). `plan` stores what would happen in
+`plan/current` and changes nothing; `sync` does it:
+
+| Observed          | Desired `running` | Desired `stopped` | Desired `absent`               |
+| ----------------- | ----------------- | ----------------- | ------------------------------ |
+| missing           | create + start    | create            | none                           |
+| shut off          | start             | none              | delete (swamp-created only)    |
+| running           | none              | stop (ACPI)       | delete (swamp-created only)    |
+| paused            | resume            | stop (ACPI)       | delete (swamp-created only)    |
+| not swamp-created | as above          | as above          | **refuse** — delete it by hand |
+
+- `delete` runs only with `allowDelete: true`
+  (`virsh undefine --nvram
+  --snapshots-metadata`). `deleteStorage: true` also
+  removes the disk and seed ISO — only when the domain's own XML points at
+  exactly `<storageDir>/<name>/<name>.qcow2` and `<name>-cidata.iso` — and then
+  the folder with `rmdir`, which fails if anything else is in it. Never
+  `rm -rf`; the image cache is kept. A wrong `storageDir` fails that VM and
+  removes nothing.
+- `stop` is an ACPI shutdown; `forceStopAfterWait: true` forces it off after
+  `stopWaitSeconds` instead of failing.
+- A domain counts as swamp-created only if its XML carries the swamp metadata
+  that `vm.provision` writes.
+- Memory and vCPU differences are reported as `drift`, not changed.
+- Every VM is attempted. The stored plan records each `result`
+  (`done`/`failed`/`skipped`), and `sync` fails at the end if any failed.
+
 ## Serial console capture
 
 `vm.consoleCapture` captures a domain's serial console for a bounded time. It is

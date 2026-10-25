@@ -29,6 +29,24 @@ import {
   parseXmlGraphics,
   parseXmlInterfaces,
 } from "./lib/parse.ts";
+import {
+  type Address,
+  addressWaitFor,
+  CHANGE_ACTIONS,
+  ConnectionSchema,
+  deleteVmStorage,
+  DesiredVmSchema,
+  observeVms,
+  type PlanItem,
+  PlanSchema,
+  planVms,
+  primaryIpv4,
+  ProvisionSpecSchema,
+  provisionVm,
+  readAddresses,
+  VM_NAME_RE,
+  waitForAddress,
+} from "./lib/provision.ts";
 
 const GlobalArgsSchema = z.object({
   host: z.string().optional().describe(
@@ -125,6 +143,64 @@ const ConsoleCaptureSchema = z.object({
   timestamp: z.string(),
 });
 
+// Same rule as guestHostname: the VM name doubles as the hostname when valid.
+const VM_HOSTNAME_RE = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+// vm.plan / vm.sync input: the desired VM list, names unique.
+const DesiredVmsArgs = z.object({
+  vms: z.array(DesiredVmSchema).min(1).refine(
+    (vms) => new Set(vms.map((v) => v.name)).size === vms.length,
+    { message: "VM names must be unique" },
+  ).describe(
+    "Desired VMs: provision fields plus state (running | stopped | absent)",
+  ),
+});
+
+type ResourceContext = {
+  writeResource: CallableFunction;
+};
+
+/** Store a VM's connection facts (`connection/<name>`). */
+async function writeConnection(
+  context: ResourceContext,
+  conn: LibvirtConn,
+  spec: { name: string; cloudInit: { user?: string; hostname?: string } },
+  state: string,
+  found: { source: "agent" | "lease" | "arp" | "none"; addrs: Address[] },
+) {
+  const primary = primaryIpv4(found.addrs);
+  return await context.writeResource("connection", spec.name, {
+    name: spec.name,
+    host: connLabel(conn),
+    state,
+    ip: primary?.address ?? "",
+    mac: primary?.mac ?? found.addrs[0]?.mac ?? "",
+    addresses: found.addrs,
+    source: found.source,
+    sshUser: spec.cloudInit.user ?? "",
+    hostname: spec.cloudInit.hostname ??
+      (VM_HOSTNAME_RE.test(spec.name) ? spec.name : ""),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/** Store a plan / sync result (`plan/current`). */
+async function writePlan(
+  context: ResourceContext,
+  conn: LibvirtConn,
+  mode: "plan" | "sync",
+  items: PlanItem[],
+) {
+  return await context.writeResource("plan", "current", {
+    host: connLabel(conn),
+    mode,
+    items,
+    changes: items.filter((i) => CHANGE_ACTIONS.includes(i.action)).length,
+    failed: items.filter((i) => i.result === "failed").length,
+    timestamp: new Date().toISOString(),
+  });
+}
+
 // Guest-agent info types virsh accepts; user input is validated against this
 // allowlist so it cannot inject an arbitrary `--flag` into the argv.
 const GUEST_INFO_TYPES = [
@@ -200,7 +276,7 @@ async function reportState(
  */
 export const model = {
   type: "@bad-at-naming/libvirt/vm",
-  version: "2026.10.25.4",
+  version: "2026.10.25.5",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -282,6 +358,12 @@ export const model = {
         "Adds optional SSH transport global arguments (port, identityFile, jumpHost, sshConfig, become default false, multiplex default true); existing definitions unchanged",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.10.25.5",
+      description:
+        "Adds vm.provision, vm.connection, vm.plan, vm.sync and the connection + plan resources; additive, no globalArguments change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   globalArguments: GlobalArgsSchema,
   resources: {
@@ -315,6 +397,19 @@ export const model = {
       schema: ConsoleCaptureSchema,
       lifetime: "infinite",
       garbageCollection: 10,
+    },
+    connection: {
+      description:
+        "Connection facts for a VM (ip, mac, addresses, sshUser), from vm.provision / vm.connection / vm.sync",
+      schema: ConnectionSchema,
+      lifetime: "infinite",
+      garbageCollection: 10,
+    },
+    plan: {
+      description: "vm.plan / vm.sync result: one item per desired VM",
+      schema: PlanSchema,
+      lifetime: "infinite",
+      garbageCollection: 20,
     },
   },
   methods: {
@@ -1360,6 +1455,234 @@ export const model = {
           },
         );
         return { dataHandles: [handle] };
+      },
+    },
+
+    // ==================== Provisioning ====================
+
+    provision: {
+      description:
+        "Create a VM from a cloud image: download + verify the image (cached), copy or overlay it into <storageDir>/<name>/, build the cloud-init NoCloud seed ISO, define the domain (swamp-marked) and start it, then wait for its address. Idempotent: an existing domain is never rebuilt, only started. Needs qemu-img, curl, sha256sum/sha512sum and sh on the hypervisor; no virt-install, ISO tool or storage pool.",
+      arguments: ProvisionSpecSchema,
+      execute: async (args, context) => {
+        const conn = context.globalArgs;
+        const log = (m: string) => context.logger.info(m);
+        const res = await provisionVm(conn, args, log);
+        const handles = [
+          await context.writeResource("actionResult", args.name, {
+            domain: args.name,
+            action: `provision:${res.action}`,
+            message:
+              `${res.action} ${args.name}: disk ${res.disk}, mac ${res.mac}${
+                res.checksum ? `, image ${res.checksum}` : ""
+              }`,
+            state: res.state,
+            timestamp: new Date().toISOString(),
+          }),
+        ];
+        if (res.state === "running") {
+          const found = await waitForAddress(
+            conn,
+            args.name,
+            args.waitForIpSeconds,
+            { ...addressWaitFor(args), log },
+          );
+          handles.push(
+            await writeConnection(context, conn, args, res.state, found),
+          );
+        }
+        return { dataHandles: handles };
+      },
+    },
+
+    connection: {
+      description:
+        "Read a VM's addresses (guest agent, then DHCP lease) and store them as connection facts (ip, mac, sshUser) for later workflow steps.",
+      arguments: z.object({
+        name: z.string().regex(VM_NAME_RE).describe("VM name"),
+        sources: z.array(z.enum(["agent", "lease", "arp"])).min(1)
+          .default(["agent", "lease"]).describe("Address sources, in order"),
+        sshUser: z.string().default("").describe(
+          "SSH user to record (e.g. the cloudInit.user the VM was provisioned with)",
+        ),
+      }),
+      execute: async (args, context) => {
+        const conn = context.globalArgs;
+        const st = await virsh(conn, ["domstate", args.name]);
+        const found = await readAddresses(conn, args.name, args.sources);
+        context.logger.info(
+          `${args.name}: ${
+            primaryIpv4(found.addrs)?.address || "no address"
+          } (${found.source})`,
+        );
+        const handle = await writeConnection(
+          context,
+          conn,
+          { name: args.name, cloudInit: { user: args.sshUser || undefined } },
+          st.stdout.trim(),
+          found,
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+
+    plan: {
+      description:
+        "Compare a desired VM list (running / stopped / absent) with the hypervisor and store the actions vm.sync would take: create, start, stop, delete, refuse (not swamp-created) or none, plus memory/vCPU drift. Changes nothing.",
+      arguments: DesiredVmsArgs,
+      execute: async (args, context) => {
+        const conn = context.globalArgs;
+        const observed = await observeVms(conn, args.vms.map((v) => v.name));
+        const items = planVms(args.vms, observed);
+        for (const i of items) {
+          context.logger.info(
+            `${i.name}: ${i.action} (${i.reason})${
+              i.drift.length ? `; drift: ${i.drift.join(", ")}` : ""
+            }`,
+          );
+        }
+        const handle = await writePlan(context, conn, "plan", items);
+        return { dataHandles: [handle] };
+      },
+    },
+
+    sync: {
+      description:
+        "Apply the vm.plan actions for a desired VM list: provision missing VMs, start/stop to the desired state, and (only with allowDelete) destroy + undefine swamp-created VMs that should be absent. Drift is reported, not fixed. Every VM is attempted; the stored plan records each result and the method fails at the end if any failed.",
+      arguments: DesiredVmsArgs.extend({
+        allowDelete: z.boolean().default(false).describe(
+          "Required for `absent` to delete anything. Without it, delete actions are skipped.",
+        ),
+        deleteStorage: z.boolean().default(false).describe(
+          "With allowDelete: also remove the disk and seed ISO vm.provision made, and then the empty <storageDir>/<name>/ folder — only if the domain's XML points at exactly those files. Never rm -rf; the image cache is kept.",
+        ),
+        stopWaitSeconds: z.number().int().min(0).max(3600).default(120)
+          .describe("How long a stop waits for 'shut off' (ACPI shutdown)."),
+        forceStopAfterWait: z.boolean().default(false).describe(
+          "If a stop does not reach 'shut off' in stopWaitSeconds, force it off (virsh destroy) instead of failing.",
+        ),
+      }),
+      execute: async (args, context) => {
+        const conn = context.globalArgs;
+        const log = (m: string) => context.logger.info(m);
+        const observed = await observeVms(conn, args.vms.map((v) => v.name));
+        const items = planVms(args.vms, observed);
+        const handles: unknown[] = [];
+        for (const item of items) {
+          const d = args.vms.find((v) => v.name === item.name)!;
+          try {
+            switch (item.action) {
+              case "create": {
+                if (!d.image) {
+                  throw new Error("image is required to create this VM");
+                }
+                const spec = {
+                  ...d,
+                  image: d.image,
+                  start: d.state === "running",
+                };
+                const res = await provisionVm(conn, spec, log);
+                if (res.state === "running") {
+                  const found = await waitForAddress(
+                    conn,
+                    d.name,
+                    d.waitForIpSeconds,
+                    { ...addressWaitFor(d), log },
+                  );
+                  handles.push(
+                    await writeConnection(context, conn, d, res.state, found),
+                  );
+                }
+                break;
+              }
+              case "start":
+                await virsh(conn, ["start", d.name]);
+                break;
+              case "resume":
+                await virsh(conn, ["resume", d.name]);
+                break;
+              case "stop": {
+                const res = await virshTry(conn, ["shutdown", d.name]);
+                if (
+                  res.code !== 0 &&
+                  !isIdempotent(res, IDEMPOTENT_ERRORS.vmNotRunning)
+                ) {
+                  throw new Error(`virsh shutdown failed: ${res.stderr}`);
+                }
+                const deadline = Date.now() + args.stopWaitSeconds * 1000;
+                let state = (await virsh(conn, ["domstate", d.name])).stdout
+                  .trim();
+                while (state !== "shut off" && Date.now() < deadline) {
+                  await new Promise((r) => setTimeout(r, POLL_MS));
+                  state = (await virsh(conn, ["domstate", d.name])).stdout
+                    .trim();
+                }
+                if (state !== "shut off" && args.forceStopAfterWait) {
+                  log(
+                    `${d.name}: no ACPI shutdown in ${args.stopWaitSeconds}s; forcing off`,
+                  );
+                  await virsh(conn, ["destroy", d.name]);
+                  state = "shut off";
+                }
+                if (state !== "shut off") {
+                  throw new Error(
+                    `did not reach 'shut off' within ${args.stopWaitSeconds}s (state: ${state}); set forceStopAfterWait to force it off`,
+                  );
+                }
+                break;
+              }
+              case "delete": {
+                if (!args.allowDelete) {
+                  item.result = "skipped";
+                  item.reason += "; allowDelete is false";
+                  continue;
+                }
+                await virshTry(conn, ["destroy", d.name]);
+                const undef = await virshTry(conn, [
+                  "undefine",
+                  d.name,
+                  "--nvram",
+                  "--snapshots-metadata",
+                ]);
+                if (undef.code !== 0) await virsh(conn, ["undefine", d.name]);
+                if (args.deleteStorage) {
+                  await deleteVmStorage(
+                    conn,
+                    d,
+                    observed.get(d.name)?.disks ?? [],
+                  );
+                }
+                break;
+              }
+              case "refuse":
+                item.result = "skipped";
+                continue;
+              case "none":
+                break;
+            }
+            item.result = "done";
+          } catch (e) {
+            item.result = "failed";
+            item.error = (e as Error).message.slice(0, 500);
+          }
+          log(
+            `${item.name}: ${item.action} -> ${item.result}${
+              item.error ? ` (${item.error})` : ""
+            }`,
+          );
+        }
+        handles.push(await writePlan(context, conn, "sync", items));
+        const failed = items.filter((i) => i.result === "failed");
+        if (failed.length > 0) {
+          throw new Error(
+            `vm.sync: ${failed.length} of ${items.length} failed: ${
+              failed.map((i) => `${i.name} (${i.action}): ${i.error}`).join(
+                "; ",
+              )
+            }`,
+          );
+        }
+        return { dataHandles: handles };
       },
     },
 

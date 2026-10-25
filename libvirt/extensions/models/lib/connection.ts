@@ -747,7 +747,7 @@ const decoder = new TextDecoder();
 async function run(
   command: string,
   args: string[],
-  stdin?: string,
+  stdin?: string | Uint8Array,
 ): Promise<VirshResult> {
   // @ts-ignore Deno global is available at bundle/runtime.
   const proc = new Deno.Command(command, {
@@ -766,7 +766,9 @@ async function run(
   }
   const child = proc.spawn();
   const writer = child.stdin.getWriter();
-  await writer.write(new TextEncoder().encode(stdin));
+  await writer.write(
+    typeof stdin === "string" ? new TextEncoder().encode(stdin) : stdin,
+  );
   await writer.close();
   const out = await child.output();
   return {
@@ -792,7 +794,7 @@ export function assertSshReached(conn: LibvirtConn, res: VirshResult): void {
 async function runChecked(
   conn: LibvirtConn,
   inv: Invocation,
-  stdin?: string,
+  stdin?: string | Uint8Array,
 ): Promise<VirshResult> {
   const res = await run(inv.command, inv.args, stdin);
   assertSshReached(conn, res);
@@ -842,11 +844,32 @@ export async function virsh(
 export async function runSshRaw(
   conn: LibvirtConn,
   argv: string[],
+  stdin?: string | Uint8Array,
 ): Promise<VirshResult> {
   return await withSsh(
     conn,
-    (ctx) => runChecked(conn, buildSshRaw(conn, argv, ctx)),
+    (ctx) => runChecked(conn, buildSshRaw(conn, argv, ctx), stdin),
   );
+}
+
+/**
+ * Run a NON-virsh command on the hypervisor: over ssh in SSH mode (as
+ * runSshRaw), or directly on the swamp host in local mode (argv straight to
+ * Deno.Command, no shell). `stdin` may be text or bytes. Does not throw on a
+ * non-zero exit (only on ssh exit 255). Used by vm.provision for qemu-img,
+ * curl, sha256sum and file writes.
+ */
+export async function runOnHost(
+  conn: LibvirtConn,
+  argv: string[],
+  stdin?: string | Uint8Array,
+): Promise<VirshResult> {
+  if (conn.host) return await runSshRaw(conn, argv, stdin);
+  checkHostKeyConfig(conn);
+  checkSshTransportConfig(conn);
+  const [command, ...args] = argv;
+  if (!command) throw new Error("runOnHost: empty argv");
+  return await run(command, args, stdin);
 }
 
 /**

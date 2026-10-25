@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026.10.25.5
+
+### Added
+
+- `vm.provision`: create a VM from a cloud image with only `qemu-img`, `curl`,
+  `sha256sum`/`sha512sum` and `sh` on the hypervisor (no `virt-install`, ISO
+  tool or storage pool; works on Unraid). It downloads and verifies the image
+  (pinned `checksum`, or SHA256SUMS/SHA512SUMS) into a cache, copies or overlays
+  it into `<storageDir>/<name>/`, builds the cloud-init NoCloud seed ISO in
+  TypeScript, defines a q35 domain with swamp metadata and a name-derived MAC,
+  starts it, and waits for the guest agent's address. Idempotent; never
+  overwrites a leftover disk; cleans up its own files if a step fails.
+- Review fixes before release: storage delete removes only the two files the
+  domain's XML names (then `rmdir`, never `rm -rf`); an atomic `mkdir` claim of
+  the VM folder blocks concurrent or leftover provisions; images with a backing
+  file or the wrong format are refused; the cache file is 0444; disk size below
+  the image size is refused; http sources need a pinned checksum; local mode
+  with a remote `uri` is refused for file steps; `paused` is resumed; provision
+  refuses a same-named non-swamp domain; `sync` gains `forceStopAfterWait` and
+  undefines with `--snapshots-metadata`.
+- `vm.connection` and the `connection` resource: ip, mac, addresses, source
+  (`agent`/`lease`/`arp`/`none`), sshUser and hostname for later steps.
+- `vm.plan` / `vm.sync` and the `plan` resource: a desired VM list (`running` /
+  `stopped` / `absent`) is turned into create / start / stop / delete / refuse /
+  none actions. Delete needs `allowDelete` and applies only to domains with
+  swamp metadata; memory/vCPU drift is reported, not changed.
+- `runOnHost` (SSH or local) with text or byte stdin, used for the file steps.
+
+### Notes
+
+- Found in the live test on Unraid: the seed must be a virtio disk, not a SATA
+  CD-ROM. Ubuntu's minimal cloud images boot `linux-kvm`, which has no CD-ROM
+  driver, so cloud-init never saw the seed.
+- Found in the live test too: a DHCP lease from an earlier boot with the same
+  MAC named the wrong address (`.244` while the guest had `.245`). With the
+  guest agent enabled, only the agent is trusted while waiting; the lease is a
+  logged fallback at the deadline.
+- `makeNoCloudIso` is adapted from `@evrardjp/cloud-init-nocloud` (Apache
+  License 2.0); see LICENSE.md and LICENSE-APACHE-2.0.txt. The plan/sync shape
+  follows `@evrardjp/libvirt-vm-pool`, and the checksum handling follows
+  `@taylor/libvirt` (ideas only).
+
 ## 2026.10.25.4
 
 ### Added
