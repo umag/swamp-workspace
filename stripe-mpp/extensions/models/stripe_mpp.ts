@@ -1026,7 +1026,7 @@ async function retrievePaymentIntent(
  * grant, spend by reference) + full seller API. */
 export const model = {
   type: "@magistr/stripe-mpp",
-  version: "2026.10.25.2",
+  version: "2026.10.25.10",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -1094,6 +1094,11 @@ export const model = {
       toVersion: "2026.10.25.2",
       description:
         "Fix: consumer-buyer link-cli calls go through link-cli 0.28.0's MCP wrapper tools (call_write_tool) and unwrap streamed results; paySpendRequest records an HTTP-error mpp_pay as pay-failed and sends report's required domain; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.10",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

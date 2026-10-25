@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.10.25.10
+
+- Repo-wide republish; no functional change.
+
 ## 2026.10.25.1
 
 ### Changed
