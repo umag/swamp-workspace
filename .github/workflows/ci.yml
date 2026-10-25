@@ -419,15 +419,9 @@ jobs:
     name: skill-review (tessl)
     needs: discover
     runs-on: ubuntu-latest
-    # TEMPORARILY DISABLED (2026-07-28): prompt-based checks are paused during
-    # the extension-quality test backfill — every backfill PR edits root
-    # quality files (quality-allowlist.txt), triggering the FULL matrix and
-    # re-running every skill review, which re-fails the 3 known sub-90 skills
-    # (issue-lifecycle: moldable-dev / review-security / review-skill; tracked
-    # in the workspace-skill-review-rot lifecycle issue) and burns API spend.
-    # RE-ENABLE by restoring the original condition below.
-    # if: github.event_name == 'pull_request' && needs.discover.outputs.skills != '[]'
-    if: false
+    # Re-enabled 2026-10-25 (paused 2026-07-28 for the test backfill, which is
+    # done: quality-allowlist.txt is empty).
+    if: github.event_name == 'pull_request' && needs.discover.outputs.skills != '[]'
     # Skip when no in-scope skill changed: an empty `skills` array expands to an
     # empty matrix, which GitHub marks as a failed run. Mirrors the same guard on
     # skill-trigger-eval / pr-report below.
@@ -468,14 +462,15 @@ jobs:
           SKILL: ${{ matrix.pair.skill }}
         run: |
           set -eo pipefail
-          # `--threshold 90` makes tessl exit non-zero when the skill scores
-          # below 90% (native gating; replaces the old hand-rolled JSON parser,
-          # whose score keys no longer match tessl's output schema). `--json` is
-          # piped to a file for the uploaded report; pipefail propagates the
-          # tessl exit code through `tee`.
-          npx --yes tessl@0.80.0 skill review \
+          # `tessl skill review` was removed in tessl 0.11x ("replaced by Tessl
+          # Review"); `review run quality` is its successor and needs a
+          # workspace. `--threshold 90` makes tessl exit non-zero when the
+          # skill scores below 90%. `--json` is piped to a file for the
+          # uploaded report; pipefail propagates the tessl exit code through
+          # `tee`.
+          npx --yes tessl@0.118.0 review run quality \
             "$EXT/.claude/skills/$SKILL" \
-            --threshold 90 --json | tee "tessl-$SKILL.json"
+            --workspace aopab --threshold 90 --json | tee "tessl-$SKILL.json"
 
       - name: Upload tessl report
         if: always()
@@ -488,10 +483,8 @@ jobs:
     name: skill-trigger-eval (promptfoo, sonnet)
     runs-on: ubuntu-latest
     needs: discover
-    # TEMPORARILY DISABLED (2026-07-28): paused with skill-review during the
-    # test backfill (see the comment there). RE-ENABLE by restoring:
-    # if: github.event_name == 'pull_request' && needs.discover.outputs.skills != '[]'
-    if: false
+    # Re-enabled 2026-10-25 with skill-review (see the comment there).
+    if: github.event_name == 'pull_request' && needs.discover.outputs.skills != '[]'
     # Skip when no in-scope skill changed. Trigger-collision eval is inherently
     # cross-skill, so when it DOES run it still evaluates every skill's triggers.
     steps:

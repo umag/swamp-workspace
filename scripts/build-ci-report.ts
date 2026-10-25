@@ -157,7 +157,7 @@ async function buildTessl(): Promise<string> {
     "<!-- ci-report:tessl -->",
     "## tessl skill-review — full report",
     "",
-    `\`tessl@0.80.0 skill review --threshold 90\`${runLine}`,
+    `\`tessl@0.118.0 review run quality --threshold 90\`${runLine}`,
     "",
     header,
     "",
@@ -215,7 +215,7 @@ async function buildPromptfoo(): Promise<string> {
     "<!-- ci-report:promptfoo -->",
     "## promptfoo trigger-eval — full report",
     "",
-    `\`promptfoo@0.121.12\` · model \`claude-sonnet-4-5\` · gate ≥90%${runLine}`,
+    `\`promptfoo@0.121.12\` · model \`claude-sonnet-5-5\` · gate ≥90%${runLine}`,
     "",
     `${rate >= 90 ? "✅" : "❌"} **${ok}/${total} = ${
       rate.toFixed(1)

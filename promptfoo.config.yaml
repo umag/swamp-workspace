@@ -16,7 +16,7 @@
 description: "Skill routing evals — does the model pick the right skill?"
 
 providers:
-  - id: anthropic:messages:claude-sonnet-4-5
+  - id: anthropic:messages:claude-sonnet-5-5
     config:
       max_tokens: 64
       temperature: 0
