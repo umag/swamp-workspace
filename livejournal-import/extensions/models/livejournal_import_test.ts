@@ -300,3 +300,30 @@ Deno.test("structural: model declares exactly the `result` and `post` resource s
   assertEquals(Object.keys(model.resources).sort(), ["post", "result"]);
   assertEquals(Object.keys(model.methods), ["import"]);
 });
+
+Deno.test("structural: the type-only domhandler pin matches the domhandler cheerio resolves to in deno.lock", async () => {
+  // livejournal_import.ts casts cheerio's runtime nodes to domhandler's
+  // AnyNode/Element/Text types. Those types only describe the runtime objects
+  // if they come from the same domhandler version cheerio itself depends on;
+  // a drift-driven bump of the direct pin alone (#227) would silently type
+  // the nodes against a different major.
+  const here = new URL(".", import.meta.url);
+  const source = await Deno.readTextFile(
+    new URL("./livejournal_import.ts", here),
+  );
+  const cheerioPin = source.match(/npm:cheerio@([0-9][^/"]*)/)?.[1];
+  const domhandlerPin = source.match(/npm:domhandler@([0-9][^/"]*)/)?.[1];
+  const lock = JSON.parse(
+    await Deno.readTextFile(new URL("../../deno.lock", here)),
+  ) as { npm: Record<string, { dependencies?: string[] }> };
+  const cheerioDeps = lock.npm[`cheerio@${cheerioPin}`]?.dependencies ?? [];
+  const resolved = cheerioDeps.find((d) => d.startsWith("domhandler"));
+  // deno.lock writes a bare name when only one version is locked, and
+  // name@version when several are.
+  const resolvedVersion = resolved?.includes("@")
+    ? resolved.split("@")[1]
+    : Object.keys(lock.npm)
+      .find((k) => k.startsWith("domhandler@"))
+      ?.split("@")[1];
+  assertEquals(domhandlerPin, resolvedVersion);
+});

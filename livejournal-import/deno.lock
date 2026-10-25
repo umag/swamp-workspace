@@ -8,7 +8,7 @@
     "jsr:@std/testing@1": "1.0.19",
     "jsr:@std/yaml@1": "1.0.10",
     "npm:cheerio@1.2.0": "1.2.0",
-    "npm:domhandler@6.0.1": "6.0.1",
+    "npm:domhandler@5.0.3": "5.0.3",
     "npm:fast-check@4.8.0": "4.8.0",
     "npm:zod@4": "4.5.4"
   },
@@ -49,8 +49,8 @@
         "boolbase",
         "css-select",
         "css-what",
-        "domelementtype@2.3.0",
-        "domhandler@5.0.3",
+        "domelementtype",
+        "domhandler",
         "domutils"
       ]
     },
@@ -59,7 +59,7 @@
       "dependencies": [
         "cheerio-select",
         "dom-serializer",
-        "domhandler@5.0.3",
+        "domhandler",
         "domutils",
         "encoding-sniffer",
         "htmlparser2",
@@ -75,7 +75,7 @@
       "dependencies": [
         "boolbase",
         "css-what",
-        "domhandler@5.0.3",
+        "domhandler",
         "domutils",
         "nth-check"
       ]
@@ -86,35 +86,26 @@
     "dom-serializer@2.0.0": {
       "integrity": "sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==",
       "dependencies": [
-        "domelementtype@2.3.0",
-        "domhandler@5.0.3",
+        "domelementtype",
+        "domhandler",
         "entities@4.5.0"
       ]
     },
     "domelementtype@2.3.0": {
       "integrity": "sha512-OLETBj6w0OsagBwdXnPdN0cnMfF9opN69co+7ZrbfPGrdpPVNBUj02spi6B1N7wChLQiPn4CSH/zJvXw56gmHw=="
     },
-    "domelementtype@3.0.0": {
-      "integrity": "sha512-umCQid3jKbDmVjx8jGaW7uUykm4DEUeyV21hPxNMo2nV955DhUThwqyOIDtreepP31hl84X7G5U9ZfsWvIB3Pg=="
-    },
     "domhandler@5.0.3": {
       "integrity": "sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==",
       "dependencies": [
-        "domelementtype@2.3.0"
-      ]
-    },
-    "domhandler@6.0.1": {
-      "integrity": "sha512-gYzvtM72ZtxQO0T048kd6HWSbbGCNOUwcnfQ01cqIJ4X2IYKFFHZ5mKvrQETcFXxsRObZulDaKmy//R7TPtsBg==",
-      "dependencies": [
-        "domelementtype@3.0.0"
+        "domelementtype"
       ]
     },
     "domutils@3.2.2": {
       "integrity": "sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==",
       "dependencies": [
         "dom-serializer",
-        "domelementtype@2.3.0",
-        "domhandler@5.0.3"
+        "domelementtype",
+        "domhandler"
       ]
     },
     "encoding-sniffer@0.2.1": {
@@ -142,8 +133,8 @@
     "htmlparser2@10.1.0": {
       "integrity": "sha512-VTZkM9GWRAtEpveh7MSF6SjjrpNVNNVJfFup7xTY3UpFtm67foy9HDVXneLtFVt4pMz5kZtgNcvCniNFb1hlEQ==",
       "dependencies": [
-        "domelementtype@2.3.0",
-        "domhandler@5.0.3",
+        "domelementtype",
+        "domhandler",
         "domutils",
         "entities@7.0.1"
       ]
@@ -163,7 +154,7 @@
     "parse5-htmlparser2-tree-adapter@7.1.0": {
       "integrity": "sha512-ruw5xyKs6lrpo9x9rCZqZZnIUntICjQAd0Wsmp396Ul9lN/h+ifgVV1x1gZHi8euej6wTfpqX8j+BFQxF0NS/g==",
       "dependencies": [
-        "domhandler@5.0.3",
+        "domhandler",
         "parse5"
       ]
     },

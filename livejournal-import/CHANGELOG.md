@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026.10.25.1
+
+Resolves the residual risk flagged in 2026.09.19.1 (release-watch #227): the
+type-only `domhandler` import now uses the same version cheerio depends on.
+
+### Changed
+
+- `npm:domhandler@6.0.1` -> `npm:domhandler@5.0.3` (type-only: `AnyNode`,
+  `Element`, `Text`). `cheerio@1.2.0` (still the latest, unchanged here) and its
+  whole transitive chain (`htmlparser2`, `domutils`, `cheerio-select`,
+  `dom-serializer`) declare `domhandler: ^5.0.3`, so the objects the model casts
+  are domhandler 5 nodes at runtime. cheerio does not re-export these node
+  types, so the direct pin stays, but now matches what cheerio uses.
+- `deno.lock`: `domhandler@6.0.1` and its `domelementtype@3.0.0` dependency
+  removed; one domhandler copy remains. No other locked version changed.
+- `quality-standard.yaml`: dropped the independent `domhandler` release-watch
+  source. That pin follows cheerio's declared range, so watching domhandler's
+  own `latest` would re-file the same drift. `cheerio` is still watched.
+- New structural test in `livejournal_import_test.ts` asserts that the
+  domhandler pin equals the domhandler version cheerio resolves to in
+  `deno.lock`.
+- Added an identity `upgrades[]` entry (`-> 2026.10.25.1`), no schema change.
+
 ## 2026.10.15.9
 
 ### Changed
