@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026.10.25.1
+
+### Changed
+
+- `storage.volClone` is now idempotent by target name (#261). It first checks
+  the target with `virsh vol-info <newName> --pool <pool>`; if the volume
+  already exists the call is a no-op success
+  (`message: "<pool>/<newName> already exists (idempotent)"`) and `vol-clone` is
+  never issued, so a re-run never clones over an existing volume (run
+  `volDelete` first for a fresh copy). A target that appears between the check
+  and the clone is caught by the shared `alreadyExists` matcher. Works for any
+  pool driver, including zfs pools whose golden image is a zvol.
+
+### Added
+
+- `storage.volClone`'s `actionResult` now records `idempotent` (true when the
+  target already existed) and, read best-effort from `vol-dumpxml`, the target's
+  `format` and `capacityBytes`. The fields are optional on the shared
+  `actionResult` schema, so existing records stay valid.
+
 ## 2026.10.15.9
 
 ### Changed

@@ -86,7 +86,7 @@ const ActionResultSchema = z.object({
  */
 export const model = {
   type: "@bad-at-naming/libvirt/network",
-  version: "2026.10.15.9",
+  version: "2026.10.25.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -142,6 +142,12 @@ export const model = {
     {
       toVersion: "2026.10.15.9",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.1",
+      description:
+        "Version bump — storage.volClone is now idempotent by target name; no schema change in this model",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

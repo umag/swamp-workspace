@@ -230,3 +230,29 @@ export function parseXmlGraphics(xml: string): XmlGraphics[] {
   }
   return graphics;
 }
+
+/** Format + byte capacity of a storage volume, from `virsh vol-dumpxml`. */
+export interface XmlVolume {
+  format?: string;
+  capacityBytes?: number;
+}
+
+/**
+ * Extract the volume's own `<target><format type=…/>` and its
+ * `<capacity unit='bytes'>` from `virsh vol-dumpxml` output. The format is
+ * read from the `<target>` block only, so a `<backingStore>`'s format is never
+ * mistaken for the volume's. Block volumes (zfs zvols, LVM) carry no
+ * `<format>`; a capacity in any unit other than bytes is ignored rather than
+ * mis-scaled. Fields that cannot be read are omitted.
+ */
+export function parseXmlVolume(xml: string): XmlVolume {
+  const out: XmlVolume = {};
+  const target = xml.match(/<target>([\s\S]*?)<\/target>/)?.[1];
+  const format = target?.match(/<format\s[^>]*type=['"]([^'"]+)['"]/)?.[1];
+  if (format) out.format = format;
+  const cap = xml.match(
+    /<capacity\s+unit=['"]bytes['"]\s*>\s*(\d+)\s*<\/capacity>/,
+  )?.[1];
+  if (cap !== undefined) out.capacityBytes = Number(cap);
+  return out;
+}
