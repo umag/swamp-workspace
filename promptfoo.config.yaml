@@ -16,10 +16,15 @@
 description: "Skill routing evals — does the model pick the right skill?"
 
 providers:
-  - id: anthropic:messages:claude-sonnet-4-5
+  - id: anthropic:messages:claude-sonnet-5-5
     config:
       max_tokens: 64
-      temperature: 0
+      # Sonnet 5 runs adaptive thinking when `thinking` is omitted, which would
+      # spend the 64-token budget before the one-word routing answer. No
+      # `temperature`: Claude 5 models reject sampling params (400), and
+      # promptfoo >= 0.125 omits its own default for them.
+      thinking:
+        type: disabled
 
 prompts:
   - id: routing

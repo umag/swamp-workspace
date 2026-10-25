@@ -4,10 +4,8 @@ description: >
   Drive enterprise-architecture governance projects end-to-end using the
   @magistr/arckit/workspace model — a standalone swamp port of ArcKit (no
   Claude plugin or Python CLI needed). A state machine gates 12 lifecycle
-  phases (foundation → context → risk → business-case → requirements →
-  design → procurement → design-review → delivery → operations → assurance →
-  story) against ARC-* artifacts actually on disk; 65 bundled arc-kit
-  templates drive document production. Triggers on "governance project",
+  phases, foundation through story, against ARC-* artifacts on disk; 65
+  bundled arc-kit templates drive document production. Triggers on "governance project",
   "start governance", "architecture governance", "arckit", "governance
   status", "advance phase", "governance gaps", "architecture principles",
   "requirements document", "risk register", "stakeholder analysis", "SOBC",

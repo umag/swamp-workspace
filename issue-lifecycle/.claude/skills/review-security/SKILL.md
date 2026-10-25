@@ -281,14 +281,16 @@ usage, token caching without TTL check, shared credentials across environments.
 ## Review Workflow
 
 1. **Scope** — identify files/diff under review.
-2. **Automated checks** — run grep targets listed per category above; also
-   search for `http://` (non-localhost), `npm:` without exact version, template
-   literals in shell calls.
-3. **Manual review** — walk all 7 categories in order; do not skip any.
+2. **Automated checks** — run the grep targets listed per category above.
+3. **Manual review** — walk all 7 categories in order; do not skip any. For the
+   complete per-category checklist, read
+   [references/checklist.md](references/checklist.md) before reporting.
 4. **Cross-reference** — a missing input validation finding may also be a
    command injection finding if input reaches a shell call; surface these as
    linked findings.
-5. **Report** — use the output format below.
+5. **Verify** — re-read each flagged file:line and confirm the finding before
+   writing it up; drop any you cannot reproduce from the code.
+6. **Report** — use the output format below.
 
 ---
 
