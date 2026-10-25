@@ -37,10 +37,64 @@ export interface McpResponse {
   error?: { code: number; message: string; data?: unknown };
 }
 
-/** One MCP tool invocation. `args` are passed as JSON — never as argv — so a
- * value can never be re-parsed as a flag at this boundary. */
+/** One MCP `tools/call` on the wire. `args` are passed as JSON — never as argv —
+ * so a value can never be re-parsed as a flag at this boundary. Since the
+ * progressive-discovery protocol (see {@link LINK_TOOLS}), `tool` is always one
+ * of the wrapper tools and `args` is `{ name, arguments }`. */
 export interface McpRequest {
   tool: string;
+  args: Record<string, unknown>;
+}
+
+/** The link-cli wrapper tools that execute an inner tool. */
+export type McpWrapperTool = "call_read_tool" | "call_write_tool";
+
+/**
+ * How link-cli 0.28.0 exposes the operations this model uses.
+ *
+ * link-cli is built on `incur`, whose stdio MCP server defaults to
+ * PROGRESSIVE DISCOVERY (incur/dist/Mcp.js `registerTools`, `discovery ??
+ * 'progressive'`; link-cli sets no `mcp.tools` override). `tools/list` returns
+ * only four wrapper tools — `search_tools`, `get_tool_details`,
+ * `call_read_tool`, `call_write_tool` — and a direct `tools/call` of an inner
+ * name fails with JSON-RPC -32602 "Tool spend-request_create not found".
+ *
+ * An inner tool is executed as `tools/call { name: <wrapper>, arguments: { name:
+ * <inner>, arguments: {...} } }`. The wrapper is chosen by the inner tool's
+ * `readOnlyHint` annotation: `call_read_tool` refuses any tool without
+ * `readOnlyHint: true` ("Tool is not read-only: X") and `call_write_tool`
+ * refuses any tool with it ("Tool is read-only: X"). link-cli 0.28.0 annotates
+ * NONE of its commands (get_tool_details returns no `annotations` for any of
+ * them), so even the reads (`payment-methods_list`, `spend-request_retrieve`)
+ * are only callable through `call_write_tool`. The strict serverInfo.version
+ * check is what keeps this table honest: a link-cli that starts annotating
+ * reads must be re-pinned here, not silently mis-routed.
+ *
+ * `streaming`: the command is an async generator in link-cli. incur buffers its
+ * yielded chunks and returns them as a JSON ARRAY (`[chunk, ...]`), so the
+ * result is the LAST chunk. A generator that ends with `return c.error(...)`
+ * (e.g. NOT_FOUND, POLLING_TIMEOUT, a duplicate spend request) yields nothing,
+ * and incur reports that as a SUCCESSFUL `[]` — so an empty stream is a
+ * failure, never an empty success.
+ */
+export const LINK_TOOLS = {
+  "payment-methods_list": { wrapper: "call_write_tool", streaming: false },
+  "spend-request_create": { wrapper: "call_write_tool", streaming: true },
+  "spend-request_retrieve": { wrapper: "call_write_tool", streaming: true },
+  "spend-request_cancel": { wrapper: "call_write_tool", streaming: false },
+  "mpp_pay": { wrapper: "call_write_tool", streaming: true },
+  "report": { wrapper: "call_write_tool", streaming: false },
+} as const satisfies Record<
+  string,
+  { wrapper: McpWrapperTool; streaming: boolean }
+>;
+
+/** A link-cli inner tool this model invokes. */
+export type LinkTool = keyof typeof LINK_TOOLS;
+
+/** One link-cli operation: the inner tool and its own arguments. */
+export interface LinkToolRequest {
+  tool: LinkTool;
   args: Record<string, unknown>;
 }
 
@@ -79,19 +133,60 @@ function contentText(resp: McpResponse): string {
   return (resp.result?.content ?? []).map((c) => c.text ?? "").join("");
 }
 
+/** Parse a tool result's text as JSON. incur appends a rendered call-to-action
+ * after a blank line (`<json>\n\nSuggested command: ...`) when a command
+ * returns one; its JSON is compact (no raw newlines), so the JSON is the part
+ * before the first blank line. `undefined` when neither parses. */
+function parseResultText(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch { /* fall through: maybe a CTA suffix */ }
+  const cut = text.indexOf("\n\n");
+  if (cut > 0) {
+    try {
+      return JSON.parse(text.slice(0, cut));
+    } catch { /* not JSON */ }
+  }
+  return undefined;
+}
+
+/** The human message of an `isError` result: the wrapper's `{"error": ...}`,
+ * an inner validation error's `{"message": ...}`, or the raw text. */
+function errorMessage(text: string): string {
+  const parsed = parseResultText(text);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const o = parsed as Record<string, unknown>;
+    if (typeof o.error === "string") return o.error;
+    if (typeof o.message === "string") {
+      return typeof o.code === "string" ? `${o.code}: ${o.message}` : o.message;
+    }
+  }
+  return text;
+}
+
 /**
- * Invoke a link-cli MCP tool and return its parsed JSON payload, or throw a
- * REDACTED error. Envelope handling happens BEFORE any domain parse: a
- * top-level JSON-RPC `error`, or a tool-level `isError: true` (a 2xx-shaped
- * failure — e.g. "Not authenticated"), is a failure, never a success. That
- * matters because the tool result is the source of truth for whether a human
- * approved a payment.
+ * Invoke a link-cli inner tool THROUGH its wrapper (see {@link LINK_TOOLS}) and
+ * return the inner tool's parsed JSON payload, or throw a REDACTED error.
+ * Envelope handling happens BEFORE any domain parse: a top-level JSON-RPC
+ * `error`, a tool-level `isError: true` (a 2xx-shaped failure — e.g. "Not
+ * authenticated", or the wrapper's "Unknown tool" / "Tool is not read-only"),
+ * or an empty stream is a failure, never a success. That matters because the
+ * tool result is the source of truth for whether a human approved a payment.
  */
 export async function callTool(
-  req: McpRequest,
+  req: LinkToolRequest,
   cfg: LinkCliConfig,
   redactFn: (s: string) => string,
 ): Promise<unknown> {
+  const spec = Object.hasOwn(LINK_TOOLS, req.tool)
+    ? LINK_TOOLS[req.tool]
+    : undefined;
+  if (!spec) {
+    throw new Error(
+      redactFn(`link-cli tool "${req.tool}" is not in the pinned tool table.`),
+    );
+  }
+
   // Flag-smuggling defense-in-depth: refuse any string value that begins with
   // '-' so it can never be re-tokenized as a flag if link-cli re-expands params
   // server-side (an unverifiable internal — US-only Link). Anchored id patterns
@@ -107,7 +202,10 @@ export async function callTool(
     }
   }
 
-  const resp = await _transport(req, cfg);
+  const resp = await _transport(
+    { tool: spec.wrapper, args: { name: req.tool, arguments: req.args } },
+    cfg,
+  );
 
   if (resp.error) {
     throw new Error(
@@ -117,16 +215,37 @@ export async function callTool(
 
   const text = contentText(resp);
   if (resp.result?.isError) {
-    throw new Error(redactFn(`link-cli ${req.tool} error: ${text}`));
+    throw new Error(
+      redactFn(`link-cli ${req.tool} error: ${errorMessage(text)}`),
+    );
+  }
+
+  const parsed = text ? parseResultText(text) : undefined;
+
+  if (spec.streaming) {
+    // A generator command's chunks come back as a JSON array; its result is
+    // the last chunk. `[]` means it ended via c.error, which incur drops.
+    if (!Array.isArray(parsed)) {
+      throw new Error(
+        redactFn(
+          `link-cli ${req.tool} returned an unexpected result envelope ` +
+            "(expected a JSON array of streamed chunks).",
+        ),
+      );
+    }
+    if (parsed.length === 0) {
+      throw new Error(
+        `link-cli ${req.tool} returned no result — the command ended with an ` +
+          "error that the MCP server does not report (e.g. not found, polling " +
+          "timeout, or a duplicate spend request).",
+      );
+    }
+    return parsed[parsed.length - 1];
   }
 
   if (!text) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    // Some tools emit plain text rather than JSON; hand it back redacted.
-    return redactFn(text);
-  }
+  // Some tools emit plain text rather than JSON; hand it back redacted.
+  return parsed === undefined ? redactFn(text) : parsed;
 }
 
 // ============================================================================
@@ -241,10 +360,10 @@ async function defaultStdioTransport(
       method: "notifications/initialized",
       params: {},
     }));
-    // Args are passed verbatim as JSON — never as argv. The `test` flag is NOT
-    // injected here (link-cli tool schemas are additionalProperties:false, so an
-    // unexpected key is rejected); the caller adds it only to spend-request
-    // creation, derived from allowLiveGrants.
+    // Args are passed verbatim as JSON — never as argv. `req` is already the
+    // wrapper call (`call_*_tool { name, arguments }`, built by callTool). The
+    // `test` flag is NOT injected here; the caller adds it only to
+    // spend-request creation, derived from allowLiveGrants.
     await writer.write(encode({
       jsonrpc: "2.0",
       id: 1,

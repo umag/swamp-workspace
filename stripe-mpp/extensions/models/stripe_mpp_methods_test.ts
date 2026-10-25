@@ -21,12 +21,14 @@ import {
 } from "jsr:@std/assert@1";
 import { Challenge, Credential, Receipt } from "npm:mppx@0.13.5";
 import { model } from "./stripe_mpp.ts";
+import { _resetMcpTransport, _setMcpTransport } from "./lib/link_cli.ts";
 import {
-  _resetMcpTransport,
-  _setMcpTransport,
-  type McpRequest,
-  type McpResponse,
-} from "./lib/link_cli.ts";
+  fakeLinkCli,
+  type InnerCall,
+  innerError,
+  type InnerRoute,
+  innerStream,
+} from "./lib/link_cli_test_helpers.ts";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -649,28 +651,25 @@ const CONSUMER_ARGS = {
   allowLiveGrants: false,
 };
 
-/** Stub the MCP transport with a per-tool response map; capture the calls. */
+/** Run against a fake link-cli 0.28.0 MCP server that exposes ONLY the four
+ * wrapper tools (a direct inner-tool call fails "not found", like the real
+ * server). `routes` answer by INNER tool name; `calls` records the inner tools
+ * that actually executed, with the wrapper that reached them. */
 function withMcpStub(
-  routes: Record<string, unknown>,
-  fn: (calls: McpRequest[]) => Promise<void>,
+  routes: Record<string, InnerRoute>,
+  fn: (calls: InnerCall[]) => Promise<void>,
 ) {
-  const calls: McpRequest[] = [];
-  _setMcpTransport((req: McpRequest): Promise<McpResponse> => {
-    calls.push(req);
-    const payload = routes[req.tool];
-    return Promise.resolve({
-      jsonrpc: "2.0",
-      id: 1,
-      result: {
-        content: [{ type: "text", text: JSON.stringify(payload ?? {}) }],
-      },
-    });
-  });
+  const fake = fakeLinkCli(routes);
+  _setMcpTransport(fake.transport);
   return (async () => {
     try {
-      await fn(calls);
+      await fn(fake.calls);
     } finally {
       _resetMcpTransport();
+    }
+    // Nothing may bypass the wrappers: every wire call is a wrapper call.
+    for (const w of fake.wire) {
+      assertEquals(w.tool, "call_write_tool", `wire call ${w.tool}`);
     }
   })();
 }
@@ -996,5 +995,220 @@ Deno.test("createSpendRequest blocks a grant whose echoed payment method was swa
         "payment method",
       );
     },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// link-cli 0.28.0 wrapper protocol, per buyer method: every inner tool is
+// reached through call_write_tool (0.28.0 marks no tool read-only) with the
+// right inner name and arguments, and results/errors are unwrapped.
+// ---------------------------------------------------------------------------
+
+Deno.test("buyer methods route each inner tool through call_write_tool", async () => {
+  const cases: Array<{
+    method: string;
+    args: Record<string, unknown>;
+    routes: Record<string, InnerRoute>;
+    expect: Array<{ tool: string; args: Record<string, unknown> }>;
+  }> = [
+    {
+      method: "listConsumerPaymentMethods",
+      args: {},
+      routes: { "payment-methods_list": [{ id: "csmrpd_1" }] },
+      expect: [{ tool: "payment-methods_list", args: {} }],
+    },
+    {
+      method: "getSpendRequest",
+      args: { id: "lsrq_abc" },
+      routes: {
+        "spend-request_retrieve": { id: "lsrq_abc", status: "created" },
+      },
+      expect: [{ tool: "spend-request_retrieve", args: { id: "lsrq_abc" } }],
+    },
+    {
+      method: "cancelSpendRequest",
+      args: { id: "lsrq_abc" },
+      routes: {
+        "spend-request_retrieve": { id: "lsrq_abc", status: "created" },
+        "spend-request_cancel": { id: "lsrq_abc", status: "canceled" },
+      },
+      expect: [
+        { tool: "spend-request_retrieve", args: { id: "lsrq_abc" } },
+        { tool: "spend-request_cancel", args: { id: "lsrq_abc" } },
+      ],
+    },
+    {
+      method: "createSpendRequest",
+      args: { amount: "500", currency: "usd", context: CTX100 },
+      routes: { "spend-request_create": { id: "lsrq_new", status: "created" } },
+      expect: [{
+        tool: "spend-request_create",
+        args: {
+          credentialType: "shared_payment_token",
+          networkId: "profile_test_fixture",
+          amount: 500,
+          currency: "usd",
+          context: CTX100,
+          requestApproval: false,
+          test: true,
+        },
+      }],
+    },
+  ];
+  for (const c of cases) {
+    const { ctx } = makeCtx(CONSUMER_ARGS);
+    await withMcpStub(c.routes, async (calls) => {
+      await run(c.method, c.args, ctx);
+      assertEquals(
+        calls,
+        c.expect.map((e) => ({ wrapper: "call_write_tool", ...e })),
+        c.method,
+      );
+    });
+  }
+});
+
+Deno.test("paySpendRequest routes mpp_pay and report (with domain) through call_write_tool", async () => {
+  const { ctx } = makeCtx(CONSUMER_ARGS);
+  const fx = fixture402("1000", "usd");
+  await withFetchStub([() => fx.response()], async () => {
+    await withMcpStub(
+      { "mpp_pay": { status: 200, headers: {}, body: "{}" } },
+      async (calls) => {
+        await run("paySpendRequest", {
+          url: "https://api.example.test/paid",
+          id: "lsrq_abc",
+          maxAmount: "1000",
+          currency: "usd",
+          httpMethod: "POST",
+          body: '{"q":1}',
+        }, ctx);
+        assertEquals(calls, [
+          {
+            wrapper: "call_write_tool",
+            tool: "mpp_pay",
+            args: {
+              url: "https://api.example.test/paid",
+              spendRequestId: "lsrq_abc",
+              method: "POST",
+              data: '{"q":1}',
+            },
+          },
+          {
+            wrapper: "call_write_tool",
+            tool: "report",
+            args: {
+              domain: "api.example.test",
+              spendRequestId: "lsrq_abc",
+              outcome: "success",
+            },
+          },
+        ]);
+      },
+    );
+  });
+});
+
+Deno.test("paySpendRequest records pay-failed when the paid request returns an HTTP error", async () => {
+  const { ctx, written } = makeCtx(CONSUMER_ARGS);
+  const fx = fixture402("1000", "usd");
+  await withFetchStub([() => fx.response()], async () => {
+    await withMcpStub(
+      { "mpp_pay": { status: 402, headers: {}, body: "payment rejected" } },
+      async (calls) => {
+        await assertRejects(
+          () =>
+            run("paySpendRequest", {
+              url: "https://api.example.test/paid",
+              id: "lsrq_abc",
+              maxAmount: "1000",
+              currency: "usd",
+            }, ctx),
+          Error,
+          "HTTP 402",
+        );
+        const report = calls.find((c) => c.tool === "report");
+        assertEquals(report?.args.outcome, "blocked");
+      },
+    );
+  });
+  const sr = written.find((w) => w.spec === "spendRequest");
+  assert(sr);
+  assertEquals(sr.payload.outcome, "pay-failed");
+});
+
+Deno.test("paySpendRequest records pay-failed when mpp_pay is an isError result", async () => {
+  const { ctx, written } = makeCtx(CONSUMER_ARGS);
+  const fx = fixture402("1000", "usd");
+  await withFetchStub([() => fx.response()], async () => {
+    await withMcpStub(
+      {
+        "mpp_pay": innerError(
+          "Spend request must be approved (current status: pending_approval)",
+        ),
+      },
+      async () => {
+        await assertRejects(
+          () =>
+            run("paySpendRequest", {
+              url: "https://api.example.test/paid",
+              id: "lsrq_abc",
+              maxAmount: "1000",
+              currency: "usd",
+            }, ctx),
+          Error,
+          "must be approved",
+        );
+      },
+    );
+  });
+  const sr = written.find((w) => w.spec === "spendRequest");
+  assert(sr);
+  assertEquals(sr.payload.outcome, "pay-failed");
+});
+
+Deno.test("getSpendRequest fails closed on an empty stream and writes nothing", async () => {
+  // link-cli's retrieve ends NOT_FOUND via `return c.error(...)`, which incur
+  // reports as a successful `[]`.
+  const { ctx, written } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub(
+    { "spend-request_retrieve": innerStream() },
+    async () => {
+      await assertRejects(
+        () => run("getSpendRequest", { id: "lsrq_gone" }, ctx),
+        Error,
+        "returned no result",
+      );
+    },
+  );
+  assertEquals(written.filter((w) => w.spec === "spendRequest").length, 0);
+});
+
+Deno.test("createSpendRequest surfaces 'Not authenticated' and records no grant", async () => {
+  const { ctx, written } = makeCtx(CONSUMER_ARGS);
+  await withMcpStub(
+    {
+      "spend-request_create": innerError(
+        'Not authenticated. Run "link-cli auth login" first.',
+      ),
+    },
+    async () => {
+      await assertRejects(
+        () =>
+          run("createSpendRequest", {
+            amount: "500",
+            currency: "usd",
+            context: CTX100,
+          }, ctx),
+        Error,
+        "Not authenticated",
+      );
+    },
+  );
+  assertEquals(
+    written.filter((w) =>
+      w.spec === "spendRequest" && w.payload.outcome === "created"
+    ).length,
+    0,
   );
 });
