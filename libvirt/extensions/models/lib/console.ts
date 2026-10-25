@@ -27,6 +27,7 @@ import {
   type Invocation,
   type LibvirtConn,
   shellQuote,
+  type SshCallContext,
   uriFlag,
 } from "./connection.ts";
 
@@ -92,15 +93,15 @@ export function validateConsoleTarget(
 
 /**
  * Build the command + argv for a bounded console capture. Pure. `os` is the
- * swamp host OS (Deno.build.os), used only in local mode. `knownHostsFile` is
- * the per-call file under hostKeyPolicy "strict" (see withHostKeys).
+ * swamp host OS (Deno.build.os), used only in local mode. `env` also carries
+ * the per-call ssh state from `withSsh` (strict known_hosts, ControlPath).
  */
 export function buildConsoleInvocation(
   conn: LibvirtConn,
   opts: Pick<ConsoleCaptureOptions, "name" | "device" | "force"> & {
     timeoutSeconds: number;
   },
-  env: { os: string; knownHostsFile?: string },
+  env: { os: string } & SshCallContext,
 ): Invocation {
   validateConsoleTarget(opts.name, opts.device);
   const virsh = ["virsh", ...uriFlag(conn), "console", opts.name];
@@ -119,7 +120,7 @@ export function buildConsoleInvocation(
       "-qec",
       quotedInner,
       "/dev/null",
-    ], env.knownHostsFile);
+    ], { knownHostsFile: env.knownHostsFile, controlPath: env.controlPath });
   }
   if (env.os === "linux") {
     return {

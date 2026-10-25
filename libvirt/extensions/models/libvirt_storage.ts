@@ -4,6 +4,7 @@ import {
   IDEMPOTENT_ERRORS,
   isIdempotent,
   SshHostKeyArgs,
+  SshTransportArgs,
   virsh,
   virshTry,
 } from "./lib/connection.ts";
@@ -25,6 +26,7 @@ const GlobalArgsSchema = z.object({
     "Libvirt connection URI. Local mode (no host) defaults to qemu:///system; in SSH mode it is passed to the remote virsh via -c when set.",
   ),
   ...SshHostKeyArgs,
+  ...SshTransportArgs,
 });
 
 const PoolSchema = z.object({
@@ -117,7 +119,7 @@ const ActionResultSchema = z.object({
  */
 export const model = {
   type: "@bad-at-naming/libvirt/storage",
-  version: "2026.10.25.3",
+  version: "2026.10.25.4",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -191,6 +193,12 @@ export const model = {
       toVersion: "2026.10.25.3",
       description:
         "Version bump — vm.consoleCapture added; no schema change in this model",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.4",
+      description:
+        "Adds optional SSH transport global arguments (port, identityFile, jumpHost, sshConfig, become default false, multiplex default true); existing definitions unchanged",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

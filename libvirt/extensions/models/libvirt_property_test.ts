@@ -123,12 +123,12 @@ Deno.test("property: buildInvocation SSH mode collapses the whole subcommand int
       const conn = { host: "h" };
       const inv = buildInvocation(conn, argv);
       const remote = inv.args[inv.args.length - 1];
-      // Exactly SSH_OPTS(6) + [target, remote] regardless of how long argv
+      // Exactly SSH_OPTS(6) + ["--", target, remote] regardless of how long argv
       // is — the whole subcommand is ONE trailing string, never N elements.
       return (
         inv.command === "ssh" &&
         typeof remote === "string" &&
-        inv.args.length === 8
+        inv.args.length === 9
       );
     }),
     FC_RUNS,

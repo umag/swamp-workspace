@@ -28,6 +28,49 @@ Each model instance picks its transport from `globalArguments`:
 
 In both modes the optional `uri` argument selects the libvirt connection.
 
+### SSH settings
+
+All optional, SSH mode only (setting one in local mode is an error — put ssh
+settings in `~/.ssh/config` or the `qemu+ssh://` URI there instead):
+
+| Argument       | Default | Effect                                                                      |
+| -------------- | ------- | --------------------------------------------------------------------------- |
+| `port`         |         | ssh `-p`                                                                    |
+| `identityFile` |         | ssh `-i <file>` with `IdentitiesOnly=yes`                                   |
+| `jumpHost`     |         | ssh `-J`, e.g. `ops@bastion:2222`                                           |
+| `sshConfig`    |         | Extra `-o Key=Value` settings, e.g. `{ServerAliveInterval: "15"}`           |
+| `become`       | `false` | Run virsh and other remote commands under `sudo -n` (passwordless sudo)     |
+| `multiplex`    | `true`  | Share one ssh connection across a run's calls (ControlMaster, 30 s persist) |
+
+`sshConfig` takes only connection-tuning keys: `AddressFamily`, `Ciphers`,
+`Compression`, `ConnectionAttempts`, `HostKeyAlgorithms`, `IPQoS`,
+`KexAlgorithms`, `LogLevel`, `MACs`, `PubkeyAcceptedAlgorithms`,
+`ServerAliveCountMax`, `ServerAliveInterval`, `TCPKeepAlive`. Other keys could
+get past strict host-key pinning (`VerifyHostKeyDNS`, `HostKeyAlias`), run local
+commands (`ProxyCommand`, `LocalCommand`) or change what runs (`RemoteCommand`,
+`SessionType`), so they are refused. The host-key options always come first on
+the ssh command line, and ssh keeps the first value it sees. `host` and `user`
+may not start with `-`, and `--` separates the options from the destination.
+With `jumpHost`, the bastion hop uses the runner's `~/.ssh/config` and
+`known_hosts`, not `hostKeyPolicy`; the hypervisor's key is still checked end to
+end.
+
+With `multiplex` on, the first call opens a master connection and later calls
+reuse it (about 300 ms per call down to about 50 ms against a LAN hypervisor).
+Sockets live in a 0700 directory under `/tmp`, checked (owner, mode, not a
+symlink) before every call and replaced if the check fails. It is removed at
+normal process exit; a serve or worker stopped with SIGTERM leaves one empty
+directory. An idle master exits after 30 s, and `ServerAliveInterval=5` /
+`ServerAliveCountMax=2` make a call on a master whose link died fail in about 10
+s. Each socket is named by a hash of the target AND its security settings, so a
+`hostKeyPolicy: strict` call never reuses a connection opened under `accept-new`
+or with other pinned keys.
+
+If ssh exits 255 (unreachable, auth refused, host key rejected, connection
+dropped, or the remote command killed by a signal) the method throws
+`SshConnectionError` and writes nothing. A transport failure is never read as a
+virsh answer such as "domain not found".
+
 ## Prerequisites
 
 - **SSH mode**: ssh access to the hypervisor; `virsh` installed there.
