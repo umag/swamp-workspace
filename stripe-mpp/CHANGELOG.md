@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026.10.25.1
+
+Dependency bump for the upstream release drift tracked in #231:
+`mppx@0.9.3 → 0.13.5`, `stripe@22.7.0-beta.1 → 23.1.0-beta.1`, and the
+`linkCliVersion` drift-detection default `0.19.1 → 0.28.0`. No source change was
+needed. Contract (`stripe_mpp_test.ts`) and adversarial/tamper
+(`stripe_mpp_adversarial_test.ts`) suites pass **unmodified** apart from the pin
+strings.
+
+- **mppx** (0.10.0 … 0.13.5, read release notes for every version):
+  - The Stripe SPT rail is byte-identical. `dist/Challenge.js`,
+    `dist/Credential.js`, `dist/PaymentRequest.js`, `dist/Expires.js` and
+    `dist/stripe/server/Charge.js` match 0.9.3 exactly, so the HMAC challenge-id
+    binding, the codec and the per-currency `canOffer` minimums are unchanged.
+    The crypto primitives in the regenerated lock are unchanged too:
+    `@noble/hashes@1.8.0`, `@noble/curves@1.9.1`, `@scure/base@1.2.6`,
+    `@scure/bip32@1.7.0` and `@scure/bip39@1.6.0`.
+  - `Receipt` gains an optional `fundingCurrency` field. The change is additive.
+  - Since 0.13.4, server-issued challenges carry an HMAC-bound random issuance
+    nonce in `opaque` (`_mppx_nonce`). Route scope still lives in
+    `request.methodDetails.metadata.scope`, so `expectedScope` checks are
+    unaffected. A swamp-runtime smoke test (`createChallenge`, then
+    `verifyCredential`) confirmed that an in-scope credential is accepted and a
+    cross-scope one is rejected.
+  - Breaking changes in the range only affect surfaces this model does not use:
+    Tempo, EVM, x402, sessions, `stripe.create()`'s new shared-store
+    requirement, and the CLI.
+  - Peer `viem` floor is now 2.57.1 (locked at 2.57.10). The direct `zod` floor
+    is now ^4.6.5, but zod stays externalized and shared with swamp. mppx uses
+    only basic `zod/mini` APIs.
+- **stripe** (`public-preview` channel): the model pins its own API version
+  (`2026-04-22.preview`), so the SDK's new pinned API version does not change
+  the wire format. No changes in the range touch the endpoints this model uses:
+  SharedPayment issued/granted tokens, PaymentIntents, Refunds and `rawRequest`.
+  From the 23.0.0 GA notes: incomplete response bodies now throw
+  `StripeConnectionError` instead of `StripeAPIError`. Only the message is
+  surfaced, and it is redacted.
+- **link-cli**: the inputs of the six MCP tools this model calls
+  (`spend-request_create`/`_retrieve`/`_cancel`, `payment-methods_list`,
+  `mpp_pay`, `report`) were compared between 0.19.1 and 0.28.0 via
+  `get_tool_details`. Changes are additive only (`useApprovalPolicy`,
+  `approvedChallenge`, recurring fields), `currency` became optional (this model
+  always sends it), and the removed `executionMethod` field was never sent.
+  Hosts must upgrade the `link-cli` binary to 0.28.0, because the version check
+  is fatal.
+- README: setup now stores secrets with a prompting
+  `swamp vault put <vault>
+  <key>` instead of passing the value on the command
+  line.
+
 ## 2026.10.15.9
 
 ### Changed

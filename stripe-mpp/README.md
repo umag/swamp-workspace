@@ -7,10 +7,10 @@ Payment Tokens (SPTs)**; the Tempo/crypto method is deferred.
 
 Built reuse-first:
 
-- [`mppx@0.9.3`](https://github.com/wevm/mppx) — the reference MPP protocol
+- [`mppx@0.13.5`](https://github.com/wevm/mppx) — the reference MPP protocol
   library (challenge codec, HMAC-bound challenge ids, credential envelope,
   receipts; server primitives)
-- `stripe@22.7.0-beta.1` (public-preview channel) — typed SPT lifecycle
+- `stripe@23.1.0-beta.1` (public-preview channel) — typed SPT lifecycle
   (`sharedPayment.issuedTokens` / `grantedTokens`)
 
 The model adds the swamp-native layer: vault wiring, an audit trail (a `payment`
@@ -25,8 +25,9 @@ errors), and test-mode gates.
 ```bash
 swamp extension source add /path/to/swamp-workspace/stripe-mpp
 swamp vault create local_encryption stripe-mpp
-swamp vault put stripe-mpp STRIPE_SECRET_KEY sk_test_...
-swamp vault put stripe-mpp SERVER_SECRET "$(openssl rand -hex 32)"   # seller side
+# Each put prompts for the value, so it never lands in shell history.
+swamp vault put stripe-mpp STRIPE_SECRET_KEY   # paste your sk_test_... key
+swamp vault put stripe-mpp SERVER_SECRET       # seller side: a random 32-byte hex value
 swamp model create @magistr/stripe-mpp stripe-mpp \
   --global-arg 'secretKey=${{ vault.get(stripe-mpp, STRIPE_SECRET_KEY) }}' \
   --global-arg 'serverSecret=${{ vault.get(stripe-mpp, SERVER_SECRET) }}' \

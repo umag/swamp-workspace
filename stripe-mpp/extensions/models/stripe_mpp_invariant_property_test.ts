@@ -9,7 +9,7 @@
  * the swamp runtime drives them (arguments.parse → execute).
  */
 import fc from "npm:fast-check@4.8.0";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.9.3";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.13.5";
 import {
   assertUrlPolicy,
   hostCategory,
