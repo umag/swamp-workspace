@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026.10.25.3
+
+### Added
+
+- `vm.consoleCapture` (#262): a bounded, read-only capture of a domain's serial
+  console, for diagnosing guests that hang before they reach the network.
+  - Arguments: `name`, optional `device` (`--devname`, for domains with more
+    than one console), required `timeoutSeconds` (1-300), and `force` (default
+    true: passes `--force`, which disconnects an existing console session).
+  - SSH mode runs
+    `env SHELL=/bin/sh timeout -k 5 <n> script -qec '<virsh console …>' /dev/null`
+    on the hypervisor (needs coreutils `timeout` and util-linux `script` there),
+    with a Deno-side kill timer on the ssh process as a backstop. Local mode
+    runs `script` on the swamp host (`-qec` on Linux, `script -q /dev/null …` on
+    macOS/BSD) under a Deno-side kill timer (SIGTERM at the deadline, SIGKILL 3
+    s later).
+  - Read-only: the process's stdin is held open and never written, so no input
+    reaches the guest console.
+  - Terminal control sequences are stripped. The last 256 KiB of text is kept
+    (`truncated` flags a cut).
+  - Stored in the new `console` resource (instance `<name>` or
+    `<name>-<device>`) with `ended: deadline | exited`, `bytes`, and `text`.
+    `text` is marked sensitive (`.meta({ sensitive: true })`), so swamp stores
+    it in a vault. It is never logged. A virsh/ssh failure throws with only the
+    `error:` lines and stderr, never console content.
+  - Domain names may not start with `-` or contain control characters. Device
+    aliases must match `[A-Za-z0-9][A-Za-z0-9_.-]*`. In SSH mode the inner
+    command is shell-quoted for both shells it passes through.
+
+## 2026.10.25.2
+
+### Added
+
+- Optional strict / pinned SSH host-key policy (#260), as two new global
+  arguments on every model:
+  - `hostKeyPolicy: "accept-new" | "strict"` (default `accept-new`, so existing
+    definitions behave exactly as before).
+  - `knownHosts: string[]`: OpenSSH known_hosts lines for the hypervisor.
+- With `strict`, every ssh call writes the `knownHosts` lines to its own temp
+  file (created with `Deno.makeTempFile`, chmod 0600 before the keys are
+  written, removed afterwards even on error) and runs ssh with
+  `StrictHostKeyChecking=yes`, `UserKnownHostsFile=<that file>`,
+  `GlobalKnownHostsFile=/dev/null` and `UpdateHostKeys=no`. An unknown or
+  changed host key fails closed, and the runner's `~/.ssh/known_hosts` is
+  neither read nor written in this mode.
+- Misconfiguration fails closed before any file or process is created: `strict`
+  without `knownHosts`, `strict` in local/URI mode (virsh's own `qemu+ssh://`
+  transport is not governed by these options), and `knownHosts` without `strict`
+  (the keys would be ignored) are errors.
+- Each `knownHosts` entry must be exactly one known_hosts line
+  (`[@cert-authority|@revoked] <hosts> <key-type> <base64-key> [comment]`). A
+  line with a newline or any other control character is rejected, both at
+  definition time (zod) and per call.
+
 ## 2026.10.25.1
 
 ### Changed

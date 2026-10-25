@@ -28,6 +28,10 @@ tests:
     state: present
     files:
       - extensions/models/libvirt_methods_test.ts
+      # vm.consoleCapture (#262): method-level cases plus the pure contract of
+      # lib/console.ts (argv per transport, double quoting, control-sequence
+      # stripping, bounded runner) in one file.
+      - extensions/models/libvirt_console_test.ts
   adversarial:
     state: present
     files:
