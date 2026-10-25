@@ -498,7 +498,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Build promptfoo tests from per-skill JSONs
         run: deno run --allow-read --allow-write scripts/build-promptfoo-tests.ts
