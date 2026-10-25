@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/jscad-cad"
-version: "2026.10.15.9"
+version: "2026.10.25.10"
 license: MIT
 description: >-
   JSCAD v2 CAD renderer — evaluate CadScript main() and serialize to

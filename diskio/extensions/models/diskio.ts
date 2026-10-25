@@ -936,7 +936,7 @@ export async function attributeImpl(
  * this disk?" on a Linux host over SSH. */
 export const model = {
   type: "@magistr/diskio",
-  version: "2026.10.25.1",
+  version: "2026.10.25.10",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -997,6 +997,11 @@ export const model = {
     {
       toVersion: "2026.10.25.1",
       description: "Docs: JSDoc on every exported symbol; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.10",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

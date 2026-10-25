@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/ns-international"
-version: "2026.10.15.9"
+version: "2026.10.25.10"
 license: MIT
 description: |
   Plan train trips on NS and NS International via the official NS

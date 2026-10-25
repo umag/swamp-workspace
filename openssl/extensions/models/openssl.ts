@@ -535,11 +535,16 @@ const ConvertArgsSchema = z.object({
 /** The `@magistr/openssl` model definition. */
 export const model = {
   type: "@magistr/openssl",
-  version: "2026.10.21.2",
+  version: "2026.10.25.10",
   upgrades: [
     {
       toVersion: "2026.10.21.2",
       description: "First published release; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.10",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

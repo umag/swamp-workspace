@@ -228,7 +228,7 @@ async function haFetch(host, token, path, protocol, options: RequestInit = {}) {
  */
 export const model = {
   type: "@magistr/homeassistant",
-  version: "2026.10.25.1",
+  version: "2026.10.25.10",
   globalArguments: InputSchema,
   upgrades: [
     {
@@ -320,6 +320,11 @@ export const model = {
       toVersion: "2026.10.25.1",
       description:
         "Docs: vault secrets are prompted for instead of typed on the command line; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.10",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

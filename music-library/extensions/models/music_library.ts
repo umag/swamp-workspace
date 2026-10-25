@@ -2407,7 +2407,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.10.25.1",
+  version: "2026.10.25.10",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2530,6 +2530,11 @@ export const model = {
       toVersion: "2026.10.25.1",
       description:
         "jschardet 3.1.4 -> 4.0.0: tag-encoding recovery adapted to the new detector (chardet names mapped back, Cyrillic charset chosen by letter-frequency/case scoring, CJK accepted via a script gate); no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.10",
+      description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

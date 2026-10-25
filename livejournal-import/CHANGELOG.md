@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.10.25.10
+
+- Repo-wide republish; no functional change.
+
 ## 2026.10.25.1
 
 Resolves the residual risk flagged in 2026.09.19.1 (release-watch #227): the

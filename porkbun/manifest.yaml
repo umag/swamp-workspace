@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/porkbun"
-version: "2026.10.15.9"
+version: "2026.10.25.10"
 license: MIT
 description: "Porkbun DNS record management with full CRUD for all common record types"
 

@@ -1061,7 +1061,7 @@ async function readState(ctx: ReadWriteCtx): Promise<PlanState | null> {
  */
 export const model = {
   type: "@magistr/good-planning",
-  version: "2026.10.15.9",
+  version: "2026.10.25.10",
 
   upgrades: [
     {
@@ -1138,6 +1138,11 @@ export const model = {
     },
     {
       toVersion: "2026.10.15.9",
+      description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.10",
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },

@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/homeassistant"
-version: "2026.10.25.1"
+version: "2026.10.25.10"
 license: MIT
 description: |
   Home Assistant integration for swamp — query entity states, call services,
