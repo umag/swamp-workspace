@@ -25,10 +25,14 @@ that principle.
 ## Review Process
 
 1. Read the target skill's SKILL.md and all files in its references/ directory
-2. Read SKILL.md files from other skills in the project (for trigger conflict
+2. Check that every path the target SKILL.md references resolves to a file, and
+   that every file in its references/ is linked from SKILL.md (anti-pattern 6)
+3. Read SKILL.md files from other skills in the project (for trigger conflict
    and consistency checks)
-3. Evaluate the skill against all 7 quality dimensions below
-4. Produce a structured review report
+4. Evaluate the skill against all 7 quality dimensions below
+5. Before delivering, confirm the report has all 7 dimension sections, the
+   Freedom Level assessment and the Trigger Conflict Check filled in
+6. Produce the structured review report
 
 ## Quality Dimensions
 
@@ -65,7 +69,8 @@ skill that _should_ match so promptfoo catches regressions.
 
 ## Freedom Level Assessment
 
-Assess prescriptiveness level. Details in `references/dimensions.md`.
+Assess prescriptiveness level. Details in `references/quality-criteria.md`
+(Freedom Level Selection).
 
 | Level  | When to use                                                             |
 | ------ | ----------------------------------------------------------------------- |

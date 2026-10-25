@@ -2,12 +2,15 @@
 name: ddd
 description: >
   Domain Driven Design guidance for TypeScript/Deno codebases and swamp
-  extensions. Apply when writing or modifying code to choose appropriate DDD
-  building blocks (entities, value objects, aggregates, domain services,
-  repositories, application services) and maintain ubiquitous language.
-  Triggers on all code changes to ensure domain model consistency, "domain
-  model", "entity", "value object", "aggregate", "domain service",
-  "repository", "bounded context", "DDD", "building block".
+  extensions: choose the DDD building block (entity, value object, aggregate,
+  domain service, repository, application service), keep one consistency
+  boundary per aggregate and per swamp model, keep the ubiquitous-language
+  glossary current, and fix anti-patterns such as anemic domain models. Use
+  when adding or modifying domain types, models or business logic. Triggers
+  on "domain model", "entity", "value object", "aggregate", "domain service",
+  "domain event", "repository", "bounded context", "ubiquitous language",
+  "anemic domain model", "DDD", "building block". Not for test workflow
+  (tdd) or general code review (review-code).
 ---
 
 # Domain Driven Design
@@ -37,6 +40,9 @@ Follow these steps whenever writing or modifying domain code:
    - Each swamp model owns a single consistency boundary; unrelated concerns
      live in separate models wired with CEL expressions.
    - All new domain terms are added to the ubiquitous language glossary.
+
+   If any item fails, fix the code (or the glossary) and run the checklist again
+   before moving on.
 
 ## Building Block Selection
 

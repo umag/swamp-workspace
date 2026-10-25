@@ -19,7 +19,8 @@ providers:
   - id: anthropic:messages:claude-sonnet-5-5
     config:
       max_tokens: 64
-      temperature: 0
+      # No `temperature`: claude-sonnet-5-5 rejects it (400 "temperature is
+      # deprecated for this model").
 
 prompts:
   - id: routing
