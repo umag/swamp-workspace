@@ -5,7 +5,7 @@
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/yaml@1": "1.0.10",
     "npm:fast-check@4.8.0": "4.8.0",
-    "npm:jschardet@3.1.4": "3.1.4",
+    "npm:jschardet@4.0.0": "4.0.0",
     "npm:zod@4": "4.4.3"
   },
   "jsr": {
@@ -29,8 +29,9 @@
         "pure-rand"
       ]
     },
-    "jschardet@3.1.4": {
-      "integrity": "sha512-/kmVISmrwVwtyYU40iQUOp3SUPk2dhNCMsZBQX0R1/jZ8maaXJ/oZIzUOiyOqcgtLnETFKYChbJ5iDC/eWmFHg=="
+    "jschardet@4.0.0": {
+      "integrity": "sha512-EsNiLV+xzeMBtkGL/HeWoUivNkGIr8JmaC5A5j7DBlKnhp4CcBTWKEOtNg6vlmf+mkn9yQ9Wals47u7+LoTr7w==",
+      "bin": true
     },
     "pure-rand@8.4.2": {
       "integrity": "sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng=="
