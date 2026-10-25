@@ -3,6 +3,7 @@ import {
   connLabel,
   runSshRaw,
   SshHostKeyArgs,
+  SshTransportArgs,
   virsh,
 } from "./lib/connection.ts";
 import { parseKV } from "./lib/parse.ts";
@@ -18,6 +19,7 @@ const GlobalArgsSchema = z.object({
     "Libvirt connection URI. Local mode (no host) defaults to qemu:///system; in SSH mode it is passed to the remote virsh via -c when set.",
   ),
   ...SshHostKeyArgs,
+  ...SshTransportArgs,
 });
 
 const HostInfoSchema = z.object({
@@ -67,7 +69,7 @@ const DeviceListSchema = z.object({
  */
 export const model = {
   type: "@bad-at-naming/libvirt/host",
-  version: "2026.10.25.3",
+  version: "2026.10.25.4",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -141,6 +143,12 @@ export const model = {
       toVersion: "2026.10.25.3",
       description:
         "Version bump — vm.consoleCapture added; no schema change in this model",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.4",
+      description:
+        "Adds optional SSH transport global arguments (port, identityFile, jumpHost, sshConfig, become default false, multiplex default true); existing definitions unchanged",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

@@ -315,7 +315,7 @@ Deno.test("buildInvocation ssh strict: StrictHostKeyChecking=yes against ONLY th
   const inv = buildInvocation(
     { host: "h", hostKeyPolicy: "strict", knownHosts: [`h ${ED25519}`] },
     ["list"],
-    KH_FILE,
+    { knownHostsFile: KH_FILE },
   );
   assertEquals(inv.command, "ssh");
   assertEquals(inv.args.slice(0, 12), [
@@ -341,7 +341,7 @@ Deno.test("buildSshRaw strict: same pinned option set as virsh calls", () => {
   const inv = buildSshRaw(
     { host: "h", hostKeyPolicy: "strict", knownHosts: [`h ${ED25519}`] },
     ["ip", "route"],
-    KH_FILE,
+    { knownHostsFile: KH_FILE },
   );
   assertEquals(inv.args[1], "StrictHostKeyChecking=yes");
   assertEquals(inv.args[3], `UserKnownHostsFile=${KH_FILE}`);
@@ -363,7 +363,9 @@ Deno.test("buildInvocation ssh strict: a known_hosts path ssh would split or exp
   for (const bad of ["/tmp/a b.kh", "/tmp/%h.kh", "/tmp/a\tb", "~/kh", ""]) {
     let threw = false;
     try {
-      buildInvocation({ host: "h", hostKeyPolicy: "strict" }, ["list"], bad);
+      buildInvocation({ host: "h", hostKeyPolicy: "strict" }, ["list"], {
+        knownHostsFile: bad,
+      });
     } catch {
       threw = true;
     }
@@ -376,7 +378,7 @@ Deno.test("buildInvocation: the default / accept-new policy ignores a file argum
     const inv = buildInvocation(
       { host: "h", hostKeyPolicy: policy },
       ["list"],
-      KH_FILE,
+      { knownHostsFile: KH_FILE },
     );
     assertEquals(
       inv.args.slice(0, HARDENED_SSH_OPTS.length),

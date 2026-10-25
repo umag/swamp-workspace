@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026.10.25.4
+
+### Added
+
+- SSH connection sharing: `multiplex` (default `true`) runs ssh with
+  `ControlMaster=auto` and `ControlPersist=30`, so a run's virsh calls reuse one
+  connection. Measured against Unraid: about 300 ms per call without it, about
+  50 ms with it. Sockets are in a per-process 0700 directory under `/tmp`
+  (removed at exit). Each is named by 16 hex chars of a SHA-256 over the target
+  (user, host, port, jump host) and the security settings (host-key policy,
+  pinned keys, identity file, `sshConfig`), so a `strict` call never reuses an
+  `accept-new` master. ssh's `%C` is not used: with the 17-char suffix ssh adds
+  while binding, it overflows the ~104-byte socket path limit on macOS. If the
+  path would still be too long, sharing is skipped.
+- SSH settings `port` (`-p`), `identityFile` (`-i`, `IdentitiesOnly=yes`),
+  `jumpHost` (`-J`; no hop may start with `-`), `sshConfig` (extra
+  `-o Key=Value` from an allowlist of connection-tuning keys; see README) and
+  `become` (default `false`: remote commands run under `sudo -n`). They apply in
+  SSH mode only; setting one in local mode throws before any process starts.
+- With `multiplex`, `ServerAliveInterval=5` and `ServerAliveCountMax=2` (after
+  `sshConfig`, so a user value wins): a reused connection skips
+  `ConnectTimeout`, so keepalives bound a call on a dead master to ~10 s. The
+  socket directory is checked (owner, 0700, not a symlink) before every call and
+  replaced if the check fails.
+- `SshConnectionError`: ssh exit 255 now throws, naming `user@host` and ssh's
+  stderr, from `virshTry`, `virsh`, `runSshRaw`, `defineXml` and
+  `vm.consoleCapture`. Before, `virshTry` returned the result, and a caller
+  matching virsh stderr for idempotency could act on a transport failure.
+
+### Changed
+
+- `host` and `user` may not start with `-` or contain whitespace, `@` or control
+  characters, and ssh gets `--` before the destination (a `user` such as
+  `-oProxyCommand=…` used to reach ssh as an option).
+- `buildInvocation`, `buildSshRaw`, `sshOptions` and `buildConsoleInvocation`
+  take an `SshCallContext` (`{ knownHostsFile?, controlPath? }`) in place of the
+  bare `knownHostsFile` string. `withHostKeys` is now `withSsh`.
+
+Ideas from `@taylor/libvirt` (connection sharing, the ssh settings and the
+exit-255 rule); no code was copied (it is AGPL-3.0).
+
 ## 2026.10.25.3
 
 ### Added

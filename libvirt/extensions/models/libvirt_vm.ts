@@ -1,5 +1,6 @@
 import { z } from "npm:zod@4";
 import {
+  assertSshReached,
   connLabel,
   defineXml,
   IDEMPOTENT_ERRORS,
@@ -7,9 +8,10 @@ import {
   type LibvirtConn,
   redactSecrets,
   SshHostKeyArgs,
+  SshTransportArgs,
   virsh,
   virshTry,
-  withHostKeys,
+  withSsh,
 } from "./lib/connection.ts";
 import {
   buildConsoleInvocation,
@@ -39,6 +41,7 @@ const GlobalArgsSchema = z.object({
     "Libvirt connection URI. Local mode (no host) defaults to qemu:///system; in SSH mode it is passed to the remote virsh via -c when set.",
   ),
   ...SshHostKeyArgs,
+  ...SshTransportArgs,
 });
 
 const VmSchema = z.object({
@@ -197,7 +200,7 @@ async function reportState(
  */
 export const model = {
   type: "@bad-at-naming/libvirt/vm",
-  version: "2026.10.25.3",
+  version: "2026.10.25.4",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -271,6 +274,12 @@ export const model = {
       toVersion: "2026.10.25.3",
       description:
         "Adds vm.consoleCapture and a new console resource (text field sensitive); additive, no globalArguments change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.25.4",
+      description:
+        "Adds optional SSH transport global arguments (port, identityFile, jumpHost, sshConfig, become default false, multiplex default true); existing definitions unchanged",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1362,11 +1371,11 @@ export const model = {
       arguments: ConsoleCaptureArgs,
       execute: async (args, context) => {
         const conn = context.globalArgs;
-        const res = await withHostKeys(conn, (kh) => {
+        const res = await withSsh(conn, (ctx) => {
           const { command, args: argv } = buildConsoleInvocation(conn, args, {
             // @ts-ignore Deno global is available at bundle/runtime.
             os: Deno.build.os,
-            knownHostsFile: kh,
+            ...ctx,
           });
           return runBounded(command, argv, {
             deadlineMs: consoleDeadlineMs(conn, args.timeoutSeconds),
@@ -1377,6 +1386,7 @@ export const model = {
         // SSH: 124/137 = the remote `timeout` ended the capture (normal).
         const deadline = res.timedOut ||
           (!!conn.host && (res.code === 124 || res.code === 137));
+        if (!deadline) assertSshReached(conn, res);
         if (!deadline && res.code !== 0) {
           // Report virsh/ssh errors only — never console content, which may
           // hold secrets: `error:` lines from the pty stream plus stderr
