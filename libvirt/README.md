@@ -75,18 +75,65 @@ Several methods are safe to re-run:
 Idempotency is detected by matching anchored substrings in `virsh` stderr (see
 `lib/connection.ts` `IDEMPOTENT_ERRORS`); unrelated failures still raise.
 
+## Strict host-key pinning (SSH mode)
+
+By default the first connection to a hypervisor is trust-on-first-use. To pin
+the expected key in the definition instead, set `hostKeyPolicy: strict` and
+supply the hypervisor's OpenSSH known_hosts line(s) in `knownHosts`:
+
+```bash
+# get the key, then check its fingerprint against the hypervisor's console
+# (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the host) before trusting it
+ssh-keyscan -t ed25519 10.0.0.5 2>/dev/null | tee hv.known_hosts
+ssh-keygen -lf hv.known_hosts
+```
+
+```yaml
+# model definition (excerpt)
+globalArguments:
+  host: 10.0.0.5
+  user: root
+  hostKeyPolicy: strict
+  knownHosts:
+    - "10.0.0.5 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..."
+```
+
+With `strict`, each ssh call writes those lines to its own temp file (mode 0600,
+removed afterwards, also on error) and runs ssh with
+`StrictHostKeyChecking=yes`, `UserKnownHostsFile=<that file>`,
+`GlobalKnownHostsFile=/dev/null` and `UpdateHostKeys=no`. Only the supplied keys
+are trusted. An unknown or changed key fails with
+`Host key verification failed.`, and the runner's `~/.ssh/known_hosts` is
+neither read nor written, so it need not be writable. `knownHosts` can also come
+from another model's output through a CEL expression.
+
+These cases fail closed before anything runs:
+
+- `strict` without `knownHosts`.
+- `strict` in local/URI mode. The libvirt URI transport (`qemu+ssh://`,
+  `qemu+libssh2://`, ...) does not use these options; configure host keys for it
+  in the runner's ssh config, or with the `known_hosts=` URI parameter of the
+  libssh/libssh2 transports.
+- `knownHosts` without `strict`, because the keys would be ignored.
+- An entry that is not exactly one known_hosts line, such as a line with an
+  embedded newline or other control character, a comment, or a bad key type or
+  key.
+
 ## Security notes
 
 - On the SSH path every argument is shell-quoted, so VM/network/volume names and
   other inputs cannot inject shell commands. In local mode arguments are passed
   directly to the process (no shell at all).
-- **SSH host keys** use `StrictHostKeyChecking=accept-new`: the hypervisor's key
-  is pinned to your default `known_hosts` on first connect (trust-on-first-use)
-  and a later **changed** key is refused. This requires a writable
-  `~/.ssh/known_hosts`; if you rotate/rebuild a hypervisor, clear its stale
-  `known_hosts` entry. To close the first-use gap, pre-seed the key out of band
-  (`ssh-keyscan -H <host> >> ~/.ssh/known_hosts`). `BatchMode=yes` makes auth
-  failures fail fast instead of hanging on a prompt.
+- **SSH host keys** default to `StrictHostKeyChecking=accept-new`
+  (`hostKeyPolicy: accept-new`): the hypervisor's key is pinned to your default
+  `known_hosts` on first connect (trust-on-first-use) and a later **changed**
+  key is refused. This requires a writable `~/.ssh/known_hosts`; if you
+  rotate/rebuild a hypervisor, clear its stale `known_hosts` entry. To close the
+  first-use gap, pre-seed the key out of band
+  (`ssh-keyscan -H <host> >> ~/.ssh/known_hosts`), or pin it in the definition
+  with `hostKeyPolicy: strict` (see
+  [Strict host-key pinning](#strict-host-key-pinning-ssh-mode)). `BatchMode=yes`
+  makes auth failures fail fast instead of hanging on a prompt.
 - `vm.setUserPassword` passes the password as a `virsh` argument; while it runs
   it is visible in the hypervisor's process list (`ps`). Avoid it on shared
   hosts where this matters.

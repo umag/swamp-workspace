@@ -12,15 +12,20 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { z } from "npm:zod@4";
 import {
   buildInvocation,
   buildSshRaw,
+  checkHostKeyConfig,
   connLabel,
   includesAny,
+  isKnownHostsLine,
   redactSecrets,
   runSshRaw,
   shellQuote,
+  SshHostKeyArgs,
   uriFlag,
+  validateKnownHosts,
 } from "./lib/connection.ts";
 
 // --- uriFlag -----------------------------------------------------------------
@@ -291,4 +296,204 @@ Deno.test("includesAny matches any needle, case-sensitive", () => {
   assert(includesAny("error: Domain is already active", ["already active"]));
   assert(!includesAny("error: some other failure", ["already active"]));
   assert(includesAny("a b c", ["x", "b"]));
+});
+
+// --- strict / pinned host-key policy (issue #260) ---------------------------
+//
+// hostKeyPolicy "strict" swaps accept-new for StrictHostKeyChecking=yes
+// against a per-call known_hosts file built from the definition's
+// `knownHosts` lines. These pin the pure parts: the option set, the
+// misconfiguration guards (fail closed), and the line validator that keeps a
+// definition-supplied line from smuggling extra entries or options.
+
+const ED25519 =
+  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+const RSA_KEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7vbqajDhA+17ZAdaZ==";
+const KH_FILE = "/tmp/swamp-libvirt-abc123.known_hosts";
+
+Deno.test("buildInvocation ssh strict: StrictHostKeyChecking=yes against ONLY the supplied known_hosts file", () => {
+  const inv = buildInvocation(
+    { host: "h", hostKeyPolicy: "strict", knownHosts: [`h ${ED25519}`] },
+    ["list"],
+    KH_FILE,
+  );
+  assertEquals(inv.command, "ssh");
+  assertEquals(inv.args.slice(0, 12), [
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    `UserKnownHostsFile=${KH_FILE}`,
+    "-o",
+    "GlobalKnownHostsFile=/dev/null",
+    "-o",
+    "UpdateHostKeys=no",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=10",
+  ]);
+  assertEquals(inv.args.at(-2), "root@h");
+  assertEquals(inv.args.at(-1), "'virsh' 'list'");
+  assert(!inv.args.join(" ").includes("accept-new"));
+});
+
+Deno.test("buildSshRaw strict: same pinned option set as virsh calls", () => {
+  const inv = buildSshRaw(
+    { host: "h", hostKeyPolicy: "strict", knownHosts: [`h ${ED25519}`] },
+    ["ip", "route"],
+    KH_FILE,
+  );
+  assertEquals(inv.args[1], "StrictHostKeyChecking=yes");
+  assertEquals(inv.args[3], `UserKnownHostsFile=${KH_FILE}`);
+  assertEquals(inv.args.at(-1), "'ip' 'route'");
+});
+
+Deno.test("buildInvocation ssh strict without a known_hosts file fails closed", () => {
+  let threw = false;
+  try {
+    buildInvocation({ host: "h", hostKeyPolicy: "strict" }, ["list"]);
+  } catch (e) {
+    threw = true;
+    assertStringIncludes((e as Error).message, "known_hosts");
+  }
+  assert(threw, "strict without a file must throw, never fall back");
+});
+
+Deno.test("buildInvocation ssh strict: a known_hosts path ssh would split or expand is refused", () => {
+  for (const bad of ["/tmp/a b.kh", "/tmp/%h.kh", "/tmp/a\tb", "~/kh", ""]) {
+    let threw = false;
+    try {
+      buildInvocation({ host: "h", hostKeyPolicy: "strict" }, ["list"], bad);
+    } catch {
+      threw = true;
+    }
+    assert(threw, `path ${JSON.stringify(bad)} must be refused`);
+  }
+});
+
+Deno.test("buildInvocation: the default / accept-new policy ignores a file argument and keeps the original opts", () => {
+  for (const policy of [undefined, "accept-new" as const]) {
+    const inv = buildInvocation(
+      { host: "h", hostKeyPolicy: policy },
+      ["list"],
+      KH_FILE,
+    );
+    assertEquals(
+      inv.args.slice(0, HARDENED_SSH_OPTS.length),
+      HARDENED_SSH_OPTS,
+    );
+    assert(!inv.args.join(" ").includes("UserKnownHostsFile"));
+  }
+});
+
+Deno.test("checkHostKeyConfig: defaults and well-formed strict configs pass", () => {
+  checkHostKeyConfig({});
+  checkHostKeyConfig({ host: "h" });
+  checkHostKeyConfig({ host: "h", hostKeyPolicy: "accept-new" });
+  checkHostKeyConfig({ uri: "qemu:///session", hostKeyPolicy: "accept-new" });
+  checkHostKeyConfig({
+    host: "h",
+    hostKeyPolicy: "strict",
+    knownHosts: [`h ${ED25519}`],
+  });
+});
+
+Deno.test("checkHostKeyConfig: strict without knownHosts fails closed with a clear error", () => {
+  for (const knownHosts of [undefined, []]) {
+    let msg = "";
+    try {
+      checkHostKeyConfig({ host: "h", hostKeyPolicy: "strict", knownHosts });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    assertStringIncludes(msg, "hostKeyPolicy 'strict' requires knownHosts");
+  }
+});
+
+Deno.test("checkHostKeyConfig: strict in local/URI mode is refused (virsh's own transport is not governed)", () => {
+  let msg = "";
+  try {
+    checkHostKeyConfig({
+      uri: "qemu+ssh://root@h/system",
+      hostKeyPolicy: "strict",
+      knownHosts: [`h ${ED25519}`],
+    });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  assertStringIncludes(msg, "SSH mode");
+});
+
+Deno.test("checkHostKeyConfig: knownHosts without strict is refused (it would pin nothing)", () => {
+  let msg = "";
+  try {
+    checkHostKeyConfig({ host: "h", knownHosts: [`h ${ED25519}`] });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  assertStringIncludes(msg, "hostKeyPolicy");
+});
+
+Deno.test("isKnownHostsLine accepts real OpenSSH known_hosts shapes", () => {
+  for (
+    const line of [
+      `10.0.0.5 ${ED25519}`,
+      `hv1,10.0.0.5 ${ED25519} root@hv1`,
+      `[10.0.0.5]:2222 ${RSA_KEY}`,
+      `|1|JfKTdBh7rNbXkVAQCRp4OQoPfmI=|USECr3SWf1JUPsms5AqfD5QfxkM= ${ED25519}`,
+      `@cert-authority *.lab.example ${ED25519}`,
+      `@revoked * ${RSA_KEY}`,
+      "hv ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY=",
+      "hv sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t",
+    ]
+  ) {
+    assert(isKnownHostsLine(line), `should accept ${line}`);
+  }
+});
+
+Deno.test("isKnownHostsLine rejects lines that could smuggle extra entries or are not entries", () => {
+  for (
+    const line of [
+      "", // empty
+      "   ", // blank
+      `# comment ${ED25519}`, // comment line, pins nothing
+      `h ${ED25519}\n* ${RSA_KEY}`, // LF: second, wildcard entry
+      `h ${ED25519}\r* ${RSA_KEY}`, // CR
+      `h ${ED25519}\u0000`, // NUL
+      `h\t${ED25519}`, // control-char separator
+      "h ssh-ed25519", // no key
+      `h -oProxyCommand=touch ${ED25519.split(" ")[1]}`, // bogus key type
+      "h ssh-ed25519 not*base64!", // key is not base64
+      `@bogus h ${ED25519}`, // unknown marker
+      `@revoked`, // marker alone
+      ED25519, // key type where the host pattern belongs
+    ]
+  ) {
+    assert(!isKnownHostsLine(line), `should reject ${JSON.stringify(line)}`);
+  }
+});
+
+Deno.test("validateKnownHosts names the offending index and returns the trimmed lines", () => {
+  assertEquals(validateKnownHosts([`  h ${ED25519}  `]), [`h ${ED25519}`]);
+  let msg = "";
+  try {
+    validateKnownHosts([`h ${ED25519}`, `h ${ED25519}\nevil`]);
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  assertStringIncludes(msg, "knownHosts[1]");
+});
+
+Deno.test("SshHostKeyArgs: defaults to accept-new; zod rejects an invalid knownHosts line at definition time", () => {
+  const schema = z.object(SshHostKeyArgs);
+  assertEquals(schema.parse({}).hostKeyPolicy, "accept-new");
+  assertEquals(
+    schema.parse({ hostKeyPolicy: "strict", knownHosts: [`h ${ED25519}`] })
+      .knownHosts,
+    [`h ${ED25519}`],
+  );
+  assert(
+    !schema.safeParse({ knownHosts: [`h ${ED25519}\n* ${RSA_KEY}`] }).success,
+  );
+  assert(!schema.safeParse({ hostKeyPolicy: "no" }).success);
 });

@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026.10.25.2
+
+### Added
+
+- Optional strict / pinned SSH host-key policy (#260), as two new global
+  arguments on every model:
+  - `hostKeyPolicy: "accept-new" | "strict"` (default `accept-new`, so existing
+    definitions behave exactly as before).
+  - `knownHosts: string[]`: OpenSSH known_hosts lines for the hypervisor.
+- With `strict`, every ssh call writes the `knownHosts` lines to its own temp
+  file (created with `Deno.makeTempFile`, chmod 0600 before the keys are
+  written, removed afterwards even on error) and runs ssh with
+  `StrictHostKeyChecking=yes`, `UserKnownHostsFile=<that file>`,
+  `GlobalKnownHostsFile=/dev/null` and `UpdateHostKeys=no`. An unknown or
+  changed host key fails closed, and the runner's `~/.ssh/known_hosts` is
+  neither read nor written in this mode.
+- Misconfiguration fails closed before any file or process is created: `strict`
+  without `knownHosts`, `strict` in local/URI mode (virsh's own `qemu+ssh://`
+  transport is not governed by these options), and `knownHosts` without `strict`
+  (the keys would be ignored) are errors.
+- Each `knownHosts` entry must be exactly one known_hosts line
+  (`[@cert-authority|@revoked] <hosts> <key-type> <base64-key> [comment]`). A
+  line with a newline or any other control character is rejected, both at
+  definition time (zod) and per call.
+
 ## 2026.10.25.1
 
 ### Changed
