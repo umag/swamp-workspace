@@ -121,7 +121,9 @@ data.latest("governance", "gaps").attributes.summary.projectsWithViolations
   tractorjuice); this extension redistributes the core templates with only
   `deno fmt` applied. Overlay templates come from 15 plugins (TOGAF, agent
   architecture, OAA, repo, and the AT, AU, CA, EU, FR, UAE, UK and US regional
-  packs).
+  packs). They ship as one file per plugin in `templates/overlays/`, because the
+  registry caps an extension at 150 files; `template` and `provisionTemplates`
+  split them back out.
 - This extension's own NL overlay replaces upstream's NL plugin, and its
   document-control partial replaces upstream's. Upstream's `TBB`, `RBCLOUD`,
   `BIO2` and `EUCSF` artifacts satisfy the matching gates.

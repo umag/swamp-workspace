@@ -2094,6 +2094,41 @@ function suggestNextAction(
 }
 
 const TEMPLATES_DIR = "templates";
+const OVERLAY_PACKS_DIR = `${TEMPLATES_DIR}/overlays`;
+const OVERLAY_PACK_HEADING = /^<!-- arckit-overlay-template: (\S+) -->$/gm;
+
+/**
+ * Split an overlay pack into its templates. Overlays ship as one pack per
+ * upstream plugin because the registry caps an extension at 150 files.
+ */
+export function parseOverlayPack(pack: string): Map<string, string> {
+  const headings = [...pack.matchAll(OVERLAY_PACK_HEADING)];
+  const templates = new Map<string, string>();
+  headings.forEach((h, i) => {
+    const start = h.index + h[0].length;
+    const end = headings[i + 1]?.index ?? pack.length;
+    templates.set(h[1], `${pack.slice(start, end).trim()}\n`);
+  });
+  return templates;
+}
+
+/** Every template in the bundled overlay packs, by filename. */
+async function readOverlayTemplates(context): Promise<Map<string, string>> {
+  const dir = context.extensionFile(OVERLAY_PACKS_DIR);
+  const templates = new Map<string, string>();
+  try {
+    for await (const e of Deno.readDir(dir)) {
+      if (!e.isFile) continue;
+      const pack = await Deno.readTextFile(`${dir}/${e.name}`);
+      for (const [file, text] of parseOverlayPack(pack)) {
+        templates.set(file, text);
+      }
+    }
+  } catch (e) {
+    if (!(e instanceof Deno.errors.NotFound)) throw e;
+  }
+  return templates;
+}
 
 // ---------- Model ---------------------------------------------------------------
 
@@ -2676,6 +2711,8 @@ export const model = {
           file: string;
           sizeBytes: number;
         }> = [];
+        const overlays = await readOverlayTemplates(context);
+        const encoder = new TextEncoder();
         for (const [command, file] of Object.entries(TEMPLATE_MAP).sort()) {
           let sizeBytes = 0;
           try {
@@ -2684,7 +2721,8 @@ export const model = {
             );
             sizeBytes = stat.size;
           } catch {
-            // bundled file missing — surface as zero size
+            // In an overlay pack, or missing — missing surfaces as zero size.
+            sizeBytes = encoder.encode(overlays.get(file) ?? "").length;
           }
           templates.push({
             command,
@@ -2761,14 +2799,21 @@ export const model = {
           );
         }
         const cap = context.globalArgs.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-        const templatePath = context.extensionFile(`${TEMPLATES_DIR}/${file}`);
-        const st = await Deno.stat(templatePath);
-        if (st.size > cap) {
+        // Packs first: extensionFile throws for a file that is not on disk.
+        let content = (await readOverlayTemplates(context)).get(file);
+        const size = content !== undefined
+          ? new TextEncoder().encode(content).length
+          : (await Deno.stat(
+            context.extensionFile(`${TEMPLATES_DIR}/${file}`),
+          )).size;
+        if (size > cap) {
           throw new Error(
-            `Template file "${file}" (${st.size} bytes) exceeds max size ${cap} bytes`,
+            `Template file "${file}" (${size} bytes) exceeds max size ${cap} bytes`,
           );
         }
-        let content = await Deno.readTextFile(templatePath);
+        content ??= await Deno.readTextFile(
+          context.extensionFile(`${TEMPLATES_DIR}/${file}`),
+        );
         const docCode = COMMAND_TO_CODE[args.command];
         let documentControl: z.infer<typeof TemplateDocSchema>[
           "documentControl"
@@ -2847,6 +2892,10 @@ export const model = {
             written.push(e.name);
           }
         }
+        for (const [file, text] of await readOverlayTemplates(context)) {
+          await Deno.writeTextFile(`${targetDir}/${file}`, text);
+          written.push(file);
+        }
         try {
           for await (const e of Deno.readDir(`${srcDir}/_partials`)) {
             if (!e.isFile) continue;
@@ -2876,7 +2925,7 @@ export const model = {
 
     migrateClassification: {
       description:
-        "Port of `arckit migrate-classification`: walk every ARC-* markdown artifact and map Document Control Classification values from the UK ladder to the target classification ladder — uae (default, UAE Smart Data: PUBLIC→Open, OFFICIAL→Shared, OFFICIAL-SENSITIVE→Confidential) or nl (NL rubricering/VIRBI 2025: PUBLIC→Ongerubriceerd, SECRET→Stg. GEHEIM, TOP SECRET→Stg. ZEER GEHEIM — SECRET/TOP SECRET sourced from the German BMI's NATO-equivalence table, PUBLIC reasoned floor-to-floor; OFFICIAL and OFFICIAL-SENSITIVE have no published post-2014 UK→NL equivalence and are left byte-unchanged, recorded in `skipped` with a reason naming the value for a human to decide by hand). Never aborts on an undecidable value — one such document is skipped, not the whole run. Report-only by default; pass apply=true to write.",
+        "Port of `arckit migrate-classification`: walk every ARC-* markdown artifact and map Document Control Classification values from the UK ladder to the target classification ladder — uae (default, UAE Smart Data: PUBLIC→Open, OFFICIAL→Confidential, OFFICIAL-SENSITIVE→Sensitive, SECRET and TOP SECRET→Secret) or nl (NL rubricering/VIRBI 2025: PUBLIC→Ongerubriceerd, SECRET→Stg. GEHEIM, TOP SECRET→Stg. ZEER GEHEIM — SECRET/TOP SECRET sourced from the German BMI's NATO-equivalence table, PUBLIC reasoned floor-to-floor; OFFICIAL and OFFICIAL-SENSITIVE have no published post-2014 UK→NL equivalence and are left byte-unchanged, recorded in `skipped` with a reason naming the value for a human to decide by hand). Never aborts on an undecidable value — one such document is skipped, not the whole run. Report-only by default; pass apply=true to write.",
       arguments: z.object({
         apply: z.boolean().default(false).describe(
           "Write the proposed changes (default: report only)",

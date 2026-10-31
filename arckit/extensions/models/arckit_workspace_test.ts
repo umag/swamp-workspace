@@ -11,6 +11,7 @@ import {
   nextPhase,
   nextProjectDir,
   parseArtifactFilename,
+  parseOverlayPack,
   parseProjectDir,
   PHASE_GATES,
   PHASES,
@@ -305,7 +306,13 @@ Deno.test("COMMAND_TO_CODE inverts DOC_CODES", () => {
 
 Deno.test("every TEMPLATE_MAP file exists in the bundled templates dir", async () => {
   const dir = new URL("../../templates/", import.meta.url).pathname;
+  const packed = new Set<string>();
+  for await (const e of Deno.readDir(`${dir}overlays`)) {
+    const pack = await Deno.readTextFile(`${dir}overlays/${e.name}`);
+    for (const f of parseOverlayPack(pack).keys()) packed.add(f);
+  }
   for (const file of Object.values(TEMPLATE_MAP)) {
+    if (packed.has(file)) continue;
     const stat = await Deno.stat(`${dir}${file}`);
     assert(stat.isFile && stat.size > 0, `${file} missing or empty`);
   }

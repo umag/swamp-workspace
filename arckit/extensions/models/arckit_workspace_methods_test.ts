@@ -13,7 +13,12 @@
  * fields, not just counts, per the approved plan.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { DOC_CONTROL_NAMES, model, TEMPLATE_MAP } from "./arckit_workspace.ts";
+import {
+  DOC_CONTROL_NAMES,
+  model,
+  parseOverlayPack,
+  TEMPLATE_MAP,
+} from "./arckit_workspace.ts";
 import {
   arcFilename,
   docControlContent,
@@ -589,11 +594,88 @@ Deno.test("methods: template fills in the header for the doc code's regime and r
 
 Deno.test("methods: every template named in TEMPLATE_MAP is on disk with a resolvable header", async () => {
   const dir = new URL("../../templates/", import.meta.url).pathname;
+  const packed = new Map<string, string>();
+  for await (const e of Deno.readDir(`${dir}overlays`)) {
+    const pack = await Deno.readTextFile(`${dir}overlays/${e.name}`);
+    for (const [f, text] of parseOverlayPack(pack)) packed.set(f, text);
+  }
+  assertEquals(packed.size, 122);
   for (const [command, file] of Object.entries(TEMPLATE_MAP)) {
-    const text = await Deno.readTextFile(`${dir}${file}`);
+    const text = packed.get(file) ??
+      await Deno.readTextFile(`${dir}${file}`);
     assert(text.length > 0, command);
   }
   for (const name of DOC_CONTROL_NAMES) {
     await Deno.stat(`${dir}_partials/document-control-${name}.md`);
   }
+});
+
+const PACK = [
+  "<!-- arckit-overlay-template: au-pia-template.md -->",
+  "",
+  "# PIA",
+  "",
+  "<!-- arckit-overlay-template: au-dss-template.md -->",
+  "",
+  "# DSS",
+  "",
+].join("\n");
+
+Deno.test("parseOverlayPack splits a pack into its templates", () => {
+  assertEquals([...parseOverlayPack(PACK)], [
+    ["au-pia-template.md", "# PIA\n"],
+    ["au-dss-template.md", "# DSS\n"],
+  ]);
+});
+
+Deno.test("methods: template, templates and provisionTemplates all reach a packed overlay template", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    await writeTemplateFile(templatesDir, "overlays/au.md", PACK);
+    const { ctx, written } = makeCtx(root, templatesDir);
+
+    await run(model, "template", { command: "au-pia" }, ctx);
+    assertEquals(written[0].payload.content, "# PIA\n");
+
+    await run(model, "templates", {}, ctx);
+    const catalog = written[1].payload.templates as Array<
+      Record<string, unknown>
+    >;
+    assertEquals(
+      catalog.find((t) => t.command === "au-pia")?.sizeBytes,
+      "# PIA\n".length,
+    );
+    assertEquals(written[1].payload.unmappedFiles, []);
+
+    await run(model, "provisionTemplates", {}, ctx);
+    assertEquals(
+      await Deno.readTextFile(`${root}/.arckit/templates/au-dss-template.md`),
+      "# DSS\n",
+    );
+  });
+});
+
+Deno.test("methods: template still rejects a command whose file is in no pack", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    await writeTemplateFile(templatesDir, "overlays/au.md", PACK);
+    const { ctx } = makeCtx(root, templatesDir);
+    await assertRejects(
+      () => run(model, "template", { command: "us-icam" }, ctx),
+      Deno.errors.NotFound,
+    );
+  });
+});
+
+Deno.test("methods: template reaches a packed template when extensionFile throws for missing files, as the runtime does", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    await writeTemplateFile(templatesDir, "overlays/au.md", PACK);
+    const { ctx, written } = makeCtx(root, templatesDir);
+    const real = ctx.extensionFile;
+    ctx.extensionFile = (rel: string) => {
+      const path = real(rel);
+      Deno.statSync(path);
+      return path;
+    };
+    await run(model, "template", { command: "au-pia" }, ctx);
+    assertEquals(written[0].payload.content, "# PIA\n");
+  });
 });
