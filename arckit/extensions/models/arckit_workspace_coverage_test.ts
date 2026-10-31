@@ -316,7 +316,7 @@ Deno.test("coverage: migrateClassification finds zero changes for a Classificati
 Deno.test("coverage: gaps() via the actual method — 000-global's principles satisfies every other project's dependency on it", async () => {
   await withTempWorkspace(async (root, templatesDir) => {
     await writeArtifact(root, "000-global", arcFilename("000", "PRIN"));
-    await writeArtifact(root, "001-x", arcFilename("001", "ANAL")); // analyze needs principles
+    await writeArtifact(root, "001-x", arcFilename("001", "STORY")); // story needs principles
     await writeArtifact(root, "002-y", arcFilename("002", "STRAT")); // strategy needs principles+stakeholders
     const { ctx, written } = makeCtx(root, templatesDir);
     await run(model, "gaps", {}, ctx);

@@ -10,7 +10,7 @@ production through the lifecycle.
 ArcKit organizes governance as markdown artifacts (`ARC-{ID}-{TYPE}-v{VER}.md`)
 inside `projects/NNN-name/` directories. This extension owns both the **state
 machine** (which phase each project is in, gated against artifacts actually on
-disk) and the **material** (65 bundled arc-kit templates served on demand).
+disk) and the **material** (193 bundled templates served on demand).
 
 ## Model type: `@magistr/arckit/workspace`
 
@@ -43,11 +43,12 @@ nl-bio + nl-exit + eu-sovereignty in assurance.
   story).
 - **`abandon`** `{project, reason}` — close from any state.
 
-### Templates (bundled, arc-kit v6.2.0)
+### Templates (bundled, arc-kit v6.18.3)
 
-- **`template`** `{command, project?}` — one template's content plus doc code,
-  suggested `ARC-{ID}-{CODE}-v1.0.md` filename, and the mandatory input
-  artifacts to read first (from the dependency matrix).
+- **`template`** `{command, project?, documentControl?}` — one template's
+  content with its Document Control header filled in, plus doc code, suggested
+  `ARC-{ID}-{CODE}-v1.0.md` filename, and the mandatory input artifacts to read
+  first (from the dependency matrix).
 - **`templates`** — catalog of all bundled templates.
 - **`provisionTemplates`** — copy the bundle into `.arckit/templates/`
   (refreshes defaults; `.arckit/templates-custom/` is never touched).
@@ -112,9 +113,21 @@ data.latest("governance", "gaps").attributes.summary.projectsWithViolations
 
 ### Notes
 
-- Doc-code table covers all 62 ArcKit document types, including hyphenated codes
-  (`PRIN-COMP`, `SECD-MOD` — matched longest-first) and multi-instance artifacts
-  (`DFD-2`, `WVCH-1`).
+- Doc-code table covers ArcKit's core and overlay document types, including
+  hyphenated codes (`PRIN-COMP`, `SECD-MOD` — matched longest-first) and
+  multi-instance artifacts (`DFD-2`, `WVCH-1`).
 - Unrecognized `ARC-*` doc types surface in `scan`'s `unmappedDocTypes`.
-- Templates and the dependency matrix derive from arc-kit v6.2.0 (MIT, ©
-  tractorjuice); this extension redistributes the templates unmodified.
+- Templates and the dependency matrix derive from arc-kit v6.18.3 (MIT, ©
+  tractorjuice); this extension redistributes the core templates with only
+  `deno fmt` applied. Overlay templates come from 15 plugins (TOGAF, agent
+  architecture, OAA, repo, and the AT, AU, CA, EU, FR, UAE, UK and US regional
+  packs).
+- This extension's own NL overlay replaces upstream's NL plugin, and its
+  document-control partial replaces upstream's. Upstream's `TBB`, `RBCLOUD`,
+  `BIO2` and `EUCSF` artifacts satisfy the matching gates.
+- Overlay commands have no entries in the mandatory-dependency table, because
+  upstream's matrix covers core commands only: `mandatoryInputs` is empty for
+  them and `gaps` does not check them.
+- The Document Control header comes from the doc type's regime for AT, AU, CA,
+  FR, NL, UAE and US documents. Otherwise it comes from `documentControl`, then
+  the nl-gov profile, then the UK header.

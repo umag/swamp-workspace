@@ -1,0 +1,100 @@
+# UAE Digital Records Plan
+
+> **Template Origin**: Community | **ArcKit Version**: [VERSION] | **Command**:
+> `/arckit:uae-digital-records`
+
+## Document Control
+
+<!-- DOC-CONTROL-HEADER -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
+
+## Revision History
+
+| Version   | Date         | Author    | Changes                                             | Approved By | Approval Date |
+| --------- | ------------ | --------- | --------------------------------------------------- | ----------- | ------------- |
+| [VERSION] | [YYYY-MM-DD] | ArcKit AI | Initial creation from `/arckit:uae-digital-records` | [PENDING]   | [PENDING]     |
+
+## Executive Summary
+
+[Two to three paragraphs describing the records that the service creates or
+consumes, the source-of-truth posture, and the records-as-official-source
+designation under the UAE Digital Records Policy.]
+
+## Source-of-Truth Register
+
+| Record type   | Authoritative system | Custodian entity                 | Record ID scheme | Notes   |
+| ------------- | -------------------- | -------------------------------- | ---------------- | ------- |
+| [record type] | [system]             | [federal entity / business unit] | [ID scheme]      | [notes] |
+
+## Retention Schedule
+
+| Record type   | Retention period | Authority (law / regulation / policy) | Disposal trigger | Disposal method                      |
+| ------------- | ---------------- | ------------------------------------- | ---------------- | ------------------------------------ |
+| [record type] | [duration]       | [citation]                            | [trigger]        | [secure deletion / archive transfer] |
+
+## Records-as-Official-Source Designation
+
+| Record type   | Designated official source? | Integrity control                                | Evidence of compliance |
+| ------------- | --------------------------- | ------------------------------------------------ | ---------------------- |
+| [record type] | [Y/N]                       | [hash / WORM / signed audit trail / e-signature] | [evidence ref]         |
+
+> Where a record type is _not_ designated the official source, state the
+> rationale and the legacy paper or alternative system that retains the
+> designation.
+
+## Records Lifecycle
+
+| Lifecycle stage | Where implemented           | CLAS classification (cross-ref)            | Notes                                                              |
+| --------------- | --------------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
+| Capture         | [system / journey]          | [Open / Confidential / Sensitive / Secret] | [notes]                                                            |
+| Classification  | [system]                    | [classification]                           | [cross-ref to CLAS Dataset ID]                                     |
+| Storage         | [system / region]           | [classification]                           | [residency note — see the CRES residency assessment if applicable] |
+| Access          | [system / IAM model]        | [classification]                           | [notes]                                                            |
+| Retention       | [retention store / archive] | [classification]                           | [retention period]                                                 |
+| Disposal        | [process]                   | [classification]                           | [disposal evidence]                                                |
+
+## Audit & Disposal Procedures
+
+### Periodic Audit
+
+| Aspect            | Detail                                                        |
+| ----------------- | ------------------------------------------------------------- |
+| Cadence           | [Monthly / Quarterly / Annual]                                |
+| Sampling approach | [random / risk-based]                                         |
+| Integrity checks  | [hash verification / signature verification / WORM read-back] |
+| Owner             | [role]                                                        |
+| Evidence storage  | [where audit reports live]                                    |
+
+### Controlled Disposal
+
+| Aspect                      | Detail                                   |
+| --------------------------- | ---------------------------------------- |
+| Approver                    | [role]                                   |
+| Disposal evidence captured  | [certificate / log / signed attestation] |
+| Disposal evidence retention | [period]                                 |
+| Reversibility window        | [if applicable]                          |
+
+## External References
+
+### Document Register
+
+| Doc ID             | Title                                                                                    | URL                                                                                                                                                                                                                            | Verified date |
+| ------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
+| UAE-CAB-2026-04-23 | UAE Cabinet meeting, 23 April 2026 — Government Services Digital Records Policy approved | <https://uaecabinet.ae/en/news/under-directives-of-uae-president-and-in-world-first-mohammed-bin-rashid-reveals-new-uae-government-framework-to-deploy-agentic-ai-across-50-of-government-sectors-operations-within-two-years> | [YYYY-MM-DD]  |
+
+### Citations
+
+| Citation | Doc ID             | Section                       | Used in                                |
+| -------- | ------------------ | ----------------------------- | -------------------------------------- |
+| [DREC-1] | UAE-CAB-2026-04-23 | Digital Records Policy        | Records-as-Official-Source Designation |
+| [DREC-2] | UAE-CAB-2026-04-23 | Records lifecycle obligations | Records Lifecycle                      |
+
+### Unreferenced Documents
+
+[List any documents read during generation but not cited, or "None".]
+
+---
+
+**Generated by**: ArcKit `/arckit:uae-digital-records` command **Generated on**:
+[DATE] **ArcKit Version**: [VERSION] **Project**: [PROJECT_NAME] **Model**:
+[AI_MODEL]

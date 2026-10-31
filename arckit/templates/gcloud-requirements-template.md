@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -62,10 +62,10 @@ The service **MUST** provide:
 
 ### 2.3 Security Requirements
 
-| ID        | Requirement                            | Evidence Required           |
-| --------- | -------------------------------------- | --------------------------- |
-| NFR-S-xxx | [From NFR-S-xxx or ARC-000-PRIN-v*.md] | [Certificate/documentation] |
-| NFR-S-xxx | [From NFR-S-xxx or ARC-000-PRIN-v*.md] | [Certificate/documentation] |
+| ID          | Requirement                              | Evidence Required           |
+| ----------- | ---------------------------------------- | --------------------------- |
+| NFR-SEC-xxx | [From NFR-SEC-xxx or ARC-000-PRIN-v*.md] | [Certificate/documentation] |
+| NFR-SEC-xxx | [From NFR-SEC-xxx or ARC-000-PRIN-v*.md] | [Certificate/documentation] |
 
 ### 2.4 Compliance Requirements
 
@@ -111,6 +111,14 @@ The service **SHOULD** provide:
 
 ## 5. Evaluation Criteria
 
+> **Call-off route**: this weighted model can become award criteria only on the
+> G-Cloud 15 competitive selection route, where price and quality (including
+> social value) must each carry between 10% and 90% of the weighting; the
+> default below gives pricing 5%, so adjust it before using it that way. On the
+> award without competition route the buyer cannot add criteria or weightings:
+> the award goes to the lowest price after the framework's filters, so use these
+> scores only to inform the statement of requirements and the choice of route.
+
 ### 5.1 Functional Fit (50%)
 
 | Criterion          | Weight | Description                     |
@@ -152,22 +160,24 @@ The service **SHOULD** provide:
 
 - Primary: [main service category]
 - Secondary: [specific capabilities]
-- Filters: [UK data centers, certifications, etc.]
+- Filters: [Lot, taxonomy, social value, data storage and processing locations,
+  certifications, security clearance, etc.]
 
 **Digital Marketplace URL**:
-https://www.digitalmarketplace.service.gov.uk/g-cloud/search
+https://www.applytosupply.digitalmarketplace.service.gov.uk/g-cloud-15/choose-lot
 
 ### Shortlisted Services
 
 #### Service 1: [Service Name]
 
-| Field             | Value                                            |
-| ----------------- | ------------------------------------------------ |
-| **Supplier**      | [Supplier Name]                                  |
-| **Service ID**    | [G-Cloud Service ID]                             |
-| **Service URL**   | [Link to Digital Marketplace page]               |
-| **Category**      | [Cloud Hosting / Cloud Software / Cloud Support] |
-| **Pricing Model** | [Per user / Per GB / Per transaction / etc.]     |
+| Field             | Value                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| **Supplier**      | [Supplier Name]                                                                                      |
+| **Service ID**    | [G-Cloud Service ID]                                                                                 |
+| **Service URL**   | [Link to Digital Marketplace page]                                                                   |
+| **Framework**     | [G-Cloud 15]                                                                                         |
+| **Lot**           | [1a IaaS and PaaS / 1b IaaS and PaaS above OFFICIAL / 2a iSaaS / 2b SaaS / 3 Cloud support services] |
+| **Pricing Model** | [Per user / Per GB / Per transaction / etc.]                                                         |
 
 **Must-Have Match**: [X]/[Y] requirements **Desirable Match**: [X]/[Y] features
 
@@ -221,6 +231,25 @@ https://www.digitalmarketplace.service.gov.uk/g-cloud/search
 
 **Legend**: ✅ Confirmed | ⚠️ Ambiguous | ❌ Not Mentioned
 
+### Unmet Must-Have Requirements
+
+Requirements from Section 2 that **no** shortlisted service clearly meets. A
+per-service gap belongs in that service's "Gaps Identified" block above; this
+section is for the ones nothing on the shortlist covers, because those change
+the procurement decision rather than the ranking.
+
+⚠️ **Requirement Gap**: [MUST requirement ID and description]
+
+- **Finding**: No shortlisted service clearly mentions this capability
+- **Action Required**:
+  - Contact shortlisted suppliers directly to confirm capability —
+    `/arckit:gcloud-clarify` generates the questions
+  - Broaden the search, or revisit whether the requirement is genuinely a MUST
+  - Consider a hybrid approach combining two services
+
+_If every MUST requirement is met by at least one shortlisted service, write "No
+unmet must-have requirements." — do not omit the section._
+
 ---
 
 ## 8. Recommendation
@@ -265,22 +294,38 @@ https://www.digitalmarketplace.service.gov.uk/g-cloud/search
    questions
 3. **Budget alignment**: Confirm pricing fits within budget constraints
 
+**Recommended call-off route**: [Award without competition / Competitive
+selection (two-stage or multi-stage)] — [Why this route fits the requirement]
+
 ### Supplier Engagement
 
-4. **Send clarifications**: Email suppliers with questions from gcloud-clarify
+4. **Send clarifications**: Email suppliers with questions from gcloud-clarify.
+   On award without competition, keep these to basic clarifications of
+   operational details (such as capacity or delivery timelines) or of the total
+   price; anything more needs the competitive selection route
 5. **Schedule demos**: Arrange technical demonstrations with top 2-3 services
+   (competitive selection: the multi-stage process allows demonstrations)
 6. **Reference checks**: Request customer references from shortlisted suppliers
+   (not on award without competition, where supplier contact is limited to basic
+   clarifications)
 
 ### Evaluation
 
 7. **Formal scoring**: Use `/arckit:evaluate` to create evaluation framework
+   (competitive selection only; award without competition uses the framework's
+   objective mechanism and lowest price)
 8. **Technical validation**: Test integration in demo/trial environment
-9. **Final decision**: Select winning service based on scoring
+9. **Final decision**: Select winning service: lowest price after the filters
+   (award without competition) or most advantageous tender (competitive
+   selection)
 
 ### Contract Award
 
-10. **Award contract**: Via Digital Marketplace
-11. **Publish on Contracts Finder**: Legal requirement for transparency
+10. **Award contract**: Through the Contract Award Service, completing the
+    G-Cloud 15 order form
+11. **Publish transparency notices**: The notices the G-Cloud 15 buyer guide
+    sets out, such as the UK6 contract award notice and the UK7 contract details
+    notice (within 30 days of entering the contract), on Find a Tender
 12. **Onboarding**: Begin service implementation
 
 ---
@@ -290,10 +335,36 @@ https://www.digitalmarketplace.service.gov.uk/g-cloud/search
 ### Digital Marketplace Guidance
 
 - **Digital Marketplace**: https://www.digitalmarketplace.service.gov.uk/
-- **G-Cloud Buyers Guide**: https://www.gov.uk/guidance/g-cloud-buyers-guide
-- **General Buying Guide**:
-  https://www.gov.uk/guidance/buying-and-selling-on-the-digital-marketplace
-- **Contracts Finder**: https://www.gov.uk/contracts-finder
+- **G-Cloud 15 agreement, buyer guide and call-off guidance (GCA)**:
+  https://www.gca.gov.uk/agreements/RM1557.15
+- **G-Cloud 14 agreement (ends 28 October 2026)**:
+  https://www.gca.gov.uk/agreements/RM1557.14
+- **Search G-Cloud 15 services by lot**:
+  https://www.applytosupply.digitalmarketplace.service.gov.uk/g-cloud-15/choose-lot
+- **Contract Award Service (shortlist and award)**:
+  https://redirect.contractawardservice.gca.gov.uk/
+- **Find a Tender (transparency notices)**: https://www.gov.uk/find-tender
+
+### G-Cloud Framework Notes
+
+- **Framework agreement**: G-Cloud 15 (RM1557.15) is an open framework under the
+  Procurement Act 2023, run by the Government Commercial Agency (Crown
+  Commercial Service until 1 April 2026). It replaced G-Cloud 14 and started on
+  6 August 2026.
+- **Two call-off routes**: award without competition, where an existing
+  catalogue service meets the statement of requirements (apply the framework's
+  filters, then award on lowest price, with no criteria of your own), or
+  competitive selection (shortlist with the filters, issue an invitation to
+  tender to every eligible supplier on the shortlist, award on the most
+  advantageous tender).
+- **Call-off contracts**: each service purchase creates a call-off contract
+  under the framework.
+- **Integration testing**: confirm the service integrates per the `INT-xxx`
+  requirements before commitment.
+- **Exit strategy**: clarify data export and service termination terms before
+  signing.
+- **Audit trail**: record the evaluation decision and its justification — the
+  call-off is auditable.
 
 ### Project Documents
 
@@ -316,11 +387,13 @@ https://www.digitalmarketplace.service.gov.uk/g-cloud/search
 
 **Digital Marketplace Filters Applied**:
 
-- Lot: [Cloud Hosting / Cloud Software / Cloud Support]
-- Categories: [Selected categories]
-- Capabilities: [Selected capabilities]
-- Certifications: [Required certifications]
-- Data location: [UK only / EU / etc.]
+- Lot: [1a IaaS and PaaS / 2a iSaaS / 2b SaaS / 3 Cloud support services]
+- Taxonomy filters: [Selected service categories]
+- Social value filters: [Selected social value themes, if applicable]
+- Standardised technical filters: [For example certifications, data storage and
+  processing locations (United Kingdom / EEA), minimum government security
+  clearance, supplier type]
+- Keyword search: [Generic keywords used after the filters, if any]
 
 **Search Queries**:
 
@@ -334,14 +407,18 @@ https://www.digitalmarketplace.service.gov.uk/g-cloud/search
 
 ## Appendix B: Glossary
 
-| Term    | Definition                                                        |
-| ------- | ----------------------------------------------------------------- |
-| G-Cloud | UK Government framework for procuring cloud services              |
-| DOS     | Digital Outcomes and Specialists framework for custom development |
-| SLA     | Service Level Agreement                                           |
-| DR/BC   | Disaster Recovery / Business Continuity                           |
-| NFR     | Non-Functional Requirement                                        |
-| INT     | Integration Requirement                                           |
+| Term                      | Definition                                                                                            |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| G-Cloud                   | UK Government framework for procuring cloud services; G-Cloud 15 (RM1557.15) is the current iteration |
+| GCA                       | Government Commercial Agency, which runs G-Cloud (Crown Commercial Service until 1 April 2026)        |
+| CAS                       | Contract Award Service, GCA's platform for shortlisting and awarding G-Cloud call-off contracts       |
+| Award without competition | G-Cloud 15 call-off route: the framework's filters, then award on lowest price                        |
+| Competitive selection     | G-Cloud 15 call-off route: shortlist, invitation to tender, award on the most advantageous tender     |
+| DOS                       | Digital Outcomes and Specialists framework for custom development                                     |
+| SLA                       | Service Level Agreement                                                                               |
+| DR/BC                     | Disaster Recovery / Business Continuity                                                               |
+| NFR                       | Non-Functional Requirement                                                                            |
+| INT                       | Integration Requirement                                                                               |
 
 ## External References
 

@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -124,6 +124,8 @@ erDiagram
 - **Primary Keys (PK)**: Uniquely identify each record
 - **Foreign Keys (FK)**: Reference other entities
 - **Unique Keys (UK)**: Must be unique but not primary identifier
+- **Combined keys**: comma-separate them (`uuid tenant_id FK, UK`). `FK UK` and
+  `PK_FK` are invalid Mermaid and stop the whole block rendering
 
 ---
 

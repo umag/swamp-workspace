@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -20,21 +20,79 @@
 
 ---
 
-## 1. Review Overview
+## 1. Executive Summary
 
-### 1.1 Purpose
+### 1.1 Overall Assessment
+
+**Status**: [APPROVED | APPROVED WITH CONDITIONS | REJECTED]
+
+**Summary**: [2-3 paragraph executive summary of the review outcome. The first
+sentence states the verdict and what must happen before the design proceeds; the
+reasons and evidence follow it.]
+
+[Example: "Approved with conditions: the design can proceed to detailed design
+once the disaster recovery strategy and observability instrumentation are
+specified. It demonstrates a well-thought-out microservices architecture
+leveraging AWS cloud-native services, aligns with our API-first and cloud-first
+principles, and adequately addresses most functional and non-functional
+requirements."]
+
+### 1.2 Key Strengths
+
+- [Strength 1: e.g., "Modern, cloud-native architecture with appropriate use of
+  managed services"]
+- [Strength 2: e.g., "Comprehensive security controls with defense-in-depth"]
+- [Strength 3: e.g., "Clear service boundaries aligned with domain-driven design
+  principles"]
+
+### 1.3 Key Concerns
+
+- [Concern 1: e.g., "Disaster recovery plan lacks detail on failover
+  procedures"]
+- [Concern 2: e.g., "Observability strategy does not specify SLO/SLI
+  definitions"]
+- [Concern 3: e.g., "Integration with legacy system X requires further
+  clarification"]
+
+### 1.4 Conditions for Approval
+
+**MUST Address Before Detailed Design**:
+
+1. [BLOCKING-01]: [Critical issue that MUST be resolved]
+2. [BLOCKING-02]: [Critical issue that MUST be resolved]
+
+**SHOULD Address During Detailed Design**:
+
+1. [ADVISORY-01]: [Important issue that should be clarified]
+2. [ADVISORY-02]: [Important issue that should be clarified]
+
+### 1.5 Recommendation
+
+- [ ] **APPROVED**: Proceed to detailed design with no conditions
+- [ ] **APPROVED WITH CONDITIONS**: Proceed after addressing blocking items
+      listed above
+- [ ] **APPROVED WITH ADVISORIES**: Proceed but address advisory items in DLD
+- [ ] **REJECTED**: Significant rework required; resubmit revised HLD for review
+
+**Target Resubmission Date** (if rejected or conditional): [DATE]
+
+---
+
+## 2. Review Overview
+
+### 2.1 Purpose
 
 This document captures the Architecture Review Board's evaluation of the
 High-Level Design (HLD) for [PROJECT_NAME]. The HLD must demonstrate
 architectural soundness, alignment with enterprise principles, and feasibility
 before proceeding to detailed design.
 
-### 1.2 HLD Document Under Review
+### 2.2 HLD Document Under Review
 
 **Document**: [Link to HLD document or path] **ArcKit Version**: [VERSION]
 **Submitted By**: [VENDOR_NAME] **Submission Date**: [DATE]
 
-### 1.3 Review Participants
+### 2.3 Review Participants
 
 | Name   | Role                     | Organization            | Review Focus                                  |
 | ------ | ------------------------ | ----------------------- | --------------------------------------------- |
@@ -45,7 +103,7 @@ before proceeding to detailed design.
 | [Name] | Data Architect           | Data Governance         | Data architecture, privacy, governance        |
 | [Name] | SRE Lead                 | Operations              | Operational readiness, observability          |
 
-### 1.4 Review Criteria
+### 2.4 Review Criteria
 
 The HLD will be evaluated against:
 
@@ -58,63 +116,6 @@ The HLD will be evaluated against:
   compliance
 - **Scalability & Resilience**: Ability to scale and handle failures gracefully
 - **Operational Readiness**: Observability, supportability, maintainability
-
----
-
-## 2. Executive Summary
-
-### 2.1 Overall Assessment
-
-**Status**: [APPROVED | APPROVED WITH CONDITIONS | REJECTED]
-
-**Summary**: [2-3 paragraph executive summary of the review outcome]
-
-[Example: "The High-Level Design for the Payment Modernization project
-demonstrates a well-thought-out microservices architecture leveraging AWS
-cloud-native services. The design aligns with our API-first and cloud-first
-principles and adequately addresses most functional and non-functional
-requirements. However, several conditions must be addressed before proceeding to
-detailed design, primarily related to disaster recovery strategy and
-observability instrumentation."]
-
-### 2.2 Key Strengths
-
-- [Strength 1: e.g., "Modern, cloud-native architecture with appropriate use of
-  managed services"]
-- [Strength 2: e.g., "Comprehensive security controls with defense-in-depth"]
-- [Strength 3: e.g., "Clear service boundaries aligned with domain-driven design
-  principles"]
-
-### 2.3 Key Concerns
-
-- [Concern 1: e.g., "Disaster recovery plan lacks detail on failover
-  procedures"]
-- [Concern 2: e.g., "Observability strategy does not specify SLO/SLI
-  definitions"]
-- [Concern 3: e.g., "Integration with legacy system X requires further
-  clarification"]
-
-### 2.4 Conditions for Approval
-
-**MUST Address Before Detailed Design**:
-
-1. [BLOCKING-01]: [Critical issue that MUST be resolved]
-2. [BLOCKING-02]: [Critical issue that MUST be resolved]
-
-**SHOULD Address During Detailed Design**:
-
-1. [ADVISORY-01]: [Important issue that should be clarified]
-2. [ADVISORY-02]: [Important issue that should be clarified]
-
-### 2.5 Recommendation
-
-- [ ] **APPROVED**: Proceed to detailed design with no conditions
-- [ ] **APPROVED WITH CONDITIONS**: Proceed after addressing blocking items
-      listed above
-- [ ] **APPROVED WITH ADVISORIES**: Proceed but address advisory items in DLD
-- [ ] **REJECTED**: Significant rework required; resubmit revised HLD for review
-
-**Target Resubmission Date** (if rejected or conditional): [DATE]
 
 ---
 

@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -36,7 +36,34 @@
 
 ## 1. DPIA Screening Assessment
 
-### 1.1 Screening Criteria (ICO's 9 Criteria)
+### 1.1 Screening Criteria (Article 35(3), ICO List, Nine European Criteria)
+
+**Article 35(3) cases** (any one means a DPIA is required):
+
+| Case                                                                                                                                                                         | YES/NO   | Evidence   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------- |
+| (a) **Systematic and extensive evaluation** of people based on automated processing, including profiling, with decisions that produce legal or similarly significant effects | [YES/NO] | [Evidence] |
+| (b) **Large-scale processing** of special category data (Article 9) or criminal convictions and offences data (Article 10)                                                   | [YES/NO] | [Evidence] |
+| (c) **Systematic monitoring of a publicly accessible area** on a large scale                                                                                                 | [YES/NO] | [Evidence] |
+
+**ICO list of processing likely to result in high risk** (published under
+Article 35(4)):
+
+| Processing type                                                                                                                                                               | DPIA needed                                 | YES/NO   | Evidence   |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | -------- | ---------- |
+| **Denial of service**: decisions on access to a product, service, opportunity or benefit based to any extent on automated decision-making, or involving special category data | Always                                      | [YES/NO] | [Evidence] |
+| **Large-scale profiling** of individuals                                                                                                                                      | Always                                      | [YES/NO] | [Evidence] |
+| **Data matching**: combining, comparing or matching personal data from multiple sources                                                                                       | Always                                      | [YES/NO] | [Evidence] |
+| **Targeting of children or other vulnerable individuals** for marketing, profiling or other automated decision-making, or offering online services directly to children       | Always                                      | [YES/NO] | [Evidence] |
+| **Risk of physical harm**: a personal data breach could jeopardise people's physical health or safety                                                                         | Always                                      | [YES/NO] | [Evidence] |
+| **Innovative technology**, including AI                                                                                                                                       | When combined with any of the nine criteria | [YES/NO] | [Evidence] |
+| **Biometric data** used to uniquely identify someone                                                                                                                          | When combined with any of the nine criteria | [YES/NO] | [Evidence] |
+| **Genetic data** (other than by an individual GP or health professional providing direct care)                                                                                | When combined with any of the nine criteria | [YES/NO] | [Evidence] |
+| **Invisible processing**: relying on the Article 14(5)(b) exception to providing privacy information                                                                          | When combined with any of the nine criteria | [YES/NO] | [Evidence] |
+| **Tracking** of geolocation or behaviour                                                                                                                                      | When combined with any of the nine criteria | [YES/NO] | [Evidence] |
+
+**Nine screening criteria** from the European DPIA guidelines (Article 29
+Working Party WP248, endorsed by the EDPB), which the ICO cites:
 
 | # | Criterion                                                                                                                                                       | YES/NO   | Evidence                                         |
 | - | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------ |
@@ -58,9 +85,16 @@
 
 **Rationale**:
 
-- If ≥2 criteria met → DPIA REQUIRED
-- If processing involves special category data at scale → DPIA REQUIRED
-- If innovative technology with unknown risks → DPIA REQUIRED
+- If any Article 35(3) case applies → DPIA REQUIRED
+- If any ICO-listed processing applies (on its own, or combined with any of the
+  nine criteria where the ICO list requires a combination) → DPIA REQUIRED
+- If ≥2 of the nine criteria are met → DPIA REQUIRED in most cases (not a strict
+  rule; document the reasons for any decision not to do one)
+- If 1 criterion is met → DPIA RECOMMENDED (one criterion can be enough, and the
+  ICO says doing a DPIA is good practice)
+- If no criterion, Article 35(3) case or ICO-listed processing applies → DPIA
+  NOT REQUIRED on screening (record the decision, the reasons and the DPO's
+  advice; if in doubt, do a DPIA)
 - [Specific rationale based on screening results]
 
 **Decision Authority**: [NAME, ROLE]
@@ -452,40 +486,38 @@ organisational risks.
 
 ### 5.2 Inherent Risks (Before Mitigation)
 
-| Risk ID  | Risk Description                             | Impact on Data Subjects                   | Likelihood        | Severity                    | Risk Level                  | Risk Source             |
-| -------- | -------------------------------------------- | ----------------------------------------- | ----------------- | --------------------------- | --------------------------- | ----------------------- |
-| DPIA-001 | Unauthorised access to [data type]           | [Description of harm to individuals]      | [Low/Medium/High] | [Low/Medium/High/Very High] | [LOW/MEDIUM/HIGH/VERY HIGH] | Security vulnerability  |
-| DPIA-002 | Data breach exposing [data type]             | [Description of harm]                     | [Likelihood]      | [Severity]                  | [Risk Level]                | [Source]                |
-| DPIA-003 | Inaccurate data leading to wrong decisions   | [Description of harm]                     | [Likelihood]      | [Severity]                  | [Risk Level]                | Data quality            |
-| DPIA-004 | Excessive data retention                     | [Description of harm]                     | [Likelihood]      | [Severity]                  | [Risk Level]                | Retention policy        |
-| DPIA-005 | Third party misuse of data                   | [Description of harm]                     | [Likelihood]      | [Severity]                  | [Risk Level]                | Third party failure     |
-| DPIA-006 | Algorithmic bias/discrimination (if AI/ML)   | [Description of harm to protected groups] | [Likelihood]      | [Severity]                  | [Risk Level]                | Algorithm design        |
-| DPIA-007 | Re-identification of anonymized data         | [Description of harm]                     | [Likelihood]      | [Severity]                  | [Risk Level]                | De-anonymization attack |
-| DPIA-008 | Function creep (use for unintended purposes) | [Description of harm]                     | [Likelihood]      | [Severity]                  | [Risk Level]                | Mission creep           |
+| Risk ID  | Risk Description                             | Impact on Data Subjects                   | Likelihood                 | Severity                     | Risk Level        | Risk Source             |
+| -------- | -------------------------------------------- | ----------------------------------------- | -------------------------- | ---------------------------- | ----------------- | ----------------------- |
+| DPIA-001 | Unauthorised access to [data type]           | [Description of harm to individuals]      | [Remote/Possible/Probable] | [Minimal/Significant/Severe] | [LOW/MEDIUM/HIGH] | Security vulnerability  |
+| DPIA-002 | Data breach exposing [data type]             | [Description of harm]                     | [Likelihood]               | [Severity]                   | [Risk Level]      | [Source]                |
+| DPIA-003 | Inaccurate data leading to wrong decisions   | [Description of harm]                     | [Likelihood]               | [Severity]                   | [Risk Level]      | Data quality            |
+| DPIA-004 | Excessive data retention                     | [Description of harm]                     | [Likelihood]               | [Severity]                   | [Risk Level]      | Retention policy        |
+| DPIA-005 | Third party misuse of data                   | [Description of harm]                     | [Likelihood]               | [Severity]                   | [Risk Level]      | Third party failure     |
+| DPIA-006 | Algorithmic bias/discrimination (if AI/ML)   | [Description of harm to protected groups] | [Likelihood]               | [Severity]                   | [Risk Level]      | Algorithm design        |
+| DPIA-007 | Re-identification of anonymized data         | [Description of harm]                     | [Likelihood]               | [Severity]                   | [Risk Level]      | De-anonymization attack |
+| DPIA-008 | Function creep (use for unintended purposes) | [Description of harm]                     | [Likelihood]               | [Severity]                   | [Risk Level]      | Mission creep           |
 
 **Likelihood Scale**:
 
-- **Low**: Unlikely to occur (0-33% chance)
-- **Medium**: May occur (34-66% chance)
-- **High**: Likely to occur (67-100% chance)
+- **Remote**: Unlikely to occur (0-33% chance)
+- **Possible**: May occur (34-66% chance)
+- **Probable**: Likely to occur (67-100% chance)
 
 **Severity Scale** (Impact on Individuals):
 
-- **Low**: Minimal or no impact; temporary inconvenience
-- **Medium**: Significant inconvenience or distress; some financial loss; minor
-  reputational impact
-- **High**: Serious consequences; significant financial loss; significant
+- **Minimal**: Minimal or no impact; temporary inconvenience
+- **Significant**: Significant inconvenience or distress; some financial loss;
   reputational damage; psychological harm
-- **Very High**: Irreversible harm; severe financial loss; severe psychological
-  trauma; physical safety risk
+- **Severe**: Serious or irreversible harm; severe financial loss; severe
+  psychological trauma; physical safety risk
 
 **Risk Level Matrix**:
 
-|                       | Low Severity | Medium Severity | High Severity | Very High Severity |
-| --------------------- | ------------ | --------------- | ------------- | ------------------ |
-| **Low Likelihood**    | LOW          | LOW             | MEDIUM        | HIGH               |
-| **Medium Likelihood** | LOW          | MEDIUM          | HIGH          | VERY HIGH          |
-| **High Likelihood**   | MEDIUM       | HIGH            | VERY HIGH     | VERY HIGH          |
+|                         | Minimal Severity | Significant Severity | Severe Severity |
+| ----------------------- | ---------------- | -------------------- | --------------- |
+| **Remote Likelihood**   | LOW              | LOW                  | MEDIUM          |
+| **Possible Likelihood** | LOW              | MEDIUM               | HIGH            |
+| **Probable Likelihood** | MEDIUM           | HIGH                 | HIGH            |
 
 ### 5.3 Detailed Risk Analysis
 
@@ -503,7 +535,7 @@ organisational risks.
 
 **Likelihood Analysis**: [Why is this likely/unlikely to happen?]
 
-**Severity Analysis**: [Why would the impact be low/medium/high/very high?]
+**Severity Analysis**: [Why would the impact be minimal/significant/severe?]
 
 **Existing Controls**: [What controls are already in place, if any?]
 
@@ -600,37 +632,41 @@ organisational risks.
 
 **Risk-by-Risk Mitigation**:
 
-| Risk ID  | Risk Title          | Mitigations Applied                                                    | Responsibility              | Implementation Date |
-| -------- | ------------------- | ---------------------------------------------------------------------- | --------------------------- | ------------------- |
-| DPIA-001 | Unauthorised access | Encryption (AES-256), MFA, RBAC, Audit logging                         | Security Team               | [DATE]              |
-| DPIA-002 | Data breach         | Encryption, DLP, Incident response plan, Staff training                | Security + DPO              | [DATE]              |
-| DPIA-003 | Inaccurate data     | Data validation, Rectification process, Regular audits                 | Data Steward                | [DATE]              |
-| DPIA-004 | Excessive retention | Automated deletion, Retention policy, Regular reviews                  | Data Governance             | [DATE]              |
-| DPIA-005 | Third party misuse  | DPAs, Vendor audits, Limited sharing, Contractual controls             | Legal + Procurement         | [DATE]              |
-| DPIA-006 | Algorithmic bias    | Bias testing, Fairness metrics, Human oversight, Diverse training data | Data Science + Ethics Board | [DATE]              |
+| Risk ID  | Risk Title          | Mitigations Applied                                                                                                       | Responsibility              | Implementation Date |
+| -------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------- |
+| DPIA-001 | Unauthorised access | Encryption (AES-256), MFA, RBAC, Audit logging                                                                            | Security Team               | [DATE]              |
+| DPIA-002 | Data breach         | Encryption, DLP, Incident response plan, Staff training                                                                   | Security + DPO              | [DATE]              |
+| DPIA-003 | Inaccurate data     | Data validation, Rectification process, Regular audits                                                                    | Data Steward                | [DATE]              |
+| DPIA-004 | Excessive retention | Automated deletion, Retention policy, Regular reviews                                                                     | Data Governance             | [DATE]              |
+| DPIA-005 | Third party misuse  | DPAs, Vendor audits, Limited sharing, Contractual controls                                                                | Legal + Procurement         | [DATE]              |
+| DPIA-006 | Algorithmic bias    | Bias testing, Fairness metrics, Human oversight, Diverse training data                                                    | Data Science + Ethics Board | [DATE]              |
+| DPIA-007 | Re-identification   | Robust anonymisation/pseudonymisation, k-anonymity testing, Separation of re-identification keys, Motivated-intruder test | Data Governance + DPO       | [DATE]              |
+| DPIA-008 | Function creep      | Purpose limitation policy, Purpose-based access controls, DPO review of new uses, Privacy notice updates                  | DPO + Service Owner         | [DATE]              |
 
 ### 6.4 Residual Risk Assessment
 
 **Risks After Mitigation**:
 
-| Risk ID  | Risk Title          | Mitigations                                 | Residual Likelihood | Residual Severity | Residual Risk Level | Acceptable?           | Justification                                                     |
-| -------- | ------------------- | ------------------------------------------- | ------------------- | ----------------- | ------------------- | --------------------- | ----------------------------------------------------------------- |
-| DPIA-001 | Unauthorised access | Encryption + MFA + RBAC + Audit logs        | Low                 | Medium            | **MEDIUM**          | YES                   | Risk reduced to tolerable level with strong controls              |
-| DPIA-002 | Data breach         | Encryption + DLP + Incident plan + Training | Low                 | High              | **MEDIUM**          | YES                   | Cannot eliminate entirely; mitigations are industry best practice |
-| DPIA-003 | Inaccurate data     | Validation + Rectification + Audits         | Medium              | Low               | **LOW**             | YES                   | Low impact; regular audits catch issues                           |
-| DPIA-004 | Excessive retention | Automated deletion + Policy                 | Low                 | Low               | **LOW**             | YES                   | Technical controls ensure compliance                              |
-| DPIA-005 | Third party misuse  | DPAs + Audits + Limited sharing             | Low                 | Medium            | **MEDIUM**          | YES                   | Contractual and technical controls in place                       |
-| DPIA-006 | Algorithmic bias    | Bias testing + Fairness + Oversight         | Medium              | Medium            | **MEDIUM**          | YES (with monitoring) | Ongoing monitoring and human oversight required                   |
+| Risk ID  | Risk Title          | Mitigations                                          | Residual Likelihood | Residual Severity | Residual Risk Level | Acceptable?           | Justification                                                          |
+| -------- | ------------------- | ---------------------------------------------------- | ------------------- | ----------------- | ------------------- | --------------------- | ---------------------------------------------------------------------- |
+| DPIA-001 | Unauthorised access | Encryption + MFA + RBAC + Audit logs                 | Possible            | Significant       | **MEDIUM**          | YES                   | Risk reduced to tolerable level with strong controls                   |
+| DPIA-002 | Data breach         | Encryption + DLP + Incident plan + Training          | Remote              | Severe            | **MEDIUM**          | YES                   | Cannot eliminate entirely; mitigations are industry best practice      |
+| DPIA-003 | Inaccurate data     | Validation + Rectification + Audits                  | Possible            | Minimal           | **LOW**             | YES                   | Low impact; regular audits catch issues                                |
+| DPIA-004 | Excessive retention | Automated deletion + Policy                          | Remote              | Minimal           | **LOW**             | YES                   | Technical controls ensure compliance                                   |
+| DPIA-005 | Third party misuse  | DPAs + Audits + Limited sharing                      | Possible            | Significant       | **MEDIUM**          | YES                   | Contractual and technical controls in place                            |
+| DPIA-006 | Algorithmic bias    | Bias testing + Fairness + Oversight                  | Possible            | Significant       | **MEDIUM**          | YES (with monitoring) | Ongoing monitoring and human oversight required                        |
+| DPIA-007 | Re-identification   | Anonymisation + k-anonymity testing + Key separation | Remote              | Significant       | **LOW**             | YES                   | Re-identification keys held separately; motivated-intruder test passed |
+| DPIA-008 | Function creep      | Purpose limitation + Access controls + DPO review    | Remote              | Significant       | **LOW**             | YES                   | New uses require DPO approval and a DPIA update                        |
 
-**Overall Residual Risk Level**: [LOW/MEDIUM/HIGH/VERY HIGH]
+**Overall Residual Risk Level**: [LOW/MEDIUM/HIGH]
 
 **Acceptability Assessment**:
 
 - [ ] All residual risks are LOW or MEDIUM → ACCEPTABLE
-- [ ] Some residual risks are HIGH → ACCEPTABLE WITH CONDITIONS (describe
-      conditions)
-- [ ] Any residual risks are VERY HIGH → NOT ACCEPTABLE (ICO consultation
-      required)
+- [ ] Some MEDIUM residual risks depend on ongoing monitoring → ACCEPTABLE WITH
+      CONDITIONS (describe conditions)
+- [ ] Any residual risks are HIGH → NOT ACCEPTABLE without ICO prior
+      consultation (Section 7)
 
 **Conditions for Acceptance** (if applicable):
 
@@ -645,21 +681,26 @@ organisational risks.
 
 **Trigger**: ICO prior consultation is required if:
 
-- Residual risk remains **HIGH** or **VERY HIGH** after mitigation, AND
+- Residual risk remains **HIGH** after mitigation, AND
 - Processing will go ahead despite the high residual risk
+
+Consultation must happen before processing starts (UK GDPR Article 36). The ICO
+gives written advice; it does not approve a DPIA. It aims to respond within
+eight weeks, extendable to 14 weeks in complex cases. See
+[Do we need to consult the ICO?](https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/accountability-and-governance/data-protection-impact-assessments-dpias/do-we-need-to-consult-the-ico/)
 
 **ICO Consultation Details** (if required):
 
-| Field                    | Value                                            |
-| ------------------------ | ------------------------------------------------ |
-| ICO Reference Number     | [REF-NUMBER]                                     |
-| Consultation Date        | [DATE]                                           |
-| ICO Case Officer         | [NAME]                                           |
-| ICO Advice Received      | [DATE]                                           |
-| ICO Recommendations      | [SUMMARY]                                        |
-| ICO Approval             | [APPROVED/APPROVED WITH CONDITIONS/NOT APPROVED] |
-| Conditions               | [LIST CONDITIONS]                                |
-| How Conditions Addressed | [SUMMARY]                                        |
+| Field                          | Value                                                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------------------------ |
+| ICO Reference Number           | [REF-NUMBER]                                                                                     |
+| Consultation Date              | [DATE]                                                                                           |
+| ICO Case Officer               | [NAME]                                                                                           |
+| ICO Advice Received            | [DATE]                                                                                           |
+| ICO Recommendations            | [SUMMARY]                                                                                        |
+| ICO Written Advice Outcome     | [MAY PROCEED / FURTHER MITIGATION ADVISED / OFFICIAL WARNING ISSUED / LIMITATION OR BAN IMPOSED] |
+| Actions Required by ICO Advice | [LIST ACTIONS, WARNINGS OR LIMITATIONS]                                                          |
+| How ICO Advice Addressed       | [SUMMARY]                                                                                        |
 
 **ICO Advice Summary**:
 
@@ -706,7 +747,7 @@ organisational risks.
 ### 9.1 Link to Security Controls
 
 **Security Assessment Reference**:
-`projects/{project_id}/ARC-{PROJECT_ID}-SBD-v*.md`
+`projects/{project_id}/ARC-{PROJECT_ID}-SECD-v*.md`
 
 **DPIA Mitigations → Security Controls Mapping**:
 
@@ -738,6 +779,10 @@ unauthorized access, data breach, and misuse risks.
 
 ### 10.1 Review Triggers
 
+UK GDPR Article 35(11) requires a review at least when the risk represented by
+the processing changes. The periodic review below is ArcKit's default, not a
+legal requirement.
+
 **DPIA must be reviewed when**:
 
 - [ ] Significant change to processing (new data, new purpose, new systems)
@@ -748,7 +793,8 @@ unauthorized access, data breach, and misuse risks.
 - [ ] Data subjects raise concerns
 - [ ] Periodic review date reached
 
-**Periodic Review Frequency**: Every [6/12/24] months
+**Periodic Review Frequency**: Every [6/12/24] months (ArcKit default: 12
+months)
 
 ### 10.2 Review Schedule
 
@@ -1179,9 +1225,11 @@ framework.
 
 ---
 
-## Appendix A: ICO DPIA Screening Checklist
+## Appendix A: DPIA Screening Checklist
 
-Full screening questionnaire (9 criteria) with detailed YES/NO/N/A responses:
+Full screening questionnaire for the nine criteria from the European DPIA
+guidelines (WP248), which the ICO cites, with detailed YES/NO/N/A responses.
+Record the Article 35(3) cases and the ICO list in Section 1.1:
 
 1. ☐ Evaluation or scoring (including profiling)
 2. ☐ Automated decision-making with legal/significant effect

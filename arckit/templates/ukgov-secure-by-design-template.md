@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -63,8 +63,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **A2: Risk Management**
 
@@ -83,8 +85,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **A3: Asset Management**
 
@@ -103,8 +107,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **A4: Supply Chain**
 
@@ -123,8 +129,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 ---
 
@@ -147,8 +155,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **B2: Identity and Access Control**
 
@@ -170,8 +180,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **B3: Data Security**
 
@@ -193,8 +205,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **B4: System Security**
 
@@ -216,8 +230,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **B5: Resilient Networks**
 
@@ -239,8 +255,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **B6: Staff Awareness and Training**
 
@@ -262,8 +280,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 ---
 
@@ -289,8 +309,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **C2: Proactive Security Event Discovery**
 
@@ -319,8 +341,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 ---
 
@@ -356,8 +380,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 **D2: Improvements**
 
@@ -376,8 +402,10 @@ Non-Compliant / Not Assessed]
 
 **Gaps/Actions**:
 
-- [Action 1]
-- [Action 2]
+- [Action 1] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
+- [Action 2] — Owner: [Role] — Due: [YYYY-MM-DD] — Priority: [CRITICAL | HIGH |
+  MEDIUM | LOW]
 
 ---
 

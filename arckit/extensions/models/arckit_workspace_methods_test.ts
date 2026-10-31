@@ -13,7 +13,7 @@
  * fields, not just counts, per the approved plan.
  */
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { model, TEMPLATE_MAP } from "./arckit_workspace.ts";
+import { DOC_CONTROL_NAMES, model, TEMPLATE_MAP } from "./arckit_workspace.ts";
 import {
   arcFilename,
   docControlContent,
@@ -511,7 +511,7 @@ Deno.test("methods: migrateClassification (report-only) proposes changes without
     assertEquals(payload.totalChanges, 1);
     const files = payload.files as Array<Record<string, unknown>>;
     assertEquals(files[0].relPath, `001-x/${arcFilenameReq()}`);
-    assertEquals(files[0].changes, [{ from: "OFFICIAL", to: "Shared" }]);
+    assertEquals(files[0].changes, [{ from: "OFFICIAL", to: "Confidential" }]);
     const onDisk = await Deno.readTextFile(full);
     assert(onDisk.includes("OFFICIAL")); // untouched — report-only
   });
@@ -548,3 +548,52 @@ Deno.test("methods: migrateClassification finds zero changes when no artifact ha
 function arcFilenameReq(): string {
   return arcFilename("001", "REQ");
 }
+
+Deno.test("methods: template suggests a filename that does not overwrite the project's existing document", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    await writeTemplateFile(
+      templatesDir,
+      "risk-register-template.md",
+      "# Risk Register\n",
+    );
+    await writeArtifact(root, "001-x", "ARC-001-RISK-v1.0.md");
+    await writeArtifact(root, "002-y", "ARC-002-RISK-v4.0.md");
+    const { ctx, written } = makeCtx(root, templatesDir);
+    await run(model, "template", { command: "risk", project: "001-x" }, ctx);
+    assertEquals(written[0].payload.suggestedFilename, "ARC-001-RISK-v1.1.md");
+  });
+});
+
+Deno.test("methods: template fills in the header for the doc code's regime and records the choice", async () => {
+  await withTempWorkspace(async (root, templatesDir) => {
+    await writeTemplateFile(
+      templatesDir,
+      "au-pia-template.md",
+      "# PIA\n\n<!-- DOC-CONTROL-HEADER -->\n<!-- Resolved at command-execution time per _partials/RENDERING.md. -->\n",
+    );
+    await writeTemplateFile(
+      templatesDir,
+      "_partials/document-control-au.md",
+      "| AU header |\n",
+    );
+    const { ctx, written } = makeCtx(root, templatesDir);
+    await run(model, "template", { command: "au-pia" }, ctx);
+    const payload = written[0].payload;
+    assertEquals(payload.content, "# PIA\n\n| AU header |\n");
+    assertEquals(payload.documentControl, {
+      partial: "document-control-au.md",
+      routing: "regime",
+    });
+  });
+});
+
+Deno.test("methods: every template named in TEMPLATE_MAP is on disk with a resolvable header", async () => {
+  const dir = new URL("../../templates/", import.meta.url).pathname;
+  for (const [command, file] of Object.entries(TEMPLATE_MAP)) {
+    const text = await Deno.readTextFile(`${dir}${file}`);
+    assert(text.length > 0, command);
+  }
+  for (const name of DOC_CONTROL_NAMES) {
+    await Deno.stat(`${dir}_partials/document-control-${name}.md`);
+  }
+});

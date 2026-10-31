@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -397,11 +397,26 @@ Type**: Supporting Entity
 
 #### 2.4.3 Goals
 
-**Regulatory Goals:**
+**Short-term Goals (0-6 months):**
+
+1. [Goal 1 - e.g., "Gain real-time visibility of provider compliance status"]
+2. [Goal 2 - e.g., "Receive consumer complaints through a single digital
+   channel"]
+3. [Goal 3 - e.g., "Agree data-sharing terms with the platform operator"]
+
+**Medium-term Goals (6-18 months):**
 
 1. [Goal 1 - e.g., "Ensure 100% provider compliance with safety standards"]
 2. [Goal 2 - e.g., "Reduce consumer complaints by 30%"]
-3. [Goal 3 - e.g., "Improve market transparency"]
+3. [Goal 3 - e.g., "Shift from annual audits to risk-based, continuous
+   monitoring"]
+
+**Long-term Goals (18+ months):**
+
+1. [Goal 1 - e.g., "Improve market transparency"]
+2. [Goal 2 - e.g., "Base policy decisions on platform market data"]
+3. [Goal 3 - e.g., "Reduce the cost of regulatory oversight per provider by
+   25%"]
 
 #### 2.4.4 Gains Sought
 
@@ -419,6 +434,24 @@ Type**: Supporting Entity
 3. **Consumer Protection**
    - [How platform ensures consumer safety]
    - **Value Metric**: [e.g., Automated verification, complaint resolution SLAs]
+
+4. **Early Risk Detection**
+   - [How platform surfaces emerging risks and non-compliant providers]
+   - **Value Metric**: [e.g., Issues flagged within 48 hours vs months under
+     manual reporting]
+
+5. **Reduced Oversight Cost**
+   - [How platform lowers the cost of supervision]
+   - **Value Metric**: [e.g., 25% fewer on-site inspections through risk-based
+     targeting]
+
+#### 2.4.5 Linkage to Platform Features
+
+| Entity Goal       | Platform Feature                                      | How Feature Delivers Value                  |
+| ----------------- | ----------------------------------------------------- | ------------------------------------------- |
+| [Goal from 2.4.3] | [Feature name - e.g., Regulator compliance dashboard] | [Description of how feature addresses goal] |
+| [Goal from 2.4.3] | [Feature name - e.g., Complaints API]                 | [Description of how feature addresses goal] |
+| [Goal from 2.4.3] | [Feature name - e.g., Market data export]             | [Description of how feature addresses goal] |
 
 ---
 

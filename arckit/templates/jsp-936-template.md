@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -75,7 +75,8 @@ Approval]
 
 **Human Involvement**:
 
-- **Teaming Model**: [Human-in-loop / Human-on-loop / Human-out-of-loop]
+- **Teaming Model**: [Human-in-the-loop / Human-on-the-loop /
+  Human-out-of-the-loop]
 - **Human Control Points**: [Where do humans interact?]
 - **Override Capability**: [Yes / No / Partial]
 
@@ -121,6 +122,12 @@ integrate into overall system]
 ---
 
 ## 2. Ethical Risk Assessment
+
+> The 1-5 scales and score bands in this section are ArcKit's. JSP 936 Part 1
+> does not publish a scoring matrix: it sets the classification names and their
+> referral levels for approval (Table 1), and requires the rating to assess
+> impact and likelihood together, based on residual risk with controls in place
+> and working as intended (para 88).
 
 ### 2.1 Risk Matrix for AI Component 1: [Name]
 
@@ -186,15 +193,19 @@ integrate into overall system]
 
 **Risk Score**: [Likelihood (Y) × Impact (X) = Z]
 
-**Classification**: [Based on score Z]
+**Classification**: [Based on residual-risk score Z, using ArcKit's score bands;
+approval routes per JSP 936 Table 1]
 
-- 20-25: **Critical** → 2PUS or Ministerial approval
-- 15-19: **Severe** → Defence-Level (JROC/IAC) approval
-- 10-14: **Major** → Defence-Level (JROC/IAC) approval
+- 20-25: **Critical** → 2PUS (Second Permanent Under Secretary), or Ministers by
+  exception
+- 15-19: **Severe** → 2PUS (Second Permanent Under Secretary), or Ministers by
+  exception
+- 10-14: **Major** → Defence-Level oversight (e.g. JROC/IAC) approval
 - 5-9: **Moderate** → TLB-Level approval (delegated)
 - 1-4: **Minor** → TLB-Level approval (delegated)
 
-**Approval Pathway**: [2PUS/Ministerial / Defence-Level / TLB-Level]
+**Approval Pathway**: [2PUS (Ministers by exception) / Defence-Level /
+TLB-Level]
 
 #### Unacceptable Risk Check
 
@@ -217,8 +228,8 @@ integrate into overall system]
 
 **Highest Individual Risk Score**: [Maximum score from all AI components]
 **Overall Project Classification**: [Critical / Severe / Major / Moderate /
-Minor] **Required Approval Authority**: [2PUS/Ministerial / Defence-Level /
-TLB-Level]
+Minor] **Required Approval Authority**: [2PUS (Ministers by exception) /
+Defence-Level / TLB-Level]
 
 ---
 
@@ -240,7 +251,8 @@ must remain in control of AI systems.
 
 **Human-AI Interaction**:
 
-- **Interaction Model**: [Human-in-loop / Human-on-loop / Human-out-of-loop]
+- **Interaction Model**: [Human-in-the-loop / Human-on-the-loop /
+  Human-out-of-the-loop]
 - **Control Mechanisms**: [How humans maintain control]
 - **Override Capability**: [Yes / No / Partial - describe]
 - **Transparency to Users**: [What users see/understand about AI decisions]
@@ -471,6 +483,14 @@ Non-Compliant]
 
 ## 4. AI Lifecycle Phase Documentation
 
+> The 8 phases below are ArcKit's grouping of the JSP 936 section 6
+> lifecycle-agnostic requirements and section 7 quality, safety and security
+> requirements. JSP 936 does not require or advocate any one lifecycle (Part 1,
+> para 134).
+
+**Lifecycle Followed by This Project**: [e.g. MLOps / DevSecOps / other, and why
+it suits the context the AI will operate in]
+
 ### Phase 1: Planning
 
 **Status**: [Not Started / In Progress / Completed]
@@ -557,7 +577,7 @@ Non-Compliant]
 **Key Architectural Decisions**:
 
 - [Decision 1: Model architecture selection and rationale]
-- [Decision 2: Human-in-loop placement]
+- [Decision 2: Human-in-the-loop placement]
 - [Decision 3: Data pipeline design]
 
 **Assurance Activities**:
@@ -663,7 +683,8 @@ Non-Compliant]
 - [ ] Robustness testing results
 - [ ] Adversarial testing results
 - [ ] User acceptance testing (UAT)
-- [ ] Independent V&V report (for Critical/Severe)
+- [ ] Independent verification report: a separate verification team using
+      set-aside verification data (JSP 936 Pt 1 paras 147 and 156c)
 
 **Documentation Location**: [File path or reference]
 
@@ -684,7 +705,8 @@ Non-Compliant]
 
 **Assurance Activities**:
 
-- [ ] Independent V&V conducted (if Critical/Severe)
+- [ ] Independent verification conducted by a team separate from development
+      (JSP 936 Pt 1 para 156c)
 - [ ] Test results review
 - [ ] Requirements traceability verified
 - [ ] UAT sign-off
@@ -813,7 +835,10 @@ Non-Compliant]
 
 **Independent Ethics Assurance**:
 
-- **Required**: [Yes / No - Required for Critical classification]
+- **Required**: [Yes / No - JSP 936 Part 1 para 105: there should be one
+  (recommended practice, not compulsory) during implementation of large
+  projects, projects where the AI's ethics risk is significant, and where teams
+  produce AI regularly]
 - **Assurance Provider**: [Name/Organization]
 - **Assurance Status**: [Not Started / In Progress / Completed]
 
@@ -828,11 +853,14 @@ Non-Compliant]
 
 **Risk Classification**: [Critical / Severe / Major / Moderate / Minor]
 
-**Approval Authority**: [Based on classification]
+**Approval Authority**: [Based on classification; referral levels per JSP 936
+Table 1, score bands are ArcKit's]
 
-- **Critical (20-25)**: 2PUS or Ministers
-- **Severe (15-19)**: Defence-Level - JROC/IAC
-- **Major (10-14)**: Defence-Level - JROC/IAC
+- **Critical (20-25)**: 2PUS (Second Permanent Under Secretary), or Ministers by
+  exception
+- **Severe (15-19)**: 2PUS (Second Permanent Under Secretary), or Ministers by
+  exception
+- **Major (10-14)**: Defence-Level oversight - e.g. JROC/IAC
 - **Moderate (5-9)**: TLB-Level (delegated)
 - **Minor (1-4)**: TLB-Level (delegated)
 
@@ -841,7 +869,8 @@ Non-Compliant]
 - [ ] Initial ethical screening (Ethics Manager)
 - [ ] Detailed JSP 936 assessment (this document)
 - [ ] RAISO review and endorsement
-- [ ] Independent assurance (if Critical)
+- [ ] Independent Ethics Assurance (if a large project, significant ethics risk,
+      or a team producing AI regularly: JSP 936 para 105)
 - [ ] Ethics Board review
 - [ ] Submission to approval authority
 - [ ] Approval granted / Conditional approval / Rejected
@@ -879,13 +908,14 @@ Non-Compliant]
 
 **For AI Component 1: [Name]**
 
-**Teaming Model**: [Human-in-loop / Human-on-loop / Human-out-of-loop]
+**Teaming Model**: [Human-in-the-loop / Human-on-the-loop /
+Human-out-of-the-loop]
 
 **Model Definition**:
 
-- **Human-in-loop**: Human reviews every AI decision before action
-- **Human-on-loop**: Human monitors AI with ability to intervene
-- **Human-out-of-loop**: AI operates autonomously, humans set constraints
+- **Human-in-the-loop**: Human reviews every AI decision before action
+- **Human-on-the-loop**: Human monitors AI with ability to intervene
+- **Human-out-of-the-loop**: AI operates autonomously, humans set constraints
 
 **Rationale**: [Why this teaming model was selected]
 
@@ -1260,59 +1290,59 @@ Non-Compliant]
 
 ### Compliance Summary
 
-| JSP 936 Requirement                    | Status     | Evidence Location | Comments   |
-| -------------------------------------- | ---------- | ----------------- | ---------- |
-| **Ethical Risk Classification**        |            |                   |            |
-| Risk assessment completed              | [✅/⚠️/❌] | Section 2         | [Comments] |
-| Likelihood assessed (1-5)              | [✅/⚠️/❌] | Section 2.1       | [Comments] |
-| Impact assessed (1-5)                  | [✅/⚠️/❌] | Section 2.1       | [Comments] |
-| Risk score calculated                  | [✅/⚠️/❌] | Section 2.1       | [Comments] |
-| Classification assigned                | [✅/⚠️/❌] | Section 2         | [Comments] |
-| Unacceptable risk check                | [✅/⚠️/❌] | Section 2.1       | [Comments] |
-| **Five Ethical Principles**            |            |                   |            |
-| Human-Centricity assessed              | [✅/⚠️/❌] | Section 3.1       | [Comments] |
-| Responsibility assigned                | [✅/⚠️/❌] | Section 3.2       | [Comments] |
-| Understanding demonstrated             | [✅/⚠️/❌] | Section 3.3       | [Comments] |
-| Bias & Harm mitigated                  | [✅/⚠️/❌] | Section 3.4       | [Comments] |
-| Reliability proven                     | [✅/⚠️/❌] | Section 3.5       | [Comments] |
-| **AI Lifecycle Documentation**         |            |                   |            |
-| Phase 1: Planning                      | [✅/⚠️/❌] | Section 4         | [Comments] |
-| Phase 2: Requirements                  | [✅/⚠️/❌] | Section 4         | [Comments] |
-| Phase 3: Architecture                  | [✅/⚠️/❌] | Section 4         | [Comments] |
-| Phase 4: Algorithm Design              | [✅/⚠️/❌] | Section 4         | [Comments] |
-| Phase 5: Model Development             | [✅/⚠️/❌] | Section 4         | [Comments] |
-| Phase 6: V&V                           | [✅/⚠️/❌] | Section 4         | [Comments] |
-| Phase 7: Integration & Use             | [✅/⚠️/❌] | Section 4         | [Comments] |
-| Phase 8: Quality Assurance             | [✅/⚠️/❌] | Section 4         | [Comments] |
-| **Governance**                         |            |                   |            |
-| RAISO assigned                         | [✅/⚠️/❌] | Section 5.1       | [Comments] |
-| Ethics Manager assigned                | [✅/⚠️/❌] | Section 5.1       | [Comments] |
-| Independent assurance (if Critical)    | [✅/⚠️/❌] | Section 5.1       | [Comments] |
-| Governance board established           | [✅/⚠️/❌] | Section 5.1       | [Comments] |
-| Approval pathway followed              | [✅/⚠️/❌] | Section 5.2       | [Comments] |
-| Escalation process defined             | [✅/⚠️/❌] | Section 5.3       | [Comments] |
-| **Human-AI Teaming**                   |            |                   |            |
-| Teaming model defined                  | [✅/⚠️/❌] | Section 6.1       | [Comments] |
-| Training programme delivered           | [✅/⚠️/❌] | Section 6.2       | [Comments] |
-| Human control interface designed       | [✅/⚠️/❌] | Section 6.3       | [Comments] |
-| Trust calibration addressed            | [✅/⚠️/❌] | Section 6.3       | [Comments] |
-| Override mechanisms provided           | [✅/⚠️/❌] | Section 6.3       | [Comments] |
-| **Secure by Design**                   |            |                   |            |
-| AI threat landscape assessed           | [✅/⚠️/❌] | Section 7.1       | [Comments] |
-| AI-specific controls implemented       | [✅/⚠️/❌] | Section 7.2       | [Comments] |
-| Security testing completed             | [✅/⚠️/❌] | Section 7.3       | [Comments] |
-| **Supplier Assurance** (if applicable) |            |                   |            |
-| Supplier assessment completed          | [✅/⚠️/❌] | Section 8         | [Comments] |
-| Data provenance documented             | [✅/⚠️/❌] | Section 8.1       | [Comments] |
-| Model transparency provided            | [✅/⚠️/❌] | Section 8.1       | [Comments] |
-| Supplier MOD compliance verified       | [✅/⚠️/❌] | Section 8.1       | [Comments] |
-| **Continuous Monitoring**              |            |                   |            |
-| Real-time monitoring implemented       | [✅/⚠️/❌] | Section 9.1       | [Comments] |
-| Periodic reporting established         | [✅/⚠️/❌] | Section 9.2       | [Comments] |
-| Drift detection operational            | [✅/⚠️/❌] | Section 9.1       | [Comments] |
-| Retraining triggers defined            | [✅/⚠️/❌] | Section 9.3       | [Comments] |
-| Annual review scheduled                | [✅/⚠️/❌] | Section 9.4       | [Comments] |
-| Retirement criteria defined            | [✅/⚠️/❌] | Section 9.5       | [Comments] |
+| JSP 936 Requirement                                                                                                    | Status     | Evidence Location | Comments   |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------- | ---------- |
+| **Ethical Risk Classification**                                                                                        |            |                   |            |
+| Risk assessment completed                                                                                              | [✅/⚠️/❌] | Section 2         | [Comments] |
+| Likelihood assessed (1-5)                                                                                              | [✅/⚠️/❌] | Section 2.1       | [Comments] |
+| Impact assessed (1-5)                                                                                                  | [✅/⚠️/❌] | Section 2.1       | [Comments] |
+| Risk score calculated                                                                                                  | [✅/⚠️/❌] | Section 2.1       | [Comments] |
+| Classification assigned                                                                                                | [✅/⚠️/❌] | Section 2         | [Comments] |
+| Unacceptable risk check                                                                                                | [✅/⚠️/❌] | Section 2.1       | [Comments] |
+| **Five Ethical Principles**                                                                                            |            |                   |            |
+| Human-Centricity assessed                                                                                              | [✅/⚠️/❌] | Section 3.1       | [Comments] |
+| Responsibility assigned                                                                                                | [✅/⚠️/❌] | Section 3.2       | [Comments] |
+| Understanding demonstrated                                                                                             | [✅/⚠️/❌] | Section 3.3       | [Comments] |
+| Bias & Harm mitigated                                                                                                  | [✅/⚠️/❌] | Section 3.4       | [Comments] |
+| Reliability proven                                                                                                     | [✅/⚠️/❌] | Section 3.5       | [Comments] |
+| **AI Lifecycle Documentation**                                                                                         |            |                   |            |
+| Phase 1: Planning                                                                                                      | [✅/⚠️/❌] | Section 4         | [Comments] |
+| Phase 2: Requirements                                                                                                  | [✅/⚠️/❌] | Section 4         | [Comments] |
+| Phase 3: Architecture                                                                                                  | [✅/⚠️/❌] | Section 4         | [Comments] |
+| Phase 4: Algorithm Design                                                                                              | [✅/⚠️/❌] | Section 4         | [Comments] |
+| Phase 5: Model Development                                                                                             | [✅/⚠️/❌] | Section 4         | [Comments] |
+| Phase 6: V&V                                                                                                           | [✅/⚠️/❌] | Section 4         | [Comments] |
+| Phase 7: Integration & Use                                                                                             | [✅/⚠️/❌] | Section 4         | [Comments] |
+| Phase 8: Quality Assurance                                                                                             | [✅/⚠️/❌] | Section 4         | [Comments] |
+| **Governance**                                                                                                         |            |                   |            |
+| RAISO assigned                                                                                                         | [✅/⚠️/❌] | Section 5.1       | [Comments] |
+| Ethics Manager assigned                                                                                                | [✅/⚠️/❌] | Section 5.1       | [Comments] |
+| Independent Ethics Assurance (if a large project, significant ethics risk, or a team producing AI regularly: para 105) | [✅/⚠️/❌] | Section 5.1       | [Comments] |
+| Governance board established                                                                                           | [✅/⚠️/❌] | Section 5.1       | [Comments] |
+| Approval pathway followed                                                                                              | [✅/⚠️/❌] | Section 5.2       | [Comments] |
+| Escalation process defined                                                                                             | [✅/⚠️/❌] | Section 5.3       | [Comments] |
+| **Human-AI Teaming**                                                                                                   |            |                   |            |
+| Teaming model defined                                                                                                  | [✅/⚠️/❌] | Section 6.1       | [Comments] |
+| Training programme delivered                                                                                           | [✅/⚠️/❌] | Section 6.2       | [Comments] |
+| Human control interface designed                                                                                       | [✅/⚠️/❌] | Section 6.3       | [Comments] |
+| Trust calibration addressed                                                                                            | [✅/⚠️/❌] | Section 6.3       | [Comments] |
+| Override mechanisms provided                                                                                           | [✅/⚠️/❌] | Section 6.3       | [Comments] |
+| **Secure by Design**                                                                                                   |            |                   |            |
+| AI threat landscape assessed                                                                                           | [✅/⚠️/❌] | Section 7.1       | [Comments] |
+| AI-specific controls implemented                                                                                       | [✅/⚠️/❌] | Section 7.2       | [Comments] |
+| Security testing completed                                                                                             | [✅/⚠️/❌] | Section 7.3       | [Comments] |
+| **Supplier Assurance** (if applicable)                                                                                 |            |                   |            |
+| Supplier assessment completed                                                                                          | [✅/⚠️/❌] | Section 8         | [Comments] |
+| Data provenance documented                                                                                             | [✅/⚠️/❌] | Section 8.1       | [Comments] |
+| Model transparency provided                                                                                            | [✅/⚠️/❌] | Section 8.1       | [Comments] |
+| Supplier MOD compliance verified                                                                                       | [✅/⚠️/❌] | Section 8.1       | [Comments] |
+| **Continuous Monitoring**                                                                                              |            |                   |            |
+| Real-time monitoring implemented                                                                                       | [✅/⚠️/❌] | Section 9.1       | [Comments] |
+| Periodic reporting established                                                                                         | [✅/⚠️/❌] | Section 9.2       | [Comments] |
+| Drift detection operational                                                                                            | [✅/⚠️/❌] | Section 9.1       | [Comments] |
+| Retraining triggers defined                                                                                            | [✅/⚠️/❌] | Section 9.3       | [Comments] |
+| Annual review scheduled                                                                                                | [✅/⚠️/❌] | Section 9.4       | [Comments] |
+| Retirement criteria defined                                                                                            | [✅/⚠️/❌] | Section 9.5       | [Comments] |
 
 **Overall Compliance**: [X% Complete]
 
@@ -1369,14 +1399,14 @@ Ready]
 
 ## Approval and Sign-Off
 
-| Role                                | Name            | Date | Signature |
-| ----------------------------------- | --------------- | ---- | --------- |
-| Project Lead                        | [Name]          |      |           |
-| Technical Lead                      | [Name]          |      |           |
-| Ethics Manager                      | [Name]          |      |           |
-| RAISO                               | [Name]          |      |           |
-| Independent Assurance (if Critical) | [Name/Org]      |      |           |
-| Approval Authority                  | [Name/Position] |      |           |
+| Role                                                          | Name            | Date | Signature |
+| ------------------------------------------------------------- | --------------- | ---- | --------- |
+| Project Lead                                                  | [Name]          |      |           |
+| Technical Lead                                                | [Name]          |      |           |
+| Ethics Manager                                                | [Name]          |      |           |
+| RAISO                                                         | [Name]          |      |           |
+| Independent Ethics Assurance (where JSP 936 para 105 applies) | [Name/Org]      |      |           |
+| Approval Authority                                            | [Name/Position] |      |           |
 
 ---
 

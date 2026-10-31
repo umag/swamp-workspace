@@ -26,7 +26,19 @@ const GlobalArgsSchema = z.object({
 });
 
 // ---------- Reference tables (derived from arc-kit docs/DEPENDENCY-MATRIX.md
-// and the plugin command specs, arc-kit v6.2.0) ------------------------------
+// and the plugin command specs, arc-kit v6.18.3) -----------------------------
+
+/**
+ * Upstream's codes for documents this extension's NL/EU overlay also covers.
+ * An artifact using one satisfies the same gate, but new documents are always
+ * named with the extension's own code.
+ */
+const DOC_CODE_ALIASES: ReadonlySet<string> = new Set([
+  "TBB",
+  "RBCLOUD",
+  "BIO2",
+  "EUCSF",
+]);
 
 /** Document type code (as embedded in ARC-{ID}-{CODE}-v{VER}) → command. */
 export const DOC_CODES: Record<string, string> = {
@@ -51,6 +63,7 @@ export const DOC_CODES: Record<string, string> = {
   "EVAL": "evaluate",
   "FBC": "full-business-case",
   "FINOPS": "finops",
+  "FWRK": "framework",
   "GCLC": "gcloud-clarify",
   "GCLD": "gcloud-search",
   "GCRS": "gcp-research",
@@ -100,6 +113,121 @@ export const DOC_CODES: Record<string, string> = {
   "NLBIO": "nl-bio",
   "NLEXIT": "nl-exit",
   "NLDTIA": "nl-dtia",
+
+  // ---- arc-kit v6.18.3 overlay plugins ------------------------------------
+  "AAGR": "agent-design",
+  "AAOV": "agent-governance",
+  "AAIN": "agent-integration",
+  "AAGI": "agent-inventory",
+  "AAMT": "agent-maturity",
+  "AASE": "agent-security",
+  "ATBFR": "at-barrierefreiheit",
+  "BVERGG": "at-bvergg",
+  "ATDSG": "at-dsgvo",
+  "ATNISG": "at-nisg",
+  "AUAIA": "au-ai-assurance",
+  "AUDISP": "au-disp-attestation",
+  "AUDSS": "au-dss",
+  "AUE8": "au-e8-posture",
+  "AUISM": "au-ism-controls",
+  "AUNDB": "au-ndb-playbook",
+  "AUOT": "au-ot-security",
+  "AUPIA": "au-pia",
+  "AUPSPF": "au-pspf",
+  "AUSOCI": "au-soci-cirmp",
+  "AUAESCSF": "au-aescsf",
+  "AUENERGY": "au-energy-compliance",
+  "AIA": "ca-aia",
+  "ATIP": "ca-atip",
+  "CHRT": "ca-charter",
+  "CACR": "ca-cloud-residency",
+  "FITAA": "ca-fitaa",
+  "DIGSTD": "ca-gc-digital-standards",
+  "ITSG": "ca-itsg-33",
+  "OCAP": "ca-ocap",
+  "OLA": "ca-ola",
+  "PIA": "ca-pia",
+  "PROC": "ca-pspc",
+  "SOIA": "ca-soia",
+  "AIACT": "eu-ai-act",
+  "CRA": "eu-cra",
+  "DATAACT": "eu-data-act",
+  "DORA": "eu-dora",
+  "DSA": "eu-dsa",
+  "NIS2": "eu-nis2",
+  "RGPD": "eu-rgpd",
+  "ALGO": "fr-algorithme-public",
+  "ANSSI": "fr-anssi",
+  "CARTO": "fr-anssi-carto",
+  "REUSE": "fr-code-reuse",
+  "DINUM": "fr-dinum",
+  "DR": "fr-dr",
+  "EBIOS": "fr-ebios",
+  "IRN": "fr-irn",
+  "MARPUB": "fr-marche-public",
+  "PSSI": "fr-pssi",
+  "CNIL": "fr-rgpd",
+  "SECNUM": "fr-secnumcloud",
+  "OAGOV": "agile-governance",
+  "OASEC": "agile-security",
+  "OASTR": "agile-strategy",
+  "OAAL": "oaa-adm-lite",
+  "OAPR": "product-architecture",
+  "CDAU": "repo-audit",
+  "ADMP": "adm-preliminary",
+  "APP": "application-inventory",
+  "APPR": "application-rationalization",
+  "BORD": "architecture-board",
+  "ACHG": "architecture-change",
+  "REPO": "architecture-repository",
+  "BPCM": "business-capability-map",
+  "GAPA": "gap-analysis",
+  "TRANS": "transition-architecture",
+  "AUTI": "uae-ai-autonomy-tier",
+  "AICH": "uae-ai-charter",
+  "CLAS": "uae-classification",
+  "CRES": "uae-cloud-residency",
+  "DSHR": "uae-data-sharing",
+  "DREC": "uae-digital-records",
+  "IAS": "uae-ias",
+  "PDPL": "uae-pdpl",
+  "NPRA": "uae-priorities-alignment",
+  "FPRO": "uae-procurement",
+  "UPASS": "uae-uaepass",
+  "ZBUR": "uae-zero-bureaucracy",
+  "FSCD": "uk-fs-consumer-duty",
+  "FSCTP": "uk-fs-ctp-dependency",
+  "FSSAFE": "uk-fs-safeguarding",
+  "FSSCA": "uk-fs-sca-rts",
+  "DECL": "declaration",
+  "GCMP": "gcloud-competitors",
+  "LOTQ": "lot-questions",
+  "PRIC": "pricing",
+  "GCRV": "review",
+  "SDD": "sdd-lot1a",
+  "SECA": "security",
+  "SVCD": "service-design",
+  "SOCV": "social-value",
+  "SUPP": "supplier-profile",
+  "RATE": "rate-card",
+  "NHSMDR": "uk-mdr-classification",
+  "NHSDTAC": "uk-nhs-dtac",
+  "AIIA": "us-ai-impact",
+  "AIRMF": "us-ai-rmf",
+  "FRRR": "us-fedramp-readiness",
+  "FRSSP": "us-fedramp-ssp",
+  "FIPS199": "us-fisma-categorization",
+  "ICAM": "us-icam",
+  "NIST": "us-nist-800-53",
+  "USPIA": "us-privacy-pia",
+  "SBOM": "us-sbom-eo-14028",
+  "ZTA": "us-zero-trust",
+
+  // ---- DOC_CODE_ALIASES ----------------------------------------------------
+  "TBB": "nl-tbb",
+  "RBCLOUD": "nl-cloud",
+  "BIO2": "nl-bio",
+  "EUCSF": "eu-sovereignty",
 };
 
 const CODES_BY_LENGTH = Object.keys(DOC_CODES).sort(
@@ -112,30 +240,36 @@ const CODES_BY_LENGTH = Object.keys(DOC_CODES).sort(
  * and are excluded).
  */
 export const MANDATORY_DEPS: Record<string, string[]> = {
+  "requirements": ["stakeholders"],
   "risk": ["stakeholders"],
   "sobc": ["stakeholders"],
-  "platform-design": ["principles"],
-  "roadmap": ["principles"],
+  "platform-design": ["requirements", "principles"],
+  "roadmap": ["requirements", "principles"],
   "strategy": ["principles", "stakeholders"],
+  "framework": ["requirements", "principles"],
+  "adr": ["requirements", "principles"],
+  "wardley": ["requirements", "principles"],
   "data-model": ["requirements"],
-  "dpia": ["data-model", "requirements"],
+  "dpia": ["data-model"],
   "research": ["requirements"],
   "azure-research": ["requirements"],
   "aws-research": ["requirements"],
   "gcp-research": ["requirements"],
-  "datascout": ["requirements"],
+  "datascout": ["requirements", "principles"],
   "grants": ["requirements"],
+  "gov-reuse": ["requirements"],
   "wardley.value-chain": ["requirements"],
   "wardley.doctrine": ["principles"],
   "wardley.gameplay": ["wardley"],
   "wardley.climate": ["wardley"],
   "data-mesh-contract": ["principles"],
-  "sow": ["requirements"],
-  "dos": ["requirements", "stakeholders"],
+  "sow": ["requirements", "principles"],
+  "dos": ["requirements", "principles"],
+  "gcloud-search": ["requirements"],
   "gcloud-clarify": ["requirements", "gcloud-search"],
-  "evaluate": ["requirements", "sow"],
+  "evaluate": ["requirements", "principles"],
   "hld-review": ["requirements", "principles"],
-  "dld-review": ["requirements", "principles"],
+  "dld-review": ["requirements", "principles", "hld-review"],
   "backlog": ["requirements"],
   "servicenow": ["requirements", "diagram"],
   "devops": ["requirements", "principles"],
@@ -143,15 +277,17 @@ export const MANDATORY_DEPS: Record<string, string[]> = {
   "finops": ["requirements"],
   "operationalize": ["requirements", "diagram"],
   "traceability": ["requirements"],
-  "analyze": ["principles"],
+  "analyze": ["requirements"],
   "principles-compliance": ["principles"],
   "conformance": ["principles", "adr"],
-  "service-assessment": ["requirements"],
-  "tcop": ["requirements"],
-  "atrs": ["requirements"],
+  "service-assessment": ["requirements", "principles"],
+  "tcop": ["requirements", "principles"],
+  "ai-playbook": ["requirements", "principles"],
+  "atrs": ["requirements", "principles"],
   "secure": ["requirements", "principles"],
   "mod-secure": ["requirements", "principles"],
   "jsp-936": ["requirements", "principles"],
+  "presentation": ["principles"],
   "story": ["principles"],
 
   // ---- NL/EU sovereign-cloud overlay (arckit-nl-sovereign-cloud) ----------
@@ -173,8 +309,10 @@ export const CRITICAL_PATH: string[] = [
   "requirements",
   "research",
   "wardley",
+  "adr",
   "sow",
   "evaluate",
+  "diagram",
   "hld-review",
   "backlog",
   "servicenow",
@@ -187,7 +325,7 @@ export const CRITICAL_PATH: string[] = [
   "story",
 ];
 
-/** command → bundled template file under templates/ (arc-kit v6.2.0). */
+/** command → bundled template file under templates/ (arc-kit v6.18.3). */
 export const TEMPLATE_MAP: Record<string, string> = {
   "adr": "adr-template.md",
   "ai-playbook": "uk-gov-ai-playbook-template.md",
@@ -209,6 +347,7 @@ export const TEMPLATE_MAP: Record<string, string> = {
   "dpia": "dpia-template.md",
   "evaluate": "evaluation-criteria-template.md",
   "finops": "finops-template.md",
+  "framework": "framework-overview-template.md",
   "gcloud-clarify": "gcloud-clarify-template.md",
   "gcloud-search": "gcloud-requirements-template.md",
   "gcp-research": "gcp-research-template.md",
@@ -260,12 +399,284 @@ export const TEMPLATE_MAP: Record<string, string> = {
   "nl-bio": "nl-bio-conformance-template.md",
   "nl-exit": "nl-exit-plan-template.md",
   "nl-dtia": "nl-dtia-template.md",
+
+  // ---- arc-kit v6.18.3 overlay plugins ------------------------------------
+  "agent-design": "agent-design-template.md",
+  "agent-governance": "agent-governance-template.md",
+  "agent-integration": "agent-integration-template.md",
+  "agent-inventory": "agent-inventory-template.md",
+  "agent-maturity": "agent-maturity-template.md",
+  "agent-security": "agent-security-template.md",
+  "at-barrierefreiheit": "at-barrierefreiheit-template.md",
+  "at-bvergg": "at-bvergg-template.md",
+  "at-dsgvo": "at-dsgvo-template.md",
+  "at-nisg": "at-nisg-template.md",
+  "au-ai-assurance": "au-ai-assurance-template.md",
+  "au-disp-attestation": "au-disp-attestation-template.md",
+  "au-dss": "au-dss-template.md",
+  "au-e8-posture": "au-e8-posture-template.md",
+  "au-ism-controls": "au-ism-controls-template.md",
+  "au-ndb-playbook": "au-ndb-playbook-template.md",
+  "au-ot-security": "au-ot-security-template.md",
+  "au-pia": "au-pia-template.md",
+  "au-pspf": "au-pspf-template.md",
+  "au-soci-cirmp": "au-soci-cirmp-template.md",
+  "au-aescsf": "au-aescsf-template.md",
+  "au-energy-compliance": "au-energy-compliance-template.md",
+  "ca-aia": "ca-aia-template.md",
+  "ca-atip": "ca-atip-template.md",
+  "ca-charter": "ca-charter-template.md",
+  "ca-cloud-residency": "ca-cloud-residency-template.md",
+  "ca-fitaa": "ca-fitaa-template.md",
+  "ca-gc-digital-standards": "ca-gc-digital-standards-template.md",
+  "ca-itsg-33": "ca-itsg-33-template.md",
+  "ca-ocap": "ca-ocap-template.md",
+  "ca-ola": "ca-ola-template.md",
+  "ca-pia": "ca-pia-template.md",
+  "ca-pspc": "ca-pspc-template.md",
+  "ca-soia": "ca-soia-template.md",
+  "eu-ai-act": "eu-ai-act-template.md",
+  "eu-cloud-sovereignty": "eu-cloud-sovereignty-template.md",
+  "eu-cra": "eu-cra-template.md",
+  "eu-data-act": "eu-data-act-template.md",
+  "eu-dora": "eu-dora-template.md",
+  "eu-dsa": "eu-dsa-template.md",
+  "eu-nis2": "eu-nis2-template.md",
+  "eu-rgpd": "eu-rgpd-template.md",
+  "fr-algorithme-public": "fr-algorithme-public-template.md",
+  "fr-anssi": "fr-anssi-template.md",
+  "fr-anssi-carto": "fr-anssi-carto-template.md",
+  "fr-code-reuse": "fr-code-reuse-template.md",
+  "fr-dinum": "fr-dinum-template.md",
+  "fr-dr": "fr-dr-template.md",
+  "fr-ebios": "fr-ebios-template.md",
+  "fr-irn": "fr-irn-template.md",
+  "fr-marche-public": "fr-marche-public-template.md",
+  "fr-pssi": "fr-pssi-template.md",
+  "fr-rgpd": "fr-rgpd-template.md",
+  "fr-secnumcloud": "fr-secnumcloud-template.md",
+  "agile-governance": "agile-governance-template.md",
+  "agile-security": "agile-security-template.md",
+  "agile-strategy": "agile-strategy-template.md",
+  "oaa-adm-lite": "oaa-adm-lite-template.md",
+  "product-architecture": "product-architecture-template.md",
+  "repo-audit": "codebase-audit-template.md",
+  "adm-preliminary": "adm-preliminary-template.md",
+  "application-inventory": "application-inventory-template.md",
+  "application-rationalization": "rationalization-template.md",
+  "architecture-board": "architecture-board-template.md",
+  "architecture-change": "architecture-change-template.md",
+  "architecture-repository": "architecture-repository-template.md",
+  "business-capability-map": "capability-map-template.md",
+  "gap-analysis": "gap-analysis-template.md",
+  "transition-architecture": "transition-architecture-template.md",
+  "uae-ai-autonomy-tier": "uae-ai-autonomy-tier-template.md",
+  "uae-ai-charter": "uae-ai-charter-template.md",
+  "uae-classification": "uae-classification-template.md",
+  "uae-cloud-residency": "uae-cloud-residency-template.md",
+  "uae-data-sharing": "uae-data-sharing-template.md",
+  "uae-digital-records": "uae-digital-records-template.md",
+  "uae-ias": "uae-ias-template.md",
+  "uae-pdpl": "uae-pdpl-template.md",
+  "uae-priorities-alignment": "uae-priorities-alignment-template.md",
+  "uae-procurement": "uae-procurement-template.md",
+  "uae-uaepass": "uae-uaepass-template.md",
+  "uae-zero-bureaucracy": "uae-zero-bureaucracy-template.md",
+  "uk-fs-consumer-duty": "uk-fs-consumer-duty-template.md",
+  "uk-fs-ctp-dependency": "uk-fs-ctp-dependency-template.md",
+  "uk-fs-safeguarding": "uk-fs-safeguarding-template.md",
+  "uk-fs-sca-rts": "uk-fs-sca-rts-template.md",
+  "uk-fs-consumer-duty-board-report":
+    "uk-fs-consumer-duty-board-report-template.md",
+  "uk-fs-ctp-dependency-register": "uk-fs-ctp-dependency-register-template.md",
+  "uk-fs-safeguarding-reconciliation":
+    "uk-fs-safeguarding-reconciliation-template.md",
+  "uk-fs-sca-rts-exemption-matrix":
+    "uk-fs-sca-rts-exemption-matrix-template.md",
+  "declaration": "declaration-template.md",
+  "gcloud-competitors": "gcloud-competitors-template.md",
+  "lot-questions": "lot-questions-template.md",
+  "pricing": "pricing-template.md",
+  "review": "review-template.md",
+  "sdd-lot1a": "sdd-lot1-template.md",
+  "sdd-lot1b": "sdd-lot1-template.md",
+  "sdd-lot2a": "sdd-lot2-template.md",
+  "sdd-lot2b": "sdd-lot2-template.md",
+  "sdd-lot3": "sdd-lot3-template.md",
+  "security": "security-template.md",
+  "service-design": "service-design-template.md",
+  "social-value": "social-value-template.md",
+  "supplier-profile": "supplier-profile-template.md",
+  "rate-card": "rate-card-template.md",
+  "uk-mdr-classification": "uk-mdr-classification-template.md",
+  "uk-nhs-dcb0129": "uk-nhs-dcb0129-template.md",
+  "uk-nhs-dcb0160": "uk-nhs-dcb0160-template.md",
+  "uk-nhs-dtac": "uk-nhs-dtac-template.md",
+  "uk-nhs-dcb0129-case": "uk-nhs-dcb0129-case-template.md",
+  "uk-nhs-dcb0129-hazard": "uk-nhs-dcb0129-hazard-template.md",
+  "uk-nhs-dcb0129-safety": "uk-nhs-dcb0129-safety-template.md",
+  "uk-nhs-dcb0160-deployment-case":
+    "uk-nhs-dcb0160-deployment-case-template.md",
+  "uk-nhs-dcb0160-deployment-hazard":
+    "uk-nhs-dcb0160-deployment-hazard-template.md",
+  "uk-nhs-dcb0160-deployment-safety":
+    "uk-nhs-dcb0160-deployment-safety-template.md",
+  "us-ai-impact": "us-ai-impact-template.md",
+  "us-ai-rmf": "us-ai-rmf-template.md",
+  "us-fedramp-readiness": "us-fedramp-readiness-template.md",
+  "us-fedramp-ssp": "us-fedramp-ssp-template.md",
+  "us-fisma-categorization": "us-fisma-categorization-template.md",
+  "us-icam": "us-icam-template.md",
+  "us-nist-800-53": "us-nist-800-53-template.md",
+  "us-privacy-pia": "us-privacy-pia-template.md",
+  "us-sbom-eo-14028": "us-sbom-eo-14028-template.md",
+  "us-zero-trust": "us-zero-trust-template.md",
 };
 
 /** command → ARC document type code (inverse of DOC_CODES). */
-export const COMMAND_TO_CODE: Record<string, string> = Object.fromEntries(
-  Object.entries(DOC_CODES).map(([code, command]) => [command, code]),
-);
+export const COMMAND_TO_CODE: Record<string, string> = Object.fromEntries([
+  ...Object.entries(DOC_CODES)
+    .filter(([code]) => !DOC_CODE_ALIASES.has(code))
+    .map(([code, command]) => [command, code]),
+  // Commands that write a code another command also writes.
+  ["sdd-lot1b", "SDD"],
+  ["sdd-lot2a", "SDD"],
+  ["sdd-lot2b", "SDD"],
+  ["sdd-lot3", "SDD"],
+  ["eu-cloud-sovereignty", "EUCSF"],
+]);
+
+/**
+ * Doc codes whose regime always selects its own Document Control header
+ * (arc-kit v6.18.3 _partials/RENDERING.md), plus this extension's NL codes. A
+ * code not listed here falls through to the caller's choice.
+ */
+export const HARD_ROUTED_REGIMES: Record<string, string[]> = {
+  "at": ["ATBFR", "ATDSG", "ATNISG", "BVERGG"],
+  "au": [
+    "AUE8",
+    "AUISM",
+    "AUPIA",
+    "AUNDB",
+    "AUOT",
+    "AUSOCI",
+    "AUAESCSF",
+    "AUENERGY",
+    "AUDSS",
+    "AUPSPF",
+    "AUAIA",
+    "AUDISP",
+  ],
+  "ca": [
+    "FITAA",
+    "PIA",
+    "ATIP",
+    "AIA",
+    "CHRT",
+    "ITSG",
+    "SOIA",
+    "CACR",
+    "DIGSTD",
+    "OLA",
+    "PROC",
+    "OCAP",
+  ],
+  "fr": [
+    "IRN",
+    "CNIL",
+    "SECNUM",
+    "MARPUB",
+    "DINUM",
+    "EBIOS",
+    "ANSSI",
+    "CARTO",
+    "DR",
+    "ALGO",
+    "PSSI",
+    "REUSE",
+  ],
+  "nl": [
+    "RBCLOUD",
+    "TBB",
+    "BIO2",
+    "NLEXIT",
+    "NLTBB",
+    "NLCLD",
+    "NLBIO",
+    "NLDTIA",
+  ],
+  "uae": [
+    "PDPL",
+    "IAS",
+    "CRES",
+    "CLAS",
+    "UPASS",
+    "ZBUR",
+    "DREC",
+    "DSHR",
+    "NPRA",
+    "AICH",
+    "AUTI",
+    "FPRO",
+  ],
+  "us": [
+    "FIPS199",
+    "NIST",
+    "FRSSP",
+    "FRRR",
+    "ZTA",
+    "ICAM",
+    "AIRMF",
+    "AIIA",
+    "USPIA",
+    "SBOM",
+  ],
+};
+
+/** Document Control headers a caller can request. */
+export const DOC_CONTROL_NAMES = [
+  "at",
+  "au",
+  "ca",
+  "fr",
+  "nl",
+  "uae",
+  "uk",
+  "us",
+] as const;
+
+/**
+ * Choose a template's Document Control header: the doc code's own regime wins,
+ * then the caller's request, then the nl-gov profile, then the UK header.
+ */
+export function resolveDocControl(
+  docCode: string | undefined,
+  requested: string | undefined,
+  profile: string | undefined,
+): { name: string; routing: "regime" | "requested" | "profile" | "default" } {
+  for (const [name, codes] of Object.entries(HARD_ROUTED_REGIMES)) {
+    if (docCode && codes.includes(docCode)) return { name, routing: "regime" };
+  }
+  if (requested) return { name: requested, routing: "requested" };
+  if (profile === "nl-gov") return { name: "nl", routing: "profile" };
+  return { name: "uk", routing: "default" };
+}
+
+const DOC_CONTROL_MARKER =
+  /<!-- DOC-CONTROL-HEADER -->\n(?:<!-- Resolved [^\n]*-->\n)?/;
+
+/**
+ * Replace a template's DOC-CONTROL-HEADER marker and its note with a header.
+ * The plugin's user_config has no equivalent here, so the organisation name
+ * becomes an ordinary placeholder for the author to fill in.
+ */
+export function renderDocControl(template: string, header: string): string {
+  const body = header.replaceAll(
+    "${user_config.organisation_name}",
+    "[ORGANISATION_NAME]",
+  );
+  return template.replace(DOC_CONTROL_MARKER, () => body);
+}
 
 // ---------- Governance state machine (phases from the DSM tier structure) ----
 
@@ -359,13 +770,18 @@ export const PROFILE_EXTRAS: Record<string, Record<string, string[][]>> = {
 
 // ---------- Classification migration (port of arckit migrate-classification) -
 
-/** UK classification ladder → UAE Smart Data ladder (arc-kit v4.10 overlay). */
+/**
+ * UK classification ladder → the four classes of the UAE Smart Data Framework
+ * (arc-kit v6.18.3). The framework has no class above Secret. Values from the
+ * earlier five-rung ladder (Shared, Top Secret) are not UK values, so they
+ * never match and are left for a human to re-label.
+ */
 export const CLASSIFICATION_MAPPING: Record<string, string> = {
   "PUBLIC": "Open",
-  "OFFICIAL": "Shared",
-  "OFFICIAL-SENSITIVE": "Confidential",
+  "OFFICIAL": "Confidential",
+  "OFFICIAL-SENSITIVE": "Sensitive",
   "SECRET": "Secret",
-  "TOP SECRET": "Top Secret",
+  "TOP SECRET": "Secret",
 };
 
 const CLASSIFICATION_LINE =
@@ -723,6 +1139,10 @@ const TemplateDocSchema = z.object({
   targetDir: z.string().optional(),
   suggestedFilename: z.string().optional(),
   mandatoryInputs: z.array(z.string()),
+  documentControl: z.object({
+    partial: z.string(),
+    routing: z.enum(["regime", "requested", "profile", "default"]),
+  }).optional(),
   content: z.string(),
   fetchedAt: z.string(),
 });
@@ -848,6 +1268,65 @@ export function parseArtifactFilename(filename: string): {
     }
   }
   return { projectId, docType: middle, version, format };
+}
+
+/**
+ * Doc codes that hold one numbered document per run (arc-kit v6.18.3
+ * MULTI_INSTANCE_TYPES, limited to codes in DOC_CODES).
+ */
+export const MULTI_INSTANCE_CODES: ReadonlySet<string> = new Set([
+  "ADR",
+  "DIAG",
+  "DFD",
+  "WARD",
+  "DMC",
+  "RSCH",
+  "AWRS",
+  "AZRS",
+  "GCRS",
+  "DSCT",
+  "TNDR",
+  "CMPT",
+  "WGAM",
+  "WCLM",
+  "WVCH",
+  "GOVR",
+  "GCSR",
+  "GLND",
+  "GRNT",
+  "CDAU",
+  "ACHG",
+]);
+
+/**
+ * Next ARC filename that does not overwrite a document already in the project:
+ * a multi-instance code takes the next number at v1.0, any other code takes
+ * the next minor version of its highest existing version.
+ */
+export function suggestArtifactFilename(
+  projectId: string,
+  docCode: string,
+  existing: Array<{ docType: string; instance?: number; version: string }>,
+): string {
+  const same = existing.filter((a) => a.docType === docCode);
+  if (MULTI_INSTANCE_CODES.has(docCode)) {
+    const next = Math.max(0, ...same.map((a) => a.instance ?? 0)) + 1;
+    return `ARC-${projectId}-${docCode}-${
+      String(next).padStart(3, "0")
+    }-v1.0.md`;
+  }
+  let major = 0;
+  let minor = -1;
+  for (const a of same) {
+    const [ma, mi = 0] = a.version.split(".").map(Number);
+    if (ma > major || (ma === major && mi > minor)) {
+      major = ma;
+      minor = mi;
+    }
+  }
+  return minor < 0
+    ? `ARC-${projectId}-${docCode}-v1.0.md`
+    : `ARC-${projectId}-${docCode}-v${major}.${minor + 1}.md`;
 }
 
 /** Parse a `NNN-name` project directory name; null when not a project dir. */
@@ -1605,8 +2084,9 @@ function suggestNextAction(
     command,
     docCode,
     templateFile: TEMPLATE_MAP[command],
+    // The group is unsatisfied, so no document of this type exists yet.
     suggestedFilename: docCode
-      ? `ARC-${projectId}-${docCode}-v1.0.md`
+      ? suggestArtifactFilename(projectId, docCode, [])
       : undefined,
     mandatoryInputs: MANDATORY_DEPS[command] ?? [],
     alternatives: unsatisfied.anyOf.slice(1),
@@ -1643,7 +2123,7 @@ const TEMPLATES_DIR = "templates";
  */
 export const model = {
   type: "@magistr/arckit/workspace",
-  version: "2026.10.25.10",
+  version: "2026.10.31.1",
   upgrades: [
     {
       fromVersion: "2026.07.16.2",
@@ -1750,6 +2230,11 @@ export const model = {
     {
       toVersion: "2026.10.25.10",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.31.1",
+      description: "Sync with arc-kit v6.18.3; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -2262,6 +2747,9 @@ export const model = {
         project: z.string().optional().describe(
           "Project dir (e.g. 001-payments) — fills in targetDir and suggested ARC filename",
         ),
+        documentControl: z.enum(DOC_CONTROL_NAMES).optional().describe(
+          "Document Control header for a doc type with no regime of its own (default: nl for an nl-gov project, otherwise uk)",
+        ),
       }),
       execute: async (args, context) => {
         const file = TEMPLATE_MAP[args.command];
@@ -2280,11 +2768,45 @@ export const model = {
             `Template file "${file}" (${st.size} bytes) exceeds max size ${cap} bytes`,
           );
         }
-        const content = await Deno.readTextFile(templatePath);
+        let content = await Deno.readTextFile(templatePath);
         const docCode = COMMAND_TO_CODE[args.command];
+        let documentControl: z.infer<typeof TemplateDocSchema>[
+          "documentControl"
+        ];
+        if (DOC_CONTROL_MARKER.test(content)) {
+          const state = args.project
+            ? await readProjectState(context, args.project)
+            : null;
+          const { name, routing } = resolveDocControl(
+            docCode,
+            args.documentControl,
+            state?.profile,
+          );
+          const partial = `document-control-${name}.md`;
+          content = renderDocControl(
+            content,
+            await Deno.readTextFile(
+              context.extensionFile(`${TEMPLATES_DIR}/_partials/${partial}`),
+            ),
+          );
+          documentControl = { partial, routing };
+        }
         const projectId = args.project
           ? parseProjectDir(args.project)?.id
           : undefined;
+        // Matched by directory name from the scan, so `project` never reaches
+        // a filesystem path here. A workspace with no projects/ yet has no
+        // documents to avoid.
+        let existing: Array<z.infer<typeof ArtifactSchema>> = [];
+        if (docCode && projectId) {
+          try {
+            const { projects } = await scanWorkspace(context.globalArgs.path);
+            existing = projects.find((p) => p.dir === args.project)
+              ?.artifacts ?? [];
+          } catch (e) {
+            if (!(e instanceof Deno.errors.NotFound)) throw e;
+          }
+        }
         const handle = await context.writeResource(
           "templateDoc",
           `template-${args.command.replace(/\./g, "-")}`,
@@ -2294,9 +2816,10 @@ export const model = {
             templateFile: file,
             targetDir: args.project ? `projects/${args.project}` : undefined,
             suggestedFilename: docCode && projectId
-              ? `ARC-${projectId}-${docCode}-v1.0.md`
+              ? suggestArtifactFilename(projectId, docCode, existing)
               : undefined,
             mandatoryInputs: MANDATORY_DEPS[args.command] ?? [],
+            documentControl,
             content,
             fetchedAt: new Date().toISOString(),
           },

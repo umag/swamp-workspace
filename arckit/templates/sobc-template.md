@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -18,9 +18,25 @@
 
 [Brief description of what this document is for and how it will be used]
 
+**Business case stage**: Strategic Outline Case (SOC), Stage 1 of HM Treasury's
+project business case process. ArcKit calls this document a Strategic Outline
+Business Case (SOBC). The later stages are the Outline Business Case (OBC,
+Stage 2) and the Full Business Case (FBC, Stage 3).
+
 ---
 
 ## Executive Summary
+
+**Go/No-Go Recommendation**: **PROCEED** | **DO NOT PROCEED** | **DEFER** — [One
+sentence naming the recommended option and the headline reason, e.g. "Option 2:
+Preferred Way Forward is the only option that meets all five critical success
+factors within the £[X]M budget."]
+
+**Recommended Option**: Option [X]: [Name]
+
+**Rationale**: [The reasons the recommendation rests on, most decisive first,
+each with the figure behind it from the Economic or Financial Case. As many as
+the appraisal supports; not a fixed number.]
 
 **Purpose**: [1 paragraph: Why does this project exist?]
 
@@ -38,7 +54,8 @@ strategy?]
 
 **Expected Benefits**: £[X]M over [Y] years
 
-- [Top 3 benefits with values]
+- [The benefits that carry most of the value, each with its figure; as many as
+  matter, not a fixed three]
 
 **Return on Investment**:
 
@@ -46,17 +63,12 @@ strategy?]
 - Payback Period: [X] months
 - ROI: [X]%
 
-**Recommended Option**: Option [X]: [Name]
-
-**Key Risks**:
+**Key Risks**: [A risk that would change the recommendation if it materialised
+also goes in the Go/No-Go line above]
 
 1. [Risk 1]
 2. [Risk 2]
 3. [Risk 3]
-
-**Go/No-Go Recommendation**: **PROCEED** | **DO NOT PROCEED** | **DEFER**
-
-**Rationale**: [2-3 sentences explaining recommendation]
 
 **Next Steps if Approved**:
 
@@ -190,21 +202,36 @@ Before analyzing options, define what "success" looks like:
 
 ## B2. Options Analysis
 
-### Option 0: Do Nothing (Baseline)
+**Shortlist** (HM Treasury Green Book and business case guidance): around five
+options: business as usual (BAU), do minimum, the preferred way forward, and a
+more ambitious and a less ambitious version of it. BAU and do minimum are always
+shortlisted. Apart from BAU, an option that does not meet the objectives is not
+shortlisted. Leave out Option 4 if the preferred way forward is also the do
+minimum.
 
-**Description**: Continue with current systems and processes.
+**Longlist summary**: [How the longlist was generated (for example with HM
+Treasury's options framework filter) and why options were discarded]
+
+### Option 0: Business as Usual (BAU)
+
+**Description**: [What happens if current arrangements continue and the proposal
+is not implemented. BAU is not "do nothing": describe how the organisation would
+still act under its existing budgets, for example maintaining, patching or
+re-procuring current systems]
 
 **Costs** (3-year):
 
-- Capital: £0
-- Operational: £[X]M (continued high running costs)
+- Capital: £[X]M (capital still needed to sustain current arrangements, for
+  example hardware refresh or contract renewal; £0 only if none)
+- Operational: £[X]M (continued running costs)
 - Total: £[X]M
 
-**Benefits**: £0 (no improvement)
+**Benefits**: £[X]M (benefits that continue under current arrangements; state
+"none" only if there are none)
 
 **Pros**:
 
-- ✅ No upfront investment
+- ✅ No new investment beyond sustaining current arrangements
 - ✅ No implementation risk
 
 **Cons**:
@@ -222,14 +249,16 @@ Before analyzing options, define what "success" looks like:
 
 **Stakeholder Goals Met**: 0%
 
-**Recommendation**: **Reject** - Unacceptable baseline, costs and risks
-escalate.
+**Recommendation**: **Retain as benchmark; reject as the way forward** - BAU
+stays on the shortlist as the benchmark the other options are compared against,
+but its costs and risks escalate.
 
 ---
 
-### Option 1: Minimal Viable Solution
+### Option 1: Do Minimum
 
-**Description**: [High-level description of minimal approach]
+**Description**: [The option that just meets the proposal's objectives and goes
+no further in generating additional benefits]
 
 **Scope**:
 
@@ -260,9 +289,13 @@ escalate.
 
 **Cons**:
 
-- ❌ Only 40% of stakeholder goals met
+- ❌ Meets the objectives only at the minimum level: 40% of stakeholder goals
+  met in full
 - ❌ Limited scalability
 - ❌ May need replacement sooner (5-year life)
+
+**Objectives Met**: Yes, at the minimum level (a do minimum that does not meet
+the objectives is not a valid shortlist option)
 
 **Stakeholder Impact**:
 
@@ -279,9 +312,11 @@ escalate.
 
 ---
 
-### Option 2: Balanced Approach (RECOMMENDED)
+### Option 2: Preferred Way Forward (RECOMMENDED)
 
-**Description**: [High-level description of balanced solution]
+**Description**: [The option that appears best to meet the objectives and
+critical success factors and to offer the best value for money. It may be the
+same as the do minimum]
 
 **Scope**:
 
@@ -352,9 +387,10 @@ escalate.
 
 ---
 
-### Option 3: Comprehensive Solution
+### Option 3: More Ambitious Preferred Way Forward
 
-**Description**: [High-level description of comprehensive/"Rolls Royce" option]
+**Description**: [A version of the preferred way forward that delivers more
+social benefits, at higher social costs or with more risk]
 
 **Scope**:
 
@@ -387,19 +423,78 @@ escalate.
 
 **Stakeholder Goals Met**: 100%
 
+**Risks**:
+
+- [Risk 1]: Scope and budget overrun on an 18-month build → £[X]M additional
+  cost
+- [Risk 2]: Delivery complexity (multi-region, AI components) → delayed benefits
+  and supplier dependency
+- [Risk 3]: Affordability → funding not approved, forcing a mid-programme
+  re-scope
+
 **Recommendation**: **Reject** - Diminishing returns, cost not justified.
+
+---
+
+### Option 4: Less Ambitious Preferred Way Forward
+
+[Leave this option out, and say so, if the preferred way forward is also the do
+minimum]
+
+**Description**: [A version of the preferred way forward that delivers lower
+social benefits, with lower social costs or less risk]
+
+**Scope**:
+
+- [Component 1]: [Reduced scope compared with Option 2]
+- [Component 2]: [Feature deferred to a later phase]
+
+**Costs** (3-year) - ROM (±30%):
+
+- Capital: £[X]M (lower than Option 2)
+- Operational: £[X]M over 3 years
+- Total 3-year TCO: £[X]M
+
+**Benefits** (3-year): £[X]M (lower than Option 2)
+
+**Net Benefit**: £[X]M
+
+**Pros**:
+
+- ✅ Lower cost and delivery risk than Option 2
+- ✅ Shorter implementation
+
+**Cons**:
+
+- ❌ Fewer stakeholder goals met than Option 2
+- ❌ Deferred scope may cost more to add later
+
+**Stakeholder Goals Met**: [X]%
+
+**Risks**:
+
+- [Risk 1]: Deferred scope never funded → benefits capped below target
+- [Risk 2]: Reduced scope needs rework when deferred features are added → £[X]M
+  additional cost
+
+**Recommendation**: **Reject** - [Reason, e.g. "Lower cost does not offset the
+benefits lost against Option 2"]
 
 ---
 
 ## B3. Recommended Option
 
-**Recommendation**: **Option 2: Balanced Approach**
+**Recommendation**: **Option 2: Preferred Way Forward**
+
+At SOC stage the recommended option is the preferred way forward. HM Treasury's
+preferred option is identified at the Outline Business Case (OBC) stage, after
+more detailed appraisal of the shortlist.
 
 **Rationale**:
 
 1. **Best Value**: Highest NPV at £[X]M
 2. **Stakeholder Satisfaction**: Meets 85% of goals (vs 40% for Option 1, 100%
-   for Option 3)
+   for Option 3, [X]% for Option 4)
 3. **Acceptable Risk**: Manageable implementation with phased approach
 4. **Affordability**: Within budget constraints
 5. **Deliverability**: Realistic 12-month timeline
@@ -412,7 +507,11 @@ escalate.
 
 **Optimism Bias Adjustment** (UK Government):
 
-- Standard uplift for IT projects: +40% on costs
+- Uplift applied: +[X]% on costs, +[Y]% on duration, -[Z]% on benefits
+- Source of the uplift: [the organisation's evidence of past forecast errors on
+  similar proposals | the generic values in the Green Book supplementary
+  guidance on optimism bias, for this project type]. The Green Book asks for the
+  organisation's own evidence first (paragraphs 6.80 to 6.81)
 - Adjusted Total Cost: £[X]M → £[X]M (with uplift)
 - NPV with optimism bias: Still positive at £[X]M
 
@@ -551,7 +650,8 @@ evaluation.
 
 - All costs in [current year] prices
 - Excludes VAT (if applicable)
-- Optimism bias NOT YET applied (add 40% for UK Gov)
+- Optimism bias NOT YET applied (for UK Government, apply the uplift recorded in
+  B3 and state its source)
 
 ## D2. Funding Source
 
@@ -562,11 +662,28 @@ evaluation.
 - **Amount Available**: £[X]M
 - **Timing**: [Financial years when available]
 
-**Budget Approval Path**:
+**Approval Route**:
 
-1. [Departmental board]: Up to £[X]M
-2. [Finance committee]: £[X]M to £[Y]M
-3. [HM Treasury]: Above £[Y]M (UK Government)
+1. **Approving authority**: [Minister | Accounting officer | Investment
+   committee (UK central government) | Mayor or councillors, or the officers
+   they delegate to (local government) | Board (private sector)], under the
+   organisation's scheme of delegation: [internal limits, from the
+   organisation's own policy]
+2. **Internal assurance**: [The organisation's own assurance before approval,
+   including digital assurance under the Digital Assurance Playbook for digital
+   and technology spend (the digital and technology spend controls were removed
+   on 1 April 2026)]
+3. **HM Treasury approval** (UK central government only): [Required | Not
+   required | To be confirmed with the HM Treasury spending team]. Required if
+   the project meets any Treasury Approvals Process criterion: whole life costs
+   at or above one of the department's Delegated Authority Limits (DAL: [the
+   department's DAL, from its delegation letter, or "to be confirmed"]); novel,
+   contentious or could cause repercussions elsewhere in the public sector;
+   likely to breach agreed budget or Supply Estimate limits; significant future
+   spending commitments without set budgets; a potentially expensive precedent;
+   primary legislation needed; or a statutory requirement for HM Treasury
+   consent. If required, HM Treasury approves the business case at SOC, OBC and
+   FBC, and the SOC should usually be approved before any public announcement
 
 **Funding Gaps** (if any):
 
@@ -598,7 +715,8 @@ evaluation.
 
 ### D4.1 Economic Appraisal (UK Government Green Book)
 
-**Discount Rate**: 3.5% (HMT standard social time preference rate)
+**Discount Rate**: 3.5% (HM Treasury social time preference rate, in real terms,
+for years 1 to 30)
 
 **Net Present Value Calculation**:
 
@@ -650,15 +768,15 @@ ROI = (£[X]M - £[X]M) / £[X]M × 100% = [X]%
 
 Derived from stakeholder analysis RACI matrix in `ARC-{PROJECT_ID}-STKE-v*.md`:
 
-| Decision/Activity         | Responsible        | Accountable       | Consulted                    | Informed         |
-| ------------------------- | ------------------ | ----------------- | ---------------------------- | ---------------- |
-| Overall programme success | Programme Manager  | SRO ([Name, CFO]) | Steering Committee           | All stakeholders |
-| Budget approval           | Finance Director   | SRO               | Permanent Secretary (UK Gov) | HMT              |
-| Requirements definition   | Business Analyst   | Product Owner     | Stakeholders                 | Delivery team    |
-| Technical design          | Solution Architect | CTO               | Security, Operations         | Developers       |
-| Procurement               | Commercial Manager | SRO               | Finance, Legal               | Suppliers        |
-| Change management         | Change Manager     | SRO               | HR, Communications           | All staff        |
-| Go-live decision          | SRO                | SRO               | Steering Committee           | All stakeholders |
+| Decision/Activity         | Responsible        | Accountable                                                                          | Consulted            | Informed                                                                               |
+| ------------------------- | ------------------ | ------------------------------------------------------------------------------------ | -------------------- | -------------------------------------------------------------------------------------- |
+| Overall programme success | Programme Manager  | SRO ([Name, CFO])                                                                    | Steering Committee   | All stakeholders                                                                       |
+| Business case approval    | SRO                | Approving authority (minister, accounting officer or investment committee in UK Gov) | Finance Director     | HM Treasury spending team (approves as well if the Treasury Approvals Process applies) |
+| Requirements definition   | Business Analyst   | Product Owner                                                                        | Stakeholders         | Delivery team                                                                          |
+| Technical design          | Solution Architect | CTO                                                                                  | Security, Operations | Developers                                                                             |
+| Procurement               | Commercial Manager | SRO                                                                                  | Finance, Legal       | Suppliers                                                                              |
+| Change management         | Change Manager     | SRO                                                                                  | HR, Communications   | All staff                                                                              |
+| Go-live decision          | SRO                | SRO                                                                                  | Steering Committee   | All stakeholders                                                                       |
 
 **Senior Responsible Owner (SRO)**: [Name, Role]
 
@@ -678,14 +796,21 @@ Derived from stakeholder analysis RACI matrix in `ARC-{PROJECT_ID}-STKE-v*.md`:
 
 ### E1.2 Approval Gates
 
-| Gate                              | Criteria                                              | Approving Body             | Timing |
-| --------------------------------- | ----------------------------------------------------- | -------------------------- | ------ |
-| **Gate 0: SOBC Approval**         | Business case approved, funding secured               | Steering Committee / Board | [Date] |
-| **Gate 1: Requirements Complete** | Stakeholders signed off, traceability matrix complete | SRO                        | [Date] |
-| **Gate 2: Procurement Award**     | Vendor selected, contract signed                      | SRO + Finance Director     | [Date] |
-| **Gate 3: Design Approval**       | HLD & DLD approved, security sign-off                 | SRO + CTO + CISO           | [Date] |
-| **Gate 4: Go-Live Approval**      | UAT passed, cutover plan approved                     | Steering Committee         | [Date] |
-| **Gate 5: Benefits Realization**  | 6-month post-live, benefits measured                  | Steering Committee         | [Date] |
+Business case approval follows HM Treasury's stages: SOC (this document), OBC
+and FBC. HM Treasury's guidance assures each through a Gate Review held before
+the approval; NISTA arranges independent assurance reviews for projects on the
+Government Major Projects Portfolio (GMPP). Project-level decision points sit
+between them.
+
+| Decision Point            | Criteria                                                   | Assurance                                                  | Approving Body                                                                   | Timing |
+| ------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------- | ------ |
+| **SOC (SOBC) Approval**   | Case for change and preferred way forward approved         | Gate Review 1: Business Justification                      | [Approving authority; HM Treasury too if the Treasury Approvals Process applies] | [Date] |
+| **Requirements Complete** | Stakeholders signed off, traceability matrix complete      | [Internal review]                                          | SRO                                                                              | [Date] |
+| **OBC Approval**          | Shortlist appraised, preferred option identified           | Gate Review 2: Delivery Strategy                           | [Approving authority; HM Treasury if applicable]                                 | [Date] |
+| **FBC Approval**          | Procurement complete; approved before contracts are signed | Gate Review 3: Investment Decision                         | [Approving authority; HM Treasury if applicable]                                 | [Date] |
+| **Design Approval**       | HLD & DLD approved, security sign-off                      | [Internal review]                                          | SRO + CTO + CISO                                                                 | [Date] |
+| **Go-Live Approval**      | UAT passed, cutover plan approved                          | Gate Review 4: Readiness for Service                       | Steering Committee                                                               | [Date] |
+| **Benefits Realization**  | 6-month post-live, benefits measured                       | Gate Review 5: Operational Review and Benefits Realisation | Steering Committee                                                               | [Date] |
 
 ## E2. Delivery Approach
 
@@ -707,19 +832,21 @@ Derived from stakeholder analysis RACI matrix in `ARC-{PROJECT_ID}-STKE-v*.md`:
 
 ## E3. Key Milestones
 
-| Milestone                                        | Date              | Dependencies                   | Owner              |
-| ------------------------------------------------ | ----------------- | ------------------------------ | ------------------ |
-| SOBC Approval (this document)                    | [Date]            | Stakeholder analysis complete  | SRO                |
-| Funding Secured                                  | [Date]            | SOBC approval                  | Finance Director   |
-| Requirements Complete (`/arckit:requirements`)   | [Date]            | SOBC approval                  | Business Analyst   |
-| Procurement Launch                               | [Date]            | Requirements approved          | Commercial Manager |
-| Vendor Contract Award                            | [Date]            | Evaluation complete            | SRO                |
-| High-Level Design Approval                       | [Date]            | Vendor onboarded               | Solution Architect |
-| Detailed Design Approval                         | [Date]            | HLD approved                   | Solution Architect |
-| User Acceptance Testing Start                    | [Date]            | Build 80% complete             | Test Manager       |
-| Go-Live Readiness Review                         | [Date]            | UAT passed, cutover plan ready | SRO                |
-| **GO-LIVE**                                      | **[Target Date]** | All gates passed               | SRO                |
-| Benefits Realization Review (6 months post-live) | [Date]            | Go-live + 6 months             | SRO                |
+| Milestone                                        | Date              | Dependencies                               | Owner              |
+| ------------------------------------------------ | ----------------- | ------------------------------------------ | ------------------ |
+| SOBC Approval (this document)                    | [Date]            | Stakeholder analysis complete              | SRO                |
+| Funding Secured                                  | [Date]            | SOBC approval                              | Finance Director   |
+| Requirements Complete (`/arckit:requirements`)   | [Date]            | SOBC approval                              | Business Analyst   |
+| Outline Business Case (OBC) Approval             | [Date]            | Requirements complete, shortlist appraised | SRO                |
+| Procurement Launch                               | [Date]            | OBC approval                               | Commercial Manager |
+| Full Business Case (FBC) Approval                | [Date]            | Evaluation complete                        | SRO                |
+| Vendor Contract Award                            | [Date]            | FBC approval                               | SRO                |
+| High-Level Design Approval                       | [Date]            | Vendor onboarded                           | Solution Architect |
+| Detailed Design Approval                         | [Date]            | HLD approved                               | Solution Architect |
+| User Acceptance Testing Start                    | [Date]            | Build 80% complete                         | Test Manager       |
+| Go-Live Readiness Review                         | [Date]            | UAT passed, cutover plan ready             | SRO                |
+| **GO-LIVE**                                      | **[Target Date]** | All gates passed                           | SRO                |
+| Benefits Realization Review (6 months post-live) | [Date]            | Go-live + 6 months                         | SRO                |
 
 **Critical Path**:
 
@@ -921,7 +1048,7 @@ Derived from stakeholder analysis RACI matrix in `ARC-{PROJECT_ID}-STKE-v*.md`:
 
 ## F1. Summary of Recommendation
 
-**Recommended Option**: **Option 2: Balanced Approach**
+**Recommended Option**: **Option 2: Preferred Way Forward**
 
 **Investment**: £[X]M over 3 years
 
@@ -944,7 +1071,10 @@ Derived from stakeholder analysis RACI matrix in `ARC-{PROJECT_ID}-STKE-v*.md`:
 1. Funding secured: £[X]M confirmed available
 2. SRO appointed and accepted role
 3. Steering Committee established
-4. HM Treasury approval (if threshold exceeded) - UK Gov
+4. HM Treasury approval, if the Treasury Approvals Process applies (whole life
+   costs at or above one of the department's Delegated Authority Limits, or
+   novel, contentious or repercussive, among its other criteria) - UK central
+   government
 
 **Recommended Conditions**:
 
@@ -971,6 +1101,10 @@ Derived from stakeholder analysis RACI matrix in `ARC-{PROJECT_ID}-STKE-v*.md`:
    stakeholders - **Target: [Date]**
 3. **Traceability Matrix**: Generate requirements traceability matrix -
    **Target: [Date]**
+4. **Outline Business Case (OBC)**: Appraise the shortlist in detail, identify
+   the preferred option and outline the commercial, financial and management
+   arrangements; Gate Review 2 (Delivery Strategy) before approval - **Target:
+   [Date]**
 
 **Phase 2: Procurement** (Months 2-4):
 
@@ -979,7 +1113,11 @@ Derived from stakeholder analysis RACI matrix in `ARC-{PROJECT_ID}-STKE-v*.md`:
    Gov) - **Target: [Date]**
 3. **Vendor Evaluation**: Score and compare vendors using `/arckit:evaluate` -
    **Target: [Date]**
-4. **Contract Award**: Award contract to selected vendor - **Target: [Date]**
+4. **Full Business Case (FBC)**: Record the procurement outcome and final
+   arrangements; Gate Review 3 (Investment Decision) before approval - **Target:
+   [Date]**
+5. **Contract Award**: Award contract to selected vendor, after FBC approval -
+   **Target: [Date]**
 
 **Phase 3: Design** (Months 4-6):
 
@@ -1006,12 +1144,11 @@ Derived from stakeholder analysis RACI matrix in `ARC-{PROJECT_ID}-STKE-v*.md`:
 **Phase 6: Benefits Realization** (Months 10-21):
 
 1. **6-Month Review**: Measure benefits achieved vs plan - **Target: Month 15**
-2. **OBC Update**: Create Outline Business Case (OBC) with actuals vs SOBC -
-   **Target: Month 12**
-3. **12-Month Review**: Full benefits realization assessment - **Target: Month
+2. **Business Case Update**: Log material changes against the approved FBC and
+   update the benefits and risk registers - **Target: Month 12**
+3. **12-Month Review**: Full benefits realization assessment (Gate Review 5:
+   Operational Review and Benefits Realisation, where used) - **Target: Month
    21**
-4. **FBC**: Create Full Business Case (FBC) if major variance from SOBC -
-   **Target: If required**
 
 ## F4. Next Steps if Not Approved
 
@@ -1024,7 +1161,7 @@ If this SOBC is not approved:
 3. **Re-submit**: Present revised SOBC within [X] weeks
 4. **Communicate**: Inform stakeholders of decision and next steps
 
-**Do Nothing Consequences**: If project cancelled:
+**Business as Usual Consequences**: If project cancelled:
 
 - Stakeholder goals not met (0%)
 - Continued overspend: £[X]M over 3 years
@@ -1087,15 +1224,19 @@ estimates]
 
 ## Appendix H: Glossary
 
-| Term | Definition                                                                            |
-| ---- | ------------------------------------------------------------------------------------- |
-| SOBC | Strategic Outline Business Case - First stage business case with high-level estimates |
-| OBC  | Outline Business Case - Second stage with refined costs after requirements            |
-| FBC  | Full Business Case - Final stage with accurate costs before implementation            |
-| NPV  | Net Present Value - Sum of discounted benefits minus costs                            |
-| ROI  | Return on Investment - (Benefits - Costs) / Costs × 100%                              |
-| SRO  | Senior Responsible Owner - Accountable for project delivery                           |
-| TCO  | Total Cost of Ownership - Capital + Operational costs over lifecycle                  |
+| Term  | Definition                                                                                                                                 |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| SOBC  | Strategic Outline Business Case - ArcKit's name for HM Treasury's Strategic Outline Case (SOC)                                             |
+| SOC   | Strategic Outline Case - Stage 1 of HM Treasury's project business case process: case for change, shortlist and preferred way forward      |
+| OBC   | Outline Business Case - Stage 2: shortlist appraised in detail to identify the preferred option                                            |
+| FBC   | Full Business Case - Stage 3: procurement outcome and full arrangements, approved before contracts are signed                              |
+| BAU   | Business as usual - The outcome if current arrangements continue; always shortlisted as the benchmark                                      |
+| DAL   | Delegated Authority Limit - Spending limit HM Treasury sets for a department, above which HM Treasury approval is needed                   |
+| NISTA | National Infrastructure and Service Transformation Authority - Arranges independent assurance reviews for GMPP projects (replaced the IPA) |
+| NPV   | Net Present Value - Sum of discounted benefits minus costs                                                                                 |
+| ROI   | Return on Investment - (Benefits - Costs) / Costs × 100%                                                                                   |
+| SRO   | Senior Responsible Owner - Accountable for project delivery                                                                                |
+| TCO   | Total Cost of Ownership - Capital + Operational costs over lifecycle                                                                       |
 
 ---
 
@@ -1125,7 +1266,8 @@ estimates]
 **END OF STRATEGIC OUTLINE BUSINESS CASE**
 
 _Document created using ArcKit `/arckit:sobc` command_ _Template version: 1.0_
-_Green Book compliant: Yes (HM Treasury 5-case model)_
+_Structure: HM Treasury Five Case Model (Guidance on Developing Business Cases),
+SOC stage_
 
 ## External References
 
