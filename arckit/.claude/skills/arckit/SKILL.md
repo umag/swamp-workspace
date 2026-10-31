@@ -4,8 +4,8 @@ description: >
   Drive enterprise-architecture governance projects end-to-end using the
   @magistr/arckit/workspace model — a standalone swamp port of ArcKit (no
   Claude plugin or Python CLI needed). A state machine gates 12 lifecycle
-  phases, foundation through story, against ARC-* artifacts on disk; 65
-  bundled arc-kit templates drive document production. Triggers on "governance project",
+  phases, foundation through story, against ARC-* artifacts on disk; 193
+  bundled templates drive document production. Triggers on "governance project",
   "start governance", "architecture governance", "arckit", "governance
   status", "advance phase", "governance gaps", "architecture principles",
   "requirements document", "risk register", "stakeholder analysis", "SOBC",
@@ -71,6 +71,11 @@ swamp data get governance 001-nhs-appointment-booking-status --json
 swamp model method run governance template \
   --input command=requirements --input project=001-nhs-appointment-booking
 swamp data get governance template-requirements --json   # .attributes.content
+#    content has its Document Control header filled in. The output's
+#    documentControl says which one. Pass --input documentControl=uae (at, au,
+#    ca, fr, nl, uk, us) when a doc type with no regime of its own needs another
+#    header. Overlay commands (at-*, au-*, ca-*, eu-*, fr-*, uae-*, uk-*, us-*)
+#    list no mandatoryInputs, so ask the human which inputs apply.
 
 # 4. produce the artifact:
 #    read mandatoryInputs artifacts from the project dir, interview the human,

@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -48,11 +48,11 @@ NEEDED]
 
 ### Requirements Coverage Matrix
 
-| Requirement ID | Type       | Priority | Design Coverage | Tests Coverage | Status     |
-| -------------- | ---------- | -------- | --------------- | -------------- | ---------- |
-| BR-001         | Business   | MUST     | [✅/❌]         | [✅/❌]        | [✅/⚠️/❌] |
-| FR-001         | Functional | MUST     | [✅/❌]         | [✅/❌]        | [✅/⚠️/❌] |
-| NFR-S-001      | Security   | MUST     | [✅/❌]         | [✅/❌]        | [✅/⚠️/❌] |
+| Requirement ID | Type       | Priority  | Design Coverage | Tests Coverage | Status     |
+| -------------- | ---------- | --------- | --------------- | -------------- | ---------- |
+| BR-001         | Business   | MUST_HAVE | [✅/❌]         | [✅/❌]        | [✅/⚠️/❌] |
+| FR-001         | Functional | MUST_HAVE | [✅/❌]         | [✅/❌]        | [✅/⚠️/❌] |
+| NFR-SEC-001    | Security   | MUST_HAVE | [✅/❌]         | [✅/❌]        | [✅/⚠️/❌] |
 
 **Statistics**:
 
@@ -63,9 +63,9 @@ NEEDED]
 
 ### Uncovered Requirements (CRITICAL)
 
-| Requirement ID | Priority | Description   | Why Critical |
-| -------------- | -------- | ------------- | ------------ |
-| [REQ-ID]       | MUST     | [Description] | [Impact]     |
+| Requirement ID | Priority  | Description   | Why Critical |
+| -------------- | --------- | ------------- | ------------ |
+| [REQ-ID]       | MUST_HAVE | [Description] | [Impact]     |
 
 ---
 

@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -94,7 +94,7 @@ artifacts:
 | Requirements Specification    | ARC-[PROJECT_ID]-REQ-v[N].md  | [COUNT] terms     |
 | Stakeholder Analysis          | ARC-[PROJECT_ID]-STKE-v[N].md | [COUNT] terms     |
 | Risk Register                 | ARC-[PROJECT_ID]-RISK-v[N].md | [COUNT] terms     |
-| Data Model                    | ARC-[PROJECT_ID]-DMOD-v[N].md | [COUNT] terms     |
+| Data Model                    | ARC-[PROJECT_ID]-DATA-v[N].md | [COUNT] terms     |
 | Architecture Principles       | ARC-000-PRIN-v[N].md          | [COUNT] terms     |
 | Architecture Decision Records | ARC-[PROJECT_ID]-ADR-*.md     | [COUNT] terms     |
 

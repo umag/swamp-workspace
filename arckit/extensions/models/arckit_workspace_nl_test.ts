@@ -329,7 +329,7 @@ Deno.test("cross-ladder: nl then uae over an nl-undecidable value — OFFICIAL i
   assertEquals(afterNl.requiresDecision, [{ value: "OFFICIAL" }]);
   assertEquals(afterNl.newText, doc);
   const afterUae = proposeWithLadder(afterNl.newText, "uae");
-  assertEquals(afterUae.changes, [{ from: "OFFICIAL", to: "Shared" }]);
+  assertEquals(afterUae.changes, [{ from: "OFFICIAL", to: "Confidential" }]);
 });
 
 Deno.test("cross-ladder: uae then nl over the same text — the second pass finds zero changes and no phantom entries", () => {

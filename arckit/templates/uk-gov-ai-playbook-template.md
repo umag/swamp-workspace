@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -73,10 +73,14 @@ APPROVED / [ ] APPROVED WITH CONDITIONS / [ ] REJECTED
 
 ## The 10 Core Principles Assessment
 
+> Each **Principle** line quotes the
+> [AI Playbook for the UK Government](https://www.gov.uk/government/publications/ai-playbook-for-the-uk-government)
+> (GDS, 10 February 2025). The section headings are ArcKit's short labels.
+
 ### 1. Understanding AI
 
-**Principle**: Organizations must comprehend what AI is, its capabilities, and
-limitations.
+**Principle** (AI Playbook, Principle 1): You know what AI is and what its
+limitations are.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -105,8 +109,8 @@ limitations.
 
 ### 2. Lawful and Ethical Use
 
-**Principle**: AI deployment must comply with legal requirements and ethical
-standards.
+**Principle** (AI Playbook, Principle 2): You use AI lawfully, ethically and
+responsibly.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -150,8 +154,7 @@ standards.
 
 ### 3. Security
 
-**Principle**: Systems must be secure and resilient to cyber attacks, including
-AI-specific threats.
+**Principle** (AI Playbook, Principle 3): You know how to use AI securely.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -198,7 +201,8 @@ AI-specific threats.
 
 ### 4. Human Control
 
-**Principle**: Meaningful human oversight must exist at appropriate stages.
+**Principle** (AI Playbook, Principle 4): You have meaningful human control at
+the right stages.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -244,8 +248,8 @@ AI-specific threats.
 
 ### 5. Lifecycle Management
 
-**Principle**: Understand complete product lifecycle from selection to
-decommissioning.
+**Principle** (AI Playbook, Principle 5): You understand how to manage the full
+AI life cycle.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -320,8 +324,7 @@ decommissioning.
 
 ### 6. Right Tool Selection
 
-**Principle**: AI should only be deployed when it genuinely solves problems
-better than alternatives.
+**Principle** (AI Playbook, Principle 6): You use the right tool for the job.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -378,7 +381,7 @@ better than alternatives.
 
 ### 7. Collaboration
 
-**Principle**: Engage across government and with external stakeholders.
+**Principle** (AI Playbook, Principle 7): You are open and collaborative.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -391,6 +394,10 @@ better than alternatives.
 - [ ] User community involvement
 - [ ] Sharing lessons learned
 - [ ] Contributing to government AI community
+- [ ] Open with the public about where and how AI is used (ATRS record where in
+      mandatory scope; see Ethical Theme 2)
+- [ ] Automated responses to the public clearly identified (e.g. "this response
+      has been written by an automated AI chatbot")
 
 **Collaboration Activities**:
 
@@ -418,8 +425,8 @@ better than alternatives.
 
 ### 8. Commercial Partnership
 
-**Principle**: Early engagement with commercial colleagues on responsible AI
-expectations.
+**Principle** (AI Playbook, Principle 8): You work with commercial colleagues
+from the start.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -465,7 +472,8 @@ expectations.
 
 ### 9. Skills and Expertise
 
-**Principle**: Teams need appropriate technical, ethical, and domain expertise.
+**Principle** (AI Playbook, Principle 9): You have the skills and expertise
+needed to implement and use AI solutions.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -512,8 +520,8 @@ expectations.
 
 ### 10. Organizational Alignment
 
-**Principle**: AI use must align with organizational policies, governance, and
-assurance.
+**Principle** (AI Playbook, Principle 10): You use these principles alongside
+your organisation's policies and have the right assurance in place.
 
 **Compliance Status**: [ ] COMPLIANT / [ ] PARTIAL / [ ] NON-COMPLIANT
 
@@ -590,7 +598,8 @@ assurance.
 
 **Evidence**:
 
-- [ ] Algorithmic Transparency Recording Standard (ATRS) completed
+- [ ] Algorithmic Transparency Recording Standard (ATRS) record completed
+      (required where in mandatory scope; see below)
 - [ ] System documented publicly (where appropriate)
 - [ ] Decision explanations available to affected persons
 - [ ] Model card or factsheet published
@@ -598,6 +607,19 @@ assurance.
 
 **ATRS Compliance**:
 
+The ATRS is mandatory for all government departments, and for arm's length
+bodies (ALBs) that deliver public or frontline services or directly interact
+with the general public. Within those organisations it is mandatory for
+algorithmic tools that have a significant influence on a decision-making process
+with public effect, or that directly interact with the general public
+([ATRS guidance](https://www.gov.uk/government/publications/guidance-for-organisations-using-the-algorithmic-transparency-recording-standard),
+updated May 2025). Other public sector organisations are encouraged to use it.
+
+- **Organisation in Mandatory Scope**: [YES - government department / YES - ALB
+  delivering public or frontline services or interacting with the public / NO]
+- **Tool in Mandatory Scope**: [YES - significant influence on decisions with
+  public effect / YES - directly interacts with the public / NO]
+- **ATRS Status**: [REQUIRED / RECOMMENDED - outside mandatory scope]
 - **ATRS URL**: [Link to published ATRS entry]
 - **Publication Date**: [Date]
 - **Last Updated**: [Date]
@@ -790,7 +812,8 @@ assurance.
 - [ ] MUST score ≥ 90% to proceed
 - [ ] ALL principles must be met (no ❌ allowed)
 - [ ] Human-in-the-loop REQUIRED
-- [ ] ATRS publication MANDATORY
+- [ ] ATRS record published (MANDATORY where the organisation and tool are in
+      the ATRS mandatory scope; see Ethical Theme 2; encouraged otherwise)
 - [ ] Regular audits (quarterly minimum)
 
 **For MEDIUM-RISK AI**:
@@ -843,7 +866,8 @@ assurance.
 
 ### Required Assessments (attach or link)
 
-- [ ] **ATRS** (Algorithmic Transparency Recording Standard): [Link]
+- [ ] **ATRS** (Algorithmic Transparency Recording Standard), where in mandatory
+      scope: [Link / NOT IN SCOPE - reason]
 - [ ] **DPIA** (Data Protection Impact Assessment): [Link]
 - [ ] **EqIA** (Equality Impact Assessment): [Link]
 - [ ] **Human Rights Assessment**: [Link]

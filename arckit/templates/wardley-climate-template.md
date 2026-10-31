@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -65,20 +65,23 @@ assessment._
 
 ## Climate Assessment by Category
 
+_Keep only patterns that are Active or Latent (Applies? = Yes / Partial) in each
+table; delete rows for patterns that are not relevant to this landscape._
+
 ### 1. Component Patterns
 
 _How do components naturally evolve and what forces act on them?_
 
-| Pattern                                          |      Applies?      |  Impact   | Evidence                             | Strategic Implication          |
-| ------------------------------------------------ | :----------------: | :-------: | ------------------------------------ | ------------------------------ |
-| Everything evolves (no component stays still)    | Yes / No / Partial | H / M / L | {Observation from the map or market} | {What this means for strategy} |
-| Characteristics change as components evolve      | Yes / No / Partial | H / M / L | {Observation}                        | {Strategic implication}        |
-| No "one size fits all" method                    | Yes / No / Partial | H / M / L | {Observation}                        | {Strategic implication}        |
-| Success breeds inertia                           | Yes / No / Partial | H / M / L | {Observation}                        | {Strategic implication}        |
-| Higher-order systems create new sources of worth | Yes / No / Partial | H / M / L | {Observation}                        | {Strategic implication}        |
-| Components can co-evolve                         | Yes / No / Partial | H / M / L | {Observation}                        | {Strategic implication}        |
-| Capital flows to new areas of value              | Yes / No / Partial | H / M / L | {Observation}                        | {Strategic implication}        |
-| Commoditisation enables new genesis              | Yes / No / Partial | H / M / L | {Observation}                        | {Strategic implication}        |
+| Pattern                                          |      Applies?      |  Impact   | Primary Components Affected              | Evidence                             | Strategic Implication          | Time Horizon                       |
+| ------------------------------------------------ | :----------------: | :-------: | ---------------------------------------- | ------------------------------------ | ------------------------------ | ---------------------------------- |
+| Everything evolves (no component stays still)    | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation from the map or market} | {What this means for strategy} | < 12 months / 1-3 years / 3+ years |
+| Characteristics change as components evolve      | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation}                        | {Strategic implication}        | < 12 months / 1-3 years / 3+ years |
+| No "one size fits all" method                    | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation}                        | {Strategic implication}        | < 12 months / 1-3 years / 3+ years |
+| Success breeds inertia                           | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation}                        | {Strategic implication}        | < 12 months / 1-3 years / 3+ years |
+| Higher-order systems create new sources of worth | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation}                        | {Strategic implication}        | < 12 months / 1-3 years / 3+ years |
+| Components can co-evolve                         | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation}                        | {Strategic implication}        | < 12 months / 1-3 years / 3+ years |
+| Capital flows to new areas of value              | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation}                        | {Strategic implication}        | < 12 months / 1-3 years / 3+ years |
+| Commoditisation enables new genesis              | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation}                        | {Strategic implication}        | < 12 months / 1-3 years / 3+ years |
 
 ---
 
@@ -86,14 +89,14 @@ _How do components naturally evolve and what forces act on them?_
 
 _How do economic forces shape the landscape?_
 
-| Pattern                                           |      Applies?      |  Impact   | Evidence      | Strategic Implication   |
-| ------------------------------------------------- | :----------------: | :-------: | ------------- | ----------------------- |
-| Efficiency enables innovation                     | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Capital flows to new sources of value             | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Commoditisation reduces margin                    | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| New economic models emerge (e.g., SaaS, platform) | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Price pressure on product-stage components        | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Investment bias towards Genesis/Custom stages     | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
+| Pattern                                           |      Applies?      |  Impact   | Primary Components Affected              | Evidence      | Strategic Implication   | Time Horizon                       |
+| ------------------------------------------------- | :----------------: | :-------: | ---------------------------------------- | ------------- | ----------------------- | ---------------------------------- |
+| Efficiency enables innovation                     | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Capital flows to new sources of value             | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Commoditisation reduces margin                    | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| New economic models emerge (e.g., SaaS, platform) | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Price pressure on product-stage components        | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Investment bias towards Genesis/Custom stages     | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
 
 ---
 
@@ -101,13 +104,13 @@ _How do economic forces shape the landscape?_
 
 _How does the pace of change affect the landscape?_
 
-| Pattern                                                  |      Applies?      |  Impact   | Evidence      | Strategic Implication   |
-| -------------------------------------------------------- | :----------------: | :-------: | ------------- | ----------------------- |
-| Evolution is not uniform (some components evolve faster) | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Commoditisation is accelerating (shorter cycles)         | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Ecosystem effects accelerate evolution                   | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Open source accelerates commoditisation                  | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Regulation can slow or accelerate evolution              | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
+| Pattern                                                  |      Applies?      |  Impact   | Primary Components Affected              | Evidence      | Strategic Implication   | Time Horizon                       |
+| -------------------------------------------------------- | :----------------: | :-------: | ---------------------------------------- | ------------- | ----------------------- | ---------------------------------- |
+| Evolution is not uniform (some components evolve faster) | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Commoditisation is accelerating (shorter cycles)         | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Ecosystem effects accelerate evolution                   | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Open source accelerates commoditisation                  | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Regulation can slow or accelerate evolution              | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
 
 ---
 
@@ -115,11 +118,11 @@ _How does the pace of change affect the landscape?_
 
 _What forces resist change in this landscape?_
 
-| Pattern                                   |      Applies?      |  Impact   | Evidence      | Strategic Implication   |
-| ----------------------------------------- | :----------------: | :-------: | ------------- | ----------------------- |
-| Past success creates resistance to change | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Existing practices embed inertia          | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Vendor lock-in creates artificial inertia | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
+| Pattern                                   |      Applies?      |  Impact   | Primary Components Affected              | Evidence      | Strategic Implication   | Time Horizon                       |
+| ----------------------------------------- | :----------------: | :-------: | ---------------------------------------- | ------------- | ----------------------- | ---------------------------------- |
+| Past success creates resistance to change | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Existing practices embed inertia          | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Vendor lock-in creates artificial inertia | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
 
 ---
 
@@ -127,10 +130,10 @@ _What forces resist change in this landscape?_
 
 _How do competitor behaviours shape the landscape?_
 
-| Pattern                                |      Applies?      |  Impact   | Evidence      | Strategic Implication   |
-| -------------------------------------- | :----------------: | :-------: | ------------- | ----------------------- |
-| Competitors also face inertia          | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| New entrants exploit incumbent inertia | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
+| Pattern                                |      Applies?      |  Impact   | Primary Components Affected              | Evidence      | Strategic Implication   | Time Horizon                       |
+| -------------------------------------- | :----------------: | :-------: | ---------------------------------------- | ------------- | ----------------------- | ---------------------------------- |
+| Competitors also face inertia          | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| New entrants exploit incumbent inertia | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
 
 ---
 
@@ -138,16 +141,16 @@ _How do competitor behaviours shape the landscape?_
 
 _What can be reliably anticipated about how this landscape will change?_
 
-| Pattern                                                      |      Applies?      |  Impact   | Evidence      | Strategic Implication   |
-| ------------------------------------------------------------ | :----------------: | :-------: | ------------- | ----------------------- |
-| Commoditisation of custom-built components is predictable    | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Co-evolution of practice and technology is predictable       | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Higher-order systems will emerge from current commodities    | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Shifts from product to utility are visible before they occur | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| New entrants will appear at Genesis stage of key components  | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Inertia creates predictable points of disruption             | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Ecosystem plays follow commoditisation events                | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
-| Peace / War / Wonder cycles follow predictable patterns      | Yes / No / Partial | H / M / L | {Observation} | {Strategic implication} |
+| Pattern                                                      |      Applies?      |  Impact   | Primary Components Affected              | Evidence      | Strategic Implication   | Time Horizon                       |
+| ------------------------------------------------------------ | :----------------: | :-------: | ---------------------------------------- | ------------- | ----------------------- | ---------------------------------- |
+| Commoditisation of custom-built components is predictable    | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Co-evolution of practice and technology is predictable       | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Higher-order systems will emerge from current commodities    | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Shifts from product to utility are visible before they occur | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| New entrants will appear at Genesis stage of key components  | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Inertia creates predictable points of disruption             | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Ecosystem plays follow commoditisation events                | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
+| Peace / War / Wonder cycles follow predictable patterns      | Yes / No / Partial | H / M / L | {Component names from the WARD artifact} | {Observation} | {Strategic implication} | < 12 months / 1-3 years / 3+ years |
 
 ---
 

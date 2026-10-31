@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -28,6 +28,10 @@
 | **User Impact**       | [How does ML affect end users?]        |
 
 ### MLOps Maturity
+
+Levels use ArcKit's five-level MLOps maturity scale, not Google Cloud's
+three-level or Microsoft's five-level published model. Nearest level in the
+organisation's own model: [MODEL AND LEVEL, or Not applicable].
 
 | Level                        | Current  | Target   | Timeline |
 | ---------------------------- | -------- | -------- | -------- |
@@ -617,22 +621,32 @@ flowchart LR
 
 ### AI Playbook Principles
 
-| Principle                        | Implementation    | Status                |
-| -------------------------------- | ----------------- | --------------------- |
-| Understand users and their needs | [How implemented] | [Met/Partial/Not Met] |
-| Use AI responsibly               | [How implemented] | [Met/Partial/Not Met] |
-| Design for transparency          | [How implemented] | [Met/Partial/Not Met] |
-| Build in accountability          | [How implemented] | [Met/Partial/Not Met] |
+The ten principles of the
+[AI Playbook for the UK Government](https://www.gov.uk/government/publications/ai-playbook-for-the-uk-government)
+(GDS, February 2025).
+
+| Principle                                                                                                 | Implementation    | Status                |
+| --------------------------------------------------------------------------------------------------------- | ----------------- | --------------------- |
+| 1. You know what AI is and what its limitations are                                                       | [How implemented] | [Met/Partial/Not Met] |
+| 2. You use AI lawfully, ethically and responsibly                                                         | [How implemented] | [Met/Partial/Not Met] |
+| 3. You know how to use AI securely                                                                        | [How implemented] | [Met/Partial/Not Met] |
+| 4. You have meaningful human control at the right stages                                                  | [How implemented] | [Met/Partial/Not Met] |
+| 5. You understand how to manage the full AI life cycle                                                    | [How implemented] | [Met/Partial/Not Met] |
+| 6. You use the right tool for the job                                                                     | [How implemented] | [Met/Partial/Not Met] |
+| 7. You are open and collaborative                                                                         | [How implemented] | [Met/Partial/Not Met] |
+| 8. You work with commercial colleagues from the start                                                     | [How implemented] | [Met/Partial/Not Met] |
+| 9. You have the skills and expertise needed to implement and use AI solutions                             | [How implemented] | [Met/Partial/Not Met] |
+| 10. You use these principles alongside your organisation's policies and have the right assurance in place | [How implemented] | [Met/Partial/Not Met] |
 
 ### ATRS Requirements
 
-| Field                     | Value                                         |
-| ------------------------- | --------------------------------------------- |
-| **ATRS Record ID**        | [ID if published]                             |
-| **Algorithmic Tool Name** | [Name]                                        |
-| **Purpose**               | [Brief description]                           |
-| **Tier**                  | [1: Decision support / 2: Automated decision] |
-| **Transparency URL**      | [Published location]                          |
+| Field                     | Value                                                                                  |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| **ATRS Record ID**        | [ID if published]                                                                      |
+| **Algorithmic Tool Name** | [Name]                                                                                 |
+| **Purpose**               | [Brief description]                                                                    |
+| **Tiers Completed**       | [Tier 1 (summary for the public) and Tier 2 (detail for specialist audiences): Yes/No] |
+| **Transparency URL**      | [Published location]                                                                   |
 
 ### JSP 936 Alignment (MOD Only)
 

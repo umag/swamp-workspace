@@ -248,10 +248,10 @@ const CLASSIFICATION_VALUES = [
 ] as const;
 const CLASSIFICATION_TARGETS: Record<string, string> = {
   "PUBLIC": "Open",
-  "OFFICIAL": "Shared",
-  "OFFICIAL-SENSITIVE": "Confidential",
+  "OFFICIAL": "Confidential",
+  "OFFICIAL-SENSITIVE": "Sensitive",
   "SECRET": "Secret",
-  "TOP SECRET": "Top Secret",
+  "TOP SECRET": "Secret",
 };
 
 Deno.test("property: proposeClassification maps every recognized value to its documented UAE Smart Data target, for any surrounding table text", () => {

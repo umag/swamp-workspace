@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -211,13 +211,13 @@ _Populate on re-assessment only. Leave blank for initial assessment._
 
 ## Critical Gaps
 
-| Rank | Phase   | Category   | Principle   | Current Score | Target Score | Business Impact                            |
-| ---- | ------- | ---------- | ----------- | :-----------: | :----------: | ------------------------------------------ |
-| 1    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} |
-| 2    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} |
-| 3    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} |
-| 4    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} |
-| 5    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} |
+| Rank | Phase   | Category   | Principle   | Current Score | Target Score | Business Impact                            | Recommended First Action                |
+| ---- | ------- | ---------- | ----------- | :-----------: | :----------: | ------------------------------------------ | --------------------------------------- |
+| 1    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} | {First concrete step to close this gap} |
+| 2    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} | {First concrete step to close this gap} |
+| 3    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} | {First concrete step to close this gap} |
+| 4    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} | {First concrete step to close this gap} |
+| 5    | {Phase} | {Category} | {Principle} |      [X]      |     [X]      | {Why this gap matters to the organisation} | {First concrete step to close this gap} |
 
 ---
 

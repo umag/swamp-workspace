@@ -6,15 +6,20 @@ import {
   DOC_CODES,
   evaluateGate,
   gateFor,
+  HARD_ROUTED_REGIMES,
   MANDATORY_DEPS,
   nextPhase,
   nextProjectDir,
   parseArtifactFilename,
+  parseOverlayPack,
   parseProjectDir,
   PHASE_GATES,
   PHASES,
   proposeClassification,
+  renderDocControl,
+  resolveDocControl,
   slugify,
+  suggestArtifactFilename,
   TEMPLATE_MAP,
 } from "./arckit_workspace.ts";
 
@@ -124,7 +129,7 @@ Deno.test("global principles satisfy per-project mandatory deps", () => {
       id: "001",
       name: "x",
       isGlobal: false,
-      commands: ["analyze"],
+      commands: ["story"],
     },
   ]);
   const p = gaps.projects.find((x) => x.dir === "001-x");
@@ -132,19 +137,19 @@ Deno.test("global principles satisfy per-project mandatory deps", () => {
   assertEquals(p.violations, []);
 });
 
-Deno.test("evaluate requires both requirements and sow", () => {
+Deno.test("evaluate requires both requirements and principles", () => {
   const gaps = computeGaps([
     {
       dir: "001-x",
       id: "001",
       name: "x",
       isGlobal: false,
-      commands: ["evaluate", "requirements"],
+      commands: ["evaluate", "requirements", "stakeholders"],
     },
   ]);
   assertEquals(gaps.projects[0].violations, [{
     command: "evaluate",
-    missingMandatory: ["sow"],
+    missingMandatory: ["principles"],
   }]);
 });
 
@@ -301,7 +306,13 @@ Deno.test("COMMAND_TO_CODE inverts DOC_CODES", () => {
 
 Deno.test("every TEMPLATE_MAP file exists in the bundled templates dir", async () => {
   const dir = new URL("../../templates/", import.meta.url).pathname;
+  const packed = new Set<string>();
+  for await (const e of Deno.readDir(`${dir}overlays`)) {
+    const pack = await Deno.readTextFile(`${dir}overlays/${e.name}`);
+    for (const f of parseOverlayPack(pack).keys()) packed.add(f);
+  }
   for (const file of Object.values(TEMPLATE_MAP)) {
+    if (packed.has(file)) continue;
     const stat = await Deno.stat(`${dir}${file}`);
     assert(stat.isFile && stat.size > 0, `${file} missing or empty`);
   }
@@ -319,12 +330,12 @@ Deno.test("proposeClassification maps the UK ladder to UAE Smart Data", () => {
   ].join("\n");
   const { newText, changes } = proposeClassification(doc);
   assertEquals(changes, [
-    { from: "OFFICIAL", to: "Shared" },
-    { from: "OFFICIAL-SENSITIVE", to: "Confidential" },
+    { from: "OFFICIAL", to: "Confidential" },
+    { from: "OFFICIAL-SENSITIVE", to: "Sensitive" },
     { from: "PUBLIC", to: "Open" },
   ]);
-  assert(newText.includes("| **Classification** | Shared |"));
   assert(newText.includes("| **Classification** | Confidential |"));
+  assert(newText.includes("| **Classification** | Sensitive |"));
   assert(newText.includes("| **Classification** | Open |"));
   // non-row-start line untouched
   assert(newText.includes("body text | **Classification** | OFFICIAL |"));
@@ -380,13 +391,13 @@ Deno.test("regression (nl overlay prep): proposeClassification with no ladder ar
   const { newText, changes } = proposeClassification(doc);
   assertEquals(changes, [
     { from: "PUBLIC", to: "Open" },
-    { from: "OFFICIAL", to: "Shared" },
-    { from: "OFFICIAL-SENSITIVE", to: "Confidential" },
+    { from: "OFFICIAL", to: "Confidential" },
+    { from: "OFFICIAL-SENSITIVE", to: "Sensitive" },
     { from: "SECRET", to: "Secret" },
-    { from: "TOP SECRET", to: "Top Secret" },
+    { from: "TOP SECRET", to: "Secret" },
   ]);
   assert(newText.includes("| **Classification** | Open |"));
-  assert(newText.includes("| **Classification** | Top Secret |"));
+  assert(!newText.includes("Top Secret"));
 });
 
 Deno.test("regression (nl overlay prep): proposeClassification produces NO entry — not an identity entry — for a Classification value outside the UK source vocabulary", () => {
@@ -398,4 +409,105 @@ Deno.test("regression (nl overlay prep): proposeClassification produces NO entry
   const { newText, changes } = proposeClassification(doc);
   assertEquals(changes, []);
   assertEquals(newText, doc);
+});
+
+// ---------- arc-kit v6.18.3 sync ----------------------------------------------
+
+Deno.test("proposeClassification leaves the retired Shared and Top Secret labels for a human", () => {
+  const doc = [
+    "| **Classification** | Shared |",
+    "| **Classification** | Top Secret |",
+  ].join("\n");
+  const { newText, changes } = proposeClassification(doc);
+  assertEquals(changes, []);
+  assertEquals(newText, doc);
+});
+
+Deno.test("suggestArtifactFilename starts a single-instance code at v1.0 and bumps the minor after that", () => {
+  assertEquals(
+    suggestArtifactFilename("001", "REQ", []),
+    "ARC-001-REQ-v1.0.md",
+  );
+  assertEquals(
+    suggestArtifactFilename("001", "REQ", [
+      { docType: "REQ", version: "1.0" },
+      { docType: "REQ", version: "1.10" },
+      { docType: "REQ", version: "1.9" },
+      { docType: "RISK", version: "7.0" },
+    ]),
+    "ARC-001-REQ-v1.11.md",
+  );
+  assertEquals(
+    suggestArtifactFilename("001", "REQ", [{ docType: "REQ", version: "2" }]),
+    "ARC-001-REQ-v2.1.md",
+  );
+});
+
+Deno.test("suggestArtifactFilename numbers a multi-instance code past its highest instance", () => {
+  assertEquals(
+    suggestArtifactFilename("001", "ADR", []),
+    "ARC-001-ADR-001-v1.0.md",
+  );
+  assertEquals(
+    suggestArtifactFilename("001", "ADR", [
+      { docType: "ADR", version: "1.0" },
+      { docType: "ADR", instance: 2, version: "1.1" },
+    ]),
+    "ARC-001-ADR-003-v1.0.md",
+  );
+});
+
+Deno.test("every hard-routed regime code is a doc code the scanner recognises", () => {
+  for (const codes of Object.values(HARD_ROUTED_REGIMES)) {
+    for (const code of codes) assert(code in DOC_CODES, code);
+  }
+});
+
+Deno.test("upstream NL/EU codes satisfy the extension's commands but new documents keep its own codes", () => {
+  assertEquals(parseArtifactFilename("ARC-001-TBB-v1.0.md")?.command, "nl-tbb");
+  assertEquals(
+    parseArtifactFilename("ARC-001-EUCSF-v1.0.md")?.command,
+    "eu-sovereignty",
+  );
+  assertEquals(COMMAND_TO_CODE["nl-tbb"], "NLTBB");
+  assertEquals(COMMAND_TO_CODE["eu-sovereignty"], "EUSOV");
+  assertEquals(COMMAND_TO_CODE["eu-cloud-sovereignty"], "EUCSF");
+});
+
+Deno.test("every G-Cloud SDD lot command writes the SDD code", () => {
+  for (
+    const c of ["sdd-lot1a", "sdd-lot1b", "sdd-lot2a", "sdd-lot2b", "sdd-lot3"]
+  ) {
+    assertEquals(COMMAND_TO_CODE[c], "SDD");
+  }
+});
+
+Deno.test("resolveDocControl: the doc code's regime beats the request, which beats the profile", () => {
+  assertEquals(resolveDocControl("AUE8", "uk", "nl-gov"), {
+    name: "au",
+    routing: "regime",
+  });
+  assertEquals(resolveDocControl("REQ", "uae", "nl-gov"), {
+    name: "uae",
+    routing: "requested",
+  });
+  assertEquals(resolveDocControl("REQ", undefined, "nl-gov"), {
+    name: "nl",
+    routing: "profile",
+  });
+  assertEquals(resolveDocControl("REQ", undefined, "standard"), {
+    name: "uk",
+    routing: "default",
+  });
+});
+
+Deno.test("renderDocControl replaces the marker and its note, and leaves no user_config token", () => {
+  const out = renderDocControl(
+    "## Document Control\n\n<!-- DOC-CONTROL-HEADER -->\n<!-- Resolved at command-execution time per _partials/RENDERING.md. -->\n\nBody $& text\n",
+    "| **Organisation** | ${user_config.organisation_name} | $1 |\n",
+  );
+  assertEquals(
+    out,
+    "## Document Control\n\n| **Organisation** | [ORGANISATION_NAME] | $1 |\n\nBody $& text\n",
+  );
 });

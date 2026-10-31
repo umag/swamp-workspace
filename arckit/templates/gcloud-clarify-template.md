@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -246,7 +246,15 @@ available]
 
 8. **Contract award**:
    - [ ] Award via Digital Marketplace
-   - [ ] Publish on Contracts Finder
+   - [ ] Publish a UK6 contract award notice on Find a Tender
+         (https://www.find-tender.service.gov.uk/) before entering into the
+         call-off (Procurement Act 2023 s.50(1))
+   - [ ] Publish a UK7 contract details notice within 30 days of entering into
+         it (s.53(1)); over £5 million, also publish the contract within 90 days
+         (s.53(3))
+   - [ ] Below-threshold call-off instead: UK7 only, as soon as reasonably
+         practicable, if £12,000+ (central government) or £30,000+ (others)
+         (s.87(3))
 
 **Parallel Activity**: While waiting for responses, prepare evaluation criteria
 with `/arckit:evaluate`.
@@ -316,7 +324,7 @@ Common vague marketing language requiring clarification:
 ## Referenced Documents
 
 - **Requirements**: projects/[project]/ARC-_-REQ-v_.md
-- **G-Cloud Search**: projects/[project]/procurement/ARC-_-GCLOUD-v_.md
+- **G-Cloud Search**: projects/[project]/procurement/ARC-_-GCLD-v_.md
 - **Service Pages**: [list all service URLs]
 
 ## External References

@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026.10.31.1
+
+Sync with arc-kit v6.18.3 (previously v6.2.0).
+
+### Changed
+
+- All 65 core templates refreshed. Added the AT, AU, CA, FR and US
+  document-control partials and `RENDERING.md`; updated the UAE partial.
+- `migrateClassification` with `ladder: uae` now maps onto the four UAE Smart
+  Data classes: OFFICIAL → Confidential, OFFICIAL-SENSITIVE → Sensitive, TOP
+  SECRET → Secret. Documents already migrated to Shared or Top Secret are not
+  touched; re-label them by hand.
+- Mandatory dependencies follow the reconciled matrix, so `gaps` can report
+  different violations. For example, `requirements` needs `stakeholders`,
+  `analyze` needs `requirements` instead of `principles`, and `evaluate` needs
+  `principles` instead of `sow`.
+- `suggestedFilename` no longer proposes overwriting a document: `template` with
+  `project` takes the next free version or instance number. Multi-instance types
+  are numbered (`ARC-001-ADR-001-v1.0.md`).
+- The critical path includes `adr` and `diagram`.
+
+### Added
+
+- 122 overlay templates from 15 arc-kit plugins, each served by `template`: the
+  AT, AU, CA, EU, FR, UAE, UK (finance, G-Cloud, NHS) and US regional packs,
+  plus TOGAF, agent architecture, OAA and repo audit. `scan` recognises their
+  doc codes. Their commands have no mandatory dependencies recorded, because the
+  upstream matrix covers core commands only.
+- `template` fills in the Document Control header. The doc type's regime decides
+  for AT, AU, CA, FR, NL, UAE and US documents; otherwise the new
+  `documentControl` argument, then the nl-gov profile, then the UK header. The
+  output records the choice in `documentControl`.
+- Upstream's `TBB`, `RBCLOUD`, `BIO2` and `EUCSF` artifacts satisfy the matching
+  NL/EU gates. Upstream's NL plugin templates are not bundled; this extension's
+  NL overlay covers them.
+- `framework` command (doc code `FWRK`), served from the existing bundled
+  framework-overview template.
+
 ## 2026.10.25.10
 
 - Repo-wide republish; no functional change.

@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -32,7 +32,7 @@ documentation.
 categories
 
 **Research Sources**: [Google Cloud Documentation, Google Cloud Architecture
-Center, Google Cloud Architecture Framework, Google Developer Knowledge MCP]
+Center, Google Cloud Well-Architected Framework, Google Developer Knowledge MCP]
 
 ### Key Recommendations
 
@@ -100,7 +100,7 @@ Center, Google Cloud Architecture Framework, Google Developer Knowledge MCP]
 | [Service] | [Size/Type]   | £[Y]         | [Based on requirements] |
 | **Total** |               | **£[Z]**     |                         |
 
-**Google Cloud Architecture Framework Assessment**:
+**Google Cloud Well-Architected Framework Assessment**:
 
 | Pillar                               | Rating     | Notes                                                                      |
 | ------------------------------------ | ---------- | -------------------------------------------------------------------------- |
@@ -535,13 +535,13 @@ _Verify availability at https://cloud.google.com/about/locations#europe_
 
 ### Google Cloud Documentation
 
-| Topic                                | Link                                             |
-| ------------------------------------ | ------------------------------------------------ |
-| [Service 1] Documentation            | [Google Cloud Documentation URL]                 |
-| [Service 2] Documentation            | [Google Cloud Documentation URL]                 |
-| Google Cloud Architecture Center     | https://cloud.google.com/architecture            |
-| Google Cloud Architecture Framework  | https://cloud.google.com/architecture/framework  |
-| Google Cloud Security Best Practices | https://cloud.google.com/security/best-practices |
+| Topic                                   | Link                                                 |
+| --------------------------------------- | ---------------------------------------------------- |
+| [Service 1] Documentation               | [Google Cloud Documentation URL]                     |
+| [Service 2] Documentation               | [Google Cloud Documentation URL]                     |
+| Google Cloud Architecture Center        | https://docs.cloud.google.com/architecture           |
+| Google Cloud Well-Architected Framework | https://docs.cloud.google.com/architecture/framework |
+| Google Cloud Security Best Practices    | https://cloud.google.com/security/best-practices     |
 
 ### Google Cloud Architecture Center References
 

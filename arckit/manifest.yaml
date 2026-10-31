@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/arckit"
-version: "2026.10.25.10"
+version: "2026.10.31.1"
 license: MIT
 description: |
   Standalone swamp port of ArcKit (https://github.com/tractorjuice/arc-kit —
@@ -37,9 +37,10 @@ description: |
   ## Methods
 
   - startProject / status / advance / skipPhase / abandon — the lifecycle
-  - template / templates / provisionTemplates — 71 bundled templates
-    (65 arc-kit v6.2.0 plus 6 NL/EU), served with doc code, target ARC
-    filename, and mandatory input artifacts
+  - template / templates / provisionTemplates — 193 bundled templates
+    (65 arc-kit v6.18.3 core, 122 from its overlay plugins, 6 NL/EU), served
+    with doc code, target ARC filename, mandatory input artifacts, and the
+    Document Control header already filled in for the document's regime
   - init / scan / gaps — workspace scaffold, full artifact inventory,
     mandatory-dependency violation report
   - migrateClassification — port of `arckit migrate-classification`;
@@ -143,9 +144,30 @@ additionalFiles:
   - templates/wardley-map-template.md
   - templates/wardley-value-chain-template.md
   - templates/pages-template.html.txt
+  - templates/overlays/agent-architecture.md
+  - templates/overlays/at.md
+  - templates/overlays/au.md
+  - templates/overlays/au-energy.md
+  - templates/overlays/ca.md
+  - templates/overlays/eu.md
+  - templates/overlays/fr.md
+  - templates/overlays/oaa.md
+  - templates/overlays/repo.md
+  - templates/overlays/togaf-adm.md
+  - templates/overlays/uae.md
+  - templates/overlays/uk-finance.md
+  - templates/overlays/uk-gcloud.md
+  - templates/overlays/uk-nhs.md
+  - templates/overlays/us.md
+  - templates/_partials/RENDERING.md
+  - templates/_partials/document-control-at.md
+  - templates/_partials/document-control-au.md
+  - templates/_partials/document-control-ca.md
+  - templates/_partials/document-control-fr.md
   - templates/_partials/document-control-nl.md
   - templates/_partials/document-control-uae.md
   - templates/_partials/document-control-uk.md
+  - templates/_partials/document-control-us.md
 
 labels:
   - arckit

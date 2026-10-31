@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -187,6 +187,13 @@ baseline.**
 
 **Description**: Continue with current approach or defer the decision.
 
+**Implementation approach**: No change delivered; keep the current
+[system/process] running under existing support arrangements, and set a date to
+revisit the decision
+
+**Wardley Evolution Stage**: [Stage of the current solution — often
+Custom-Built, drifting behind the market as alternatives commoditise]
+
 #### Good
 
 - ✅ **No immediate cost**: No investment required
@@ -197,6 +204,23 @@ baseline.**
 - ❌ **Technical debt accumulates**: [What problems persist?]
 - ❌ **Opportunity cost**: [What benefits are missed?]
 - ❌ **Compliance risk**: [Any regulatory issues?]
+
+#### Cost Analysis
+
+- **CAPEX**: [Usually £0 now; note any deferred replacement or forced emergency
+  migration cost]
+- **OPEX**: [Current run cost per year, plus rising maintenance, extended
+  support fees and workarounds]
+- **TCO (3-year)**: [Total cost of staying put, including the cost of risk
+  exposure (e.g. unsupported software, breach or non-compliance)]
+
+#### GDS Service Standard Impact
+
+| Point             | Impact                      | Notes                                                              |
+| ----------------- | --------------------------- | ------------------------------------------------------------------ |
+| 4. Open standards | [Positive/Negative/Neutral] | [Does the current approach lock in proprietary formats?]           |
+| 5. Security       | [Impact]                    | [Exposure from ageing or unsupported components]                   |
+| 9. Technology     | [Impact]                    | [Does the current stack still meet scalability and hosting needs?] |
 
 ---
 

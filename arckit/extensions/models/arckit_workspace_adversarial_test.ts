@@ -133,7 +133,7 @@ Deno.test("fix regression (arckit-latent-bugs LB2, MEDIUM): migrateClassificatio
     await run(model, "migrateClassification", { apply: true }, ctx);
 
     const onDisk = await Deno.readTextFile(full);
-    assert(onDisk.includes("| **Classification** | Confidential |"));
+    assert(onDisk.includes("| **Classification** | Sensitive |"));
     const backup = await Deno.readTextFile(`${full}.bak`);
     assert(backup.includes("| **Classification** | OFFICIAL-SENSITIVE |"));
     // Exactly the artifact + its .bak recovery sibling — no .tmp orphan.
@@ -356,30 +356,30 @@ Deno.test("fix regression (arckit-latent-bugs LB6, LOW/info): a bundled template
     // One of the four real orphans named in the latent-bug write-up.
     await writeTemplateFile(
       templatesDir,
-      "framework-overview-template.md",
+      "data-source-profile-template.md",
       "# Framework Overview\n",
     );
     const { ctx: ctx1, written: w1 } = makeCtx(root, templatesDir);
     await run(model, "templates", {}, ctx1);
     const templates = w1[0].payload.templates as Array<Record<string, unknown>>;
     assert(
-      !templates.some((t) => t.file === "framework-overview-template.md"),
+      !templates.some((t) => t.file === "data-source-profile-template.md"),
       "templates() must not surface a file with no TEMPLATE_MAP command as a command entry",
     );
     assertEquals(w1[0].payload.unmappedFiles, [
-      "framework-overview-template.md",
+      "data-source-profile-template.md",
     ]);
 
     const { ctx: ctx2, written: w2 } = makeCtx(root, templatesDir);
     await run(model, "provisionTemplates", {}, ctx2);
     assert(
       (w2[0].payload.written as string[]).includes(
-        "framework-overview-template.md",
+        "data-source-profile-template.md",
       ),
       "provisionTemplates() copies every bundled file regardless of TEMPLATE_MAP membership",
     );
     const copied = await Deno.readTextFile(
-      `${root}/.arckit/templates/framework-overview-template.md`,
+      `${root}/.arckit/templates/data-source-profile-template.md`,
     );
     assertEquals(copied, "# Framework Overview\n");
   });

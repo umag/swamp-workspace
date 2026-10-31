@@ -6,7 +6,7 @@
 ## Document Control
 
 <!-- DOC-CONTROL-HEADER -->
-<!-- Resolved at command-execution time to _partials/document-control-uk.md or _partials/document-control-uae.md based on plugin userConfig classification_scheme + governance_framework. See _partials/RENDERING.md (when present). -->
+<!-- Resolved at command-execution time per _partials/RENDERING.md. -->
 
 ## Revision History
 
@@ -20,43 +20,17 @@
 
 ---
 
-## 1. Review Overview
+## 1. Executive Summary
 
-### 1.1 Purpose
-
-This document captures the review of the Detailed Design (DLD) for
-[PROJECT_NAME]. The DLD must provide implementation-ready specifications for all
-components, APIs, data models, and operational procedures before development
-begins.
-
-### 1.2 Review Context
-
-**HLD Approval Date**: [DATE] **HLD Open Issues**: [List any HLD issues that
-must be resolved in DLD] **DLD Document(s) Under Review**: [Links to DLD
-documents]
-
-### 1.3 Review Participants
-
-| Name   | Role              | Review Focus                         |
-| ------ | ----------------- | ------------------------------------ |
-| [Name] | Lead Reviewer     | Overall design quality, completeness |
-| [Name] | Domain Architect  | Component design, domain logic       |
-| [Name] | Security Reviewer | Security implementation details      |
-| [Name] | Data Architect    | Database schemas, data flows         |
-| [Name] | SRE/Operations    | Operational procedures, runbooks     |
-| [Name] | QA Lead           | Test strategy, test coverage         |
-
----
-
-## 2. Executive Summary
-
-### 2.1 Overall Assessment
+### 1.1 Overall Assessment
 
 **Status**: [APPROVED | APPROVED WITH CONDITIONS | REJECTED]
 
-**Summary**: [Paragraph summarizing the review outcome]
+**Summary**: [Paragraph summarizing the review outcome. The first sentence
+states the verdict and what must happen before development starts; the reasons
+and evidence follow it.]
 
-### 2.2 Conditions for Approval
+### 1.2 Conditions for Approval
 
 **MUST Address Before Development**:
 
@@ -67,11 +41,39 @@ documents]
 
 1. [ADVISORY-01]: [Important issue]
 
-### 2.3 Recommendation
+### 1.3 Recommendation
 
 - [ ] **APPROVED**: Ready for development
 - [ ] **APPROVED WITH CONDITIONS**: Address blocking items before development
 - [ ] **REJECTED**: Significant rework required
+
+---
+
+## 2. Review Overview
+
+### 2.1 Purpose
+
+This document captures the review of the Detailed Design (DLD) for
+[PROJECT_NAME]. The DLD must provide implementation-ready specifications for all
+components, APIs, data models, and operational procedures before development
+begins.
+
+### 2.2 Review Context
+
+**HLD Approval Date**: [DATE] **HLD Open Issues**: [List any HLD issues that
+must be resolved in DLD] **DLD Document(s) Under Review**: [Links to DLD
+documents]
+
+### 2.3 Review Participants
+
+| Name   | Role              | Review Focus                         |
+| ------ | ----------------- | ------------------------------------ |
+| [Name] | Lead Reviewer     | Overall design quality, completeness |
+| [Name] | Domain Architect  | Component design, domain logic       |
+| [Name] | Security Reviewer | Security implementation details      |
+| [Name] | Data Architect    | Database schemas, data flows         |
+| [Name] | SRE/Operations    | Operational procedures, runbooks     |
+| [Name] | QA Lead           | Test strategy, test coverage         |
 
 ---
 
