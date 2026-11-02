@@ -27,7 +27,7 @@ import {
 
 const CFG: LinkCliConfig = {
   binPath: "/opt/link-cli/link-cli",
-  version: "0.28.0",
+  version: "1.1.0",
   test: true,
 };
 
@@ -181,7 +181,7 @@ Deno.test("callTool rejects a value-derived arg that begins with '-'", async () 
 });
 
 // ---------------------------------------------------------------------------
-// link-cli 0.28.0 progressive-discovery protocol: inner tools are reached only
+// link-cli 1.1.0 progressive-discovery protocol: inner tools are reached only
 // through call_read_tool / call_write_tool, against a fake server that exposes
 // just the four wrapper tools (see link_cli_test_helpers.ts).
 // ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ async function withFake<T>(
   }
 }
 
-Deno.test("fake server mirrors link-cli 0.28.0: a direct inner call is 'not found'", async () => {
+Deno.test("fake server mirrors link-cli 1.1.0: a direct inner call is 'not found'", async () => {
   const fake = fakeLinkCli();
   const resp = await fake.transport(
     { tool: "spend-request_create", args: {} },
@@ -208,11 +208,11 @@ Deno.test("fake server mirrors link-cli 0.28.0: a direct inner call is 'not foun
   assertEquals(resp.error?.message, "Tool spend-request_create not found");
 });
 
-Deno.test("every pinned inner tool exists in link-cli 0.28.0", () => {
+Deno.test("every pinned inner tool exists in link-cli 1.1.0", () => {
   for (const name of Object.keys(LINK_TOOLS)) {
     assert(
       (LINK_CLI_0_28_0_TOOLS as readonly string[]).includes(name),
-      `${name} is not a link-cli 0.28.0 tool`,
+      `${name} is not a link-cli 1.1.0 tool`,
     );
   }
 });
@@ -229,7 +229,7 @@ Deno.test("callTool routes every inner tool through call_write_tool with { name,
   }
 });
 
-Deno.test("call_read_tool is refused for the reads: link-cli 0.28.0 marks none read-only", async () => {
+Deno.test("call_read_tool is refused for the reads: link-cli 1.1.0 marks none read-only", async () => {
   // Guards the routing table: if a read were sent via call_read_tool, the
   // real server answers isError "Tool is not read-only".
   const fake = fakeLinkCli();

@@ -19,7 +19,7 @@ import {
   assertMatch,
   assertRejects,
 } from "jsr:@std/assert@1";
-import { Challenge, Credential, Receipt } from "npm:mppx@0.13.5";
+import { Challenge, Credential, Receipt } from "npm:mppx@0.17.0";
 import { model } from "./stripe_mpp.ts";
 import { _resetMcpTransport, _setMcpTransport } from "./lib/link_cli.ts";
 import {
@@ -647,11 +647,11 @@ Deno.test("createTestGrantedToken: refuses outside test mode", async () => {
 const CONSUMER_ARGS = {
   ...GLOBAL_ARGS,
   linkCliPath: "/opt/link-cli/link-cli",
-  linkCliVersion: "0.28.0",
+  linkCliVersion: "1.1.0",
   allowLiveGrants: false,
 };
 
-/** Run against a fake link-cli 0.28.0 MCP server that exposes ONLY the four
+/** Run against a fake link-cli 1.1.0 MCP server that exposes ONLY the four
  * wrapper tools (a direct inner-tool call fails "not found", like the real
  * server). `routes` answer by INNER tool name; `calls` records the inner tools
  * that actually executed, with the wrapper that reached them. */
@@ -999,8 +999,8 @@ Deno.test("createSpendRequest blocks a grant whose echoed payment method was swa
 });
 
 // ---------------------------------------------------------------------------
-// link-cli 0.28.0 wrapper protocol, per buyer method: every inner tool is
-// reached through call_write_tool (0.28.0 marks no tool read-only) with the
+// link-cli 1.1.0 wrapper protocol, per buyer method: every inner tool is
+// reached through call_write_tool (1.1.0 marks no tool read-only) with the
 // right inner name and arguments, and results/errors are unwrapped.
 // ---------------------------------------------------------------------------
 

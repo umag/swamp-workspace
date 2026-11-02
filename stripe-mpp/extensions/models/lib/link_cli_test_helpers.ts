@@ -1,5 +1,5 @@
 /**
- * Test-only fake of the `link-cli --mcp` stdio server (v0.28.0), injected as
+ * Test-only fake of the `link-cli --mcp` stdio server (v1.1.0), injected as
  * the MCP transport. It mirrors the server's PROGRESSIVE-DISCOVERY surface as
  * read from incur 0.7.1 `dist/Mcp.js` (`registerDiscoveryTools`, `callTool`)
  * and observed live over stdio:
@@ -9,7 +9,7 @@
  *   "Tool <name> not found" (so a direct `spend-request_create` fails exactly
  *   like the real server);
  * - `call_read_tool` runs only tools annotated `readOnlyHint: true` and
- *   `call_write_tool` only tools that are not — link-cli 0.28.0 annotates none;
+ *   `call_write_tool` only tools that are not — link-cli 1.1.0 annotates none;
  * - an unknown inner name is `isError` `{"error":"Unknown tool: X"}`;
  * - an async-generator command returns its chunks as a JSON array.
  *
@@ -20,7 +20,7 @@
  */
 import type { McpRequest, McpResponse, McpTransport } from "./link_cli.ts";
 
-/** Inner tools link-cli 0.28.0 reports from `search_tools` (empty query). */
+/** Inner tools link-cli 1.1.0 reports from `search_tools` (empty query). */
 export const LINK_CLI_0_28_0_TOOLS = [
   "approval-policy_retrieve",
   "auth_login",
@@ -56,7 +56,7 @@ export const LINK_CLI_0_28_0_TOOLS = [
   "user-info_retrieve",
 ] as const;
 
-/** Commands implemented as async generators (`async *run`) in link-cli 0.28.0
+/** Commands implemented as async generators (`async *run`) in link-cli 1.1.0
  * among those this model uses: their result is a JSON array of chunks. */
 const STREAMING = new Set([
   "spend-request_create",
@@ -119,9 +119,9 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Build a fake link-cli 0.28.0 server answering `routes` by inner tool name.
+/** Build a fake link-cli 1.1.0 server answering `routes` by inner tool name.
  * `readOnly` lists inner tools to treat as `readOnlyHint: true` (none in
- * 0.28.0). A missing route answers `{}`. */
+ * 1.1.0). A missing route answers `{}`. */
 export function fakeLinkCli(
   routes: Record<string, InnerRoute> = {},
   opts: { readOnly?: string[] } = {},
