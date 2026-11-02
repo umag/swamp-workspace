@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.11.03.1
+
+### Changed
+
+- Dependency bump: `jschardet` `4.0.0` -> `4.1.0` (chardet 7.7.0). No schema
+  change.
+
 ## 2026.10.25.10
 
 - Repo-wide republish; no functional change.

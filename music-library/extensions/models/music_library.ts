@@ -19,7 +19,7 @@
 // "NN - Title", disc subdirs, …).
 
 import { z } from "npm:zod@4";
-import jschardet from "npm:jschardet@4.0.0";
+import jschardet from "npm:jschardet@4.1.0";
 import { buildRunning, type RunTrack } from "../lib/running.ts";
 import {
   type Candidate,
@@ -2407,7 +2407,7 @@ function albumQualityBucket(tracksAttr: unknown): QualityBucket {
  */
 export const model = {
   type: "@magistr/music-library",
-  version: "2026.10.25.10",
+  version: "2026.11.03.1",
   upgrades: [
     {
       fromVersion: "2026.07.17.1",
@@ -2535,6 +2535,12 @@ export const model = {
     {
       toVersion: "2026.10.25.10",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.11.03.1",
+      description:
+        "Dependency bump: jschardet 4.0.0 -> 4.1.0; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
