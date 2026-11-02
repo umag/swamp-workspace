@@ -4,7 +4,7 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import { DOMParser } from "npm:linkedom@0.18.13";
+import { DOMParser } from "npm:linkedom@0.18.15";
 
 // ---------------------------------------------------------------------------
 // @magistr/reading-list
@@ -977,7 +977,7 @@ async function loadStoredFeeds(
 /** Model definition for the curated reading list. */
 export const model = {
   type: "@magistr/reading-list",
-  version: "2026.10.25.10",
+  version: "2026.11.03.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -1038,6 +1038,12 @@ export const model = {
     {
       toVersion: "2026.10.25.10",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.11.03.1",
+      description:
+        "Dependency bump: linkedom 0.18.13 -> 0.18.15; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
