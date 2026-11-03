@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026.11.03.1
+
+### Changed
+
+- Dependency bumps: `mppx` `0.13.5` -> `0.17.0`, `stripe` `23.1.0-beta.1` ->
+  `23.2.0-beta.1`, `linkCliVersion` default `0.28.0` -> `1.1.0`. No schema
+  change.
+- Hosts running the `link-cli` binary must upgrade to 1.1.0: the version check
+  is fatal.
+
 ## 2026.10.25.10
 
 - Repo-wide republish; no functional change.

@@ -50,7 +50,7 @@ export interface McpRequest {
 export type McpWrapperTool = "call_read_tool" | "call_write_tool";
 
 /**
- * How link-cli 0.28.0 exposes the operations this model uses.
+ * How link-cli 1.1.0 exposes the operations this model uses.
  *
  * link-cli is built on `incur`, whose stdio MCP server defaults to
  * PROGRESSIVE DISCOVERY (incur/dist/Mcp.js `registerTools`, `discovery ??
@@ -63,7 +63,7 @@ export type McpWrapperTool = "call_read_tool" | "call_write_tool";
  * <inner>, arguments: {...} } }`. The wrapper is chosen by the inner tool's
  * `readOnlyHint` annotation: `call_read_tool` refuses any tool without
  * `readOnlyHint: true` ("Tool is not read-only: X") and `call_write_tool`
- * refuses any tool with it ("Tool is read-only: X"). link-cli 0.28.0 annotates
+ * refuses any tool with it ("Tool is read-only: X"). link-cli 1.1.0 annotates
  * NONE of its commands (get_tool_details returns no `annotations` for any of
  * them), so even the reads (`payment-methods_list`, `spend-request_retrieve`)
  * are only callable through `call_write_tool`. The strict serverInfo.version

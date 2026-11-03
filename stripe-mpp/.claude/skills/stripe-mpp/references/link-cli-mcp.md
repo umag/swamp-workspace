@@ -17,7 +17,7 @@ re-observed, since Link is still US-only and not live-verifiable from this
 maintainer's EU account. The v0.9.0 ground truth above remains the last
 directly-observed transcript.
 
-## Wrapper protocol (link-cli 0.19.1+, re-observed on 0.28.0, 2026-10-25)
+## Wrapper protocol (link-cli 0.19.1+, re-observed on 1.1.0, 2026-11-03)
 
 link-cli's stdio server is built on `incur`, which defaults to **progressive
 discovery**. `tools/list` returns only four tools: `search_tools`,
@@ -41,7 +41,7 @@ An inner tool is executed through a wrapper:
 ```
 
 - `call_read_tool` runs only tools annotated `readOnlyHint: true`, and
-  `call_write_tool` runs only tools that are not. link-cli 0.28.0 annotates
+  `call_write_tool` runs only tools that are not. link-cli 1.1.0 annotates
   **none** of its tools, so every call, reads included, uses `call_write_tool`.
   `call_read_tool` answers `isError` `{"error":"Tool is not read-only: X"}`.
 - An unknown inner name answers `isError` `{"error":"Unknown tool: X"}`.
@@ -84,7 +84,7 @@ model takes from the paid URL's hostname.
 - `test` — derived from the `allowLiveGrants` global, never from caller args
 - `merchantName` / `merchantUrl` — **FORBIDDEN** for the SPT flow (they are the
   card flow's fields)
-- link-cli 0.28.0 accepts an optional `idempotencyKey`; the model does not send
+- link-cli 1.1.0 accepts an optional `idempotencyKey`; the model does not send
   one yet
 
 Statuses: `created → pending_approval → approved | denied | expired` (link-cli
