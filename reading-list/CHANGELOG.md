@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.11.03.1
+
+### Changed
+
+- Dependency bump: `linkedom` `0.18.13` -> `0.18.15`. Upstream replaces its CSS
+  parser and fixes `[class=""]` matching. No schema change.
+
 ## 2026.10.25.10
 
 - Repo-wide republish; no functional change.

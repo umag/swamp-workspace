@@ -17,7 +17,7 @@
  * call is made.
  */
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { DOMParser } from "npm:linkedom@0.18.13";
+import { DOMParser } from "npm:linkedom@0.18.15";
 import {
   parseAccords,
   parseNotes,

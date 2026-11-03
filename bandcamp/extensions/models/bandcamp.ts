@@ -1,5 +1,5 @@
 import { z } from "npm:zod@4";
-import { DOMParser } from "npm:linkedom@0.18.13";
+import { DOMParser } from "npm:linkedom@0.18.15";
 
 const GlobalArgsSchema = z.object({
   clientId: z
@@ -613,7 +613,7 @@ const TaskResultSchema = z.object({
  */
 export const model = {
   type: "@magistr/bandcamp",
-  version: "2026.10.25.10",
+  version: "2026.11.03.1",
   upgrades: [
     {
       fromVersion: "2026.07.31.1",
@@ -700,6 +700,12 @@ export const model = {
     {
       toVersion: "2026.10.25.10",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.11.03.1",
+      description:
+        "Dependency bump: linkedom 0.18.13 -> 0.18.15; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
