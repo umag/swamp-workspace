@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026.11.06.1
+
+### Added
+
+- `scan` reads `swamp workflow schedule list` and emits
+  `swamp_workflow_paused{workflow,repo}` (1 = paused) plus
+  `swamp_watch_pause_read_ok{repo}`. A paused schedule keeps its
+  `trigger.schedule`, so before this it looked like a dead workflow and
+  `SwampWorkflowStale` paged for it every day. Alert rules should add
+  `unless on(repo, workflow) (last_over_time(swamp_workflow_paused[1h]) == 1)`.
+- Optional `pauseServer` / `pauseToken` global arguments. A
+  `@magistr/mongodb-datastore` repo refuses a local pause read, so a scan that
+  reads history locally can still read pauses from its serve. They default to
+  `server` / `token`.
+- A failed pause read reports every workflow active (same paging as before) and
+  sets `pauseError`.
+
 ## 2026.10.25.10
 
 - Repo-wide republish; no functional change.

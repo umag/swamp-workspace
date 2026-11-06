@@ -1,3 +1,9 @@
+| `workflow_schedule_list.json` |
+`swamp workflow schedule list --server … --json`, 2026-11-06 (server
+`20261102.040151.0-sha.4d9c4b54`) — three entries kept: two active schedules and
+`eod-steward`, which was genuinely paused at capture time with its real
+`reason`/`pausedBy`/`pausedAt` fields |
+
 # Fixture provenance
 
 All fixtures are trimmed captures from a real swamp CLI, 2026-08-20, against

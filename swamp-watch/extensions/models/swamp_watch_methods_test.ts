@@ -23,6 +23,9 @@ import historyFleet from "../../fixtures/workflow_history_fleet_health.json" wit
 import historyEmpty from "../../fixtures/workflow_history_empty.json" with {
   type: "json",
 };
+import scheduleList from "../../fixtures/workflow_schedule_list.json" with {
+  type: "json",
+};
 
 const LIST = JSON.stringify(workflowList);
 const FLEET = JSON.stringify(historyFleet);
@@ -202,4 +205,130 @@ Deno.test("model: scan's argument schema accepts and defaults includeUnscheduled
       .includeUnscheduled,
     true,
   );
+});
+
+// --- schedule pauses ----------------------------------------------------------
+const SCHEDULES = JSON.stringify(scheduleList);
+
+function pauseRouter(args: string[]) {
+  if (args[1] === "schedule" && args[2] === "list") return ok(SCHEDULES);
+  return router(args);
+}
+
+Deno.test("scan: a paused schedule is reported paused, every other one active", async () => {
+  const s = scriptedRunner(pauseRouter);
+  const ctx = fakeContext({ repoDir: "/repo", repoLabel: "serve" });
+  const res = await runScan(s.run, {}, ctx);
+  const paused = byWorkflow(res.lines, "swamp_workflow_paused");
+  // eod-steward is paused in the real capture; the rest are not.
+  assertEquals(paused["eod-steward"], 1);
+  assertEquals(paused["fleet-health"], 0);
+  assertEquals(paused["daily-health"], 0);
+  // A workflow the schedule list does not mention is active, not paused.
+  assertEquals(paused["ext-canary-nightly"], 0);
+  assertEquals(res.pausedWorkflows, ["eod-steward"]);
+  assertEquals(res.pauseError, null);
+  const ok1 = parseExposition(res.lines).find((m) =>
+    m.name === "swamp_watch_pause_read_ok"
+  );
+  assertEquals(ok1?.value, 1);
+});
+
+Deno.test("scan: a paused workflow keeps every other series, so resuming it pages again", async () => {
+  const s = scriptedRunner(pauseRouter);
+  const ctx = fakeContext({ repoDir: "/repo", repoLabel: "serve" });
+  const res = await runScan(s.run, {}, ctx);
+  const budgets = byWorkflow(res.lines, "swamp_workflow_stale_after_seconds");
+  const last = byWorkflow(
+    res.lines,
+    "swamp_workflow_last_success_timestamp_seconds",
+  );
+  assert("eod-steward" in budgets);
+  assert("eod-steward" in last);
+});
+
+Deno.test("scan: pauses are read from pauseServer with pauseToken when set", async () => {
+  const s = scriptedRunner(pauseRouter);
+  const ctx = fakeContext({
+    repoDir: "/repo",
+    repoLabel: "serve",
+    pauseServer: "ws://127.0.0.1:9090",
+    pauseToken: "watch.secret",
+  });
+  await runScan(s.run, {}, ctx);
+  const call = s.calls.find((c) => c.args[1] === "schedule");
+  assert(call);
+  assertEquals(call.args, [
+    "workflow",
+    "schedule",
+    "list",
+    "--server",
+    "ws://127.0.0.1:9090",
+    "--token",
+    "watch.secret",
+    "--json",
+  ]);
+  // History is still read the way it was: locally, from the repo.
+  const hist = s.calls.find((c) => c.args[1] === "history");
+  assert(hist?.args.includes("--repo-dir"));
+  assert(!hist?.args.includes("--server"));
+});
+
+Deno.test("scan: without pauseServer, pauses follow server and token", async () => {
+  const s = scriptedRunner(pauseRouter);
+  const ctx = fakeContext({
+    repoDir: "/repo",
+    repoLabel: "mac",
+    server: "https://swamp.example",
+    token: "mac.secret",
+  });
+  await runScan(s.run, {}, ctx);
+  const call = s.calls.find((c) => c.args[1] === "schedule");
+  assertEquals(call?.args.slice(3), [
+    "--server",
+    "https://swamp.example",
+    "--token",
+    "mac.secret",
+    "--json",
+  ]);
+});
+
+Deno.test("scan: a failed pause read reports every workflow active and flags the read", async () => {
+  const s = scriptedRunner((args) => {
+    if (args[1] === "schedule") {
+      return ok(JSON.stringify({
+        error:
+          'Schedule pauses of a "@magistr/mongodb-datastore" datastore are kept in its shared control-plane store.',
+      }));
+    }
+    return router(args);
+  });
+  const ctx = fakeContext({ repoDir: "/repo", repoLabel: "serve" });
+  const res = await runScan(s.run, {}, ctx);
+  assertEquals(res.scheduledCount, 4);
+  assert(res.pauseError?.includes("control-plane store"));
+  const paused = byWorkflow(res.lines, "swamp_workflow_paused");
+  assertEquals(Object.values(paused).every((v) => v === 0), true);
+  const ok0 = parseExposition(res.lines).find((m) =>
+    m.name === "swamp_watch_pause_read_ok"
+  );
+  assertEquals(ok0?.value, 0);
+});
+
+Deno.test("scan: only an explicit paused:true counts as paused", async () => {
+  const s = scriptedRunner((args) => {
+    if (args[1] === "schedule") {
+      return ok(JSON.stringify({
+        schedules: [
+          { workflowName: "fleet-health", paused: "true" },
+          { workflowName: "daily-health", paused: 1 },
+          { workflowName: "eod-steward" },
+        ],
+      }));
+    }
+    return router(args);
+  });
+  const ctx = fakeContext({ repoDir: "/repo", repoLabel: "serve" });
+  const res = await runScan(s.run, {}, ctx);
+  assertEquals(res.pausedWorkflows, []);
 });
