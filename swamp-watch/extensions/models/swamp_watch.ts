@@ -583,7 +583,10 @@ export async function runScan(
       timeoutMs: g.timeoutMs,
     });
   } catch (err) {
-    pauseError = err instanceof Error ? err.message : String(err);
+    const detail = err instanceof SwampWatchError && err.detail
+      ? `: ${err.detail}`
+      : "";
+    pauseError = (err instanceof Error ? err.message : String(err)) + detail;
   }
 
   const stats: z.infer<typeof WorkflowStatSchema>[] = [];
