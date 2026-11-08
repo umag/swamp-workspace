@@ -649,6 +649,49 @@ export async function statsImpl(
   });
 }
 
+/** `unlock` output. */
+export const UnlockResultSchema = z.object({
+  repository: z.string(),
+  action: z.enum(["no-locks", "removed-stale", "locks-still-held"]),
+  locksBefore: z.array(z.string()),
+  locksAfter: z.array(z.string()),
+  removed: z.number(),
+  timestamp: z.string(),
+});
+
+async function listLocks(run: CommandRunner, g: GlobalArgs) {
+  const res = await restic(run, g, ["list", "locks", "--no-lock"]);
+  return res.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+/**
+ * Remove stale locks (e.g. left by a killed prune). Never passes
+ * `--remove-all`: locks held by a live, refreshing process stay, and are
+ * recorded as `locks-still-held`. Lists locks before and after.
+ */
+export async function unlockImpl(run: CommandRunner, ctx: Ctx) {
+  const g = ctx.globalArgs;
+  const before = await listLocks(run, g);
+  let after: string[] = [];
+  if (before.length > 0) {
+    await restic(run, g, ["unlock"]);
+    after = await listLocks(run, g);
+  }
+  const removed = before.filter((id) => !after.includes(id)).length;
+  return await ctx.writeResource("unlockResult", "unlock", {
+    repository: g.repository,
+    action: before.length === 0
+      ? "no-locks"
+      : after.length === 0
+      ? "removed-stale"
+      : "locks-still-held",
+    locksBefore: before,
+    locksAfter: after,
+    removed,
+    timestamp: now(),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
@@ -668,7 +711,7 @@ const res = (description: string, schema: z.ZodType) => ({
  */
 export const model = {
   type: "@magistr/restic",
-  version: "2026.10.25.10",
+  version: "2026.11.08.1",
   upgrades: [
     {
       toVersion: "2026.10.15.1",
@@ -720,6 +763,11 @@ export const model = {
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.11.08.1",
+      description: "Add unlock method; no schema change to existing data",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   globalArguments: GlobalArgsSchema,
   resources: {
@@ -736,6 +784,10 @@ export const model = {
     checkResult: res("Result of the last integrity check", CheckResultSchema),
     forgetResult: res("Result of the last forget/prune", ForgetResultSchema),
     statsResult: res("Repository size statistics", StatsResultSchema),
+    unlockResult: res(
+      "Result of the last stale-lock removal",
+      UnlockResultSchema,
+    ),
   },
   methods: {
     status: {
@@ -789,6 +841,14 @@ export const model = {
       arguments: StatsArgs,
       execute: async (args, context) => ({
         dataHandles: [await statsImpl(defaultRunner, args, context)],
+      }),
+    },
+    unlock: {
+      description:
+        "Remove stale locks (left by a killed or crashed restic); locks held by a live process are kept and reported",
+      arguments: z.object({}),
+      execute: async (_args, context) => ({
+        dataHandles: [await unlockImpl(defaultRunner, context)],
       }),
     },
   },

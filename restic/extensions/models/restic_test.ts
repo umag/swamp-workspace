@@ -19,6 +19,7 @@ import {
   StatsArgs,
   statsImpl,
   statusImpl,
+  unlockImpl,
 } from "./restic.ts";
 
 const SECRET = "s3cret-pass";
@@ -266,6 +267,7 @@ Deno.test("model exposes all methods", () => {
     "snapshots",
     "stats",
     "status",
+    "unlock",
   ]);
 });
 
@@ -330,4 +332,49 @@ Deno.test("username is not redacted (it appears in repo URLs)", () => {
     "rest:http://h:8000/laptop/",
   );
   assertEquals(redact("x rest-pw-xyz", g), "x ***");
+});
+
+Deno.test("unlock removes stale locks only and records before/after", async () => {
+  let listed = 0;
+  const { run, calls } = scripted((args) => {
+    if (args.includes("list")) {
+      listed++;
+      return { stdout: listed === 1 ? "aaa111\nbbb222\n" : "" };
+    }
+    return {};
+  });
+  const { ctx, written } = fakeCtx();
+  await unlockImpl(run, ctx);
+  const cmds = calls.map((c) => c.args.join(" "));
+  assertEquals(cmds, [
+    "list locks --no-lock",
+    "unlock",
+    "list locks --no-lock",
+  ]);
+  assert(!cmds.some((c) => c.includes("--remove-all")));
+  const u = written["unlockResult/unlock"];
+  assertEquals(u.locksBefore, ["aaa111", "bbb222"]);
+  assertEquals(u.locksAfter, []);
+  assertEquals(u.removed, 2);
+  assertEquals(u.action, "removed-stale");
+});
+
+Deno.test("unlock is a no-op when there are no locks", async () => {
+  const { run, calls } = scripted(() => ({ stdout: "" }));
+  const { ctx, written } = fakeCtx();
+  await unlockImpl(run, ctx);
+  assertEquals(calls.length, 1);
+  assertEquals(written["unlockResult/unlock"].action, "no-locks");
+});
+
+Deno.test("unlock records locks it could not remove (still held)", async () => {
+  const { run } = scripted((args) =>
+    args.includes("list") ? { stdout: "live99\n" } : {}
+  );
+  const { ctx, written } = fakeCtx();
+  await unlockImpl(run, ctx);
+  const u = written["unlockResult/unlock"];
+  assertEquals(u.removed, 0);
+  assertEquals(u.locksAfter, ["live99"]);
+  assertEquals(u.action, "locks-still-held");
 });

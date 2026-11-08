@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/restic"
-version: "2026.10.25.10"
+version: "2026.11.08.1"
 license: MIT
 description: |
   Drive restic backups from swamp: read repository state, initialize,
@@ -18,6 +18,7 @@ description: |
     a failed check is data (`ok: false`), not an exception
   - `forget` — keep policy, dry-run by default, optional prune
   - `stats` — size and compression statistics
+  - `unlock` — remove stale locks (e.g. left by a killed prune); live locks are kept
 
   Works with any restic backend. Secrets (`password`, rest-server basic-auth)
   are sensitive global arguments, passed to restic only via environment

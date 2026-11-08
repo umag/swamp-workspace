@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026.11.08.1
+
+### Added
+
+- `unlock` method: lists locks, runs `restic unlock` (stale locks only, never
+  `--remove-all`), lists again, and records `no-locks` / `removed-stale` /
+  `locks-still-held`.
+
 ## 2026.10.25.10
 
 - Repo-wide republish; no functional change.
