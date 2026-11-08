@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.11.08.1
+
+### Added
+
+- `calendarEvents` method: builds calendar-ready events from upcoming bookings
+  and waitlist entries (venue, address, map pin, local start/end) and returns
+  `staleUids` for calendar events whose booking was cancelled, renamed,
+  rescheduled, or duplicated. Cancelled bookings are excluded.
+
 ## 2026.10.25.10
 
 - Repo-wide republish; no functional change.

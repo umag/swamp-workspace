@@ -574,13 +574,173 @@ async function writeSummary(
 }
 
 // ============================================================================
+// Calendar events (bookings + waitlist → @magistr/fastmail create-events)
+// ============================================================================
+
+const CALENDAR_TZ = "Europe/Amsterdam";
+
+const CalendarEventsArgs = z.object({
+  calendarEvents: z.array(
+    z.object({
+      uid: z.string(),
+      description: z.string().nullable().optional(),
+      dtstart: z.string().nullable().optional(),
+    }).passthrough(),
+  ).default([]).describe(
+    "Existing calendar events (e.g. @magistr/fastmail list-events `events`). " +
+      "Future ones whose description is `bsport booking|waitlist <id>` but no " +
+      "longer match a current booking/waitlist entry are returned as `staleUids`.",
+  ),
+  pageSize: z.number().int().min(1).max(300).default(300).describe(
+    "Bookings / waitlist entries fetched (single page).",
+  ),
+});
+
+interface Venue {
+  id: number;
+  title: string;
+  address?: string;
+  lat?: number;
+  lon?: number;
+}
+
+export interface CalendarEvent {
+  summary: string;
+  start: string;
+  end: string;
+  location?: string;
+  locationAddress?: string;
+  lat?: number;
+  lon?: number;
+  description: string;
+}
+
+/**
+ * A booking still holds a spot: not cancelled (`date_canceled` unset,
+ * `booking_status_code` ≠ 2) and not deleted.
+ */
+export function isActiveBooking(b: Record<string, unknown>): boolean {
+  return b.date_canceled == null && b.booking_status_code !== 2 &&
+    b.is_deleted !== true;
+}
+
+/**
+ * Future calendar events keyed `bsport booking|waitlist <id>` that should go:
+ * the key is no longer current (cancelled / left / converted), the summary or
+ * start no longer match what we would write (renamed, rescheduled), or it is
+ * a duplicate of an event already kept for that key.
+ */
+export function staleCalendarUids(
+  events: CalendarEvent[],
+  calendar: Array<
+    & { uid: string; description?: string | null; dtstart?: string | null }
+    & Record<string, unknown>
+  >,
+  nowLocal: string,
+): string[] {
+  const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
+  const want = new Map(events.map((e) => [e.description, e]));
+  const kept = new Set<string>();
+  const stale = new Set<string>();
+  for (const c of calendar) {
+    const key = String(c.description ?? "").trim();
+    if (!/^bsport (booking|waitlist) \d+$/.test(key)) continue;
+    const start = compactDt(c.dtstart ?? "");
+    if (start <= nowLocal) continue;
+    const w = want.get(key);
+    const matches = w !== undefined &&
+      norm(c.summary) === norm(w.summary) &&
+      start === `${w.start.replace(/[-:]/g, "")}00`;
+    if (matches && !kept.has(key)) kept.add(key);
+    else stale.add(c.uid);
+  }
+  return [...stale];
+}
+
+export function venueOf(e: Record<string, unknown>): Venue | null {
+  if (typeof e.id !== "number") return null;
+  const loc = (e.location ?? {}) as Record<string, unknown>;
+  const v: Venue = { id: e.id, title: String(e.title ?? "") };
+  if (typeof loc.address === "string" && loc.address) v.address = loc.address;
+  if (typeof loc.latitude === "number") v.lat = loc.latitude;
+  if (typeof loc.longitude === "number") v.lon = loc.longitude;
+  return v;
+}
+
+/** Wall-clock "YYYY-MM-DDTHH:MM" of an instant in CALENDAR_TZ. */
+export function localMinute(d: Date): string {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: CALENDAR_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(d).map((x) => [x.type, x.value]),
+  );
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`;
+}
+
+/** Compact "YYYYMMDDTHHMMSS" wall clock (CALENDAR_TZ) for ordering. */
+export function compactLocal(d: Date): string {
+  return localMinute(d).replace(/[-:]/g, "");
+}
+
+/** Normalise an iCal DTSTART (UTC `…Z`, floating/local, or date-only). */
+export function compactDt(dt: string): string {
+  const s = dt.trim();
+  if (/^\d{8}T\d{6}Z$/.test(s)) {
+    const iso = `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}T` +
+      `${s.slice(9, 11)}:${s.slice(11, 13)}:${s.slice(13, 15)}Z`;
+    return compactLocal(new Date(iso));
+  }
+  const digits = s.replace(/[^0-9T]/g, "");
+  return digits.length >= 15
+    ? digits.slice(0, 15)
+    : `${digits.slice(0, 8)}T000000`;
+}
+
+export function toCalendarEvent(x: {
+  name: string;
+  dateStart: string;
+  durationMin: number;
+  venue?: Venue;
+  key: string;
+  waitlist: boolean;
+}): CalendarEvent {
+  const startD = new Date(x.dateStart);
+  const endD = new Date(startD.getTime() + x.durationMin * 60_000);
+  // "Beginner 2: Basic Swimming" → "Basic Swimming"; brand from venue title.
+  const activity = x.name.replace(/^[^:]*:\s*/, "").trim() || x.name;
+  const brand = x.venue?.title.split(" - ")[0]?.trim();
+  const summary = `${x.waitlist ? "Waitlist: " : ""}${activity}` +
+    (brand ? ` @ ${brand}` : "");
+  const ev: CalendarEvent = {
+    summary,
+    start: localMinute(startD).slice(0, 16),
+    end: localMinute(endD).slice(0, 16),
+    description: x.key,
+  };
+  if (x.venue?.title) ev.location = x.venue.title;
+  if (x.venue?.address) ev.locationAddress = x.venue.address;
+  if (x.venue?.lat !== undefined && x.venue?.lon !== undefined) {
+    ev.lat = x.venue.lat;
+    ev.lon = x.venue.lon;
+  }
+  return ev;
+}
+
+// ============================================================================
 // Model
 // ============================================================================
 
 /** bsport member API model: calendar offers, my bookings, and my waitlist. */
 export const model = {
   type: "@magistr/bsport",
-  version: "2026.10.25.10",
+  version: "2026.11.08.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -638,6 +798,11 @@ export const model = {
       description: "Version bump — repo-wide republish; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.11.08.1",
+      description: "Add calendarEvents method (bookings + waitlist → calendar)",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   resources: {
     offer: {
@@ -673,6 +838,18 @@ export const model = {
       schema: z.object({ id: z.number(), fetchedAt: z.string() }).passthrough(),
       lifetime: "infinite",
       garbageCollection: 5,
+    },
+    calendarEvents: {
+      description:
+        "Calendar-ready events from bookings + waitlist, plus stale calendar " +
+        "event uids to delete.",
+      schema: z.object({
+        events: z.array(z.record(z.string(), z.unknown())),
+        staleUids: z.array(z.string()),
+        fetchedAt: z.string(),
+      }).passthrough(),
+      lifetime: "infinite",
+      garbageCollection: 10,
     },
     summary: {
       description:
@@ -1041,6 +1218,136 @@ export const model = {
           n: offerIds.length,
         });
         return { dataHandles: handles };
+      },
+    },
+
+    calendarEvents: {
+      description:
+        "Build calendar-ready events (local wall-clock start/end, venue, map " +
+        "pin) from the member's upcoming bookings AND waitlist entries, and " +
+        "diff them against the given calendar events to find stale ones " +
+        "(cancelled bookings, waitlists that left or converted). Writes one " +
+        "`calendarEvents` resource (`calendar-events`) with `events` (shape of " +
+        "@magistr/fastmail create-events) and `staleUids` (for delete-events). " +
+        "Requires `memberId` and `consumerId`.",
+      arguments: CalendarEventsArgs,
+      execute: async (
+        args: z.infer<typeof CalendarEventsArgs>,
+        context: ExecCtx,
+      ): Promise<{ dataHandles: unknown[] }> => {
+        const g = GlobalArgsSchema.parse(context.globalArgs);
+        if (!g.consumerId) {
+          throw new Error("calendarEvents requires `consumerId` to be set.");
+        }
+        const fetchedAt = new Date().toISOString();
+        const token = await getToken(g);
+        const get = async (path: string, q: Record<string, string>) =>
+          pageItems(await httpJson(g, "GET", bookUrl(g, path, q), { token }));
+
+        const venues = new Map<number, Venue>();
+        for (
+          const e of await get("/establishment/", {
+            company: g.companyId,
+            page_size: "300",
+          })
+        ) {
+          const v = venueOf(e);
+          if (v) venues.set(v.id, v);
+        }
+
+        // The listing still returns cancelled bookings — drop them so their
+        // calendar events come back as stale.
+        const bookings = (await get("/booking/", {
+          ...memberBookingFilters(g, "future"),
+          page: "1",
+          page_size: String(args.pageSize),
+        })).filter(isActiveBooking);
+        const waitlist = (await get("/waiting-list/booking-option/", {
+          company: g.companyId,
+          consumer: g.consumerId,
+          mine: "true",
+          offer_is_workshop: "false",
+          ordering: "offer__date_start",
+          page: "1",
+          page_size: String(args.pageSize),
+        })).filter((w) => w.cancelled !== true);
+
+        // Waitlist entries carry the offer but not its activity name.
+        const wlOfferIds = waitlist
+          .map((w) => (w.offer as Record<string, unknown> | null)?.id)
+          .filter((id): id is number => typeof id === "number");
+        const offerNames = new Map<number, string>();
+        if (wlOfferIds.length > 0) {
+          for (
+            const o of await get("/offer/", {
+              id__in: wlOfferIds.join(","),
+              ignore_manager_only: "true",
+            })
+          ) {
+            if (
+              typeof o.id === "number" && typeof o.activity_name === "string"
+            ) {
+              offerNames.set(o.id, o.activity_name);
+            }
+          }
+        }
+
+        const events: CalendarEvent[] = [];
+        for (const b of bookings) {
+          if (typeof b.offer_date_start !== "string") continue;
+          events.push(toCalendarEvent({
+            name: String(b.name ?? "Class"),
+            dateStart: b.offer_date_start,
+            durationMin: Number(b.offer_duration_minute ?? 60),
+            venue: venues.get(Number(b.establishment)),
+            key: `bsport booking ${b.id}`,
+            waitlist: false,
+          }));
+        }
+        for (const w of waitlist) {
+          const o = (w.offer ?? {}) as Record<string, unknown>;
+          if (typeof o.date_start !== "string") continue;
+          events.push(toCalendarEvent({
+            name: String(
+              offerNames.get(Number(o.id)) ?? o.name_override ?? "Class",
+            ),
+            dateStart: o.date_start,
+            durationMin: Number(o.duration_minute ?? 60),
+            venue: venues.get(Number(w.establishment)),
+            key: `bsport waitlist ${o.id}`,
+            waitlist: true,
+          }));
+        }
+        events.sort((a, b) => a.start.localeCompare(b.start));
+
+        const staleUids = staleCalendarUids(
+          events,
+          args.calendarEvents,
+          compactLocal(new Date()),
+        );
+
+        const handle = await context.writeResource(
+          "calendarEvents",
+          "calendar-events",
+          {
+            events,
+            staleUids,
+            bookingCount: bookings.length,
+            waitlistCount: waitlist.length,
+            calendarEventCount: args.calendarEvents.length,
+            fetchedAt,
+          },
+        );
+        context.logger?.info(
+          "Built {n} events ({b} booked, {w} waitlist), {s} stale",
+          {
+            n: events.length,
+            b: bookings.length,
+            w: waitlist.length,
+            s: staleUids.length,
+          },
+        );
+        return { dataHandles: [handle] };
       },
     },
 
