@@ -41,6 +41,7 @@ methods: {}
 | `check`     | no           | `checkResult`   | `readDataSubset: "5%"`; failure → `ok: false`    |
 | `forget`    | yes          | `forgetResult`  | `dryRun` defaults to **true**; needs a keep rule |
 | `stats`     | no           | `statsResult`   | `mode: raw-data` by default                      |
+| `unlock`    | locks only   | `unlockResult`  | stale locks only; reports `locks-still-held`     |
 
 ## Workflow
 
@@ -81,9 +82,10 @@ jobs:
 ## Append-only rest-server
 
 Run rest-server with `--append-only` so a compromised client cannot delete its
-own backups. `backup`, `snapshots`, `check` and `stats` work; `forget` fails by
-design. Apply retention server-side against the local path (a second instance
-with `repository: /data/laptop`).
+own backups. `backup`, `snapshots`, `check`, `stats` and `unlock` work (lock
+files stay deletable in append-only mode); `forget` fails by design. Apply
+retention server-side against the local path (a second instance with
+`repository: /data/laptop`).
 
 ## Security
 
