@@ -62,6 +62,7 @@ Fan-out factories — one call writes one resource per item plus a `summary`:
 | `listMyWaitlist`       | GET `/book/v1/waiting-list/booking-option/` + positions   | `consumerId` | `waitlistEntry` + `waitlistPosition` + summary |
 | `listWaitlist`         | GET `/book/v1/offer/waiting_list_position_list/?id__in=…` | offerIds     | `waitlistPosition` + summary                   |
 | `listRegisteredOffers` | GET `/book/v1/offer/registered/`                          | —            | `offer` + summary                              |
+| `calendarEvents`       | `/booking/` + `/waiting-list/booking-option/` + venues    | both ids     | `calendarEvents` (`calendar-events`)           |
 
 Each `offer` carries `effectif` (capacity) / `validated_booking_count` (booked),
 `full`, and `waiting_list_max_size` / `is_waiting_list_full`, so a full class
@@ -70,6 +71,15 @@ call. `level` 2 = Beginner (Débutant), 3 = Intermediate, 4 = Advanced. The offe
 list returns a single page (no DRF `next`) — use `pageSize` ≥ 300 for a month.
 `listMyWaitlist` needs no offer ids; `listWaitlist` takes explicit `offerIds`
 (`/offer/registered/` returns nothing for a plain member).
+
+`calendarEvents` builds calendar-ready events (local Europe/Amsterdam wall-clock
+`start`/`end`, venue title/address/map pin) from upcoming bookings and waitlist
+entries (summary prefixed `Waitlist:`), in the shape of `@magistr/fastmail`
+`create-events`. Cancelled bookings (`date_canceled` set or
+`booking_status_code` 2) are dropped. Pass the calendar's current events as
+`calendarEvents` to get `staleUids` for `delete-events`: future events keyed
+`bsport booking|waitlist <id>` that were cancelled, renamed, rescheduled, or
+duplicated.
 
 ## Booking / cancellation (not yet implemented)
 
