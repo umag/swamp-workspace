@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026.11.13.1
+
+- **Batch fallback no longer takes an earlier season's batch.** On 2026-11-13
+  the 14:10 run came before "Kusuriya no Hitorigoto 3rd Season" ep 7 was out;
+  SubsPlease had re-uploaded the season 1 batch "(01-24)" on 2026-11-11, after
+  the season 3 premiere, so the upload-date check passed, and its season 1 ep 7
+  was queued as season 3 ep 7. `pickBatch` now rejects a batch that names no
+  season for a season 2+ entry, and is only used for episodes that aired at
+  least 3 days ago (`BATCH_MIN_AGE_SECS`) — a fresh episode gets single releases
+  within hours.
+- **Dub-only releases are never picked (`isDubOnly`).** On 2026-10-25
+  "Mezametara …" ep 4 was queued as Yameii's `[English Dub]` 1080p release: it
+  and AnoZu's Dual-Audio release were both unranked, so seeders decided.
+  `pickBest` now rejects titles saying "Dub"/"Dubbed" unless they also carry the
+  original audio (Dual-Audio, Multi-Audio, DUAL, MULTi), and a dub no longer
+  ends the search for an episode.
+
 ## 2026.10.25.10
 
 - Repo-wide republish; no functional change.
