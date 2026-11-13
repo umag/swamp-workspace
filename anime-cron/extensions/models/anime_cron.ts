@@ -499,6 +499,15 @@ export function parseSeason(title: string): number | null {
   return null;
 }
 
+/** True for a dub-only release: the title says "Dub" or "Dubbed" and does not
+ *  also say it carries the original audio (Dual-Audio, Multi-Audio, DUAL,
+ *  MULTi). Such releases have English audio only and are never picked. */
+export function isDubOnly(title: string): boolean {
+  const t = decodeEntities(title);
+  if (!/\bDub(?:bed)?\b/i.test(t)) return false;
+  return !/\b(?:Dual|Multi)[- ]?Audio\b|\bDUAL\b|\bMULTi\b/i.test(t);
+}
+
 /** How long before the broadcast a release may be uploaded and still count
  *  for that episode (web/YouTube pre-airs). Anything older belongs to an
  *  earlier season — 2026-10-02 picked a January 2025 S02E01 for a S3 ep 1. */
@@ -542,6 +551,9 @@ export function pickBest(
   // retry next hour than fill the library with the wrong master.
   const eligible = hits.filter((h) => {
     if (h.resolution < targetRes) return false;
+    // English-audio-only releases are never wanted (2026-10-25 picked a
+    // Yameii "[English Dub]" over AnoZu's Dual-Audio on seeders).
+    if (isDubOnly(h.title)) return false;
     if (season != null) {
       const hs = parseSeason(h.title);
       if (hs != null && hs !== season) return false;
@@ -581,7 +593,16 @@ export interface BatchContext {
   startDateSec?: number | null;
   /** True when AniList has no next episode, i.e. the season is fully out. */
   finished?: boolean;
+  /** Real air time (unix s) of the newest wanted episode; null when unknown. */
+  newestAiredSec?: number | null;
+  /** Current time (unix s), for {@link BATCH_MIN_AGE_SECS}. */
+  nowSec?: number;
 }
+
+/** A batch is only a fallback for episodes that aired at least this long ago:
+ *  single-episode releases of a fresh episode land within hours, and on
+ *  2026-11-13 a run minutes before Kusuriya S3 ep 7 aired took a batch. */
+export const BATCH_MIN_AGE_SECS = 3 * 86400;
 
 /** Choose a batch release covering every episode in `episodes`, for when no
  *  single-episode release exists. Same resolution floor and ranking as
@@ -600,8 +621,17 @@ export function pickBatch(
   targetRes = 1080,
   ctx: BatchContext = {},
 ): NyaaHit | null {
-  const { season = null, startDateSec = null, finished = false } = ctx;
+  const {
+    season = null,
+    startDateSec = null,
+    finished = false,
+    newestAiredSec = null,
+    nowSec = Math.floor(Date.now() / 1000),
+  } = ctx;
   if (!episodes.length || startDateSec == null) return null;
+  if (
+    newestAiredSec != null && nowSec - newestAiredSec < BATCH_MIN_AGE_SECS
+  ) return null;
   const lo = Math.min(...episodes);
   const hi = Math.max(...episodes);
   const eligible = hits.filter((h) => {
@@ -611,6 +641,9 @@ export function pickBatch(
     if (season != null) {
       const hs = parseSeason(h.title);
       if (hs != null && hs !== season) return false;
+      // A sequel's batch that names no season is season 1 or continuously
+      // numbered: SubsPlease's "Kusuriya no Hitorigoto (01-24)" is season 1.
+      if (hs == null && season >= 2) return false;
     }
     if (h.batch.from > lo) return false;
     return h.batch.to == null ? finished : h.batch.to >= hi;
@@ -1336,7 +1369,7 @@ mutation ($mediaId: Int!, $progress: Int!, $status: MediaListStatus, $scoreRaw: 
 /** Anime automation pipeline: fetch airing episodes, BD upgrades, AniList sync. */
 export const model = {
   type: "@magistr/anime-cron",
-  version: "2026.10.25.10",
+  version: "2026.11.13.1",
   upgrades: [
     {
       toVersion: "2026.10.15.1",
@@ -1403,6 +1436,12 @@ export const model = {
     {
       toVersion: "2026.10.25.10",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.11.13.1",
+      description:
+        "Reject dub-only releases and wrong-season batches; no schema change",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -1713,10 +1752,12 @@ export const model = {
           try {
             hits = await nyaaSearch(title);
             // Keep searching until a release at the target resolution turns up:
-            // a 720p dub found by the English title must not end the search.
+            // a 720p or dub-only release found by the English title must not
+            // end the search.
             const needsEp = (ep: number) =>
               !hits.some((h) =>
-                h.episode === ep && h.resolution >= preferredResolution
+                h.episode === ep && h.resolution >= preferredResolution &&
+                !isDubOnly(h.title)
               );
             if (needsEp(startEp) && entry.english && entry.english !== title) {
               hits = [...hits, ...await nyaaSearch(entry.english)];
@@ -1901,10 +1942,18 @@ export const model = {
           // No single-episode release: a whole-season drop may exist only as
           // a batch. One torrent covers every missing episode.
           const missingEps = missing.map((m) => m.ep);
+          const newestMissing = Math.max(...missingEps);
+          const newestAiredSec = airingTimeIsReal &&
+              entry.nextAiringEp != null && entry.nextAiringAt != null
+            ? entry.nextAiringAt -
+              (entry.nextAiringEp - newestMissing) * WEEK_SECS
+            : null;
           const batch = pickBatch(hits, missingEps, preferredResolution, {
             season,
             startDateSec: entry.startDateSec ?? null,
             finished: entry.nextAiringEp == null,
+            newestAiredSec,
+            nowSec,
           });
           if (batch && args.dryRun) {
             for (const ep of missingEps) {
