@@ -1,3 +1,9 @@
+| `pauseServer` | `server` | serve URL to read schedule pauses from | |
+`pauseToken` | `token` | server token for `pauseServer` | |
+`swamp_watch_pause_read_ok{repo}` | `0` when pause state could not be read | |
+`swamp_workflow_paused{workflow,repo}` | `1` when the schedule is paused, else
+`0` |
+
 # @magistr/swamp-watch
 
 Per-workflow observability for a swamp repo's own scheduled work.
@@ -65,6 +71,10 @@ reported.
     (
       time() - min_over_time(swamp_watch_observed_timestamp_seconds{repo="serve"}[30d])
         > max_over_time(swamp_workflow_stale_after_seconds{repo="serve"}[30d])
+    )
+    unless on(repo, workflow)
+    (
+      last_over_time(swamp_workflow_paused{repo="serve"}[1h]) == 1
     )
   for: 5m
 

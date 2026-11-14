@@ -86,6 +86,12 @@ const GlobalArgsSchema = z.object({
   retryBackoffMs: z.number().int().min(0).default(1500).describe(
     "Pause before re-probing a workflow whose first probe failed for a non-404 reason",
   ),
+  pauseServer: z.string().optional().describe(
+    "swamp serve URL to read schedule pauses from; defaults to `server`. Needed when history is read locally but the datastore keeps pauses in a shared control-plane store",
+  ),
+  pauseToken: z.string().optional().describe(
+    "Server token for `pauseServer`; defaults to `token`",
+  ),
 });
 
 const WorkflowStatSchema = z.object({
@@ -101,6 +107,7 @@ const WorkflowStatSchema = z.object({
   failed: z.number(),
   other: z.number(),
   historyError: z.string().nullable(),
+  paused: z.boolean(),
 });
 
 const ScanSchema = z.object({
@@ -109,6 +116,8 @@ const ScanSchema = z.object({
   historySource: z.string(),
   scheduledCount: z.number(),
   unparsedSchedules: z.array(z.string()),
+  pausedWorkflows: z.array(z.string()),
+  pauseError: z.string().nullable(),
   workflows: z.array(WorkflowStatSchema),
   lines: z.string(),
   timestamp: z.string(),
@@ -184,6 +193,53 @@ export async function listDeclared(
   return out;
 }
 
+/**
+ * Names of workflows whose schedule is paused (`swamp workflow schedule
+ * pause`).
+ *
+ * A paused schedule keeps its `trigger.schedule` in the definition, so without
+ * this a deliberately paused workflow is indistinguishable from a dead one and
+ * pages every day until it is resumed. Pauses are not in the definition files:
+ * a `@magistr/mongodb-datastore` repo keeps them in its control-plane store and
+ * refuses a local read, which is why a server can be named for this read alone.
+ */
+export async function listPaused(
+  run: CommandRunner,
+  binary: string,
+  opts: {
+    repoDir: string;
+    server?: string;
+    token?: string;
+    timeoutMs: number;
+  },
+): Promise<Set<string>> {
+  const args = ["workflow", "schedule", "list"];
+  if (opts.server) {
+    args.push("--server", opts.server);
+    if (opts.token) args.push("--token", opts.token);
+  } else {
+    args.push("--repo-dir", opts.repoDir);
+  }
+  args.push("--json");
+  const raw = await swampJson(run, binary, args, { timeoutMs: opts.timeoutMs });
+  const schedules = (raw as { schedules?: unknown }).schedules;
+  if (!Array.isArray(schedules)) {
+    throw new SwampWatchError(
+      "workflow schedule list returned no schedules array",
+    );
+  }
+  const out = new Set<string>();
+  for (const entry of schedules) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as { workflowName?: unknown; paused?: unknown };
+    // Only an explicit `true` counts: anything else keeps the workflow paging.
+    if (typeof e.workflowName === "string" && e.paused === true) {
+      out.add(e.workflowName);
+    }
+  }
+  return out;
+}
+
 /** The two fields of a swamp run record this model reads. */
 interface RunRecord {
   startedAt: string;
@@ -250,6 +306,7 @@ export function summarise(
   minGraceSeconds: number,
   historyError: string | null = null,
   budgetOverride: number | null = null,
+  paused = false,
 ): z.infer<typeof WorkflowStatSchema> {
   let period: number | null = null;
   try {
@@ -298,6 +355,7 @@ export function summarise(
     failed,
     other,
     historyError,
+    paused,
   };
 }
 
@@ -313,6 +371,7 @@ export function scanLines(
   repo: string,
   stats: ReadonlyArray<z.infer<typeof WorkflowStatSchema>>,
   scannedAt: number,
+  pauseReadOk = true,
 ): string {
   const lines: string[] = [
     "# HELP swamp_workflow_declared Workflow declares a trigger.schedule in this repo",
@@ -398,6 +457,18 @@ export function scanLines(
     );
   }
   lines.push(
+    "# HELP swamp_workflow_paused Workflow's schedule is paused via `swamp workflow schedule pause` (1) or active (0)",
+    "# TYPE swamp_workflow_paused gauge",
+  );
+  for (const s of stats) {
+    lines.push(
+      metricLine("swamp_workflow_paused", {
+        workflow: s.workflow,
+        repo,
+      }, s.paused ? 1 : 0),
+    );
+  }
+  lines.push(
     "# HELP swamp_watch_observed_timestamp_seconds Unix time swamp-watch last observed this workflow declaring a schedule",
     "# TYPE swamp_watch_observed_timestamp_seconds gauge",
   );
@@ -416,6 +487,9 @@ export function scanLines(
     "# HELP swamp_watch_scan_workflows Scheduled workflows seen by this scan",
     "# TYPE swamp_watch_scan_workflows gauge",
     metricLine("swamp_watch_scan_workflows", { repo }, stats.length),
+    "# HELP swamp_watch_pause_read_ok Schedule pause state was read (1); 0 = unread, every workflow reported active",
+    "# TYPE swamp_watch_pause_read_ok gauge",
+    metricLine("swamp_watch_pause_read_ok", { repo }, pauseReadOk ? 1 : 0),
   );
   return lines.join("\n") + "\n";
 }
@@ -496,6 +570,25 @@ export async function runScan(
     args.includeUnscheduled ?? false,
   );
 
+  // A failed pause read must not drop or silence anything: every workflow is
+  // then reported active, which pages exactly as the scan did before pauses
+  // were read. `swamp_watch_pause_read_ok` exposes the failure.
+  let paused = new Set<string>();
+  let pauseError: string | null = null;
+  try {
+    paused = await listPaused(run, g.swampBinary, {
+      repoDir: g.repoDir,
+      server: g.pauseServer ?? g.server,
+      token: g.pauseServer ? g.pauseToken : (g.pauseToken ?? g.token),
+      timeoutMs: g.timeoutMs,
+    });
+  } catch (err) {
+    const detail = err instanceof SwampWatchError && err.detail
+      ? `: ${err.detail}`
+      : "";
+    pauseError = (err instanceof Error ? err.message : String(err)) + detail;
+  }
+
   const stats: z.infer<typeof WorkflowStatSchema>[] = [];
   const unparsed: string[] = [];
   for (const d of declared) {
@@ -522,6 +615,7 @@ export async function runScan(
       g.minGraceSeconds,
       historyError,
       g.budgetOverrides[d.name] ?? null,
+      paused.has(d.name),
     );
     if (d.schedule !== "" && s.expectedPeriodSeconds === null) {
       unparsed.push(`${d.name}: ${d.schedule}`);
@@ -537,8 +631,10 @@ export async function runScan(
     historySource: g.server ?? `local:${g.repoDir}`,
     scheduledCount: stats.length,
     unparsedSchedules: unparsed,
+    pausedWorkflows: stats.filter((s) => s.paused).map((s) => s.workflow),
+    pauseError,
     workflows: stats,
-    lines: scanLines(g.repoLabel, stats, scannedAt),
+    lines: scanLines(g.repoLabel, stats, scannedAt, pauseError === null),
     timestamp: now.toISOString(),
   };
   await context.writeResource("scan", "scan-current", attrs);
@@ -637,7 +733,7 @@ export async function runDrift(
 /** The `@magistr/swamp-watch` model definition swamp loads at startup. */
 export const model = {
   type: "@magistr/swamp-watch",
-  version: "2026.10.25.10",
+  version: "2026.11.06.1",
   upgrades: [
     {
       toVersion: "2026.09.19.2",
@@ -698,6 +794,12 @@ export const model = {
     {
       toVersion: "2026.10.25.10",
       description: "Version bump — repo-wide republish; no schema change",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.11.06.1",
+      description:
+        "Adds optional pauseServer/pauseToken; scan reports schedule pauses (swamp_workflow_paused)",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

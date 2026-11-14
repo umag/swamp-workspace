@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@magistr/swamp-watch"
-version: "2026.10.25.10"
+version: "2026.11.06.1"
 license: MIT
 description: |
   Per-workflow observability for a swamp repo's own scheduled work.
