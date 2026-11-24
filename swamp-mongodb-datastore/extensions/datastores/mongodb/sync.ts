@@ -162,6 +162,50 @@ interface InternalPushManifest {
   blobsPushed: number;
 }
 
+// swamp core's control-plane model types (CONTROL_PLANE_MODEL_TYPES in
+// src/domain/models/control_plane_types.ts). Core's retention never deletes
+// them — losing a token or grant locks users and workers out — so a push
+// never tombstones them either. A legitimate revoke/delete reaches the remote
+// through core's own control-plane writes, not through "absent from my cache".
+const CONTROL_PLANE_TYPES = [
+  "enrollment-token",
+  "worker",
+  "step-lease",
+  "pending-dispatch",
+  "fleet-probe",
+  "server-token",
+  "grant",
+  "group",
+  "integration",
+  "delegation",
+];
+const TOMBSTONE_PROTECTED = new RegExp(
+  `^[^/]+/@?swamp/(?:${CONTROL_PLANE_TYPES.join("|")})(?:/|$)`,
+);
+const PROTECTED_TIERS = new Set([
+  "auto-definitions",
+  "data",
+  "definitions-evaluated",
+  "outputs",
+]);
+
+/** a control-plane record a push must never tombstone */
+export function isTombstoneProtected(relPath: string): boolean {
+  const tier = relPath.slice(0, relPath.indexOf("/"));
+  return PROTECTED_TIERS.has(tier) && TOMBSTONE_PROTECTED.test(relPath);
+}
+
+const WALKED_TIERS: ReadonlySet<string> = new Set(DATASTORE_SUBDIRS);
+
+/**
+ * a full walk only enumerates DATASTORE_SUBDIRS, so only those tiers were
+ * compared; a remote path elsewhere (auto-definitions/, config/) is absent
+ * from the walk because it was never walked, not because it was deleted
+ */
+function isWalkedTier(relPath: string): boolean {
+  return WALKED_TIERS.has(relPath.slice(0, relPath.indexOf("/")));
+}
+
 const PUSH_BULK = 500;
 const BLOB_QUERY_BATCH = 5000;
 // Dirty roots folded into a single manifest query. Each root contributes two
@@ -794,23 +838,37 @@ export function createSyncService(
     // so an absent path is "never hydrated," not "deleted." Deletions resume
     // propagating once a full pull clears lazyPullActive. Legacy-prefixed
     // remote ids are never tombstoned by a push — fold_namespace_prefix owns
-    // their retirement.
+    // their retirement. Three more guards (2026-11-24: one push tombstoned
+    // ~35k paths incl. a worker's enrollment-token definition): a full walk
+    // only tombstones inside the tiers it walked, control-plane records are
+    // never tombstoned, and a pass over maxPushTombstones is skipped whole.
     if (m.watermark !== null && !m.lazy) {
       const watermark = new Date(m.watermark);
       const localPaths = new Set(m.localMetas.map((f) => f.relPath));
-      const tombstoneOps: AnyBulkWriteOperation<PathDoc>[] = [];
+      let tombstoneOps: AnyBulkWriteOperation<PathDoc>[] = [];
       for (const [relPath, doc] of remote) {
         if (localPaths.has(relPath) || doc.deletedAt !== null) continue;
         if (hasLegacyPrefix(relPath, m.namespace)) continue;
         if (doc.updatedAt > watermark) continue;
+        if (m.mode === "full" && !isWalkedTier(relPath)) continue;
+        if (isTombstoneProtected(relPath)) continue;
         tombstoneOps.push({
           updateOne: {
             filter: { _id: relPath },
             update: { $set: { deletedAt: now, updatedAt: now } },
           },
         });
-        pathsPushed++;
       }
+      const cap = cfg.maxPushTombstones;
+      if (cap > 0 && tombstoneOps.length > cap) {
+        console.warn(
+          `mongodb-datastore: push would tombstone ${tombstoneOps.length} remote path(s) in namespace "${
+            m.namespace ?? ""
+          }" (${m.mode} mode), over maxPushTombstones=${cap}; skipping the tombstone pass. Local deletions in this push are not propagated. An incomplete local cache is the usual cause; raise maxPushTombstones (0 = no cap) only for a deliberate mass delete.`,
+        );
+        tombstoneOps = [];
+      }
+      pathsPushed += tombstoneOps.length;
       for (let i = 0; i < tombstoneOps.length; i += PUSH_BULK) {
         await paths.bulkWrite(
           tombstoneOps.slice(i, i + PUSH_BULK),

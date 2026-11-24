@@ -29,6 +29,9 @@ export const ConfigSchema = z.object({
   serverSelectionTimeoutMS: z.number().int().min(1000).default(5_000).describe(
     "Timeout for server selection before failing. Default: 5000 (5 s)",
   ),
+  maxPushTombstones: z.number().int().min(0).default(1_000).describe(
+    "Most remote paths one push may tombstone. A push whose reconcile pass would exceed this skips the whole pass (its upserts still land) and warns, since a mass tombstone almost always means an incomplete local cache, not intent. 0 = no cap. Default: 1000",
+  ),
 });
 
 export type MongoDatastoreConfig = z.infer<typeof ConfigSchema>;
