@@ -1,0 +1,37 @@
+{
+  "self": {
+    "tab": "w8:t15",
+    "pane": "w8:p19"
+  },
+  "browsers": [
+    {
+      "key": "17683-1",
+      "pid": 17683,
+      "cdpPort": 50413,
+      "socket": "/home/user/.local/state/terminal-browser-f44c6ccc/instances/17683-1.sock",
+      "tty": "/dev/ttys062",
+      "pane": {
+        "tab": "w8:t15",
+        "pane": "w8:p1A"
+      },
+      "splitDir": "right",
+      "parentTty": "/dev/ttys059",
+      "inCurrentTab": true,
+      "viewport": {
+        "width": 1463,
+        "height": 1504
+      },
+      "tabs": [
+        {
+          "id": 1,
+          "url": "https://terminal-browser.com/",
+          "title": "terminal-browser",
+          "active": true,
+          "targetId": "F9B2A496CD06681DD230C5850711C552",
+          "timeOrigin": 1795549652076.9,
+          "agentControlled": false
+        }
+      ]
+    }
+  ]
+}
