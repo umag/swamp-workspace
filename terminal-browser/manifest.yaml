@@ -1,0 +1,52 @@
+manifestVersion: 1
+name: "@magistr/terminal-browser"
+version: "2026.11.24.1"
+license: MIT
+description: |
+  Manage terminal-browser (https://terminal-browser.com) from swamp: a real
+  Chromium browser that renders inside a terminal pane (herdr, Rex, Ghostty,
+  Kitty, tmux and others).
+
+  Model `@magistr/terminal-browser`:
+  - `status`   — installed version plus every running browser and its tabs
+  - `open`     — open a browser as a side panel of the caller's terminal tab;
+    reuses a browser already open there (idempotent)
+  - `new-tab`  — open a url in a running browser, skipping duplicate tabs
+  - `action`   — drive a tab through the agent-browser compatible CLI
+    (snapshot, click, fill, eval, get …) and record the output
+  - `config`   — list / get / set / unset settings; set skips when unchanged
+  - `shutdown` — stop the shared browser daemon (no-op when none runs)
+  - `upgrade`  — upgrade and record the version before and after
+
+  The CLI runs through `Deno.Command`, never a shell; positional values that
+  would be read as flags are refused. Local only: the browser splits the
+  terminal pane swamp runs in, so run it from a terminal, not from serve.
+
+repository: "https://github.com/umag/swamp-workspace"
+paths:
+  base: manifest
+
+models:
+  - extensions/models/terminal_browser.ts
+
+additionalFiles:
+  - README.md
+  - LICENSE.md
+  - CHANGELOG.md
+
+platforms:
+  - darwin-x86_64
+  - darwin-aarch64
+  - linux-x86_64
+  - linux-aarch64
+
+labels:
+  - browser
+  - terminal
+  - herdr
+  - agent-browser
+  - chromium
+  - cli
+
+skills:
+  - swamp-terminal-browser
