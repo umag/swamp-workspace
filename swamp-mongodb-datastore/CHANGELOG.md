@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026.11.24.1
+
+### Fixed
+
+- A full-walk push no longer tombstones remote paths outside the tiers it walks.
+  `auto-definitions/` and `config/` were never walked but were compared against
+  the whole remote manifest, so every full push from a non-lazy cache marked all
+  of them deleted.
+- A push never tombstones swamp control-plane records (enrollment and server
+  tokens, grants, groups, workers, step leases, pending dispatches, fleet
+  probes, integrations, delegations), matching core's retention exemption.
+
+### Added
+
+- `maxPushTombstones` config (default 1000, 0 = off): a push whose tombstone
+  pass would exceed it skips the pass with a warning; its upserts still land.
+
 ## 2026.10.25.10
 
 - Repo-wide republish; no functional change.

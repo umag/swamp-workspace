@@ -62,6 +62,7 @@ Swamp picks it up on the next invocation.
 | `maxPoolSize`              | number | no       | `500`            | Ceiling of the connection pool shared by every provider in the process (minPoolSize is 0). |
 | `maxIdleTimeMS`            | number | no       | `60000`          | How long an idle pooled connection is kept before the driver closes it.                    |
 | `serverSelectionTimeoutMS` | number | no       | `5000`           | How long to wait for a reachable primary before failing.                                   |
+| `maxPushTombstones`        | number | no       | `1000`           | Most remote paths one push may tombstone; over it the pass is skipped and warned. 0 = off. |
 
 Collections are prefixed `t_<tenantId>_r_<namespace>_*` — `_locks` for lock
 docs, `_paths` for the manifest, `_blobs` for content-addressed bytes.
@@ -361,6 +362,24 @@ window (30 days by default) — revert within that window.
   foreign bytes. Cost per push on a 290k-row catalog: about 2 s of CPU and 300
   MB of peak RSS, plus the changed rows; the host-local state is
   `<ns>/.catalog-rows.state` (8 bytes per row).
+- **A push tombstones only what it could have seen.** The reconcile pass marks a
+  remote path deleted when this cache's push no longer has it. Three guards
+  bound that (2026.11.24.1, after one push from a non-lazy cache tombstoned ~35k
+  paths in a live namespace, including the enrollment-token definition a worker
+  enrolls with):
+  - a full walk tombstones only inside the tiers it walks; `auto-definitions/`
+    and `config/` reach the remote through dirty roots, so a full walk never
+    compares them;
+  - swamp control-plane records (`swamp/enrollment-token`, `server-token`,
+    `grant`, `group`, `worker`, `step-lease`, `pending-dispatch`, `fleet-probe`,
+    `integration`, `delegation`) are never tombstoned by a push, matching core's
+    retention exemption;
+  - a pass over `maxPushTombstones` (default 1000) is skipped whole with a
+    warning on stderr. Its upserts still land; only local deletions in that push
+    are not propagated. Raise the cap (or set 0) for a deliberate mass delete.
+    Restoring a mass tombstone: set `deletedAt: null` (and bump `updatedAt` so
+    lazy caches re-pull) on the affected `_paths` docs before `sweep` passes its
+    grace window.
 - **Two watermarks, not one.** `lastPulledAt` tracks hydrated content and drives
   pull; `lastReconciledAt` tracks when this cache last enumerated the complete
   remote path list and drives the push tombstone pass. They must stay separate:
