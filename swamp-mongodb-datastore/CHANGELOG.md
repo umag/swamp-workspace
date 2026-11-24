@@ -4,10 +4,10 @@
 
 ### Fixed
 
-- A full-walk push no longer tombstones remote paths outside the tiers it
-  walks. `auto-definitions/` and `config/` were never walked but were compared
-  against the whole remote manifest, so every full push from a non-lazy cache
-  marked all of them deleted.
+- A full-walk push no longer tombstones remote paths outside the tiers it walks.
+  `auto-definitions/` and `config/` were never walked but were compared against
+  the whole remote manifest, so every full push from a non-lazy cache marked all
+  of them deleted.
 - A push never tombstones swamp control-plane records (enrollment and server
   tokens, grants, groups, workers, step leases, pending dispatches, fleet
   probes, integrations, delegations), matching core's retention exemption.
